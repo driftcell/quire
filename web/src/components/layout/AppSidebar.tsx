@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import {
-  FileTextIcon,
-  KeyRoundIcon,
-  PanelLeftCloseIcon,
-  PlusIcon,
-  Trash2Icon,
-} from "lucide-react";
+import { FileTextIcon, KeyRoundIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { deleteSession, listSessions } from "@/api/runtime";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +26,6 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import type {
   ActiveRunStatus,
@@ -91,7 +84,6 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const activeSessionId = params.sessionId;
-  const { toggleSidebar } = useSidebar();
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions"],
@@ -138,15 +130,6 @@ export function AppSidebar() {
             </span>
             <span className="text-sm tracking-tight">Quire Studio</span>
           </Link>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="收起左侧会话栏"
-            onClick={toggleSidebar}
-          >
-            <PanelLeftCloseIcon className="size-4 text-muted-foreground" />
-          </Button>
         </div>
 
         <Button
