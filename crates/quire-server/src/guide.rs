@@ -227,15 +227,15 @@ PAGE CHROME
 
 THEME TOKENS
 {
-  "preset": "editorial",
+  "preset": "default",
   "tokens": {
-    "--rpt-primary": "#1d4ed8",
-    "--rpt-accent": "#0f766e",
+    "--rpt-primary": "#1E3A5F",
+    "--rpt-accent": "#3B6E9C",
     "--rpt-font-body": "Georgia, serif"
   }
 }
 - Token names must start with `--`; values cannot contain `; { } < > \`.
-- Common tokens: --rpt-primary, --rpt-accent, --rpt-ink, --rpt-muted, --rpt-line, --rpt-surface, --rpt-background, --rpt-font-body, --rpt-font-heading, --rpt-radius, --rpt-content-width.
+- Common tokens: --rpt-primary, --rpt-accent, --rpt-ink, --rpt-muted, --rpt-border, --rpt-surface, --rpt-background, --rpt-font-body, --rpt-font-heading, --rpt-radius, --rpt-content-width.
 
 CUSTOM CSS
 - `update_style_and_css(doc_id, custom_css=".rpt-callout { border-left: 4px solid var(--rpt-accent); }", css_mode="append")`.
@@ -249,6 +249,12 @@ STYLE FIELDS
 - `keep_together` prevents block splitting across pages.
 - `page_break_before` forces a new page.
 - `style.column_widths` accepts %, px, rem, em, ch, cm, mm, in, pt.
+
+NOTES AND SOURCE ATTRIBUTION
+- `table`, `echarts` and `custom_html` blocks support `note`: a footer note (statistical scope, units) rendered below the figure/table. It supports inline `[^source_id]`.
+- Every block supports `source_note`: free-form source text rendered as `资料来源：...`, with inline `[^source_id]` support (for example `"根据教育部 2025 年公报[^moe2025]整理"`).
+- `source_ids` attaches source records to the block; the frontend merges unreferenced IDs into an interactive citation badge such as `[1,2,3]`.
+- Both `note` and `source_note` participate in citation numbering and the bibliography; use them instead of duplicating citation markers in body paragraphs.
 "##.into(),
         recommended_tools: vec![
             "upsert_sources".into(),

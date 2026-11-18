@@ -460,6 +460,96 @@ function blockTitle(block: ReportBlock): string | undefined {
   return typeof title === "string" ? title : undefined;
 }
 
+function blockNote(block: ReportBlock): string | undefined {
+  if (
+    block.type !== "table" &&
+    block.type !== "echarts" &&
+    block.type !== "custom_html"
+  ) {
+    return undefined;
+  }
+  const note = block.note;
+  return typeof note === "string" ? note : undefined;
+}
+
+function BlockFooterNotes({
+  block,
+  computed,
+  bibliographyById,
+  printMode,
+  onCitationClick,
+  align,
+  framingAttribution,
+}: {
+  block: ReportBlock;
+  computed: ComputedDocumentMeta;
+  bibliographyById: Map<string, BibliographyEntry>;
+  printMode: boolean;
+  onCitationClick: (sourceId: string) => void;
+  align: "left" | "center";
+  framingAttribution?: string | null;
+}) {
+  const note = blockNote(block)?.trim();
+  const sourceNote = block.source_note?.trim();
+  const sourceIds = block.source_ids ?? [];
+  const citedInNote = new Set<string>();
+  if (sourceNote) {
+    for (const match of sourceNote.matchAll(/\[\^([A-Za-z0-9_-]+)\]/g)) {
+      const sourceId = match[1];
+      if (sourceId) {
+        citedInNote.add(sourceId);
+      }
+    }
+  }
+  const missingIds = sourceIds.filter((sourceId) => !citedInNote.has(sourceId));
+  const sourceText = [
+    sourceNote ?? "",
+    ...missingIds.map((sourceId) => `[^${sourceId}]`),
+  ]
+    .filter((part) => part.length > 0)
+    .join(" ");
+  const hasSource = sourceText.length > 0;
+
+  const className = `space-y-0.5 pt-1 text-[11.5px] leading-relaxed text-slate-500 dark:text-slate-400 ${
+    align === "center" ? "text-center" : "text-left"
+  }`;
+
+  if (!note && !hasSource) {
+    return framingAttribution ? (
+      <div className={className}>{framingAttribution}</div>
+    ) : null;
+  }
+
+  return (
+    <div className={className}>
+      {note && (
+        <div>
+          注：
+          <InlineMarkdown
+            text={note}
+            citationMap={computed.citation_map}
+            bibliographyById={bibliographyById}
+            printMode={printMode}
+            onCitationClick={onCitationClick}
+          />
+        </div>
+      )}
+      {hasSource && (
+        <div>
+          资料来源：
+          <InlineMarkdown
+            text={sourceText}
+            citationMap={computed.citation_map}
+            bibliographyById={bibliographyById}
+            printMode={printMode}
+            onCitationClick={onCitationClick}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function referenceDomain(url: string | null | undefined): string | null {
   if (!url) {
     return null;
@@ -567,7 +657,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
     bodyNode = (
       <blockquote
         id={`block-${block.id}`}
-        className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-[var(--rpt-surface)] px-4 py-3 text-[14px] leading-[1.75] text-[var(--rpt-ink)]"
+        className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700"
       >
         {renderInline(block.text)}
       </blockquote>
@@ -576,27 +666,18 @@ const ReportBlockItem = memo(function ReportBlockItem({
     const titleText = block.title?.trim();
     const totalRows =
       slice.totalRows ?? (Array.isArray(block.rows) ? block.rows.length : 0);
-    const hasMoreRows =
-      slice.rowEnd !== undefined && totalRows > 0 && slice.rowEnd < totalRows;
-    const showCaption = Boolean(framing || titleText || slice.continuation);
+    const captionPrefix = framing?.label ?? "";
+    const captionText = [captionPrefix, titleText]
+      .filter((part): part is string => Boolean(part))
+      .join("  ");
+    const showCaption = Boolean(captionText || slice.continuation);
 
     bodyNode = (
       <figure id={`block-${block.id}`} className="my-5 space-y-2">
         {showCaption && (
-          <figcaption className="flex items-baseline justify-between gap-2 text-sm font-semibold">
-            <span>
-              {framing ? framing.label : "表"}
-              {titleText ? ` — ${titleText}` : ""}
-              {slice.continuation ? "（续）" : ""}
-            </span>
-            {slice.continuation &&
-              slice.rowStart !== undefined &&
-              slice.rowEnd !== undefined && (
-                <span className="text-[11px] font-normal text-muted-foreground tabular-nums">
-                  接上页 · 第 {slice.rowStart + 1}–{slice.rowEnd} 行 / 共{" "}
-                  {totalRows} 行
-                </span>
-              )}
+          <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
+            {captionText}
+            {slice.continuation ? "（续）" : ""}
           </figcaption>
         )}
         <TableBlockView
@@ -607,28 +688,35 @@ const ReportBlockItem = memo(function ReportBlockItem({
           includeSummary={slice.includeSummary}
           containerWidthPx={isPaged ? A4_CONTENT_WIDTH_PX : 700}
         />
-        {hasMoreRows && slice.rowEnd !== undefined && (
-          <div className="flex items-center justify-end border-t border-dashed border-black/15 pt-1 text-[11px] text-muted-foreground tabular-nums dark:border-white/15">
-            （接下页 · 续第 {slice.rowEnd + 1} 行）
-          </div>
-        )}
-        {framing?.attribution && slice.includeSummary !== false && (
-          <div className="text-xs text-muted-foreground">
-            {framing.attribution}
-          </div>
+        {slice.continuation &&
+          slice.rowStart !== undefined &&
+          slice.rowEnd !== undefined && (
+            <div className="text-right text-[11px] font-normal text-slate-500 tabular-nums dark:text-slate-400">
+              接上页 · 第 {slice.rowStart + 1}–{slice.rowEnd} 行 / 共{" "}
+              {totalRows} 行
+            </div>
+          )}
+        {slice.includeSummary !== false && (
+          <BlockFooterNotes
+            block={block}
+            computed={computed}
+            bibliographyById={bibliographyById}
+            printMode={printMode}
+            onCitationClick={onCitationClick}
+            align="left"
+            framingAttribution={framing?.attribution}
+          />
         )}
       </figure>
     );
   } else if (block.type === "echarts") {
     const titleText = blockTitle(block);
+    const captionPrefix = framing?.label ?? "";
+    const captionText = [captionPrefix, titleText]
+      .filter((part): part is string => Boolean(part))
+      .join("  ");
     bodyNode = (
       <figure id={`block-${block.id}`} className="my-5 space-y-2">
-        {(framing || titleText) && (
-          <figcaption className="text-sm font-semibold">
-            {framing ? framing.label : "图"}
-            {titleText ? ` — ${titleText}` : ""}
-          </figcaption>
-        )}
         <EchartsCanvas
           blockId={block.id}
           chart={block}
@@ -637,30 +725,45 @@ const ReportBlockItem = memo(function ReportBlockItem({
           renderer={isPaged || printMode ? "svg" : "canvas"}
           printSafe={isPaged || printMode}
         />
-        {framing?.attribution && (
-          <div className="text-xs text-muted-foreground">
-            {framing.attribution}
-          </div>
+        {captionText && (
+          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
+            {captionText}
+          </figcaption>
         )}
+        <BlockFooterNotes
+          block={block}
+          computed={computed}
+          bibliographyById={bibliographyById}
+          printMode={printMode}
+          onCitationClick={onCitationClick}
+          align="center"
+          framingAttribution={framing?.attribution}
+        />
       </figure>
     );
   } else if (block.type === "custom_html") {
     const titleText = blockTitle(block);
+    const captionPrefix = framing?.label ?? "";
+    const captionText = [captionPrefix, titleText]
+      .filter((part): part is string => Boolean(part))
+      .join("  ");
     bodyNode = (
       <figure id={`block-${block.id}`} className="my-5 space-y-2">
-        {(framing || titleText) && (
-          <figcaption className="text-sm font-semibold">
-            {framing ? framing.label : ""}
-            {framing && titleText ? " — " : ""}
-            {titleText ?? ""}
+        <CustomHtmlView block={block} />
+        {captionText && (
+          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
+            {captionText}
           </figcaption>
         )}
-        <CustomHtmlView block={block} />
-        {framing?.attribution && (
-          <div className="text-xs text-muted-foreground">
-            {framing.attribution}
-          </div>
-        )}
+        <BlockFooterNotes
+          block={block}
+          computed={computed}
+          bibliographyById={bibliographyById}
+          printMode={printMode}
+          onCitationClick={onCitationClick}
+          align="center"
+          framingAttribution={framing?.attribution}
+        />
       </figure>
     );
   }
@@ -1175,7 +1278,7 @@ export function ReportViewer({
                           href={source.url}
                           target="_blank"
                           rel="noreferrer noopener"
-                          className="inline-flex items-center gap-0.5 text-[var(--rpt-muted)] hover:text-[var(--rpt-accent)] hover:underline"
+                          className="inline-flex items-center gap-0.5 text-slate-600 underline decoration-slate-400 hover:text-[var(--rpt-accent)]"
                         >
                           {domain ?? "链接"}
                           <ExternalLinkIcon className="size-2.5" />
@@ -1184,7 +1287,7 @@ export function ReportViewer({
                     </div>
                   )}
                   {entry.excerpt && (
-                    <div className="mt-1 rounded bg-[var(--rpt-surface)] px-2 py-1 text-[11px] leading-relaxed text-[var(--rpt-muted)]">
+                    <div className="mt-1 rounded border-l-2 border-slate-300 bg-slate-50 px-2 py-1 text-[11px] leading-relaxed text-slate-600">
                       “{entry.excerpt}”
                     </div>
                   )}

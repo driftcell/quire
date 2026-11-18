@@ -40,24 +40,46 @@ pub fn scan_document_citations(document: &ReportDocument) -> CitationScan {
     let mut scan = CitationScan::default();
     let mut seen = std::collections::BTreeSet::new();
     for block in &document.blocks {
+        let mut texts: Vec<&str> = Vec::new();
         match &block.body {
             BlockKind::Paragraph { text } | BlockKind::Quote { text } => {
-                for source_id in inline_citations(text) {
-                    let usage = CitationUse {
-                        source_id: source_id.clone(),
-                        block_id: block.id.clone(),
-                        location: CitationLocation::Inline,
-                    };
-                    if !document.sources.contains_key(&source_id) {
-                        scan.dangling.push(usage.clone());
-                    }
-                    if seen.insert(source_id) {
-                        scan.cited_source_ids.push(usage.source_id.clone());
-                    }
-                    scan.uses.push(usage);
+                texts.push(text);
+            }
+            BlockKind::Table(table) => {
+                if let Some(note) = table.note.as_deref() {
+                    texts.push(note);
                 }
             }
-            _ => {}
+            BlockKind::Echarts(chart) => {
+                if let Some(note) = chart.note.as_deref() {
+                    texts.push(note);
+                }
+            }
+            BlockKind::CustomHtml(html) => {
+                if let Some(note) = html.note.as_deref() {
+                    texts.push(note);
+                }
+            }
+            BlockKind::Heading { .. } => {}
+        }
+        if let Some(source_note) = block.source_note.as_deref() {
+            texts.push(source_note);
+        }
+        for text in texts {
+            for source_id in inline_citations(text) {
+                let usage = CitationUse {
+                    source_id: source_id.clone(),
+                    block_id: block.id.clone(),
+                    location: CitationLocation::Inline,
+                };
+                if !document.sources.contains_key(&source_id) {
+                    scan.dangling.push(usage.clone());
+                }
+                if seen.insert(source_id) {
+                    scan.cited_source_ids.push(usage.source_id.clone());
+                }
+                scan.uses.push(usage);
+            }
         }
         for source_id in &block.source_ids {
             let usage = CitationUse {
@@ -362,6 +384,44 @@ mod tests {
         assert_eq!(
             resolved.block_labels(&[source_id("block-src")]),
             vec!["[1]"]
+        );
+    }
+
+    #[test]
+    fn note_and_source_note_citations_are_scanned_in_order() {
+        let mut doc = ReportDocument::new(doc_id("report"));
+        doc.sources
+            .insert(source_id("note-src"), source("Note source", "Li", "2024"));
+        doc.sources
+            .insert(source_id("sn-src"), source("Source note", "Wu", "2025"));
+        doc.sources
+            .insert(source_id("block-src"), source("Block source", "Xu", "2023"));
+        let mut table = Block::table(
+            block_id("t1"),
+            crate::block::TableBlock {
+                title: Some("Indicators".into()),
+                numbering: None,
+                note: Some("统计口径见公报[^note-src]".into()),
+                columns: vec![crate::block::ColumnNode::leaf("metric", "Metric")],
+                rows: vec![],
+                summary_rows: vec![],
+            },
+        )
+        .with_sources([source_id("block-src")]);
+        table.source_note = Some("根据年度公报[^sn-src]整理".into());
+        doc.blocks.push(table);
+
+        let resolved = resolve_citations(&doc);
+        assert_eq!(resolved.number("note-src"), Some(1));
+        assert_eq!(resolved.number("sn-src"), Some(2));
+        assert_eq!(resolved.number("block-src"), Some(3));
+        assert_eq!(
+            resolved.block_labels(&[
+                source_id("note-src"),
+                source_id("sn-src"),
+                source_id("block-src")
+            ]),
+            vec!["[1]", "[2]", "[3]"]
         );
     }
 

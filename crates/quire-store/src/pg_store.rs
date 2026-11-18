@@ -1022,10 +1022,12 @@ impl PgReportStore {
         let rows = sqlx::query!(
             r#"SELECT t.doc_id, t.thread_id, t.block_id, t.section_id, t.anchor_snapshot,
                       t.quote, t.status, t.created_rev, t.addressed_rev, t.created_at,
-                      t.updated_at, (b.block_id IS NULL) AS "anchor_detached!"
+                      t.updated_at,
+                      (NOT EXISTS (
+                          SELECT 1 FROM report_blocks b
+                          WHERE b.doc_id = t.doc_id AND b.block_id = t.block_id
+                      )) AS "anchor_detached!"
                FROM report_comment_threads t
-               LEFT JOIN report_blocks b
-                 ON b.doc_id = t.doc_id AND b.block_id = t.block_id
                WHERE t.doc_id = $1
                  AND ($2::text IS NULL OR t.status = $2)
                  AND ($3::text IS NULL OR t.block_id = $3)
@@ -1220,10 +1222,12 @@ impl PgReportStore {
         let row = sqlx::query!(
             r#"SELECT t.doc_id, t.thread_id, t.block_id, t.section_id, t.anchor_snapshot,
                       t.quote, t.status, t.created_rev, t.addressed_rev, t.created_at,
-                      t.updated_at, (b.block_id IS NULL) AS "anchor_detached!"
+                      t.updated_at,
+                      (NOT EXISTS (
+                          SELECT 1 FROM report_blocks b
+                          WHERE b.doc_id = t.doc_id AND b.block_id = t.block_id
+                      )) AS "anchor_detached!"
                FROM report_comment_threads t
-               LEFT JOIN report_blocks b
-                 ON b.doc_id = t.doc_id AND b.block_id = t.block_id
                WHERE t.doc_id = $1 AND t.thread_id = $2"#,
             doc_id.as_str(),
             thread_id,

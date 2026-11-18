@@ -92,7 +92,7 @@ export const TableBlockView = memo(function TableBlockView({
             ? { minWidth: `${sizing.minTableWidthPx}px` }
             : undefined
         }
-        className="w-full table-fixed border-collapse border-t-2 border-neutral-800 text-sm dark:border-neutral-200"
+        className="w-full table-fixed border-collapse border-t-[1.5px] border-b-[1.5px] border-slate-800 text-sm dark:border-slate-200"
       >
         <colgroup>
           {leafCols.map((col, idx) => (
@@ -110,8 +110,8 @@ export const TableBlockView = memo(function TableBlockView({
               key={rowIdx}
               className={
                 rowIdx === headerRows.length - 1
-                  ? "border-b border-neutral-700 bg-[var(--rpt-surface)] dark:border-neutral-300"
-                  : "border-b border-black/15 bg-[var(--rpt-surface)]"
+                  ? "border-b border-slate-700 bg-slate-100/80 text-slate-800 dark:border-slate-300 dark:bg-slate-800/60 dark:text-slate-100"
+                  : "border-b border-slate-300/80 bg-slate-100/80 text-slate-800 dark:border-slate-600 dark:bg-slate-800/60 dark:text-slate-100"
               }
             >
               {row.map((cell, cellIdx) => (
@@ -141,7 +141,7 @@ export const TableBlockView = memo(function TableBlockView({
               <tr
                 key={rowStart + rIdx}
                 data-measure-row-index={rowStart + rIdx}
-                className="border-b border-black/[0.06] even:bg-black/[0.012] dark:border-white/[0.08] dark:even:bg-white/[0.015]"
+                className="border-b border-slate-200/70 even:bg-slate-50/70 dark:border-slate-800 dark:even:bg-slate-900/40"
               >
                 {leafCols.map((col) => {
                   const formatted = formatCell(rowObj[col.key]);
@@ -150,7 +150,7 @@ export const TableBlockView = memo(function TableBlockView({
                       key={col.key}
                       title={formatted.tooltip}
                       style={{ textAlign: formatted.align ?? col.align }}
-                      className={`px-3 py-2 text-[13px] leading-5 break-words tabular-nums ${formatted.className ?? ""}`}
+                      className={`px-3 py-2 text-[13px] leading-5 break-words tabular-nums text-slate-700 dark:text-slate-200 ${formatted.className ?? ""}`}
                     >
                       {col.data_type === "badge" && formatted.text ? (
                         <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap">
@@ -169,7 +169,7 @@ export const TableBlockView = memo(function TableBlockView({
         {summaryRows.length > 0 && (
           <tfoot
             data-measure-tfoot="true"
-            className="border-t border-neutral-700 dark:border-neutral-300"
+            className="border-t border-slate-700 bg-slate-100/70 font-semibold text-slate-900 dark:border-slate-300 dark:bg-slate-800/70 dark:text-slate-100"
           >
             {summaryRows.map((row, sIdx) => {
               const rowObj: Record<string, CellValue> = Array.isArray(row)
@@ -183,9 +183,9 @@ export const TableBlockView = memo(function TableBlockView({
               return (
                 <tr
                   key={sIdx}
-                  className={`bg-[var(--rpt-surface)] font-semibold ${
+                  className={`bg-slate-100/70 font-semibold ${
                     isLast
-                      ? "border-b-2 border-neutral-800 dark:border-neutral-200"
+                      ? "border-b-[1.5px] border-slate-800 dark:border-slate-200"
                       : ""
                   }`}
                 >
@@ -195,7 +195,7 @@ export const TableBlockView = memo(function TableBlockView({
                       <td
                         key={col.key}
                         style={{ textAlign: formatted.align ?? col.align }}
-                        className="px-3 py-2 text-[13px] leading-5 break-words tabular-nums"
+                        className="px-3 py-2 text-[13px] leading-5 break-words tabular-nums text-slate-900 dark:text-slate-100"
                       >
                         {formatted.text}
                       </td>

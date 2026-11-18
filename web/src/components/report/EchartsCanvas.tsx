@@ -104,6 +104,69 @@ function presetSkeleton(preset: EchartsPreset | undefined): JsonObject {
   }
 }
 
+const ACADEMIC_DEFAULTS: JsonObject = {
+  color: ["#1E3A5F", "#3B6E9C", "#6495B8", "#94B4CE", "#9A6B2F", "#475569"],
+  textStyle: {
+    fontFamily:
+      '"Geist Variable", "PingFang SC", "Noto Sans SC", system-ui, sans-serif',
+    color: "#334155",
+    fontSize: 12,
+  },
+  tooltip: {
+    backgroundColor: "rgba(255,255,255,0.96)",
+    borderColor: "#CBD5E1",
+    borderWidth: 1,
+    textStyle: { color: "#1E293B", fontSize: 12 },
+  },
+  legend: {
+    textStyle: { color: "#475569", fontSize: 11 },
+    itemWidth: 12,
+    itemHeight: 8,
+  },
+};
+
+const AXIS_LINE_DEFAULTS: JsonObject = { color: "#CBD5E1" };
+const AXIS_LABEL_DEFAULTS: JsonObject = { color: "#475569", fontSize: 11 };
+const SPLIT_LINE_DEFAULTS: JsonObject = {
+  color: "#E2E8F0",
+  type: "dashed",
+};
+
+function withAxisDefaults(axis: JsonObject): JsonObject {
+  const axisLine = isPlainObject(axis.axisLine) ? axis.axisLine : {};
+  const axisLabel = isPlainObject(axis.axisLabel) ? axis.axisLabel : {};
+  const splitLine = isPlainObject(axis.splitLine) ? axis.splitLine : {};
+  const lineStyle = isPlainObject(axisLine.lineStyle) ? axisLine.lineStyle : {};
+  const splitLineStyle = isPlainObject(splitLine.lineStyle)
+    ? splitLine.lineStyle
+    : {};
+  return {
+    ...axis,
+    axisLine: {
+      ...axisLine,
+      lineStyle: { ...AXIS_LINE_DEFAULTS, ...lineStyle },
+    },
+    axisLabel: { ...AXIS_LABEL_DEFAULTS, ...axisLabel },
+    splitLine: {
+      ...splitLine,
+      lineStyle: { ...SPLIT_LINE_DEFAULTS, ...splitLineStyle },
+    },
+  };
+}
+
+function applyAxisDefaults(option: JsonObject, key: "xAxis" | "yAxis") {
+  const axis = option[key];
+  if (Array.isArray(axis)) {
+    option[key] = axis.map((entry) =>
+      isPlainObject(entry) ? withAxisDefaults(entry) : entry,
+    );
+    return;
+  }
+  if (isPlainObject(axis)) {
+    option[key] = withAxisDefaults(axis);
+  }
+}
+
 function buildEffectiveOption(chart: EchartsBlock): JsonObject {
   const preset = isEchartsPreset(chart.preset) ? chart.preset : undefined;
   let option: JsonObject =
@@ -130,6 +193,9 @@ function buildEffectiveOption(chart: EchartsBlock): JsonObject {
       bottom: 16,
     };
   }
+  option = deepMerge(ACADEMIC_DEFAULTS, option);
+  applyAxisDefaults(option, "xAxis");
+  applyAxisDefaults(option, "yAxis");
   return option;
 }
 

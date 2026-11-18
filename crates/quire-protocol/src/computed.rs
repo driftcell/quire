@@ -208,32 +208,40 @@ pub fn compute_block_framing(
             }
             NumberingKind::None => continue,
         };
+        let source_note = block
+            .source_note
+            .as_deref()
+            .map(str::trim)
+            .filter(|note| !note.is_empty());
         let mut attribution_parts = Vec::new();
-        let mut seen = BTreeSet::new();
-        for source_id in &block.source_ids {
-            if !seen.insert(source_id.clone()) {
-                continue;
+        if !block.source_ids.is_empty() || source_note.is_some() {
+            let mut line = String::from("资料来源：");
+            if let Some(source_note) = source_note {
+                line.push_str(source_note);
             }
-            let label = citations.label_or_missing(source_id);
-            let title = document
-                .sources
-                .get(source_id)
-                .map(|source| source.title.as_str())
-                .unwrap_or("UNRESOLVED SOURCE");
-            attribution_parts.push(format!("{label} {title}"));
+            let mut seen = BTreeSet::new();
+            let labels: Vec<String> = block
+                .source_ids
+                .iter()
+                .filter(|source_id| seen.insert((*source_id).clone()))
+                .map(|source_id| citations.label_or_missing(source_id))
+                .collect();
+            if !labels.is_empty() {
+                if source_note.is_some() {
+                    line.push(' ');
+                }
+                line.push_str(&labels.join(" "));
+            }
+            attribution_parts.push(line);
         }
-        let mut attribution = if attribution_parts.is_empty() {
+        if let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) {
+            attribution_parts.push(format!("注：{note}"));
+        }
+        let attribution = if attribution_parts.is_empty() {
             None
         } else {
-            Some(format!("Sources: {}.", attribution_parts.join("; ")))
+            Some(attribution_parts.join(" "))
         };
-        if let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) {
-            let line = format!("Note: {note}");
-            attribution = Some(match attribution {
-                Some(existing) => format!("{existing} {line}"),
-                None => line,
-            });
-        }
         framing.insert(
             block.id.clone(),
             BlockFraming {
@@ -970,6 +978,9 @@ mod tests {
             )
             .with_sources([source_id("sec10")]),
         );
+        if let Some(block) = doc.blocks.last_mut() {
+            block.source_note = Some("Internal filing".into());
+        }
         doc.blocks.push(Block::new(
             block_id("chart"),
             BlockKind::Echarts(crate::block::EchartsBlock {
@@ -1003,8 +1014,8 @@ mod tests {
             .attribution
             .as_deref()
             .unwrap();
-        assert!(attribution.contains("Sources: [1] Annual filing"));
-        assert!(attribution.contains("Note: Audited"));
+        assert!(attribution.contains("资料来源：Internal filing [1]"));
+        assert!(attribution.contains("注：Audited"));
     }
 
     #[test]
