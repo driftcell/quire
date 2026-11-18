@@ -1,4 +1,5 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
+import { computeTableColumnWidths } from "@/components/report/tableSizing";
 import type {
   Align,
   CellValue,
@@ -13,6 +14,7 @@ export interface TableBlockViewProps {
   rowStart?: number;
   rowEnd?: number;
   includeSummary?: boolean;
+  containerWidthPx?: number;
 }
 
 function isRichCell(value: CellValue): value is RichCell {
@@ -56,6 +58,7 @@ export const TableBlockView = memo(function TableBlockView({
   rowStart = 0,
   rowEnd,
   includeSummary = true,
+  containerWidthPx = 682,
 }: TableBlockViewProps) {
   const leafCols = layout?.leaf_columns ?? [];
   const headerRows = layout?.header_rows ?? [];
@@ -65,6 +68,13 @@ export const TableBlockView = memo(function TableBlockView({
     includeSummary && Array.isArray(table.summary_rows)
       ? table.summary_rows
       : [];
+
+  const sizing = useMemo(() => {
+    if (!layout || leafCols.length === 0) {
+      return { columnCssWidths: [] };
+    }
+    return computeTableColumnWidths(table, layout, containerWidthPx);
+  }, [table, layout, leafCols.length, containerWidthPx]);
 
   if (leafCols.length === 0) {
     return (
@@ -76,10 +86,22 @@ export const TableBlockView = memo(function TableBlockView({
 
   return (
     <div className="w-full overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
+      <table
+        style={
+          sizing.minTableWidthPx
+            ? { minWidth: `${sizing.minTableWidthPx}px` }
+            : undefined
+        }
+        className="w-full table-fixed border-collapse text-sm"
+      >
         <colgroup>
-          {leafCols.map((col) => (
-            <col key={col.key} style={{ width: col.width_css }} />
+          {leafCols.map((col, idx) => (
+            <col
+              key={col.key}
+              style={{
+                width: sizing.columnCssWidths[idx] ?? col.width_css,
+              }}
+            />
           ))}
         </colgroup>
         <thead data-measure-thead="true">
@@ -94,7 +116,7 @@ export const TableBlockView = memo(function TableBlockView({
                   colSpan={cell.colspan}
                   rowSpan={cell.rowspan}
                   style={{ textAlign: cell.align }}
-                  className="border border-black/10 px-2.5 py-2 font-semibold dark:border-white/10"
+                  className="border border-black/10 px-2.5 py-2 font-semibold break-words dark:border-white/10"
                 >
                   {cell.label}
                 </th>
@@ -124,10 +146,10 @@ export const TableBlockView = memo(function TableBlockView({
                       key={col.key}
                       title={formatted.tooltip}
                       style={{ textAlign: formatted.align ?? col.align }}
-                      className={`border border-black/10 px-2.5 py-1.5 tabular-nums dark:border-white/10 ${formatted.className ?? ""}`}
+                      className={`border border-black/10 px-2.5 py-1.5 break-words tabular-nums dark:border-white/10 ${formatted.className ?? ""}`}
                     >
                       {col.data_type === "badge" && formatted.text ? (
-                        <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium">
+                        <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap">
                           {formatted.text}
                         </span>
                       ) : (
@@ -161,7 +183,7 @@ export const TableBlockView = memo(function TableBlockView({
                       <td
                         key={col.key}
                         style={{ textAlign: formatted.align ?? col.align }}
-                        className="border border-black/10 px-2.5 py-1.5 tabular-nums dark:border-white/10"
+                        className="border border-black/10 px-2.5 py-1.5 break-words tabular-nums dark:border-white/10"
                       >
                         {formatted.text}
                       </td>

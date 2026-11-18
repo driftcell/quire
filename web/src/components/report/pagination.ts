@@ -5,6 +5,7 @@ export interface PageSlice {
   /** For oversized tables split across pages. */
   rowStart?: number;
   rowEnd?: number;
+  totalRows?: number;
   includeSummary?: boolean;
   continuation?: boolean;
 }
@@ -39,13 +40,15 @@ export const A4_CONTENT_HEIGHT_PX =
 
 const DEFAULT_ROW_HEIGHT_PX = 34;
 const DEFAULT_TABLE_CAPTION_PX = 42;
+const CONTINUATION_FOOTER_PX = 24;
 
 /**
  * Bin-pack blocks into fixed A4 pages using real per-block and per-row DOM measurements.
  * - Page 1 deducts Cover height from available content height.
  * - ECharts and CustomHtml blocks are always atomic and never split across pages.
  * - Headings enforce keep-with-next when the following block doesn't fit.
- * - Oversized tables slice rows by measured row height while repeating <thead>.
+ * - Oversized tables slice rows by measured row height while repeating <thead>,
+ *   enforcing a minimum 2-row orphan guard at page bottoms.
  * - Bibliography moves to a clean trailing page if it doesn't fit on the last content page.
  */
 export function paginateBlocks(
@@ -137,15 +140,18 @@ export function paginateBlocks(
         const rowH =
           tableMetrics?.rowHeights[cursor + count] ?? DEFAULT_ROW_HEIGHT_PX;
         const isFinalRow = cursor + count === rows.length - 1;
-        const needed = rowH + (isFinalRow ? tfootHeight : 0);
-        if (accHeight + needed > available) {
+        const extraBottom = isFinalRow ? tfootHeight : CONTINUATION_FOOTER_PX;
+        if (accHeight + rowH + extraBottom > available) {
           break;
         }
         accHeight += rowH;
         count += 1;
       }
 
-      if (count === 0 && currentItems.length > 0) {
+      const remainingRows = rows.length - cursor;
+      const minRowsToKeepOnCurrentPage = Math.min(2, remainingRows);
+
+      if (count < minRowsToKeepOnCurrentPage && currentItems.length > 0) {
         pushPage();
         continue;
       }
@@ -157,10 +163,14 @@ export function paginateBlocks(
         block,
         rowStart: cursor,
         rowEnd: nextCursor,
+        totalRows: rows.length,
         includeSummary: isLast,
         continuation: cursor > 0,
       });
-      usedHeight += chromeHeight + accHeight + (isLast ? tfootHeight : 0);
+      usedHeight +=
+        chromeHeight +
+        accHeight +
+        (isLast ? tfootHeight : CONTINUATION_FOOTER_PX);
       cursor = nextCursor;
       if (!isLast) {
         pushPage();
@@ -187,7 +197,9 @@ export function paginateBlocks(
               DEFAULT_TABLE_CAPTION_PX +
               (metrics?.theadHeight ?? 40) +
               rowsCost +
-              (slice.includeSummary ? (metrics?.tfootHeight ?? 0) : 0)
+              (slice.includeSummary
+                ? (metrics?.tfootHeight ?? 0)
+                : CONTINUATION_FOOTER_PX)
             );
           }
           return sum + (blockHeights[slice.block.id] ?? 80);

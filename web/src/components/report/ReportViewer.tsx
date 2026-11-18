@@ -311,13 +311,29 @@ const ReportBlockItem = memo(function ReportBlockItem({
     );
   } else if (block.type === "table") {
     const titleText = block.title?.trim();
+    const totalRows =
+      slice.totalRows ?? (Array.isArray(block.rows) ? block.rows.length : 0);
+    const hasMoreRows =
+      slice.rowEnd !== undefined && totalRows > 0 && slice.rowEnd < totalRows;
+    const showCaption = Boolean(framing || titleText || slice.continuation);
+
     bodyNode = (
       <figure id={`block-${block.id}`} className="my-5 space-y-2">
-        {(framing || titleText) && (
-          <figcaption className="text-sm font-semibold">
-            {framing ? framing.label : "表"}
-            {titleText ? ` — ${titleText}` : ""}
-            {slice.continuation ? "（续）" : ""}
+        {showCaption && (
+          <figcaption className="flex items-baseline justify-between gap-2 text-sm font-semibold">
+            <span>
+              {framing ? framing.label : "表"}
+              {titleText ? ` — ${titleText}` : ""}
+              {slice.continuation ? "（续）" : ""}
+            </span>
+            {slice.continuation &&
+              slice.rowStart !== undefined &&
+              slice.rowEnd !== undefined && (
+                <span className="text-[11px] font-normal text-muted-foreground tabular-nums">
+                  接上页 · 第 {slice.rowStart + 1}–{slice.rowEnd} 行 / 共{" "}
+                  {totalRows} 行
+                </span>
+              )}
           </figcaption>
         )}
         <TableBlockView
@@ -326,7 +342,13 @@ const ReportBlockItem = memo(function ReportBlockItem({
           rowStart={slice.rowStart}
           rowEnd={slice.rowEnd}
           includeSummary={slice.includeSummary}
+          containerWidthPx={isPaged ? A4_CONTENT_WIDTH_PX : 700}
         />
+        {hasMoreRows && slice.rowEnd !== undefined && (
+          <div className="flex items-center justify-end border-t border-dashed border-black/15 pt-1 text-[11px] text-muted-foreground tabular-nums dark:border-white/15">
+            （接下页 · 续第 {slice.rowEnd + 1} 行）
+          </div>
+        )}
         {framing?.attribution && slice.includeSummary !== false && (
           <div className="text-xs text-muted-foreground">
             {framing.attribution}
