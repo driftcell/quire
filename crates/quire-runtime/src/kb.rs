@@ -765,7 +765,7 @@ impl KbService {
     // System prompt and seeding
     // ---------------------------------------------------------------------
 
-    /// Build (and cache) the frozen system prompt from CLAUDE-style docs and skill summaries.
+    /// Build (and cache) the frozen system prompt from KB documents and skill summaries.
     pub async fn system_prompt(&self) -> RuntimeResult<Arc<String>> {
         self.system_prompt_for(None).await
     }
@@ -827,10 +827,18 @@ impl KbService {
                 .fetch_one(self.store.pool())
                 .await?;
         if document_count == 0 {
-            let claude = workspace.join("CLAUDE.md");
-            if claude.is_file() {
-                let content = tokio::fs::read_to_string(&claude).await?;
-                self.insert_document_raw(&branch, "claude-md", "CLAUDE.md", &content)
+            // The main system prompt is the AGENTS.md KB document. Seed it from the
+            // report editor definition so `agents/main.md` remains the single source.
+            let main_agent = workspace.join("agents").join("main.md");
+            if main_agent.is_file() {
+                let raw = tokio::fs::read_to_string(&main_agent).await?;
+                let (frontmatter, body) = parse_frontmatter(&raw)?;
+                let content = frontmatter
+                    .as_ref()
+                    .and_then(|value| value.system_prompt.clone())
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(body);
+                self.insert_document_raw(&branch, "agents-md", "AGENTS.md", &content)
                     .await?;
                 report.documents += 1;
             }

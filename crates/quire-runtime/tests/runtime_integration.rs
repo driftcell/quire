@@ -622,11 +622,16 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
         .await
         .unwrap();
     assert_eq!(first.documents, 1);
-    assert_eq!(first.agents, 1);
+    assert_eq!(first.agents, 2);
     assert_eq!(first.skills, 1);
     assert!(first.kb_version > 1);
     let documents = service.kb().list_documents().await.unwrap();
-    assert!(documents.iter().any(|doc| doc.doc_id == "claude-md"));
+    let agents_doc = documents
+        .iter()
+        .find(|doc| doc.doc_id == "agents-md")
+        .expect("AGENTS.md seeded from agents/main.md");
+    assert_eq!(agents_doc.name, "AGENTS.md");
+    assert_eq!(agents_doc.content, "Main prompt from agents/main.md");
     let skills = service.kb().list_skills().await.unwrap();
     assert!(
         skills
@@ -688,17 +693,17 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
     );
     service
         .kb()
-        .upsert_document("claude-md", "CLAUDE.md", "ONLINE EDIT")
+        .upsert_document("agents-md", "AGENTS.md", "ONLINE EDIT")
         .await
         .unwrap();
     let second = service.seed().await.unwrap();
     assert_eq!(second.documents, 0);
     let documents = service.kb().list_documents().await.unwrap();
-    let claude = documents
+    let agents_doc = documents
         .iter()
-        .find(|doc| doc.doc_id == "claude-md")
+        .find(|doc| doc.doc_id == "agents-md")
         .unwrap();
-    assert_eq!(claude.content, "ONLINE EDIT");
+    assert_eq!(agents_doc.content, "ONLINE EDIT");
     for statement in [
         "DELETE FROM skill_resources",
         "DELETE FROM skill_definitions",
@@ -710,9 +715,13 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
 }
 
 fn write_seed_workspace(root: &Path) {
-    std::fs::write(root.join("CLAUDE.md"), "Workspace rules from CLAUDE.md").unwrap();
     let agents = root.join("agents");
     std::fs::create_dir_all(&agents).unwrap();
+    std::fs::write(
+        agents.join("main.md"),
+        "---\nname: main\nmodel: stub/main\nallowed_tools: [\"*\"]\n---\nMain prompt from agents/main.md",
+    )
+    .unwrap();
     std::fs::write(
         agents.join("reviewer.md"),
         "---\nname: reviewer\nmodel: stub/reviewer\nallowed_tools: [lint_document, read_blocks]\n---\nReview every chapter.",
