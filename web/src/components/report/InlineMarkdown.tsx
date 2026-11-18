@@ -1,5 +1,10 @@
 import { memo, type ReactNode } from "react";
+import {
+  CitationHoverCard,
+  type CitationRef,
+} from "@/components/report/CitationHoverCard";
 import type {
+  BibliographyEntry,
   CitationMapEntry,
   TextQuoteSelector,
 } from "@/contracts/report-protocol";
@@ -7,13 +12,111 @@ import type {
 export interface InlineMarkdownProps {
   text: string;
   citationMap?: Record<string, CitationMapEntry>;
+  bibliographyById?: Map<string, BibliographyEntry>;
+  printMode?: boolean;
   onCitationClick?: (sourceId: string) => void;
   highlightQuotes?: TextQuoteSelector[];
   onQuoteClick?: (quote: TextQuoteSelector, rect: DOMRect) => void;
 }
 
 const TOKEN_RE =
-  /(\[\^([A-Za-z0-9_-]+)\]|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^)]+)\))/g;
+  /(((?:\[\^[A-Za-z0-9_-]+\][ \t]*)+)|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|\[([^\]]+)\]\(([^)]+)\))/g;
+
+const CITATION_ID_RE = /\[\^([A-Za-z0-9_-]+)\]/g;
+
+function stripOuterBrackets(label: string): string {
+  const trimmed = label.trim();
+  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
+}
+
+function parseCitationIds(group: string): string[] {
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const match of group.matchAll(CITATION_ID_RE)) {
+    const citeId = match[1];
+    if (citeId && !seen.has(citeId)) {
+      seen.add(citeId);
+      ids.push(citeId);
+    }
+  }
+  return ids;
+}
+
+function buildCitationRefs(
+  citeIds: string[],
+  citationMap: Record<string, CitationMapEntry> | undefined,
+  bibliographyById: Map<string, BibliographyEntry> | undefined,
+): CitationRef[] {
+  const refs: CitationRef[] = citeIds.map((citeId) => {
+    const entry = citationMap?.[citeId];
+    const bib = bibliographyById?.get(citeId);
+    const number =
+      entry && typeof entry.number === "number" ? entry.number : null;
+    const label = stripOuterBrackets(entry?.label ?? citeId);
+    return {
+      citeId,
+      sourceId: entry?.source_id ?? citeId,
+      number,
+      label,
+      badge: number !== null ? `[${number}]` : `[${label}]`,
+      title: bib?.source.title ?? entry?.title ?? citeId,
+      authors: bib?.source.authors?.join(", "),
+      date: bib?.source.date,
+      excerpt: bib?.excerpt,
+      url: bib?.source.url,
+    };
+  });
+
+  if (refs.every((ref) => ref.number !== null)) {
+    refs.sort((a, b) => (a.number ?? 0) - (b.number ?? 0));
+  }
+  return refs;
+}
+
+function mergedCitationLabel(refs: CitationRef[]): string {
+  if (refs.every((ref) => ref.number !== null)) {
+    return `[${refs.map((ref) => ref.number).join(",")}]`;
+  }
+  return `[${refs.map((ref) => ref.label).join(",")}]`;
+}
+
+function CitationGroup({
+  refs,
+  printMode,
+  onCitationClick,
+}: {
+  refs: CitationRef[];
+  printMode: boolean;
+  onCitationClick?: (sourceId: string) => void;
+}) {
+  const first = refs[0];
+  if (!first) {
+    return null;
+  }
+  const label = mergedCitationLabel(refs);
+
+  const locate = (sourceId: string) => {
+    if (onCitationClick) {
+      onCitationClick(sourceId);
+      return;
+    }
+    const target = window.document.getElementById(`bib-${sourceId}`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
+  if (printMode) {
+    return (
+      <sup className="ml-0.5 text-[11px] font-medium text-blue-600">
+        {label}
+      </sup>
+    );
+  }
+
+  return <CitationHoverCard refs={refs} label={label} onLocate={locate} />;
+}
 
 function renderHighlightedSegment(
   segment: string,
@@ -84,14 +187,16 @@ function renderHighlightedSegment(
 export const InlineMarkdown = memo(function InlineMarkdown({
   text,
   citationMap,
+  bibliographyById,
+  printMode = false,
   onCitationClick,
   highlightQuotes,
   onQuoteClick,
 }: InlineMarkdownProps) {
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
-  TOKEN_RE.lastIndex = 0;
-  let match: RegExpExecArray | null = TOKEN_RE.exec(text);
+  const tokenRe = new RegExp(TOKEN_RE);
+  let match: RegExpExecArray | null = tokenRe.exec(text);
   let key = 0;
 
   while (match !== null) {
@@ -109,32 +214,23 @@ export const InlineMarkdown = memo(function InlineMarkdown({
       );
     }
 
-    const citeId = match[2];
+    const citationGroup = match[2];
     const codeText = match[3];
     const boldText = match[4];
     const italicText = match[5];
     const linkLabel = match[6];
     const linkHref = match[7];
 
-    if (citeId !== undefined) {
-      const entry = citationMap?.[citeId];
-      const label = entry?.label ?? `[${citeId}]`;
+    if (citationGroup !== undefined) {
+      const citeIds = parseCitationIds(citationGroup);
+      const refs = buildCitationRefs(citeIds, citationMap, bibliographyById);
       nodes.push(
-        <sup key={`cite-${key++}`} className="ml-0.5">
-          <a
-            href={`#bib-${citeId}`}
-            title={entry?.title ?? citeId}
-            onClick={(event) => {
-              if (onCitationClick) {
-                event.preventDefault();
-                onCitationClick(citeId);
-              }
-            }}
-            className="rounded px-0.5 text-[11px] font-medium text-blue-600 no-underline hover:bg-blue-50 hover:underline dark:text-blue-400"
-          >
-            {label}
-          </a>
-        </sup>,
+        <CitationGroup
+          key={`cite-${key++}`}
+          refs={refs}
+          printMode={printMode}
+          onCitationClick={onCitationClick}
+        />,
       );
     } else if (codeText !== undefined) {
       nodes.push(
@@ -198,7 +294,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({
     }
 
     lastIndex = match.index + match[0].length;
-    match = TOKEN_RE.exec(text);
+    match = tokenRe.exec(text);
   }
 
   if (lastIndex < text.length) {

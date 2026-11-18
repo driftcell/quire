@@ -6,16 +6,21 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
+  BookOpenIcon,
+  ExternalLinkIcon,
   MessageSquareIcon,
-  MessageSquarePlusIcon,
-  SparklesIcon,
 } from "lucide-react";
 import { CustomHtmlView } from "@/components/report/CustomHtmlView";
 import { EchartsCanvas } from "@/components/report/EchartsCanvas";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import { InlineMarkdown } from "@/components/report/InlineMarkdown";
+import {
+  SelectionQuoteToolbar,
+  type SelectionQuoteAction,
+} from "@/components/report/SelectionQuoteToolbar";
 import { TableBlockView } from "@/components/report/TableBlockView";
 import {
   A4_CONTENT_WIDTH_PX,
@@ -29,6 +34,7 @@ import {
   type TableMeasurement,
 } from "@/components/report/pagination";
 import type {
+  BibliographyEntry,
   CommentThread,
   ComputedDocumentMeta,
   EphemeralPreviewEvent,
@@ -51,14 +57,6 @@ export interface ReportViewerProps {
   onAskAgentWithQuote?: (blockId: string, exact: string) => void;
 }
 
-interface FloatingQuoteAction {
-  blockId: string;
-  quote: TextQuoteSelector;
-  top: number;
-  left: number;
-  viewportRect: FloatingCommentAnchor["rect"];
-}
-
 function toViewportRect(domRect: DOMRect): FloatingCommentAnchor["rect"] {
   return {
     top: domRect.top,
@@ -70,24 +68,7 @@ function toViewportRect(domRect: DOMRect): FloatingCommentAnchor["rect"] {
   };
 }
 
-function renderHeadingTag(
-  level: number,
-  blockId: string,
-  text: string,
-  citationMap: ComputedDocumentMeta["citation_map"],
-  onCitationClick: (sourceId: string) => void,
-  highlightQuotes?: TextQuoteSelector[],
-  onQuoteClick?: (quote: TextQuoteSelector, rect: DOMRect) => void,
-) {
-  const content = (
-    <InlineMarkdown
-      text={text}
-      citationMap={citationMap}
-      onCitationClick={onCitationClick}
-      highlightQuotes={highlightQuotes}
-      onQuoteClick={onQuoteClick}
-    />
-  );
+function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
   switch (level) {
     case 1:
       return (
@@ -463,6 +444,17 @@ function blockTitle(block: ReportBlock): string | undefined {
   return typeof title === "string" ? title : undefined;
 }
 
+function referenceDomain(url: string | null | undefined): string | null {
+  if (!url) {
+    return null;
+  }
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
 function findBlockElement(node: Node | null): HTMLElement | null {
   let curr: Node | null = node;
   while (curr) {
@@ -479,6 +471,7 @@ interface ReportBlockItemProps {
   isPaged: boolean;
   printMode: boolean;
   computed: ComputedDocumentMeta;
+  bibliographyById: Map<string, BibliographyEntry>;
   commentCount: number;
   blockQuotes?: TextQuoteSelector[];
   onCitationClick: (sourceId: string) => void;
@@ -490,6 +483,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
   isPaged,
   printMode,
   computed,
+  bibliographyById,
   commentCount,
   blockQuotes,
   onCitationClick,
@@ -512,16 +506,24 @@ const ReportBlockItem = memo(function ReportBlockItem({
   const quoteHandler =
     !printMode && onOpenCommentForBlock ? handleQuoteClick : undefined;
 
+  const renderInline = (text: string) => (
+    <InlineMarkdown
+      text={text}
+      citationMap={computed.citation_map}
+      bibliographyById={bibliographyById}
+      printMode={printMode}
+      onCitationClick={onCitationClick}
+      highlightQuotes={blockQuotes}
+      onQuoteClick={quoteHandler}
+    />
+  );
+
   let bodyNode: React.ReactNode = null;
   if (block.type === "heading") {
     bodyNode = renderHeadingTag(
       block.level ?? 2,
       block.id,
-      block.text,
-      computed.citation_map,
-      onCitationClick,
-      blockQuotes,
-      quoteHandler,
+      renderInline(block.text),
     );
   } else if (block.type === "paragraph") {
     bodyNode = (
@@ -529,13 +531,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
         id={`block-${block.id}`}
         className="my-3 text-[15px] leading-7 text-current/90"
       >
-        <InlineMarkdown
-          text={block.text}
-          citationMap={computed.citation_map}
-          onCitationClick={onCitationClick}
-          highlightQuotes={blockQuotes}
-          onQuoteClick={quoteHandler}
-        />
+        {renderInline(block.text)}
       </p>
     );
   } else if (block.type === "quote") {
@@ -544,13 +540,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
         id={`block-${block.id}`}
         className="my-4 border-l-4 border-current/25 pl-4 text-[15px] leading-7 italic opacity-90"
       >
-        <InlineMarkdown
-          text={block.text}
-          citationMap={computed.citation_map}
-          onCitationClick={onCitationClick}
-          highlightQuotes={blockQuotes}
-          onQuoteClick={quoteHandler}
-        />
+        {renderInline(block.text)}
       </blockquote>
     );
   } else if (block.type === "table") {
@@ -700,7 +690,7 @@ export function ReportViewer({
     bibliographyHeight: 0,
   });
   const [pageScale, setPageScale] = useState(1);
-  const [quoteAction, setQuoteAction] = useState<FloatingQuoteAction | null>(
+  const [quoteAction, setQuoteAction] = useState<SelectionQuoteAction | null>(
     null,
   );
 
@@ -853,9 +843,24 @@ export function ReportViewer({
     themeVars[k] = v;
   }
 
+  const bibliographyById = useMemo(() => {
+    const map = new Map<string, BibliographyEntry>();
+    for (const entry of computed.bibliography) {
+      map.set(entry.source_id, entry);
+    }
+    return map;
+  }, [computed.bibliography]);
+
   const scrollToSource = useCallback((sourceId: string) => {
     const el = window.document.getElementById(`bib-${sourceId}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (!el) {
+      return;
+    }
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.add("quire-flash-highlight");
+    window.setTimeout(() => {
+      el.classList.remove("quire-flash-highlight");
+    }, 1600);
   }, []);
 
   const handleMouseUp = useCallback(() => {
@@ -895,11 +900,6 @@ export function ReportViewer({
         : null;
 
     const rect = range.getBoundingClientRect();
-    const rootRect = rootRef.current?.getBoundingClientRect();
-    const top = rootRect ? rect.top - rootRect.top - 36 : rect.top - 36;
-    const left = rootRect
-      ? Math.max(8, rect.left - rootRect.left + rect.width / 2 - 56)
-      : Math.max(8, rect.left);
 
     setQuoteAction({
       blockId,
@@ -908,8 +908,6 @@ export function ReportViewer({
         prefix: prefix && prefix.length > 0 ? prefix : undefined,
         suffix: suffix && suffix.length > 0 ? suffix : undefined,
       },
-      top,
-      left,
       viewportRect: toViewportRect(rect),
     });
   }, [suppressChrome, onOpenCommentForBlock]);
@@ -954,49 +952,68 @@ export function ReportViewer({
     }
     return (
       <section className="mt-10 border-t border-black/15 pt-6 dark:border-white/15">
-        <h2 className="mb-3 text-lg font-semibold">
-          {references.title || "参考资料"}
+        <h2 className="mb-4 flex items-center gap-2 text-base font-semibold">
+          <BookOpenIcon className="size-4 text-primary" />
+          <span>{references.title || "参考资料"}</span>
         </h2>
-        <ol className="space-y-2.5 pl-5 text-xs leading-relaxed">
+        <ol className="space-y-3.5 text-xs leading-relaxed">
           {computed.bibliography.map((entry) => {
             const source = entry.source;
-            const authors = source.authors ?? [];
+            const attribution =
+              source.publisher?.trim() || source.authors?.join(", ") || null;
+            const domain = referenceDomain(source.url);
+            const badge = entry.label.trim() || `[${entry.number}]`;
+            const hasMetadata = Boolean(
+              attribution || source.date || source.url,
+            );
             return (
               <li
                 key={entry.source_id}
                 id={`bib-${entry.source_id}`}
-                className="space-y-0.5"
+                className="flex scroll-mt-24 gap-3"
               >
-                <div>
-                  <span className="font-medium">{source.title}</span>
-                  {authors.length > 0 && (
-                    <span className="text-muted-foreground">
-                      {" "}
-                      — {authors.join(", ")}
-                    </span>
-                  )}
-                  {source.date && (
-                    <span className="text-muted-foreground">
-                      {" "}
-                      ({source.date})
-                    </span>
-                  )}
-                  {source.url && (
+                <span className="mt-px shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
+                  {badge}
+                </span>
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  {source.url ? (
                     <a
                       href={source.url}
                       target="_blank"
                       rel="noreferrer noopener"
-                      className="ml-2 text-blue-600 underline dark:text-blue-400"
+                      className="font-medium text-foreground underline-offset-2 hover:text-blue-700 hover:underline dark:hover:text-blue-300"
                     >
-                      链接
+                      {source.title}
                     </a>
+                  ) : (
+                    <div className="font-medium text-foreground">
+                      {source.title}
+                    </div>
+                  )}
+                  {hasMetadata && (
+                    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground">
+                      {attribution && <span>{attribution}</span>}
+                      {attribution && (source.date || source.url) && (
+                        <span aria-hidden="true">·</span>
+                      )}
+                      {source.date && <span>{source.date}</span>}
+                      {source.date && source.url && (
+                        <span aria-hidden="true">·</span>
+                      )}
+                      {source.url && (
+                        <a
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-0.5 text-blue-600 hover:underline dark:text-blue-400"
+                        >
+                          {domain ?? "链接"}
+                          <ExternalLinkIcon className="size-2.5" />
+                        </a>
+                      )}
+                    </div>
                   )}
                 </div>
-                {entry.excerpt && (
-                  <div className="rounded bg-black/[0.03] px-2 py-1 text-[11px] text-muted-foreground dark:bg-white/[0.04]">
-                    “{entry.excerpt}”
-                  </div>
-                )}
               </li>
             );
           })}
@@ -1051,51 +1068,32 @@ export function ReportViewer({
       {quoteAction &&
         (onOpenCommentForBlock || onAskAgentWithQuote) &&
         !suppressChrome && (
-          <div
-            style={{
-              top: `${Math.max(8, quoteAction.top)}px`,
-              left: `${quoteAction.left}px`,
-            }}
-            className="absolute z-40 inline-flex items-center gap-1 rounded-full border bg-background/95 p-1 shadow-md backdrop-blur print:hidden"
-          >
-            {onOpenCommentForBlock && (
-              <button
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  onOpenCommentForBlock({
-                    blockId: quoteAction.blockId,
-                    quote: quoteAction.quote,
-                    rect: quoteAction.viewportRect,
-                  });
-                  setQuoteAction(null);
-                  window.getSelection()?.removeAllRanges();
-                }}
-                className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
-              >
-                <MessageSquarePlusIcon className="size-3.5" />
-                <span>批注</span>
-              </button>
-            )}
-            {onAskAgentWithQuote && (
-              <button
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  onAskAgentWithQuote(
-                    quoteAction.blockId,
-                    quoteAction.quote.exact,
-                  );
-                  setQuoteAction(null);
-                  window.getSelection()?.removeAllRanges();
-                }}
-                className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
-              >
-                <SparklesIcon className="size-3.5" />
-                <span>问问 Agent</span>
-              </button>
-            )}
-          </div>
+          <SelectionQuoteToolbar
+            action={quoteAction}
+            onComment={
+              onOpenCommentForBlock
+                ? (action) => {
+                    onOpenCommentForBlock({
+                      blockId: action.blockId,
+                      quote: action.quote,
+                      rect: action.viewportRect,
+                    });
+                    setQuoteAction(null);
+                    window.getSelection()?.removeAllRanges();
+                  }
+                : undefined
+            }
+            onAskAgent={
+              onAskAgentWithQuote
+                ? (blockId, exact) => {
+                    onAskAgentWithQuote(blockId, exact);
+                    setQuoteAction(null);
+                    window.getSelection()?.removeAllRanges();
+                  }
+                : undefined
+            }
+            onDismiss={() => setQuoteAction(null)}
+          />
         )}
 
       {isPaged && (
@@ -1113,6 +1111,7 @@ export function ReportViewer({
                 isPaged
                 printMode
                 computed={computed}
+                bibliographyById={bibliographyById}
                 commentCount={0}
                 onCitationClick={scrollToSource}
               />
@@ -1135,6 +1134,7 @@ export function ReportViewer({
                   isPaged={false}
                   printMode={suppressChrome}
                   computed={computed}
+                  bibliographyById={bibliographyById}
                   commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
                   blockQuotes={quotesByBlock.get(item.slice.block.id)}
                   onCitationClick={scrollToSource}
@@ -1173,6 +1173,7 @@ export function ReportViewer({
                           isPaged
                           printMode={suppressChrome}
                           computed={computed}
+                          bibliographyById={bibliographyById}
                           commentCount={
                             openCountByBlock.get(item.slice.block.id) ?? 0
                           }
