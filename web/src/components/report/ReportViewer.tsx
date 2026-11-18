@@ -589,6 +589,7 @@ interface ReportBlockItemProps {
   slice: PageSlice;
   isPaged: boolean;
   printMode: boolean;
+  showChartTools?: boolean;
   computed: ComputedDocumentMeta;
   bibliographyById: Map<string, BibliographyEntry>;
   commentCount: number;
@@ -601,6 +602,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
   slice,
   isPaged,
   printMode,
+  showChartTools = true,
   computed,
   bibliographyById,
   commentCount,
@@ -724,6 +726,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
           requirements={computed.chart_requirements?.[block.id]}
           renderer={isPaged || printMode ? "svg" : "canvas"}
           printSafe={isPaged || printMode}
+          showTools={showChartTools}
         />
         {captionText && (
           <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
@@ -1389,6 +1392,7 @@ export function ReportViewer({
                 slice={{ block }}
                 isPaged
                 printMode
+                showChartTools={!suppressChrome}
                 computed={computed}
                 bibliographyById={bibliographyById}
                 commentCount={0}
@@ -1412,6 +1416,7 @@ export function ReportViewer({
                   slice={item.slice}
                   isPaged={false}
                   printMode={suppressChrome}
+                  showChartTools={!suppressChrome}
                   computed={computed}
                   bibliographyById={bibliographyById}
                   commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
@@ -1485,6 +1490,7 @@ export function ReportViewer({
                             slice={item.slice}
                             isPaged
                             printMode={suppressChrome}
+                            showChartTools={!suppressChrome}
                             computed={computed}
                             bibliographyById={bibliographyById}
                             commentCount={

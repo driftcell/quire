@@ -1,6 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
-import { BarChart3Icon, DownloadIcon, TableIcon } from "lucide-react";
+import { DownloadIcon, TableIcon } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type {
   ChartDataTable,
   ChartRequirements,
@@ -15,6 +21,7 @@ export interface EchartsCanvasProps {
   requirements?: ChartRequirements;
   renderer?: "canvas" | "svg";
   printSafe?: boolean;
+  showTools?: boolean;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -226,23 +233,25 @@ export const EchartsCanvas = memo(function EchartsCanvas({
   requirements,
   renderer = "canvas",
   printSafe = false,
+  showTools = true,
 }: EchartsCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
-  const [viewMode, setViewMode] = useState<"chart" | "table">("chart");
+  const [tableOpen, setTableOpen] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
   const chartHeightPx = chartHeight(chart);
   const effectiveHeight = printSafe
     ? Math.min(680, Math.max(140, chartHeightPx))
     : Math.max(140, chartHeightPx);
+  const dialogTitle =
+    typeof chart.title === "string" && chart.title.trim().length > 0
+      ? chart.title.trim()
+      : "图表数据";
 
   const effectiveOption = useMemo(() => buildEffectiveOption(chart), [chart]);
 
   useEffect(() => {
-    if (viewMode !== "chart") {
-      return undefined;
-    }
     const el = containerRef.current;
     if (!el) {
       return undefined;
@@ -306,7 +315,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       window.cancelAnimationFrame(rafId);
       observer.disconnect();
     };
-  }, [effectiveOption, renderer, viewMode]);
+  }, [effectiveOption, renderer]);
 
   useEffect(() => {
     return () => {
@@ -322,28 +331,12 @@ export const EchartsCanvas = memo(function EchartsCanvas({
 
   return (
     <div className="group/chart relative w-full">
-      {!printSafe && chartTables.length > 0 && (
-        <div className="mb-1.5 flex items-center justify-end gap-1 opacity-80 transition-opacity group-hover/chart:opacity-100 print:hidden">
+      {showTools && chartTables.length > 0 && (
+        <div className="pointer-events-none mb-1.5 flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover/chart:pointer-events-auto group-hover/chart:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 print:hidden">
           <button
             type="button"
-            onClick={() => setViewMode("chart")}
-            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] ${
-              viewMode === "chart"
-                ? "bg-black/10 font-medium dark:bg-white/15"
-                : "text-muted-foreground hover:bg-black/5"
-            }`}
-          >
-            <BarChart3Icon className="size-3" />
-            <span>图表</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("table")}
-            className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] ${
-              viewMode === "table"
-                ? "bg-black/10 font-medium dark:bg-white/15"
-                : "text-muted-foreground hover:bg-black/5"
-            }`}
+            onClick={() => setTableOpen(true)}
+            className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-black/5"
           >
             <TableIcon className="size-3" />
             <span>数据表</span>
@@ -373,60 +366,68 @@ export const EchartsCanvas = memo(function EchartsCanvas({
         </div>
       )}
 
-      {viewMode === "chart" ? (
-        runtimeError ? (
-          <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
-            图表渲染异常：{runtimeError}
-            <div className="mt-1 text-muted-foreground">
-              {chartFallbackSummary(chart)}
-            </div>
+      {runtimeError ? (
+        <div className="rounded border border-destructive/40 bg-destructive/5 p-3 text-xs text-destructive">
+          图表渲染异常：{runtimeError}
+          <div className="mt-1 text-muted-foreground">
+            {chartFallbackSummary(chart)}
           </div>
-        ) : (
-          <div
-            ref={containerRef}
-            style={{ height: `${effectiveHeight}px` }}
-            className="w-full"
-          />
-        )
+        </div>
       ) : (
-        <div className="space-y-3 overflow-x-auto rounded border p-3">
-          {chartTables.map((tbl, idx) => (
-            <div key={idx} className="space-y-1">
-              <div className="text-xs font-medium text-muted-foreground">
-                {tbl.title}
-              </div>
-              <table className="w-full border-collapse text-xs">
-                <thead>
-                  <tr className="border-b bg-black/[0.03] dark:bg-white/[0.05]">
-                    {tbl.headers.map((h, hIdx) => (
-                      <th
-                        key={hIdx}
-                        className="border border-black/10 px-2 py-1 text-left font-semibold dark:border-white/10"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {tbl.rows.map((row, rIdx) => (
-                    <tr key={rIdx} className="border-b">
-                      {row.map((cell, cIdx) => (
-                        <td
-                          key={cIdx}
-                          className="border border-black/10 px-2 py-1 tabular-nums dark:border-white/10"
+        <div
+          ref={containerRef}
+          style={{ height: `${effectiveHeight}px` }}
+          className="w-full"
+        />
+      )}
+
+      <Dialog open={tableOpen} onOpenChange={setTableOpen}>
+        <DialogContent className="max-h-[80vh] max-w-[calc(100%-2rem)] gap-3 overflow-hidden sm:max-w-3xl">
+          <DialogHeader className="pr-8">
+            <DialogTitle>{dialogTitle}</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[60vh] space-y-4 overflow-auto pr-1">
+            {chartTables.map((tbl, idx) => (
+              <div key={`${tbl.title}-${idx}`} className="space-y-1.5">
+                <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                  {tbl.title}
+                </div>
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-700 bg-slate-100/80 text-left text-slate-800 dark:border-slate-300 dark:bg-slate-800/60 dark:text-slate-100">
+                      {tbl.headers.map((h, hIdx) => (
+                        <th
+                          key={hIdx}
+                          className="px-2.5 py-1.5 font-semibold whitespace-nowrap"
                         >
-                          {cell}
-                        </td>
+                          {h}
+                        </th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
-        </div>
-      )}
+                  </thead>
+                  <tbody>
+                    {tbl.rows.map((row, rIdx) => (
+                      <tr
+                        key={rIdx}
+                        className="border-b border-slate-200/70 even:bg-slate-50/70 dark:border-slate-800 dark:even:bg-slate-900/40"
+                      >
+                        {row.map((cell, cIdx) => (
+                          <td
+                            key={cIdx}
+                            className="px-2.5 py-1.5 tabular-nums whitespace-nowrap text-slate-700 dark:text-slate-200"
+                          >
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 });
