@@ -36,6 +36,7 @@ pub enum ActiveRunStatus {
     Running,
     Interrupted,
     Failed,
+    AwaitingInput,
 }
 
 impl ActiveRunStatus {
@@ -45,6 +46,7 @@ impl ActiveRunStatus {
             Self::Running => "running",
             Self::Interrupted => "interrupted",
             Self::Failed => "failed",
+            Self::AwaitingInput => "awaiting_input",
         }
     }
 
@@ -54,6 +56,7 @@ impl ActiveRunStatus {
             "running" => Some(Self::Running),
             "interrupted" => Some(Self::Interrupted),
             "failed" => Some(Self::Failed),
+            "awaiting_input" => Some(Self::AwaitingInput),
             _ => None,
         }
     }
@@ -119,6 +122,49 @@ pub struct SessionMessage {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct QuestionOption {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionItem {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub multiple: bool,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub options: Vec<QuestionOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionAnswer {
+    pub question_id: String,
+    #[serde(default)]
+    pub selected_option_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeform_text: Option<String>,
+    #[serde(default)]
+    pub skipped: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PendingQuestion {
+    pub question_id: String,
+    pub run_id: String,
+    pub questions: Vec<QuestionItem>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSummary {
     pub session_id: String,
@@ -150,6 +196,9 @@ pub struct SessionDetail {
     pub messages: Vec<SessionMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentMeta>,
+    /// Latest unresolved question card, restored after refresh or reconnect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_question: Option<PendingQuestion>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -225,11 +274,29 @@ mod tests {
                 created_at: now,
             }],
             attachments: Vec::new(),
+            pending_question: Some(PendingQuestion {
+                question_id: "q_1".into(),
+                run_id: "run_1".into(),
+                questions: vec![QuestionItem {
+                    id: "scope".into(),
+                    title: "Which scope?".into(),
+                    description: None,
+                    multiple: false,
+                    required: true,
+                    options: vec![QuestionOption {
+                        id: "q3".into(),
+                        label: "Q3".into(),
+                        description: None,
+                    }],
+                }],
+                created_at: now,
+            }),
         };
         let json = serde_json::to_value(&detail).unwrap();
         assert_eq!(json["session_id"], "sess_1");
         assert_eq!(json["active_run_status"], "idle");
         assert_eq!(json["messages"][0]["role"], "user");
+        assert_eq!(json["pending_question"]["question_id"], "q_1");
         let decoded: SessionDetail = serde_json::from_value(json).unwrap();
         assert_eq!(decoded, detail);
     }
@@ -240,6 +307,10 @@ mod tests {
         assert_eq!(
             ActiveRunStatus::parse("interrupted"),
             Some(ActiveRunStatus::Interrupted)
+        );
+        assert_eq!(
+            ActiveRunStatus::parse("awaiting_input"),
+            Some(ActiveRunStatus::AwaitingInput)
         );
         assert_eq!(
             MessageRole::parse("assistant"),

@@ -15,8 +15,8 @@ use axum::{
 };
 use futures::Stream;
 use quire_session_protocol::{
-    AttachmentMeta, CreateSessionRequest, SendMessageRequest, SessionDetail, SessionEvent,
-    SessionEventKind, SessionSummary, ToolCallDetail,
+    AttachmentMeta, CreateSessionRequest, QuestionAnswer, SendMessageRequest, SessionDetail,
+    SessionEvent, SessionEventKind, SessionSummary, ToolCallDetail,
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -72,6 +72,10 @@ pub fn router(service: RuntimeService) -> Router {
         )
         .route("/api/sessions/{session_id}/events", get(session_events))
         .route("/api/sessions/{session_id}/messages", post(post_message))
+        .route(
+            "/api/sessions/{session_id}/questions/{question_id}/answer",
+            post(answer_question),
+        )
         .route("/api/sessions/{session_id}/interrupt", post(interrupt))
         .route("/api/sessions/{session_id}/retry", post(retry))
         .route("/api/sessions/{session_id}/compact", post(compact))
@@ -288,6 +292,26 @@ async fn post_message(
         inserted,
         run_id,
     }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnswerQuestionRequest {
+    #[serde(default)]
+    answers: Vec<QuestionAnswer>,
+    #[serde(default)]
+    skipped: bool,
+}
+
+async fn answer_question(
+    State(service): State<RuntimeService>,
+    Path((session_id, question_id)): Path<(String, String)>,
+    Json(request): Json<AnswerQuestionRequest>,
+) -> RuntimeResult<Json<SessionDetail>> {
+    service
+        .answer_question(&session_id, &question_id, &request.answers, request.skipped)
+        .await
+        .map(Json)
 }
 
 #[derive(Debug, Default, Deserialize)]

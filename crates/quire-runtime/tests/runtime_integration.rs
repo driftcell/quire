@@ -8,6 +8,7 @@
 )]
 
 use std::{
+    collections::VecDeque,
     path::Path,
     sync::{
         Arc, OnceLock,
@@ -26,7 +27,8 @@ use quire_runtime::{
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
 };
 use quire_session_protocol::{
-    ActiveRunStatus, ContextUsage, MessageRole, SendMessageRequest, SessionEventKind,
+    ActiveRunStatus, ContextUsage, MessageRole, QuestionItem, QuestionOption, SendMessageRequest,
+    SessionEventKind,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -312,16 +314,20 @@ impl AdminMcpClient {
 
 struct RecordingStreamProvider {
     requests: Arc<Mutex<Vec<ModelTurnRequest>>>,
-    events: Vec<ModelStreamEvent>,
+    turns: Arc<Mutex<VecDeque<Vec<ModelStreamEvent>>>>,
 }
 
 impl RecordingStreamProvider {
     fn new(events: Vec<ModelStreamEvent>) -> (Self, Arc<Mutex<Vec<ModelTurnRequest>>>) {
+        Self::with_turns(vec![events])
+    }
+
+    fn with_turns(turns: Vec<Vec<ModelStreamEvent>>) -> (Self, Arc<Mutex<Vec<ModelTurnRequest>>>) {
         let requests = Arc::new(Mutex::new(Vec::new()));
         (
             Self {
                 requests: requests.clone(),
-                events,
+                turns: Arc::new(Mutex::new(VecDeque::from(turns))),
             },
             requests,
         )
@@ -335,11 +341,38 @@ impl ModelStreamProvider for RecordingStreamProvider {
         request: ModelTurnRequest,
     ) -> quire_runtime::RuntimeResult<ModelEventStream> {
         self.requests.lock().await.push(request);
-        let events = self.events.clone();
+        let events = self
+            .turns
+            .lock()
+            .await
+            .pop_front()
+            .unwrap_or_else(|| vec![ModelStreamEvent::TextDelta("mock reply".into())]);
         Ok(Box::pin(futures::stream::iter(
             events.into_iter().map(Ok).collect::<Vec<_>>(),
         )))
     }
+}
+
+fn question_items() -> Vec<QuestionItem> {
+    vec![QuestionItem {
+        id: "scope".into(),
+        title: "Which scope should the summary use?".into(),
+        description: Some("Pick one scope.".into()),
+        multiple: false,
+        required: true,
+        options: vec![
+            QuestionOption {
+                id: "q3".into(),
+                label: "Q3".into(),
+                description: None,
+            },
+            QuestionOption {
+                id: "q4".into(),
+                label: "Q4".into(),
+                description: None,
+            },
+        ],
+    }]
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1800,4 +1833,297 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
     service.delete_session(&session.session_id).await.unwrap();
     remove_branch(&store, &branch).await;
     service.kb().delete_document(&bump_doc).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ask_user_suspends_until_answers_resume_the_run() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let (provider, requests) = RecordingStreamProvider::with_turns(vec![
+        vec![ModelStreamEvent::QuestionnaireRequested {
+            tool_call_id: Some("tc_ask".into()),
+            questions: question_items(),
+        }],
+        vec![
+            ModelStreamEvent::TextDelta("resumed after answer".into()),
+            ModelStreamEvent::Usage(ContextUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cached_tokens: 2,
+                context_used: 15,
+                context_limit: 64_000,
+            }),
+        ],
+    ]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let session = service
+        .create_session(&unique("ask-user-answer"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("ask-user-answer-start"),
+                content: "Start the questionnaire".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let waiting = service.session_detail(&session.session_id).await.unwrap();
+    assert_eq!(
+        waiting.summary.active_run_status,
+        ActiveRunStatus::AwaitingInput
+    );
+    let pending = waiting.pending_question.clone().expect("pending question");
+    assert_eq!(pending.questions.len(), 1);
+
+    let app = quire_runtime::http::router(service.clone());
+    let (status, body) = http_json(
+        &app,
+        axum::http::Method::POST,
+        &format!(
+            "/api/sessions/{}/questions/{}/answer",
+            session.session_id, pending.question_id
+        ),
+        "runtime-test-token",
+        Some(json!({
+            "answers": [{
+                "question_id": "scope",
+                "selected_option_ids": ["q3"],
+                "skipped": false
+            }],
+            "skipped": false
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(body["pending_question"], Value::Null);
+    wait_for_idle(&store, &session.session_id).await;
+
+    let resumed = service.session_detail(&session.session_id).await.unwrap();
+    assert_eq!(resumed.summary.active_run_status, ActiveRunStatus::Idle);
+    assert!(resumed.pending_question.is_none());
+    assert!(resumed.messages.iter().any(|message| {
+        message.role == MessageRole::Assistant && message.content.contains("resumed after answer")
+    }));
+    let question_status: String =
+        sqlx::query_scalar("SELECT status FROM agent_questions WHERE question_id = $1")
+            .bind(&pending.question_id)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(question_status, "answered");
+    let events = store
+        .list_events(&session.session_id, 0, 200)
+        .await
+        .unwrap();
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::QuestionnaireAnswered { skipped_all: false, answers, .. }
+            if answers.first().is_some_and(|answer| answer.selected_option_ids == vec!["q3"])
+    )));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(&event.kind, SessionEventKind::QuestionnaireRequested { .. }))
+    );
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests.get(1).is_some_and(|request| {
+        request
+            .history
+            .iter()
+            .any(|message| message.content.contains("q3"))
+    }));
+    drop(requests);
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ask_user_skip_marks_skipped_and_continues() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let (provider, requests) = RecordingStreamProvider::with_turns(vec![
+        vec![ModelStreamEvent::QuestionnaireRequested {
+            tool_call_id: Some("tc_skip".into()),
+            questions: question_items(),
+        }],
+        vec![
+            ModelStreamEvent::TextDelta("continued after skip".into()),
+            ModelStreamEvent::Usage(ContextUsage {
+                input_tokens: 8,
+                output_tokens: 4,
+                cached_tokens: 0,
+                context_used: 12,
+                context_limit: 64_000,
+            }),
+        ],
+    ]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let session = service
+        .create_session(&unique("ask-user-skip"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("ask-user-skip-start"),
+                content: "Ask me something optional".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+    let pending = service
+        .session_detail(&session.session_id)
+        .await
+        .unwrap()
+        .pending_question
+        .expect("pending question");
+
+    let app = quire_runtime::http::router(service.clone());
+    let (status, _) = http_json(
+        &app,
+        axum::http::Method::POST,
+        &format!(
+            "/api/sessions/{}/questions/{}/answer",
+            session.session_id, pending.question_id
+        ),
+        "runtime-test-token",
+        Some(json!({"answers": [], "skipped": true})),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    wait_for_idle(&store, &session.session_id).await;
+
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert!(detail.pending_question.is_none());
+    assert!(detail.messages.iter().any(|message| {
+        message.role == MessageRole::Assistant && message.content.contains("continued after skip")
+    }));
+    let question_status: String =
+        sqlx::query_scalar("SELECT status FROM agent_questions WHERE question_id = $1")
+            .bind(&pending.question_id)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(question_status, "skipped");
+    let events = store
+        .list_events(&session.session_id, 0, 200)
+        .await
+        .unwrap();
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::QuestionnaireAnswered {
+            skipped_all: true,
+            ..
+        }
+    )));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests.get(1).is_some_and(|request| {
+        request
+            .history
+            .iter()
+            .any(|message| message.content.contains("skipped questionnaire"))
+    }));
+    drop(requests);
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn new_message_dismisses_pending_question_and_starts_a_new_turn() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let (provider, requests) = RecordingStreamProvider::with_turns(vec![
+        vec![ModelStreamEvent::QuestionnaireRequested {
+            tool_call_id: Some("tc_dismiss".into()),
+            questions: question_items(),
+        }],
+        vec![ModelStreamEvent::TextDelta("reply to new message".into())],
+    ]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let session = service
+        .create_session(&unique("ask-user-dismiss"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("ask-user-dismiss-start"),
+                content: "Ask a question first".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+    let pending = service
+        .session_detail(&session.session_id)
+        .await
+        .unwrap()
+        .pending_question
+        .expect("pending question");
+
+    let app = quire_runtime::http::router(service.clone());
+    let (status, body) = http_json(
+        &app,
+        axum::http::Method::POST,
+        &format!("/api/sessions/{}/messages", session.session_id),
+        "runtime-test-token",
+        Some(json!({
+            "client_msg_id": unique("ask-user-dismiss-next"),
+            "content": "Ignore the card and answer this instead"
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(body["run_id"].as_str().is_some());
+    wait_for_idle(&store, &session.session_id).await;
+
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert!(detail.pending_question.is_none());
+    assert!(detail.messages.iter().any(|message| {
+        message.role == MessageRole::Assistant && message.content.contains("reply to new message")
+    }));
+    let question_status: String =
+        sqlx::query_scalar("SELECT status FROM agent_questions WHERE question_id = $1")
+            .bind(&pending.question_id)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(question_status, "dismissed");
+    let events = store
+        .list_events(&session.session_id, 0, 200)
+        .await
+        .unwrap();
+    assert!(events.iter().any(|event| matches!(
+        &event.kind,
+        SessionEventKind::QuestionnaireDismissed { reason, .. }
+            if reason == "superseded_by_user_message"
+    )));
+    let started_runs: Vec<&str> = events
+        .iter()
+        .filter(|event| matches!(&event.kind, SessionEventKind::TurnStarted))
+        .map(|event| event.run_id.as_str())
+        .collect();
+    assert_eq!(started_runs.len(), 2);
+    assert_ne!(started_runs.first(), started_runs.get(1));
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests.get(1).is_some_and(|request| {
+        request
+            .history
+            .iter()
+            .any(|message| message.content.contains("Ignore the card"))
+    }));
+    drop(requests);
+    service.delete_session(&session.session_id).await.unwrap();
 }

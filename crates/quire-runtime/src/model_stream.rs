@@ -4,7 +4,7 @@ use std::{collections::VecDeque, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use futures::Stream;
-use quire_session_protocol::ContextUsage;
+use quire_session_protocol::{ContextUsage, QuestionItem};
 use serde_json::Value;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -58,6 +58,10 @@ pub enum ModelStreamEvent {
         input: Value,
         output: Value,
         error: Option<String>,
+    },
+    QuestionnaireRequested {
+        tool_call_id: Option<String>,
+        questions: Vec<QuestionItem>,
     },
     /// Real upstream token counts plus the resolved model context limit.
     Usage(ContextUsage),

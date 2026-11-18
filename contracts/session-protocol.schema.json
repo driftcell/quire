@@ -9,6 +9,18 @@
     "create_session_request": {
       "$ref": "#/$defs/CreateSessionRequest"
     },
+    "pending_question": {
+      "$ref": "#/$defs/PendingQuestion"
+    },
+    "question_answer": {
+      "$ref": "#/$defs/QuestionAnswer"
+    },
+    "question_item": {
+      "$ref": "#/$defs/QuestionItem"
+    },
+    "question_option": {
+      "$ref": "#/$defs/QuestionOption"
+    },
     "send_message_request": {
       "$ref": "#/$defs/SendMessageRequest"
     },
@@ -36,7 +48,11 @@
     "attachment_meta",
     "create_session_request",
     "send_message_request",
-    "tool_call_detail"
+    "tool_call_detail",
+    "question_option",
+    "question_item",
+    "question_answer",
+    "pending_question"
   ],
   "$defs": {
     "ActiveRunStatus": {
@@ -45,7 +61,8 @@
         "idle",
         "running",
         "interrupted",
-        "failed"
+        "failed",
+        "awaiting_input"
       ]
     },
     "AttachmentMeta": {
@@ -147,6 +164,120 @@
         "system"
       ]
     },
+    "PendingQuestion": {
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "question_id": {
+          "type": "string"
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestionItem"
+          }
+        },
+        "run_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question_id",
+        "run_id",
+        "questions",
+        "created_at"
+      ]
+    },
+    "QuestionAnswer": {
+      "type": "object",
+      "properties": {
+        "freeform_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "question_id": {
+          "type": "string"
+        },
+        "selected_option_ids": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "skipped": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "question_id"
+      ]
+    },
+    "QuestionItem": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "multiple": {
+          "type": "boolean",
+          "default": false
+        },
+        "options": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          }
+        },
+        "required": {
+          "type": "boolean",
+          "default": false
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "QuestionOption": {
+      "type": "object",
+      "properties": {
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ]
+    },
     "SendMessageRequest": {
       "type": "object",
       "properties": {
@@ -226,6 +357,17 @@
           "items": {
             "$ref": "#/$defs/SessionMessage"
           }
+        },
+        "pending_question": {
+          "description": "Latest unresolved question card, restored after refresh or reconnect.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PendingQuestion"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "session_id": {
           "type": "string"
@@ -561,6 +703,76 @@
             "cached_tokens",
             "context_used",
             "context_limit"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "questionnaire_requested"
+            },
+            "question_id": {
+              "type": "string"
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/QuestionItem"
+              }
+            }
+          },
+          "required": [
+            "event",
+            "question_id",
+            "questions"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "answers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/QuestionAnswer"
+              }
+            },
+            "event": {
+              "type": "string",
+              "const": "questionnaire_answered"
+            },
+            "question_id": {
+              "type": "string"
+            },
+            "skipped_all": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "question_id",
+            "answers",
+            "skipped_all"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "questionnaire_dismissed"
+            },
+            "question_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "question_id",
+            "reason"
           ]
         },
         {

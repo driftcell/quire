@@ -218,6 +218,10 @@ the server or `rig` into the report engine. It owns:
   definitions and model routes, drives rig-core streaming multi-turn tool loops, runs subagents
   concurrently with `JoinSet`, reports real token usage/context limits, persists full tool
   input/output, and streams partial block previews to Quire's ephemeral preview endpoint.
+- `ask_user` cards suspend a run as `awaiting_input` without holding a connection. Pending cards are
+  durable in `SessionDetail.pending_question`; answers/skips resume through
+  `POST /api/sessions/{id}/questions/{question_id}/answer`, while a normal new message dismisses the
+  card and starts a fresh turn.
 
 Session contracts and SSE envelopes are exported to `contracts/session-protocol.schema.json`.
 

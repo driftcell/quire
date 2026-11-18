@@ -15,7 +15,7 @@ use quire_protocol::{
     BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
     PreviewStatus,
 };
-use quire_session_protocol::{ContextUsage, MessageRole};
+use quire_session_protocol::{ContextUsage, MessageRole, QuestionItem};
 use rig_core::{
     completion::{
         AssistantContent, CompletionRequest, CompletionResponse, Message, ToolDefinition, Usage,
@@ -48,6 +48,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "read_skill_resource",
     "describe_task",
     "spawn_subagents",
+    "ask_user",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -870,6 +871,7 @@ impl RigModelCore {
             .collect();
         let mut total_usage = Usage::default();
         let mut final_text = String::new();
+        let mut suspended = false;
         loop {
             if execution.cancellation.is_cancelled() {
                 return Ok(final_text);
@@ -928,9 +930,19 @@ impl RigModelCore {
             )));
             let mut answers: Vec<MessageToolResult> = Vec::new();
             for call in calls {
+                if !execution.run_id.starts_with("run_sub_")
+                    && call.function.name.as_str() == "ask_user"
+                {
+                    request_questionnaire(&scope, &execution, call).await?;
+                    suspended = true;
+                    break;
+                }
                 answers.push(
                     execute_tool_call(&tool_map, &scope, &execution, &mut previews, call).await,
                 );
+            }
+            if suspended {
+                break;
             }
             messages.push(Message::tool_results(answers));
         }
@@ -1108,6 +1120,61 @@ impl RigModelCore {
                 },
             ));
         }
+        if !execution.run_id.starts_with("run_sub_")
+            && execution
+                .allowed_tools
+                .iter()
+                .any(|name| name == "ask_user")
+        {
+            tools.push(DynamicTool::new(
+                ToolName::new("ask_user")
+                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
+                "Pause the run and request structured choices from the user.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "description": {"type": "string", "nullable": true},
+                                    "multiple": {"type": "boolean"},
+                                    "required": {"type": "boolean"},
+                                    "options": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "id": {"type": "string"},
+                                                "label": {"type": "string"},
+                                                "description": {"type": "string", "nullable": true}
+                                            },
+                                            "required": ["id", "label"],
+                                            "additionalProperties": false
+                                        }
+                                    }
+                                },
+                                "required": ["id", "title", "multiple", "required", "options"],
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "required": ["questions"],
+                    "additionalProperties": false
+                }),
+                |_arguments| {
+                    Box::pin(async move {
+                        Err(ToolExecutionError::other(
+                            "ask_user is handled by the runtime question loop",
+                        ))
+                    })
+                },
+            ));
+        }
         if execution
             .allowed_tools
             .iter()
@@ -1218,10 +1285,10 @@ impl RigModelCore {
                 cancellation: parent.cancellation.clone(),
             };
             let scope = parent_scope.child(subagent_run_id.clone(), task.agent_name.clone());
-            let summary = self
+            let outcome = self
                 .run_turn(execution, vec![Message::user(task.task.clone())], scope)
                 .await?;
-            Ok::<String, RuntimeError>(summary)
+            Ok::<String, RuntimeError>(outcome)
         }
         .await;
         let (status, summary) = match result {
@@ -1334,6 +1401,52 @@ async fn handle_stream_event(
             false
         }
     }
+}
+
+async fn request_questionnaire(
+    scope: &EventScope,
+    execution: &AgentExecution,
+    call: ToolCall,
+) -> RuntimeResult<()> {
+    let provider_call_id = call.id.wire().to_string();
+    let tool_call_id = format!("{}:{}", execution.run_id, provider_call_id);
+    let arguments = call.function.arguments_value();
+    let (input_preview, input_truncated) = preview_json(&arguments);
+    scope.send(ModelStreamEvent::ToolCallStarted {
+        tool_call_id: tool_call_id.clone(),
+        tool_name: "ask_user".into(),
+        input_preview,
+        truncated: input_truncated,
+        input: arguments.clone(),
+    });
+    let questions_value = arguments.get("questions").cloned().ok_or_else(|| {
+        RuntimeError::InvalidRequest("ask_user requires a `questions` array".into())
+    })?;
+    let questions: Vec<QuestionItem> =
+        serde_json::from_value(questions_value).map_err(|error| {
+            RuntimeError::InvalidRequest(format!("invalid ask_user questions: {error}"))
+        })?;
+    if questions.is_empty() {
+        return Err(RuntimeError::InvalidRequest(
+            "ask_user requires at least one question".into(),
+        ));
+    }
+    scope.send(ModelStreamEvent::QuestionnaireRequested {
+        tool_call_id: Some(tool_call_id.clone()),
+        questions,
+    });
+    scope.send(ModelStreamEvent::ToolCallFinished {
+        tool_call_id,
+        tool_name: "ask_user".into(),
+        status: "awaiting_input".into(),
+        output_preview: "{\"awaiting_input\":true}".into(),
+        truncated: false,
+        duration_ms: 0,
+        input: arguments,
+        output: json!({"awaiting_input": true}),
+        error: None,
+    });
+    Ok(())
 }
 
 async fn execute_tool_call(
@@ -1796,5 +1909,64 @@ mod tests {
         assert_eq!(mapped.cached_tokens, 40);
         assert_eq!(mapped.context_used, 150);
         assert_eq!(mapped.context_limit, 64_000);
+    }
+
+    #[tokio::test]
+    async fn ask_user_emits_questionnaire_and_pauses_the_run() {
+        use rig_core::message::ToolFunction;
+
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let scope = EventScope::top(sender, CancellationToken::new());
+        let execution = AgentExecution {
+            agent_id: "main".into(),
+            model_route: "stub/echo".into(),
+            allowed_tools: vec!["ask_user".into()],
+            system_prompt: "test".into(),
+            kb_branch: Some("main".into()),
+            doc_id: Some("report".into()),
+            session_id: "sess_test".into(),
+            run_id: "run_test".into(),
+            cancellation: CancellationToken::new(),
+        };
+        let call = ToolCall::from_wire(
+            "call_ask",
+            ToolFunction::new(
+                ToolName::new("ask_user").unwrap(),
+                json!({
+                    "questions": [{
+                        "id": "scope",
+                        "title": "Which scope?",
+                        "multiple": false,
+                        "required": true,
+                        "options": [{"id": "q3", "label": "Q3"}]
+                    }]
+                }),
+            ),
+        );
+        request_questionnaire(&scope, &execution, call)
+            .await
+            .unwrap();
+        assert!(matches!(
+            receiver.recv().await.unwrap().unwrap(),
+            ModelStreamEvent::ToolCallStarted { .. }
+        ));
+        let requested = receiver.recv().await.unwrap().unwrap();
+        match requested {
+            ModelStreamEvent::QuestionnaireRequested { questions, .. } => {
+                assert_eq!(questions.len(), 1);
+                assert_eq!(
+                    questions.first().map(|question| question.id.as_str()),
+                    Some("scope")
+                );
+            }
+            other => panic!("expected questionnaire, got {other:?}"),
+        }
+        assert!(matches!(
+            receiver.recv().await.unwrap().unwrap(),
+            ModelStreamEvent::ToolCallFinished {
+                status,
+                ..
+            } if status == "awaiting_input"
+        ));
     }
 }

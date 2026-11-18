@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::session::{QuestionAnswer, QuestionItem};
+
 /// Common envelope for every Session-SSE frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionEvent {
@@ -100,6 +102,19 @@ pub enum SessionEventKind {
         context_used: u64,
         context_limit: u64,
     },
+    QuestionnaireRequested {
+        question_id: String,
+        questions: Vec<QuestionItem>,
+    },
+    QuestionnaireAnswered {
+        question_id: String,
+        answers: Vec<QuestionAnswer>,
+        skipped_all: bool,
+    },
+    QuestionnaireDismissed {
+        question_id: String,
+        reason: String,
+    },
     DocLinked {
         doc_id: String,
         title: String,
@@ -121,6 +136,9 @@ impl SessionEventKind {
             Self::SubagentStarted { .. } => "subagent_started",
             Self::SubagentFinished { .. } => "subagent_finished",
             Self::ContextUsage { .. } => "context_usage",
+            Self::QuestionnaireRequested { .. } => "questionnaire_requested",
+            Self::QuestionnaireAnswered { .. } => "questionnaire_answered",
+            Self::QuestionnaireDismissed { .. } => "questionnaire_dismissed",
             Self::DocLinked { .. } => "doc_linked",
         }
     }
@@ -128,7 +146,10 @@ impl SessionEventKind {
     pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::TurnFinished | Self::TurnFailed { .. } | Self::SyncRequired { .. }
+            Self::TurnFinished
+                | Self::TurnFailed { .. }
+                | Self::SyncRequired { .. }
+                | Self::QuestionnaireRequested { .. }
         )
     }
 }
@@ -202,6 +223,37 @@ mod tests {
     }
 
     #[test]
+    fn questionnaire_requested_is_terminal_and_roundtrips() {
+        let event = SessionEvent::new(
+            4,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::QuestionnaireRequested {
+                question_id: "q_1".into(),
+                questions: vec![crate::session::QuestionItem {
+                    id: "scope".into(),
+                    title: "Which scope?".into(),
+                    description: None,
+                    multiple: false,
+                    required: true,
+                    options: vec![crate::session::QuestionOption {
+                        id: "q3".into(),
+                        label: "Q3".into(),
+                        description: None,
+                    }],
+                }],
+            },
+        );
+        assert!(event.kind.is_terminal());
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["event"], "questionnaire_requested");
+        assert_eq!(json["questions"][0]["id"], "scope");
+        let decoded: SessionEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
     fn schema_exports_every_event_variant() {
         let schema = schemars::schema_for!(SessionEvent);
         let rendered = serde_json::to_string(&schema).unwrap();
@@ -218,6 +270,9 @@ mod tests {
             "subagent_started",
             "subagent_finished",
             "context_usage",
+            "questionnaire_requested",
+            "questionnaire_answered",
+            "questionnaire_dismissed",
             "doc_linked",
         ] {
             assert!(rendered.contains(event), "missing {event} in schema");

@@ -1,6 +1,7 @@
 //! Session orchestration, run lifecycle, recovery and prompt-cache handling.
 
 use std::{
+    collections::HashMap,
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -10,8 +11,9 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
 use quire_session_protocol::{
-    ContextUsage, MessageRole, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind,
-    SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
+    ContextUsage, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem, SendMessageRequest,
+    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
+    ToolCallDetail,
 };
 use secrecy::SecretString;
 use serde_json::Value;
@@ -249,8 +251,94 @@ impl RuntimeService {
         if !inserted {
             return Ok((message, false, None));
         }
+        let dismissed = self.store.dismiss_pending_questions(session_id).await?;
+        for question in dismissed {
+            let _ = self.store.resolve_suspended_run(&question.run_id).await?;
+            self.emit(
+                session_id,
+                &question.run_id,
+                "main",
+                None,
+                SessionEventKind::QuestionnaireDismissed {
+                    question_id: question.question_id,
+                    reason: "superseded_by_user_message".into(),
+                },
+            )
+            .await?;
+        }
         let run_id = self.spawn_turn(session_id, request.content.clone()).await?;
         Ok((message, true, Some(run_id)))
+    }
+
+    /// Resolve a pending ask_user card and continue the interrupted reasoning immediately.
+    pub async fn answer_question(
+        &self,
+        session_id: &str,
+        question_id: &str,
+        answers: &[QuestionAnswer],
+        skipped: bool,
+    ) -> RuntimeResult<SessionDetail> {
+        let question = self
+            .store
+            .pending_question_by_id(session_id, question_id)
+            .await?
+            .ok_or_else(|| {
+                RuntimeError::InvalidRequest(format!(
+                    "question `{question_id}` is not pending for session `{session_id}`"
+                ))
+            })?;
+        let answers = if skipped {
+            Vec::new()
+        } else {
+            validate_question_answers(&question.questions, answers)?;
+            answers.to_vec()
+        };
+        self.store
+            .resolve_question(session_id, question_id, &answers, skipped)
+            .await?;
+        let _ = self.store.resolve_suspended_run(&question.run_id).await?;
+        self.emit(
+            session_id,
+            &question.run_id,
+            "main",
+            None,
+            SessionEventKind::QuestionnaireAnswered {
+                question_id: question.question_id.clone(),
+                answers: answers.clone(),
+                skipped_all: skipped,
+            },
+        )
+        .await?;
+        let continuation = if skipped {
+            format!(
+                "The user skipped questionnaire `{}`. Continue the task without those details.",
+                question.question_id
+            )
+        } else {
+            format!(
+                "The user answered questionnaire `{}`:\n{}",
+                question.question_id,
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "questions": question.questions,
+                    "answers": answers,
+                }))?
+            )
+        };
+        self.store
+            .insert_context_message(
+                session_id,
+                MessageRole::Tool,
+                &continuation,
+                &format!("question-context:{}", question.question_id),
+                Some(&question.run_id),
+            )
+            .await?;
+        self.spawn_turn(
+            session_id,
+            "Continue the task using the questionnaire response.".to_string(),
+        )
+        .await?;
+        self.store.get_session_detail(session_id).await
     }
 
     pub async fn create_attachment(
@@ -672,6 +760,7 @@ impl RuntimeService {
         let mut tick = tokio::time::interval(Duration::from_millis(50));
         let mut response = String::new();
         let mut reported_usage = None;
+        let mut suspended_question: Option<PendingQuestion> = None;
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
@@ -836,6 +925,34 @@ impl RuntimeService {
                             )
                             .await?;
                         }
+                        Some(Ok(ModelStreamEvent::QuestionnaireRequested {
+                            tool_call_id,
+                            questions,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            let question = self
+                                .store
+                                .create_question(
+                                    session_id,
+                                    run_id,
+                                    tool_call_id.as_deref(),
+                                    &questions,
+                                )
+                                .await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                SessionEventKind::QuestionnaireRequested {
+                                    question_id: question.question_id.clone(),
+                                    questions: question.questions.clone(),
+                                },
+                            )
+                            .await?;
+                            suspended_question = Some(question);
+                        }
                         Some(Ok(ModelStreamEvent::Usage(usage))) => {
                             let deltas = coalescer.flush_all();
                             self.emit_coalesced(session_id, run_id, "main", deltas).await?;
@@ -869,6 +986,19 @@ impl RuntimeService {
         self.emit_coalesced(session_id, run_id, "main", deltas)
             .await?;
         if token.is_cancelled() {
+            return Ok(());
+        }
+        if let Some(question) = suspended_question {
+            if !response.is_empty() {
+                self.store
+                    .insert_assistant_message(session_id, &response, run_id)
+                    .await?;
+            }
+            if let Some(usage) = reported_usage {
+                self.store.update_context_usage(session_id, &usage).await?;
+            }
+            self.store.mark_run_awaiting_input(run_id).await?;
+            let _ = question;
             return Ok(());
         }
         self.store
@@ -1087,6 +1217,13 @@ impl RuntimeService {
                 )
                 .await?;
             }
+            ModelStreamEvent::QuestionnaireRequested { .. } => {
+                warn!(
+                    session = %session_id,
+                    subagent = %subagent_run_id,
+                    "ask_user is only supported by the main agent"
+                );
+            }
         }
         Ok(())
     }
@@ -1270,6 +1407,40 @@ fn preview_json(value: &serde_json::Value) -> (String, bool) {
         preview.push('…');
     }
     (preview, truncated)
+}
+
+fn validate_question_answers(
+    questions: &[QuestionItem],
+    answers: &[QuestionAnswer],
+) -> RuntimeResult<()> {
+    let questions: HashMap<&str, &QuestionItem> = questions
+        .iter()
+        .map(|question| (question.id.as_str(), question))
+        .collect();
+    for answer in answers {
+        let question = questions.get(answer.question_id.as_str()).ok_or_else(|| {
+            RuntimeError::InvalidRequest(format!(
+                "answer references unknown question `{}`",
+                answer.question_id
+            ))
+        })?;
+        if answer.skipped {
+            continue;
+        }
+        for option_id in &answer.selected_option_ids {
+            if !question
+                .options
+                .iter()
+                .any(|option| option.id == *option_id)
+            {
+                return Err(RuntimeError::InvalidRequest(format!(
+                    "answer for `{}` references unknown option `{option_id}`",
+                    answer.question_id
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn safe_attachment_filename(filename: &str) -> RuntimeResult<&str> {

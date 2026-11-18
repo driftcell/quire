@@ -2,8 +2,9 @@
 
 use chrono::{DateTime, Utc};
 use quire_session_protocol::{
-    ActiveRunStatus, AttachmentMeta, MessageRole, SendMessageRequest, SessionDetail, SessionEvent,
-    SessionEventKind, SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
+    ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem,
+    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
+    SessionStatus, SessionSummary, ToolCallDetail,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
@@ -133,10 +134,12 @@ impl RuntimeStore {
         let summary = self.get_session_summary(session_id).await?;
         let messages = self.list_messages(session_id).await?;
         let attachments = self.list_attachments(session_id).await?;
+        let pending_question = self.pending_question(session_id).await?;
         Ok(SessionDetail {
             summary,
             messages,
             attachments,
+            pending_question,
         })
     }
 
@@ -350,6 +353,217 @@ impl RuntimeStore {
         .fetch_all(&self.pool)
         .await?;
         rows.iter().map(row_to_message).collect()
+    }
+
+    pub async fn insert_context_message(
+        &self,
+        session_id: &str,
+        role: MessageRole,
+        content: &str,
+        client_msg_id: &str,
+        run_id: Option<&str>,
+    ) -> RuntimeResult<SessionMessage> {
+        let message_id = format!("msg_{}", Uuid::new_v4().simple());
+        let inserted = sqlx::query(
+            r#"INSERT INTO agent_messages
+               (message_id, session_id, client_msg_id, role, content, attachment_ids, run_id)
+               VALUES ($1, $2, $3, $4, $5, '[]'::jsonb, $6)
+               ON CONFLICT (session_id, client_msg_id) DO NOTHING
+               RETURNING message_id, session_id, role, content, attachment_ids, run_id, created_at"#,
+        )
+        .bind(&message_id)
+        .bind(session_id)
+        .bind(client_msg_id)
+        .bind(role.as_str())
+        .bind(content)
+        .bind(run_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(row) = inserted {
+            return row_to_message(&row);
+        }
+        let row = sqlx::query(
+            r#"SELECT message_id, session_id, role, content, attachment_ids, run_id, created_at
+               FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
+        )
+        .bind(session_id)
+        .bind(client_msg_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| RuntimeError::Internal("question context message vanished".into()))?;
+        row_to_message(&row)
+    }
+
+    pub async fn create_question(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        tool_call_id: Option<&str>,
+        questions: &[QuestionItem],
+    ) -> RuntimeResult<PendingQuestion> {
+        let question_id = format!("q_{}", Uuid::new_v4().simple());
+        let questions_value = serde_json::to_value(questions)?;
+        let created_at: DateTime<Utc> = sqlx::query_scalar(
+            r#"INSERT INTO agent_questions
+               (question_id, session_id, run_id, tool_call_id, questions, status)
+               VALUES ($1, $2, $3, $4, $5, 'pending')
+               RETURNING created_at"#,
+        )
+        .bind(&question_id)
+        .bind(session_id)
+        .bind(run_id)
+        .bind(tool_call_id)
+        .bind(questions_value)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(PendingQuestion {
+            question_id,
+            run_id: run_id.to_string(),
+            questions: questions.to_vec(),
+            created_at,
+        })
+    }
+
+    pub async fn pending_question(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<Option<PendingQuestion>> {
+        let row = sqlx::query(
+            r#"SELECT question_id, run_id, questions, created_at
+               FROM agent_questions
+               WHERE session_id = $1 AND status = 'pending'
+               ORDER BY created_at DESC LIMIT 1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(row_to_pending_question).transpose()
+    }
+
+    pub async fn pending_question_by_id(
+        &self,
+        session_id: &str,
+        question_id: &str,
+    ) -> RuntimeResult<Option<PendingQuestion>> {
+        let row = sqlx::query(
+            r#"SELECT question_id, run_id, questions, created_at
+               FROM agent_questions
+               WHERE session_id = $1 AND question_id = $2 AND status = 'pending'"#,
+        )
+        .bind(session_id)
+        .bind(question_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(row_to_pending_question).transpose()
+    }
+
+    pub async fn resolve_question(
+        &self,
+        session_id: &str,
+        question_id: &str,
+        answers: &[QuestionAnswer],
+        skipped: bool,
+    ) -> RuntimeResult<()> {
+        let status = if skipped { "skipped" } else { "answered" };
+        let answers = serde_json::to_value(answers)?;
+        let updated = sqlx::query(
+            r#"UPDATE agent_questions
+               SET answers = $3, status = $4, resolved_at = NOW()
+               WHERE session_id = $1 AND question_id = $2 AND status = 'pending'"#,
+        )
+        .bind(session_id)
+        .bind(question_id)
+        .bind(answers)
+        .bind(status)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Err(RuntimeError::InvalidRequest(format!(
+                "question `{question_id}` is no longer pending"
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn dismiss_pending_questions(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<Vec<PendingQuestion>> {
+        let rows = sqlx::query(
+            r#"UPDATE agent_questions
+               SET status = 'dismissed', resolved_at = NOW()
+               WHERE session_id = $1 AND status = 'pending'
+               RETURNING question_id, run_id, questions, created_at"#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_pending_question).collect()
+    }
+
+    pub async fn mark_run_awaiting_input(&self, run_id: &str) -> RuntimeResult<()> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            r#"UPDATE agent_runs
+               SET status = 'awaiting_input'
+               WHERE run_id = $1 AND status = 'running'
+               RETURNING session_id"#,
+        )
+        .bind(run_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            let exists = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM agent_runs WHERE run_id = $1)",
+            )
+            .bind(run_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return if exists {
+                Ok(())
+            } else {
+                Err(RuntimeError::RunNotFound(run_id.to_string()))
+            };
+        };
+        let session_id: String = row.try_get("session_id")?;
+        sqlx::query(
+            r#"UPDATE agent_sessions
+               SET active_run_status = 'awaiting_input', updated_at = NOW()
+               WHERE session_id = $1"#,
+        )
+        .bind(&session_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn resolve_suspended_run(&self, run_id: &str) -> RuntimeResult<Option<String>> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            r#"UPDATE agent_runs
+               SET status = 'completed', finished_at = COALESCE(finished_at, NOW())
+               WHERE run_id = $1 AND status = 'awaiting_input'
+               RETURNING session_id"#,
+        )
+        .bind(run_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(row) = row else {
+            tx.commit().await?;
+            return Ok(None);
+        };
+        let session_id: String = row.try_get("session_id")?;
+        sqlx::query(
+            r#"UPDATE agent_sessions SET active_run_status = 'idle', updated_at = NOW()
+               WHERE session_id = $1"#,
+        )
+        .bind(&session_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(Some(session_id))
     }
 
     pub async fn insert_attachment(
@@ -770,6 +984,18 @@ impl RuntimeStore {
         }
         Ok(version)
     }
+}
+
+fn row_to_pending_question(row: &PgRow) -> RuntimeResult<PendingQuestion> {
+    let questions: Value = row.try_get("questions")?;
+    Ok(PendingQuestion {
+        question_id: row.try_get("question_id")?,
+        run_id: row.try_get("run_id")?,
+        questions: serde_json::from_value(questions).map_err(|error| {
+            RuntimeError::Internal(format!("corrupt question payload: {error}"))
+        })?,
+        created_at: row.try_get("created_at")?,
+    })
 }
 
 fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
