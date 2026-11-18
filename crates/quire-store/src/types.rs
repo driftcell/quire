@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use quire_protocol::{
-    BlockId, Diagnostic, DocId, PatchOutcome, ReportDocument, Revision, SessionId, SourceEntry,
-    SourceId,
+    BlockId, CommentAuthorType, Diagnostic, DocId, PatchOutcome, ReportDocument, Revision,
+    SessionId, SourceEntry, SourceId, TextQuoteSelector,
 };
 use serde::{Deserialize, Serialize};
 
@@ -93,6 +93,26 @@ pub struct ReportList {
 pub struct SourceUpsert {
     pub source_id: SourceId,
     pub source: SourceEntry,
+}
+
+/// Input for creating one side-channel comment thread and its first message.
+#[derive(Debug, Clone)]
+pub struct NewCommentThread {
+    pub block_id: BlockId,
+    pub author_type: CommentAuthorType,
+    pub author: String,
+    pub body: String,
+    pub quote: Option<TextQuoteSelector>,
+}
+
+/// Input for appending one reply to an existing comment thread.
+#[derive(Debug, Clone)]
+pub struct NewCommentReply {
+    pub author_type: CommentAuthorType,
+    pub author: String,
+    pub body: String,
+    pub mark_addressed: bool,
+    pub addressed_rev: Option<Revision>,
 }
 
 /// Optional side inputs committed atomically with an operation batch.

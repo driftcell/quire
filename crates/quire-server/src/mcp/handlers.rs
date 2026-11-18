@@ -8,14 +8,15 @@ use std::{
 use axum::http::request::Parts;
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, BlockId, BlockKind, COVER_VARIANTS, CoverConfig, Diagnostic, DocId, EphemeralClearEvent,
-    EphemeralPayload, IdAssignment, MarkdownOptions, MarkdownProjector, PatchOp, ProtocolError,
-    ReportDocument, ReportDraft, Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS,
-    is_safe_css_token_value, is_valid_css_token_name, lint_document,
+    Block, BlockId, BlockKind, COVER_VARIANTS, CommentAuthorType, CommentStatus, CoverConfig,
+    Diagnostic, DocId, EphemeralClearEvent, EphemeralPayload, IdAssignment, MarkdownOptions,
+    MarkdownProjector, PatchOp, ProtocolError, ReportDocument, ReportDraft, Revision, Severity,
+    SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value, is_valid_css_token_name,
+    lint_document,
 };
 use quire_store::{
-    ApplyResult, CommitExtras, SourceUpsert, StoreError, merge_source_entries,
-    normalized_source_key,
+    ApplyResult, CommitExtras, NewCommentReply, NewCommentThread, SourceUpsert, StoreError,
+    merge_source_entries, normalized_source_key,
 };
 use rmcp::{
     ErrorData,
@@ -979,6 +980,144 @@ impl QuireMcpServer {
             report,
             _next_hint,
         }))
+    }
+
+    // ---------------------------------------------------------------------
+    // Tool 16: list comments
+    // ---------------------------------------------------------------------
+    #[tool(
+        name = "list_comments",
+        description = "List side-channel review threads. Archived threads are omitted unless status=archived is supplied. Includes anchor_snapshot and live anchor_detached flags."
+    )]
+    pub async fn list_comments(
+        &self,
+        Parameters(request): Parameters<ListCommentsParams>,
+    ) -> Result<Json<ListCommentsReceipt>, ErrorData> {
+        let doc_id = parse_doc_id(&request.doc_id)?;
+        let block_id = request
+            .block_id
+            .as_deref()
+            .map(parse_block_id)
+            .transpose()?;
+        let mut comments = self
+            .state
+            .store
+            .list_comment_threads(&doc_id, request.status, block_id.as_ref())
+            .await
+            .map_err(mcp_error)?;
+        if request.status.is_none() {
+            comments.retain(|thread| thread.status != CommentStatus::Archived);
+        }
+        let count = comments.len();
+        let _next_hint = if comments.is_empty() {
+            "No matching review comments. Human reviewers can create threads with POST /api/docs/{doc_id}/comments.".to_string()
+        } else {
+            "Reply with reply_comment(doc_id, thread_id, body, mark_addressed=true, addressed_rev=...) after fixing the block. Only humans can archive a thread.".to_string()
+        };
+        Ok(Json(ListCommentsReceipt {
+            doc_id: doc_id.to_string(),
+            comments,
+            count,
+            _next_hint,
+        }))
+    }
+
+    // ---------------------------------------------------------------------
+    // Tool 17: add comment
+    // ---------------------------------------------------------------------
+    #[tool(
+        name = "add_comment",
+        description = "Create an agent review comment anchored to a block. Comments are side-channel data: they never increment current_rev or participate in Smart CAS."
+    )]
+    pub async fn add_comment(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(request): Parameters<AddCommentParams>,
+    ) -> Result<Json<AddCommentReceipt>, ErrorData> {
+        let actor = request_context(&parts)?.actor;
+        let doc_id = parse_doc_id(&request.doc_id)?;
+        let block_id = parse_block_id(&request.block_id)?;
+        if let Some(quote) = &request.quote {
+            quote.validate().map_err(|reason| {
+                invalid_params(
+                    reason,
+                    "Quote the exact selected phrase; prefix/suffix provide context.",
+                    None,
+                )
+            })?;
+        }
+        let thread = self
+            .state
+            .store
+            .create_comment_thread(
+                &doc_id,
+                NewCommentThread {
+                    block_id,
+                    author_type: CommentAuthorType::Agent,
+                    author: actor,
+                    body: request.body,
+                    quote: request.quote,
+                },
+            )
+            .await
+            .map_err(mcp_error)?;
+        self.state.publish_comment_updated(&thread).await;
+        let _next_hint = format!(
+            "Comment thread `{}` created without a revision change. Writers should reply with reply_comment after editing.",
+            thread.thread_id
+        );
+        Ok(Json(AddCommentReceipt { thread, _next_hint }))
+    }
+
+    // ---------------------------------------------------------------------
+    // Tool 18: reply comment
+    // ---------------------------------------------------------------------
+    #[tool(
+        name = "reply_comment",
+        description = "Reply to a review thread. With mark_addressed=true an open thread moves to addressed and records addressed_rev; agents cannot archive or reopen threads."
+    )]
+    pub async fn reply_comment(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(request): Parameters<ReplyCommentParams>,
+    ) -> Result<Json<ReplyCommentReceipt>, ErrorData> {
+        let actor = request_context(&parts)?.actor;
+        let doc_id = parse_doc_id(&request.doc_id)?;
+        let addressed_rev = request.addressed_rev.map(parse_revision).transpose()?;
+        let thread = self
+            .state
+            .store
+            .reply_comment_thread(
+                &doc_id,
+                &request.thread_id,
+                NewCommentReply {
+                    author_type: CommentAuthorType::Agent,
+                    author: actor,
+                    body: request.body,
+                    mark_addressed: request.mark_addressed,
+                    addressed_rev,
+                },
+            )
+            .await
+            .map_err(mcp_error)?;
+        self.state.publish_comment_updated(&thread).await;
+        let _next_hint = match thread.status {
+            CommentStatus::Addressed => format!(
+                "Thread marked addressed at revision {}. Only a human can archive it through PATCH /api/docs/{doc_id}/comments/{{thread_id}}.",
+                thread
+                    .addressed_rev
+                    .map(|revision| revision.get())
+                    .unwrap_or(0)
+            ),
+            CommentStatus::Archived => {
+                "Reply recorded on an archived thread; the thread stays archived.".to_string()
+            }
+            CommentStatus::Open => {
+                "Reply recorded. Set mark_addressed=true after the fix to advance the thread."
+                    .to_string()
+            }
+        };
+        Ok(Json(ReplyCommentReceipt { thread, _next_hint }))
     }
 }
 

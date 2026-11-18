@@ -8,10 +8,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use quire_protocol::{
-    Block, BlockId, BlockPatch, CoverConfig, DocId, PatchOp, ReportDocument, Revision, SessionId,
-    SourceEntry, SourceId, TableBlock, TocConfig,
+    Block, BlockId, BlockPatch, CommentAuthorType, CommentStatus, CoverConfig, DocId, PatchOp,
+    ReportDocument, Revision, SessionId, SourceEntry, SourceId, TableBlock, TextQuoteSelector,
+    TocConfig,
 };
-use quire_store::{PgReportStore, StoreError};
+use quire_store::{NewCommentReply, NewCommentThread, PgReportStore, SourceUpsert, StoreError};
 use sqlx::Row;
 
 fn unique(prefix: &str) -> String {
@@ -627,6 +628,33 @@ async fn snapshots_are_written_every_fifty_revisions() {
     assert_eq!(document.revision, as_revision(50));
     assert_eq!(document.block("a").unwrap().visible_text(), "Version 49");
 
+    store
+        .apply_operations(
+            &as_doc_id(&doc_id),
+            as_revision(50),
+            "agent",
+            "advance past snapshot",
+            &[patch_text("a", "Version 50")],
+        )
+        .await
+        .unwrap();
+    store
+        .apply_operations(
+            &as_doc_id(&doc_id),
+            as_revision(51),
+            "agent",
+            "advance past snapshot",
+            &[patch_text("a", "Version 51")],
+        )
+        .await
+        .unwrap();
+    let restored = store
+        .document_at_revision(&as_doc_id(&doc_id), as_revision(51))
+        .await
+        .unwrap();
+    assert_eq!(restored.revision, as_revision(51));
+    assert_eq!(restored.block("a").unwrap().visible_text(), "Version 50");
+
     cleanup(&store, &doc_id).await;
 }
 
@@ -688,6 +716,185 @@ async fn smart_cas_range_replacement_conflicts_with_inserts_inside_the_range() {
     assert!(
         current.block("x").is_some(),
         "intervening insert must survive"
+    );
+
+    cleanup(&store, &doc_id).await;
+}
+
+#[tokio::test]
+async fn comments_survive_block_deletion_without_touching_revisions() {
+    let store = test_store().await;
+    let doc_id = unique("it-comments");
+    let doc = document(
+        &doc_id,
+        None,
+        vec![
+            Block::heading(as_block_id("ch1"), 2, "Chapter One"),
+            paragraph("target", "Target paragraph that will be deleted"),
+            paragraph("keep", "Surviving paragraph"),
+        ],
+    );
+    store.create_document(&doc, "lead", None).await.unwrap();
+    let typed_doc_id = as_doc_id(&doc_id);
+
+    let thread = store
+        .create_comment_thread(
+            &typed_doc_id,
+            NewCommentThread {
+                block_id: as_block_id("target"),
+                author_type: CommentAuthorType::Human,
+                author: "reviewer".into(),
+                body: "Please tighten this paragraph.".into(),
+                quote: Some(TextQuoteSelector {
+                    exact: "will be deleted".into(),
+                    prefix: Some("Target paragraph that ".into()),
+                    suffix: None,
+                }),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(thread.status, CommentStatus::Open);
+    assert_eq!(thread.section_id, Some(as_block_id("ch1")));
+    assert!(
+        thread
+            .anchor_snapshot
+            .as_deref()
+            .is_some_and(|snapshot| snapshot.contains("Target paragraph"))
+    );
+    assert_eq!(thread.created_rev, as_revision(1));
+    assert_eq!(thread.messages.len(), 1);
+    assert!(!thread.anchor_detached);
+    assert_eq!(
+        store.get_document(&typed_doc_id).await.unwrap().revision,
+        as_revision(1),
+        "creating a comment must not create a revision"
+    );
+
+    let deleted = store
+        .apply_operations(
+            &typed_doc_id,
+            as_revision(1),
+            "writer-agent",
+            "delete reviewed block",
+            &[PatchOp::DeleteBlocks {
+                block_ids: vec![as_block_id("target")],
+            }],
+        )
+        .await
+        .unwrap();
+    assert_eq!(deleted.new_revision, as_revision(2));
+
+    let rev_one = store
+        .document_at_revision(&typed_doc_id, as_revision(1))
+        .await
+        .unwrap();
+    assert!(rev_one.block("target").is_some());
+    let rev_two = store
+        .document_at_revision(&typed_doc_id, as_revision(2))
+        .await
+        .unwrap();
+    assert!(rev_two.block("target").is_none());
+
+    let detached = store
+        .list_comment_threads(&typed_doc_id, None, None)
+        .await
+        .unwrap();
+    assert_eq!(detached.len(), 1);
+    assert!(detached[0].anchor_detached);
+    assert_eq!(detached[0].anchor_snapshot, thread.anchor_snapshot);
+    assert_eq!(detached[0].section_id, Some(as_block_id("ch1")));
+
+    let human_mark_error = store
+        .reply_comment_thread(
+            &typed_doc_id,
+            &thread.thread_id,
+            NewCommentReply {
+                author_type: CommentAuthorType::Human,
+                author: "reviewer".into(),
+                body: "Humans cannot mark addressed.".into(),
+                mark_addressed: true,
+                addressed_rev: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(human_mark_error, StoreError::InvalidRequest(_)));
+
+    let replied = store
+        .reply_comment_thread(
+            &typed_doc_id,
+            &thread.thread_id,
+            NewCommentReply {
+                author_type: CommentAuthorType::Agent,
+                author: "writer-agent".into(),
+                body: "Reworked and committed in revision 2.".into(),
+                mark_addressed: true,
+                addressed_rev: Some(as_revision(2)),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(replied.status, CommentStatus::Addressed);
+    assert_eq!(replied.addressed_rev, Some(as_revision(2)));
+    assert_eq!(replied.messages.len(), 2);
+    assert!(replied.anchor_detached);
+    assert_eq!(
+        store.get_document(&typed_doc_id).await.unwrap().revision,
+        as_revision(2),
+        "replying must not create a revision"
+    );
+
+    let archived = store
+        .update_comment_status(&typed_doc_id, &thread.thread_id, CommentStatus::Archived)
+        .await
+        .unwrap();
+    assert_eq!(archived.status, CommentStatus::Archived);
+    assert_eq!(archived.addressed_rev, Some(as_revision(2)));
+    assert_eq!(
+        store.get_document(&typed_doc_id).await.unwrap().revision,
+        as_revision(2),
+        "archiving must not create a revision"
+    );
+
+    let archived_only = store
+        .list_comment_threads(&typed_doc_id, Some(CommentStatus::Archived), None)
+        .await
+        .unwrap();
+    assert_eq!(archived_only.len(), 1);
+
+    cleanup(&store, &doc_id).await;
+}
+
+#[tokio::test]
+async fn source_excerpt_roundtrips_through_storage() {
+    let store = test_store().await;
+    let doc_id = unique("it-excerpt");
+    let doc = document(&doc_id, None, vec![paragraph("intro", "Hello")]);
+    store.create_document(&doc, "lead", None).await.unwrap();
+
+    store
+        .upsert_sources(
+            &as_doc_id(&doc_id),
+            "agent",
+            vec![SourceUpsert {
+                source_id: as_source_id("src_excerpt"),
+                source: SourceEntry {
+                    excerpt: Some("Verbatim evidence from the source.".into()),
+                    ..SourceEntry::new("Evidence report")
+                },
+            }],
+        )
+        .await
+        .unwrap();
+
+    let loaded = store.get_document(&as_doc_id(&doc_id)).await.unwrap();
+    assert_eq!(
+        loaded
+            .sources
+            .get(&as_source_id("src_excerpt"))
+            .and_then(|source| source.excerpt.as_deref()),
+        Some("Verbatim evidence from the source.")
     );
 
     cleanup(&store, &doc_id).await;

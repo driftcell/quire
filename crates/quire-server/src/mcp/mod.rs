@@ -1,4 +1,4 @@
-//! Quire MCP tool server (15 domain tools) mounted at `/mcp`.
+//! Quire MCP tool server (18 domain tools) mounted at `/mcp`.
 //!
 //! The implementation is split into `schema` (request/response contracts and compact receipts)
 //! and `handlers` (tool methods plus rebase/draft helpers).
@@ -24,6 +24,7 @@ Workflow state machine: INIT -> SCHEMA -> AUTHOR -> VERIFY.
 INIT: send X-Session-Id on MCP HTTP requests. Call get_protocol_guide("quickstart"), then create_report or list_reports.
 SCHEMA: call get_document_digest or read_as_markdown before editing. Block IDs are short semantic strings, never UUIDv4. Tables use recursive ColumnNode trees; never compute spans yourself.
 AUTHOR: mutate only via apply_operations(doc_id, expected_revision, summary, ops) or apply_draft. Register citations with upsert_sources. Use disjoint block-ID prefixes when writing in parallel; Smart CAS rebases disjoint edits and returns detailed conflicts for overlapping edits.
+REVIEW: list_comments returns side-channel threads with anchor_snapshot and anchor_detached. add_comment and reply_comment are revision-free; mark_addressed moves open to addressed. Only humans may archive or reopen via REST.
 VERIFY: call lint_document until there are zero errors, then read_as_markdown for a reviewer view. The external frontend is read-only and consumes GET /api/docs/{doc_id} plus SSE revision deltas.
 
 Every tool receipt includes `_next_hint`. Every error includes a structured hint with valid IDs/enums where possible. Never send HTML or Tiptap rendering payloads; the external frontend owns rendering."#;
@@ -35,7 +36,7 @@ pub struct QuireMcpServer {
 }
 
 impl QuireMcpServer {
-    /// Construct the MCP server and register all 15 domain tools on the router.
+    /// Construct the MCP server and register all 18 domain tools on the router.
     pub fn new(state: AppState) -> Self {
         Self {
             state,

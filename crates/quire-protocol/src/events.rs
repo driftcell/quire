@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{BlockId, DocId, Revision, SessionId};
+use crate::{BlockId, CommentStatus, DocId, Revision, SessionId};
 
 /// Suggested lifetime for a transient preview when the producer omits `ttl_ms`.
 pub const DEFAULT_PREVIEW_TTL_MS: u64 = 15_000;
@@ -142,6 +142,16 @@ pub struct AgentPresenceEvent {
     pub received_at: DateTime<Utc>,
 }
 
+/// Payload of an SSE `comment_updated` event.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CommentUpdatedEvent {
+    pub doc_id: DocId,
+    pub thread_id: String,
+    pub status: CommentStatus,
+    pub anchor_detached: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Immediate client-side cleanup for previews that will never become a revision.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EphemeralClearEvent {
@@ -178,6 +188,10 @@ pub enum EphemeralPayload {
         #[serde(flatten)]
         event: EphemeralClearEvent,
     },
+    CommentUpdated {
+        #[serde(flatten)]
+        event: CommentUpdatedEvent,
+    },
 }
 
 impl EphemeralPayload {
@@ -187,6 +201,7 @@ impl EphemeralPayload {
             Self::Preview { .. } => "ephemeral_preview",
             Self::Presence { .. } => "agent_presence",
             Self::Clear { .. } => "ephemeral_clear",
+            Self::CommentUpdated { .. } => "comment_updated",
         }
     }
 
@@ -205,6 +220,10 @@ impl EphemeralPayload {
             Self::Clear { event: clear } => {
                 clear.doc_id = doc_id.clone();
                 clear.received_at = received_at;
+            }
+            Self::CommentUpdated { event } => {
+                event.doc_id = doc_id.clone();
+                event.updated_at = received_at;
             }
         }
     }
@@ -241,6 +260,11 @@ impl EphemeralPayload {
                     .any(|preview_id| preview_id.trim().is_empty())
                 {
                     return Err("preview_ids must not contain empty values".into());
+                }
+            }
+            Self::CommentUpdated { event } => {
+                if event.thread_id.trim().is_empty() {
+                    return Err("thread_id must not be empty".into());
                 }
             }
         }
@@ -423,6 +447,26 @@ mod tests {
             event: EphemeralClearEvent::new(doc_id("report_1"), vec![" ".into()]),
         };
         assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn comment_updated_roundtrips_with_kind_tag() {
+        let payload = EphemeralPayload::CommentUpdated {
+            event: CommentUpdatedEvent {
+                doc_id: doc_id("report_1"),
+                thread_id: "th_1".into(),
+                status: CommentStatus::Addressed,
+                anchor_detached: true,
+                updated_at: Utc::now(),
+            },
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["kind"], "comment_updated");
+        assert_eq!(json["status"], "addressed");
+        assert_eq!(payload.event_name(), "comment_updated");
+        let decoded: EphemeralPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, payload);
+        assert!(decoded.validate().is_ok());
     }
 
     #[test]

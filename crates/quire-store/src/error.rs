@@ -92,6 +92,10 @@ pub enum StoreError {
         normalized_key: String,
         canonical_id: SourceId,
     },
+    #[error("comment thread `{thread_id}` was not found for document `{doc_id}`")]
+    CommentThreadNotFound { doc_id: DocId, thread_id: String },
+    #[error("comment target block `{block_id}` does not exist in document `{doc_id}`")]
+    CommentTargetNotFound { doc_id: DocId, block_id: BlockId },
     #[error("base-62 rank space exhausted between existing neighbours: {0}")]
     RankExhausted(String),
     #[error("snapshot compression failed: {0}")]
@@ -129,6 +133,13 @@ impl StoreError {
             Self::SourceConflict { canonical_id, .. } => {
                 format!("Reuse canonical source_id `{canonical_id}` or change the URL/title.")
             }
+            Self::CommentThreadNotFound { .. } => {
+                "Call list_comments or GET /api/docs/{doc_id}/comments to discover valid thread IDs."
+                    .into()
+            }
+            Self::CommentTargetNotFound { .. } => {
+                "Re-read get_document_digest and anchor the comment to an existing block ID.".into()
+            }
             Self::Patch(error) => error.to_string(),
             Self::Protocol(error) => error.hint(),
             Self::CorruptRevision { .. } => {
@@ -158,6 +169,8 @@ impl StoreError {
             Self::InvalidDocId { .. } => "INVALID_DOC_ID",
             Self::InvalidSourceId { .. } => "INVALID_SOURCE_ID",
             Self::SourceConflict { .. } => "SOURCE_CONFLICT",
+            Self::CommentThreadNotFound { .. } => "COMMENT_THREAD_NOT_FOUND",
+            Self::CommentTargetNotFound { .. } => "COMMENT_TARGET_NOT_FOUND",
             Self::RankExhausted(_) => "RANK_EXHAUSTED",
             Self::Snapshot(_) => "SNAPSHOT_ERROR",
             Self::InvalidRequest(_) => "INVALID_REQUEST",

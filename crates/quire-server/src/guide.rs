@@ -285,15 +285,24 @@ REVIEW LOOP
 3. Patch specific blocks via block IDs from the Markdown anchors.
 4. `rollback_revision(doc_id, target_revision)` creates a new monotonic revision; never rewrites history.
 
+COMMENTS (SIDE-CHANNEL REVIEW)
+- Review agents call `add_comment(doc_id, block_id, body, quote?)`; writers call `reply_comment(doc_id, thread_id, body, mark_addressed=true, addressed_rev=N)` after fixing the block.
+- Comments do not increment `current_rev` and never participate in Smart CAS. A deleted block leaves the thread intact with `anchor_detached=true` and the original `anchor_snapshot`.
+- `list_comments(doc_id, status?, block_id?)` defaults to open/addressed threads. Only the human REST PATCH endpoint may archive or reopen a thread; agents cannot send `archived`.
+
 FRONTEND CONTRACT
 - Frontend is read-only. It consumes GET /api/docs/{doc_id} canonical JSON + computed metadata and SSE revision deltas.
-- SSE events: revision, ephemeral_preview, agent_presence, ephemeral_clear, sync_required, plus heartbeat comments.
+- GET /api/docs/{doc_id}/diff?fromRev=A&toRev=B returns structured block-level Added/Removed/Modified entries plus metadata flags.
+- SourceEntry.excerpt carries verbatim evidence; computed.chart_tables carries renderer-ready ECharts data tables grouped by block ID.
+- SSE events: revision, ephemeral_preview, agent_presence, ephemeral_clear, comment_updated, sync_required, plus heartbeat comments.
 - Do not send cursor/presence edits other than optional ephemeral previews. When a previewed block is committed, pass its preview IDs as preview_ids to apply_operations or apply_draft so revision.cleared_preview_ids clears the placeholder atomically. A no-op commit emits ephemeral_clear immediately instead of creating a revision.
 "##.into(),
         recommended_tools: vec![
             "apply_draft".into(),
             "apply_operations".into(),
             "get_document_digest".into(),
+            "list_comments".into(),
+            "reply_comment".into(),
             "rollback_revision".into(),
         ],
         _next_hint: "Assign disjoint block ID prefixes before launching parallel writers, then merge drafts through apply_draft.".into(),

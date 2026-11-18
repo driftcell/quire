@@ -354,8 +354,8 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use quire_protocol::{
-        AgentPresenceEvent, BlockId, EphemeralClearEvent, EphemeralPreviewEvent,
-        PartialBlockPreview, PreviewAnchor, PreviewStatus,
+        AgentPresenceEvent, BlockId, CommentStatus, CommentUpdatedEvent, EphemeralClearEvent,
+        EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor, PreviewStatus,
     };
 
     fn doc_id() -> DocId {
@@ -404,11 +404,24 @@ mod tests {
         }
     }
 
+    fn comment_updated_payload() -> EphemeralPayload {
+        EphemeralPayload::CommentUpdated {
+            event: CommentUpdatedEvent {
+                doc_id: doc_id(),
+                thread_id: "th_1".into(),
+                status: CommentStatus::Open,
+                anchor_detached: false,
+                updated_at: Utc::now(),
+            },
+        }
+    }
+
     #[test]
     fn canonical_payloads_route_to_event_names() {
         assert_eq!(preview_payload().event_name(), "ephemeral_preview");
         assert_eq!(presence_payload().event_name(), "agent_presence");
         assert_eq!(clear_payload().event_name(), "ephemeral_clear");
+        assert_eq!(comment_updated_payload().event_name(), "comment_updated");
     }
 
     #[test]

@@ -9,7 +9,9 @@
 
 pub mod block;
 pub mod citation;
+pub mod comment;
 pub mod computed;
+pub mod diff;
 pub mod draft;
 pub(crate) mod echarts;
 pub mod error;
@@ -35,17 +37,22 @@ pub use citation::{
     BibliographyEntry, CitationLocation, CitationResolution, CitationScan, CitationUse,
     resolve_citations, scan_document_citations,
 };
+pub use comment::{
+    CommentAuthorType, CommentMessage, CommentStatus, CommentThread, TextQuoteSelector,
+};
 pub use computed::{
     BlockFraming, ChartRequirements, CitationMapEntry, ComputedDocumentMeta, LayoutHeaderCell,
     LayoutLeafColumn, TableLayout, TocNode, compute_block_framing, compute_document_meta,
     compute_table_layout, compute_toc_tree,
 };
+pub use diff::{BlockDiffEntry, DocumentDiffReport, DocumentMetadataDiff, diff_documents};
 pub use draft::{DraftError, ReportDraft};
+pub use echarts::{ChartDataTable, chart_data_tables};
 pub use error::ProtocolError;
 pub use events::{
-    AgentPresenceEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralClearEvent, EphemeralPayload,
-    EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor, PreviewStatus, RevisionDelta,
-    SessionDelta, SyncRequiredDelta,
+    AgentPresenceEvent, CommentUpdatedEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralClearEvent,
+    EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor, PreviewStatus,
+    RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 pub use ids::{BlockId, DocId, Rank, Revision, SessionId, SourceId};
 pub use linter::{Diagnostic, LintReport, LintSummary, Severity, lint_document};

@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, CitationStyle, CoverConfig, IdAssignment, LintReport, PatchOp, ReferencesConfig,
-    SourceEntry, SourceId, ThemeSummary, TocConfig,
+    Block, CitationStyle, CommentStatus, CommentThread, CoverConfig, IdAssignment, LintReport,
+    PatchOp, ReferencesConfig, SourceEntry, SourceId, TextQuoteSelector, ThemeSummary, TocConfig,
 };
 use quire_store::ReportSummary;
 use schemars::JsonSchema;
@@ -578,6 +578,77 @@ pub struct LintReceipt {
     pub _next_hint: String,
 }
 
+/// Input for `list_comments`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListCommentsParams {
+    pub doc_id: String,
+    /// Optional lifecycle filter. Archived threads are omitted when this is not supplied.
+    #[serde(default)]
+    pub status: Option<CommentStatus>,
+    /// Optional block-ID soft-anchor filter.
+    #[serde(default)]
+    pub block_id: Option<String>,
+}
+
+/// Output for `list_comments`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListCommentsReceipt {
+    pub doc_id: String,
+    pub comments: Vec<CommentThread>,
+    pub count: usize,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `add_comment`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AddCommentParams {
+    pub doc_id: String,
+    /// Existing block the review thread is anchored to.
+    pub block_id: String,
+    /// Review comment body.
+    pub body: String,
+    /// Optional text-selection quote for highlighting.
+    #[serde(default)]
+    pub quote: Option<TextQuoteSelector>,
+}
+
+/// Output for `add_comment`. Thread fields are flattened for compact receipts.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AddCommentReceipt {
+    #[serde(flatten)]
+    pub thread: CommentThread,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `reply_comment`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplyCommentParams {
+    pub doc_id: String,
+    pub thread_id: String,
+    /// Reply body.
+    pub body: String,
+    /// Move an open thread to addressed after the writer fixes the issue.
+    #[serde(default)]
+    pub mark_addressed: bool,
+    /// Revision containing the fix. Defaults to the current document revision.
+    #[serde(default)]
+    pub addressed_rev: Option<i64>,
+}
+
+/// Output for `reply_comment`. Thread fields are flattened for compact receipts.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReplyCommentReceipt {
+    #[serde(flatten)]
+    pub thread: CommentThread,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,5 +691,28 @@ mod tests {
         }))
         .expect("valid params");
         assert_eq!(params.expected_revision, Some(7));
+
+        let reply: ReplyCommentParams = serde_json::from_value(json!({
+            "doc_id": "synthetic",
+            "thread_id": "th_1",
+            "body": "Fixed",
+            "mark_addressed": true,
+            "addressed_rev": 4
+        }))
+        .expect("valid comment reply");
+        assert!(reply.mark_addressed);
+        assert_eq!(reply.addressed_rev, Some(4));
+    }
+
+    #[test]
+    fn agent_comment_tools_reject_archive_status() {
+        let error = serde_json::from_value::<ReplyCommentParams>(json!({
+            "doc_id": "synthetic",
+            "thread_id": "th_1",
+            "body": "Archived",
+            "status": "archived"
+        }))
+        .expect_err("agents cannot set archived through reply_comment");
+        assert!(error.to_string().contains("status"), "{error}");
     }
 }

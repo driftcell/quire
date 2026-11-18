@@ -13,7 +13,7 @@ dependency. Rendering and visual preview belong to the external frontend.
 | --- | --- |
 | `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, linter, draft parser |
 | `quire-store` | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher |
-| `quire-server` | Axum REST/SSE endpoints and the 15-tool `rmcp` server mounted at `/mcp` |
+| `quire-server` | Axum REST/SSE endpoints and the 18-tool `rmcp` server mounted at `/mcp` |
 
 ## Quickstart
 
@@ -100,7 +100,7 @@ blocks, so a citation can be registered in the same call that references it. Emp
 block IDs are auto-assigned and reported in `assigned_ids`; clients do not need to invent stable IDs
 for transient drafts.
 
-## MCP tools (15)
+## MCP tools (18)
 
 | Tool | Purpose |
 | --- | --- |
@@ -119,6 +119,9 @@ for transient drafts.
 | `configure_references` | bibliography style/page break + orphan sources |
 | `update_style_and_css` | presets, tokens, validated scoped CSS |
 | `lint_document` | zero-browser static validation |
+| `list_comments` | side-channel review threads with anchors + `anchor_detached` |
+| `add_comment` | agent review comment; never touches revisions or CAS |
+| `reply_comment` | writer reply, optionally advancing `open` to `addressed` |
 
 ## HTTP API
 
@@ -129,13 +132,18 @@ for transient drafts.
 | GET | `/api/docs/{doc_id}` | canonical `ReportDocument` + `computed` |
 | GET | `/api/docs/{doc_id}/events?sinceRev=N` | replay + live SSE revisions/previews/presence |
 | GET | `/api/docs/{doc_id}/revisions?limit=N` | audit history |
+| GET | `/api/docs/{doc_id}/diff?fromRev=A&toRev=B` | structured block-level diff (`toRev` defaults to current) |
+| GET | `/api/docs/{doc_id}/comments?status=&block_id=` | review threads (default open/addressed; `status=all` includes archived) |
+| POST | `/api/docs/{doc_id}/comments` | create a human review thread |
+| POST | `/api/docs/{doc_id}/comments/{thread_id}/replies` | append a human reply |
+| PATCH | `/api/docs/{doc_id}/comments/{thread_id}` | human-only archive/reopen |
 | POST | `/api/docs/{doc_id}/rollback` | admin rollback `{target_revision, actor?}` |
 | POST | `/api/docs/{doc_id}/ephemeral` | transient preview/presence/clear pub/sub |
 | GET | `/api/sessions/{session_id}/events` | session discovery SSE |
 | POST | `/mcp` | Streamable HTTP MCP transport |
 
 SSE event names: `revision`, `ephemeral_preview`, `agent_presence`, `ephemeral_clear`,
-`doc_created`, `sync_required`, plus `: heartbeat` comments.
+`comment_updated`, `doc_created`, `sync_required`, plus `: heartbeat` comments.
 
 ### Ephemeral typewriter previews
 
@@ -167,6 +175,25 @@ ephemeral block and apply the committed revision in one frame without flicker.
 If a commit resolves to a no-op, no revision is produced. The server then emits
 `event: ephemeral_clear` with `{"kind":"clear","preview_ids":[...]}` so clients can remove the
 streamed placeholders immediately instead of waiting for `ttl_ms` to expire.
+
+### Review comments
+
+Comments are side-channel data: they never enter `report_blocks`, never increment
+`report_documents.current_rev`, and never participate in Smart CAS. `block_id` is a soft `TEXT`
+reference plus a truncated `anchor_snapshot` and nearest-heading `section_id`; deleting the block
+leaves the thread intact with `anchor_detached: true`. Humans create/reply/archive through REST;
+agents use `add_comment`/`reply_comment` and may only advance `open` to `addressed` with
+`addressed_rev`. SSE `comment_updated` frames carry `thread_id`, `status`, `anchor_detached` and
+`updated_at`.
+
+### Version diff and computed chart tables
+
+`GET /api/docs/{doc_id}/diff?fromRev=A&toRev=B` rebuilds both revisions from snapshots and
+forward/inverse ops, then returns `BlockDiffEntry` values (`added`/`removed`/`modified`) plus
+document metadata flags. `computed.chart_tables` exposes renderer-agnostic
+`ChartDataTable { title, headers, rows }` entries for dataset, cartesian, relation, radar and
+hierarchy charts; Markdown projection uses the same extraction function. `SourceEntry.excerpt`
+stores a verbatim evidence quote and is returned in sources and bibliography entries.
 
 ### Canonical document response
 
@@ -235,7 +262,7 @@ P90 visual-width heuristic (`CJK = 2.0`, ASCII = 1.0), `fit`/`grow` weights and
 ## Persistence
 
 Tables: `report_documents`, `report_blocks`, `report_sources`, `report_revisions`,
-`report_snapshots`. Snapshots are Zstd-compressed every 50 revisions. Source dedup uses a normalized
+`report_snapshots`, `report_comment_threads`, `report_comment_messages`. Snapshots are Zstd-compressed every 50 revisions. Source dedup uses a normalized
 key (URL first, normalized title otherwise).
 
 ## Non-goals

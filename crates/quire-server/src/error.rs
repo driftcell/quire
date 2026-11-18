@@ -88,7 +88,6 @@ fn public_message(error: &StoreError) -> String {
 
 fn status_for(error: &StoreError) -> StatusCode {
     match error {
-        StoreError::NotFound { .. } => StatusCode::NOT_FOUND,
         StoreError::AlreadyExists { .. }
         | StoreError::RevisionAhead { .. }
         | StoreError::Conflict(_)
@@ -97,6 +96,9 @@ fn status_for(error: &StoreError) -> StatusCode {
         | StoreError::InvalidSourceId { .. }
         | StoreError::InvalidRollbackTarget { .. }
         | StoreError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+        StoreError::NotFound { .. }
+        | StoreError::CommentThreadNotFound { .. }
+        | StoreError::CommentTargetNotFound { .. } => StatusCode::NOT_FOUND,
         StoreError::Patch(_) | StoreError::Protocol(_) => StatusCode::UNPROCESSABLE_ENTITY,
         StoreError::CorruptRevision { .. } | StoreError::RankExhausted(_) => StatusCode::CONFLICT,
         StoreError::Database(_)

@@ -11,9 +11,10 @@
 use std::{fs, path::Path};
 
 use quire_protocol::{
-    AgentPresenceEvent, ComputedDocumentMeta, EphemeralClearEvent, EphemeralPayload,
-    EphemeralPreviewEvent, LintReport, PatchOp, PatchOutcome, ReportDocument, ReportDraft,
-    RevisionDelta, SessionDelta, SyncRequiredDelta,
+    AgentPresenceEvent, ChartDataTable, CommentMessage, CommentThread, CommentUpdatedEvent,
+    ComputedDocumentMeta, DocumentDiffReport, DocumentMetadataDiff, EphemeralClearEvent,
+    EphemeralPayload, EphemeralPreviewEvent, LintReport, PatchOp, PatchOutcome, ReportDocument,
+    ReportDraft, RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 use schemars::JsonSchema;
 
@@ -40,8 +41,20 @@ struct ProtocolContract {
     agent_presence: AgentPresenceEvent,
     /// SSE `ephemeral_clear` payload for immediate placeholder cleanup.
     ephemeral_clear: EphemeralClearEvent,
+    /// SSE `comment_updated` payload for live review-thread changes.
+    comment_updated: CommentUpdatedEvent,
     /// Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.
     ephemeral_payload: EphemeralPayload,
+    /// Side-channel review thread returned by the comments REST API and MCP tools.
+    comment_thread: CommentThread,
+    /// One review-thread message.
+    comment_message: CommentMessage,
+    /// Structured block-level diff between two revisions.
+    document_diff: DocumentDiffReport,
+    /// Non-block metadata flags included in a document diff.
+    document_metadata_diff: DocumentMetadataDiff,
+    /// Structured ECharts data table projected from a chart block.
+    chart_data_table: ChartDataTable,
     /// Offline authoring draft accepted by `apply_draft`.
     draft: ReportDraft,
     /// Receipt returned by the in-memory patch engine.

@@ -14,7 +14,9 @@ use crate::{
         Align, BlockKind, ColumnDataType, ColumnNode, ColumnSizing, NumberingKind, TableBlock,
     },
     citation::{BibliographyEntry, CitationResolution, resolve_citations},
-    echarts::{merged_option, required_extensions, required_maps},
+    echarts::{
+        ChartDataTable, chart_data_tables, merged_option, required_extensions, required_maps,
+    },
     ids::{BlockId, SourceId},
     inline::inline_plain_text,
     model::ReportDocument,
@@ -130,6 +132,9 @@ pub struct ComputedDocumentMeta {
     /// ECharts map/extension dependencies grouped by chart block.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub chart_requirements: BTreeMap<BlockId, ChartRequirements>,
+    /// Structured chart data tables grouped by chart block.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub chart_tables: BTreeMap<BlockId, Vec<ChartDataTable>>,
 }
 
 /// Compute frontend view metadata. Invalid table schemas are skipped here and surfaced by
@@ -138,6 +143,7 @@ pub fn compute_document_meta(document: &ReportDocument) -> ComputedDocumentMeta 
     let citations = resolve_citations(document);
     let mut table_layouts: BTreeMap<BlockId, TableLayout> = BTreeMap::new();
     let mut chart_requirements = BTreeMap::new();
+    let mut chart_tables = BTreeMap::new();
     for block in &document.blocks {
         match &block.body {
             BlockKind::Table(table) => {
@@ -154,6 +160,10 @@ pub fn compute_document_meta(document: &ReportDocument) -> ComputedDocumentMeta 
                 if !requirements.is_empty() {
                     chart_requirements.insert(block.id.clone(), requirements);
                 }
+                let tables = chart_data_tables(&option);
+                if !tables.is_empty() {
+                    chart_tables.insert(block.id.clone(), tables);
+                }
             }
             BlockKind::Heading { .. }
             | BlockKind::Paragraph { .. }
@@ -168,6 +178,7 @@ pub fn compute_document_meta(document: &ReportDocument) -> ComputedDocumentMeta 
         toc_tree: compute_toc_tree(document),
         block_framing: compute_block_framing(document, &citations),
         chart_requirements,
+        chart_tables,
     }
 }
 
@@ -1046,6 +1057,51 @@ mod tests {
         assert!(requirements.required_extensions.contains("wordCloud"));
         assert!(requirements.required_extensions.contains("bar3D"));
         assert!(!meta.chart_requirements.contains_key(&block_id("plain")));
+    }
+
+    #[test]
+    fn chart_tables_match_markdown_projection() {
+        let mut doc = ReportDocument::new(doc_id("charts"));
+        doc.blocks.push(Block::new(
+            block_id("chart"),
+            BlockKind::Echarts(crate::block::EchartsBlock {
+                title: Some("Quarterly revenue".into()),
+                height: 300,
+                mode: crate::block::EchartsMode::Option,
+                preset: None,
+                option: Some(serde_json::json!({
+                    "xAxis": {"type": "category", "data": ["Q1", "Q2"]},
+                    "series": [{"name": "Revenue", "type": "bar", "data": [120, 150]}]
+                })),
+                option_patch: None,
+                fallback_summary: "Revenue grew.".into(),
+                numbering: None,
+                note: None,
+            }),
+        ));
+        let meta = compute_document_meta(&doc);
+        let tables = meta
+            .chart_tables
+            .get(&block_id("chart"))
+            .expect("chart table");
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].title, "Revenue (bar)");
+        assert_eq!(
+            tables[0].headers,
+            vec!["Category".to_string(), "Value".to_string()]
+        );
+        assert_eq!(
+            tables[0].rows,
+            vec![
+                vec!["Q1".to_string(), "120".to_string()],
+                vec!["Q2".to_string(), "150".to_string()]
+            ]
+        );
+
+        let markdown = crate::project_markdown(&doc, &crate::MarkdownOptions::default()).unwrap();
+        assert!(markdown.contains("_Chart data: Revenue (bar)_"));
+        assert!(markdown.contains("| Q1 | 120 |"));
+        assert!(markdown.contains("| Q2 | 150 |"));
     }
 
     #[test]

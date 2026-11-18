@@ -5,26 +5,28 @@ use std::{
     sync::{Arc, Mutex as StdMutex},
 };
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, BlockId, DocId, PatchOp, PatchOutcome, Rank, ReportDocument, Revision, SessionId,
-    SourceEntry, SourceId, apply_operations_in_place, lint_document, normalize::normalize_document,
-    rank_after, remap_operations_sources, try_rank_between,
+    Block, BlockId, BlockKind, CommentAuthorType, CommentMessage, CommentStatus, CommentThread,
+    DocId, PatchOp, PatchOutcome, Rank, ReportDocument, Revision, SessionId, SourceEntry, SourceId,
+    apply_operations_in_place, lint_document, normalize::normalize_document, rank_after,
+    remap_operations_sources, try_rank_between,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::{error, warn};
+use uuid::Uuid;
 
 use crate::{
     error::{InlineWarnings, RevisionConflict, StoreError, ops_to_json},
     redis_stream::RedisStreamBus,
     types::{
-        ApplyResult, CommitExtras, CreateResult, DocumentDiff, DocumentSnapshot, ReportList,
-        ReportSummary, RevisionEvent, RevisionRecord, RollbackResult, SessionEvent, SourceUpsert,
-        UpsertSourcesResult,
+        ApplyResult, CommitExtras, CreateResult, DocumentDiff, DocumentSnapshot, NewCommentReply,
+        NewCommentThread, ReportList, ReportSummary, RevisionEvent, RevisionRecord, RollbackResult,
+        SessionEvent, SourceUpsert, UpsertSourcesResult,
     },
 };
 
@@ -43,6 +45,22 @@ struct DocRow {
     toc: Value,
     theme: Value,
     references: Value,
+}
+
+#[derive(Debug, Clone)]
+struct CommentThreadRow {
+    doc_id: String,
+    thread_id: String,
+    block_id: String,
+    section_id: Option<String>,
+    anchor_snapshot: Option<String>,
+    quote: Option<Value>,
+    status: String,
+    created_rev: i64,
+    addressed_rev: Option<i64>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    anchor_detached: bool,
 }
 
 #[derive(Clone)]
@@ -224,12 +242,13 @@ impl PgReportStore {
         for (source_id, source) in &document.sources {
             validate_source_id(source_id)?;
             sqlx::query!(
-                r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata)
-                   VALUES ($1, $2, $3, $4)"#,
+                r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata, excerpt)
+                   VALUES ($1, $2, $3, $4, $5)"#,
                 document.doc_id.as_str(),
                 source_id.as_str(),
                 normalized_source_key(source),
-                serde_json::to_value(source)?
+                serde_json::to_value(source)?,
+                source.excerpt.as_deref()
             )
             .execute(&mut *tx)
             .await?;
@@ -836,15 +855,17 @@ impl PgReportStore {
         validate_source_registry(&after.sources)?;
         for (source_id, (normalized, source)) in &db_updates {
             sqlx::query!(
-                r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata)
-                   VALUES ($1, $2, $3, $4)
+                r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata, excerpt)
+                   VALUES ($1, $2, $3, $4, $5)
                    ON CONFLICT (doc_id, source_id)
                    DO UPDATE SET normalized_key = EXCLUDED.normalized_key,
-                                 metadata = EXCLUDED.metadata"#,
+                                 metadata = EXCLUDED.metadata,
+                                 excerpt = EXCLUDED.excerpt"#,
                 doc_id.as_str(),
                 source_id.as_str(),
                 normalized,
-                serde_json::to_value(source)?
+                serde_json::to_value(source)?,
+                source.excerpt.as_deref()
             )
             .execute(&mut *tx)
             .await?;
@@ -893,6 +914,442 @@ impl PgReportStore {
         validate_source_registry(&document.sources)
     }
 
+    /// Create a review thread and its first message without touching revisions or CAS state.
+    pub async fn create_comment_thread(
+        &self,
+        doc_id: &DocId,
+        request: NewCommentThread,
+    ) -> Result<CommentThread, StoreError> {
+        validate_comment_body(&request.body)?;
+        if let Some(quote) = &request.quote {
+            quote.validate().map_err(StoreError::InvalidRequest)?;
+        }
+        let mut tx = self.pool.begin().await?;
+        let loaded = load_document_in_tx(&mut tx, doc_id.as_str()).await?;
+        let document = loaded.document;
+        let index = document
+            .blocks
+            .iter()
+            .position(|block| block.id == request.block_id)
+            .ok_or_else(|| StoreError::CommentTargetNotFound {
+                doc_id: doc_id.clone(),
+                block_id: request.block_id.clone(),
+            })?;
+        let block =
+            document
+                .blocks
+                .get(index)
+                .ok_or_else(|| StoreError::CommentTargetNotFound {
+                    doc_id: doc_id.clone(),
+                    block_id: request.block_id.clone(),
+                })?;
+        let section_id = comment_section_for_index(&document, index);
+        let anchor_snapshot = comment_anchor_snapshot(block);
+        let quote = request
+            .quote
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        let now = Utc::now();
+        let thread_id = generate_comment_id("th");
+        let message_id = generate_comment_id("msg");
+        let status = CommentStatus::Open;
+
+        sqlx::query!(
+            r#"INSERT INTO report_comment_threads
+               (doc_id, thread_id, block_id, section_id, anchor_snapshot, quote, status,
+                created_rev, addressed_rev, created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $9)"#,
+            doc_id.as_str(),
+            &thread_id,
+            request.block_id.as_str(),
+            section_id.as_ref().map(BlockId::as_str),
+            anchor_snapshot.as_deref(),
+            quote,
+            status.as_str(),
+            document.revision.get(),
+            now,
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query!(
+            r#"INSERT INTO report_comment_messages
+               (message_id, doc_id, thread_id, author_type, author, body, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+            &message_id,
+            doc_id.as_str(),
+            &thread_id,
+            request.author_type.as_str(),
+            &request.author,
+            &request.body,
+            now,
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
+        Ok(CommentThread {
+            thread_id: thread_id.clone(),
+            doc_id: doc_id.clone(),
+            block_id: request.block_id,
+            section_id,
+            anchor_snapshot,
+            quote: request.quote,
+            status,
+            created_rev: document.revision,
+            addressed_rev: None,
+            anchor_detached: false,
+            messages: vec![CommentMessage {
+                message_id,
+                thread_id,
+                author_type: request.author_type,
+                author: request.author,
+                body: request.body,
+                created_at: now,
+            }],
+            created_at: now,
+            updated_at: now,
+        })
+    }
+
+    /// List review threads with live detached-anchor detection.
+    pub async fn list_comment_threads(
+        &self,
+        doc_id: &DocId,
+        status: Option<CommentStatus>,
+        block_id: Option<&BlockId>,
+    ) -> Result<Vec<CommentThread>, StoreError> {
+        let rows = sqlx::query!(
+            r#"SELECT t.doc_id, t.thread_id, t.block_id, t.section_id, t.anchor_snapshot,
+                      t.quote, t.status, t.created_rev, t.addressed_rev, t.created_at,
+                      t.updated_at, (b.block_id IS NULL) AS "anchor_detached!"
+               FROM report_comment_threads t
+               LEFT JOIN report_blocks b
+                 ON b.doc_id = t.doc_id AND b.block_id = t.block_id
+               WHERE t.doc_id = $1
+                 AND ($2::text IS NULL OR t.status = $2)
+                 AND ($3::text IS NULL OR t.block_id = $3)
+               ORDER BY t.updated_at DESC, t.thread_id ASC"#,
+            doc_id.as_str(),
+            status.map(CommentStatus::as_str),
+            block_id.map(BlockId::as_str),
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let message_rows = sqlx::query!(
+            r#"SELECT message_id, thread_id, author_type, author, body, created_at
+               FROM report_comment_messages
+               WHERE doc_id = $1
+               ORDER BY created_at ASC, message_id ASC"#,
+            doc_id.as_str()
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut messages_by_thread: HashMap<String, Vec<CommentMessage>> = HashMap::new();
+        for row in message_rows {
+            let message = build_comment_message(
+                row.message_id,
+                row.thread_id.clone(),
+                &row.author_type,
+                row.author,
+                row.body,
+                row.created_at,
+            )?;
+            messages_by_thread
+                .entry(row.thread_id)
+                .or_default()
+                .push(message);
+        }
+        rows.into_iter()
+            .map(|row| {
+                let row = CommentThreadRow {
+                    doc_id: row.doc_id,
+                    thread_id: row.thread_id,
+                    block_id: row.block_id,
+                    section_id: row.section_id,
+                    anchor_snapshot: row.anchor_snapshot,
+                    quote: row.quote,
+                    status: row.status,
+                    created_rev: row.created_rev,
+                    addressed_rev: row.addressed_rev,
+                    created_at: row.created_at,
+                    updated_at: row.updated_at,
+                    anchor_detached: row.anchor_detached,
+                };
+                let messages = messages_by_thread
+                    .remove(&row.thread_id)
+                    .unwrap_or_default();
+                row.into_thread(messages)
+            })
+            .collect()
+    }
+
+    /// Append a reply and optionally move an `open` thread to `addressed`.
+    pub async fn reply_comment_thread(
+        &self,
+        doc_id: &DocId,
+        thread_id: &str,
+        reply: NewCommentReply,
+    ) -> Result<CommentThread, StoreError> {
+        validate_comment_body(&reply.body)?;
+        if reply.mark_addressed && reply.author_type != CommentAuthorType::Agent {
+            return Err(StoreError::InvalidRequest(
+                "only agents may mark a comment addressed".into(),
+            ));
+        }
+        let mut tx = self.pool.begin().await?;
+        let current_rev_row = sqlx::query!(
+            "SELECT current_rev FROM report_documents WHERE doc_id = $1",
+            doc_id.as_str()
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| StoreError::NotFound {
+            doc_id: doc_id.clone(),
+        })?;
+        let current_rev = Revision::new(current_rev_row.current_rev)?;
+        let mut thread = self
+            .load_comment_thread_in_tx(&mut tx, doc_id, thread_id)
+            .await?;
+        let now = Utc::now();
+        let message_id = generate_comment_id("msg");
+        sqlx::query!(
+            r#"INSERT INTO report_comment_messages
+               (message_id, doc_id, thread_id, author_type, author, body, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
+            &message_id,
+            doc_id.as_str(),
+            thread_id,
+            reply.author_type.as_str(),
+            &reply.author,
+            &reply.body,
+            now,
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        let mut status = thread.status;
+        let mut addressed_rev = thread.addressed_rev;
+        if reply.mark_addressed && status == CommentStatus::Open {
+            let revision = reply.addressed_rev.unwrap_or(current_rev);
+            if revision > current_rev {
+                return Err(StoreError::InvalidRequest(format!(
+                    "addressed_rev {} is ahead of current revision {}",
+                    revision.get(),
+                    current_rev.get()
+                )));
+            }
+            status = CommentStatus::Addressed;
+            addressed_rev = Some(revision);
+        }
+        sqlx::query!(
+            r#"UPDATE report_comment_threads
+               SET status = $3, addressed_rev = $4, updated_at = $5
+               WHERE doc_id = $1 AND thread_id = $2"#,
+            doc_id.as_str(),
+            thread_id,
+            status.as_str(),
+            addressed_rev.map(Revision::get),
+            now,
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
+        thread.status = status;
+        thread.addressed_rev = addressed_rev;
+        thread.updated_at = now;
+        thread.messages.push(CommentMessage {
+            message_id,
+            thread_id: thread_id.to_string(),
+            author_type: reply.author_type,
+            author: reply.author,
+            body: reply.body,
+            created_at: now,
+        });
+        Ok(thread)
+    }
+
+    /// Human-only status transition. Only `archived` and `open` are valid here.
+    pub async fn update_comment_status(
+        &self,
+        doc_id: &DocId,
+        thread_id: &str,
+        status: CommentStatus,
+    ) -> Result<CommentThread, StoreError> {
+        if !matches!(status, CommentStatus::Open | CommentStatus::Archived) {
+            return Err(StoreError::InvalidRequest(
+                "REST may only archive a thread or reopen it".into(),
+            ));
+        }
+        let mut tx = self.pool.begin().await?;
+        let mut thread = self
+            .load_comment_thread_in_tx(&mut tx, doc_id, thread_id)
+            .await?;
+        let now = Utc::now();
+        let addressed_rev = if status == CommentStatus::Open {
+            None
+        } else {
+            thread.addressed_rev
+        };
+        sqlx::query!(
+            r#"UPDATE report_comment_threads
+               SET status = $3, addressed_rev = $4, updated_at = $5
+               WHERE doc_id = $1 AND thread_id = $2"#,
+            doc_id.as_str(),
+            thread_id,
+            status.as_str(),
+            addressed_rev.map(Revision::get),
+            now,
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        thread.status = status;
+        thread.addressed_rev = addressed_rev;
+        thread.updated_at = now;
+        Ok(thread)
+    }
+
+    async fn load_comment_thread_in_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        doc_id: &DocId,
+        thread_id: &str,
+    ) -> Result<CommentThread, StoreError> {
+        let row = sqlx::query!(
+            r#"SELECT t.doc_id, t.thread_id, t.block_id, t.section_id, t.anchor_snapshot,
+                      t.quote, t.status, t.created_rev, t.addressed_rev, t.created_at,
+                      t.updated_at, (b.block_id IS NULL) AS "anchor_detached!"
+               FROM report_comment_threads t
+               LEFT JOIN report_blocks b
+                 ON b.doc_id = t.doc_id AND b.block_id = t.block_id
+               WHERE t.doc_id = $1 AND t.thread_id = $2"#,
+            doc_id.as_str(),
+            thread_id,
+        )
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or_else(|| StoreError::CommentThreadNotFound {
+            doc_id: doc_id.clone(),
+            thread_id: thread_id.to_string(),
+        })?;
+        let message_rows = sqlx::query!(
+            r#"SELECT message_id, thread_id, author_type, author, body, created_at
+               FROM report_comment_messages
+               WHERE doc_id = $1 AND thread_id = $2
+               ORDER BY created_at ASC, message_id ASC"#,
+            doc_id.as_str(),
+            thread_id,
+        )
+        .fetch_all(&mut **tx)
+        .await?;
+        let messages = message_rows
+            .into_iter()
+            .map(|row| {
+                build_comment_message(
+                    row.message_id,
+                    row.thread_id,
+                    &row.author_type,
+                    row.author,
+                    row.body,
+                    row.created_at,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        CommentThreadRow {
+            doc_id: row.doc_id,
+            thread_id: row.thread_id,
+            block_id: row.block_id,
+            section_id: row.section_id,
+            anchor_snapshot: row.anchor_snapshot,
+            quote: row.quote,
+            status: row.status,
+            created_rev: row.created_rev,
+            addressed_rev: row.addressed_rev,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            anchor_detached: row.anchor_detached,
+        }
+        .into_thread(messages)
+    }
+
+    /// Rebuild a read-only document state at any committed revision.
+    ///
+    /// Prefers the newest snapshot at or below the target and replays forward ops. When no
+    /// snapshot is available, rewinds the current state with inverse ops.
+    pub async fn document_at_revision(
+        &self,
+        doc_id: &DocId,
+        revision: Revision,
+    ) -> Result<ReportDocument, StoreError> {
+        let current = self.get_document(doc_id).await?;
+        if revision > current.revision {
+            return Err(StoreError::InvalidRequest(format!(
+                "revision {} is ahead of current revision {} for `{doc_id}`",
+                revision.get(),
+                current.revision.get()
+            )));
+        }
+        if revision.is_zero() {
+            let mut empty = ReportDocument::new(doc_id.clone());
+            empty.revision = Revision::ZERO;
+            return Ok(empty);
+        }
+        if revision == current.revision {
+            return Ok(current);
+        }
+        let snapshot = sqlx::query!(
+            r#"SELECT rev_num, snapshot_zstd FROM report_snapshots
+               WHERE doc_id = $1 AND rev_num <= $2
+               ORDER BY rev_num DESC LIMIT 1"#,
+            doc_id.as_str(),
+            revision.get()
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(snapshot) = snapshot {
+            let decoded = zstd::decode_all(snapshot.snapshot_zstd.as_slice())
+                .map_err(|error| StoreError::Snapshot(error.to_string()))?;
+            let mut document: ReportDocument = serde_json::from_slice(&decoded)?;
+            document.revision = Revision::new(snapshot.rev_num)?;
+            let rows = sqlx::query!(
+                r#"SELECT rev_num, forward_ops FROM report_revisions
+                   WHERE doc_id = $1 AND rev_num > $2 AND rev_num <= $3
+                   ORDER BY rev_num ASC"#,
+                doc_id.as_str(),
+                snapshot.rev_num,
+                revision.get()
+            )
+            .fetch_all(&self.pool)
+            .await?;
+            for row in rows {
+                let ops: Vec<PatchOp> = serde_json::from_value(row.forward_ops)?;
+                apply_operations_in_place(&mut document, &ops)?;
+                document.revision = Revision::new(row.rev_num)?;
+            }
+            return Ok(document);
+        }
+
+        let rows = sqlx::query!(
+            r#"SELECT rev_num, inverse_ops FROM report_revisions
+               WHERE doc_id = $1 AND rev_num > $2 AND rev_num <= $3
+               ORDER BY rev_num DESC"#,
+            doc_id.as_str(),
+            revision.get(),
+            current.revision.get()
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut document = current;
+        for row in rows {
+            let ops: Vec<PatchOp> = serde_json::from_value(row.inverse_ops)?;
+            apply_operations_in_place(&mut document, &ops)?;
+            document.revision = Revision::new(row.rev_num.saturating_sub(1))?;
+        }
+        Ok(document)
+    }
+
     fn maybe_snapshot(&self, doc_id: &str, revision: Revision, document: ReportDocument) {
         if revision.get() % 50 != 0 {
             return;
@@ -922,6 +1379,103 @@ impl PgReportStore {
             }
         });
     }
+}
+
+impl CommentThreadRow {
+    fn into_thread(self, messages: Vec<CommentMessage>) -> Result<CommentThread, StoreError> {
+        Ok(CommentThread {
+            thread_id: self.thread_id,
+            doc_id: DocId::parse(self.doc_id)?,
+            block_id: BlockId::parse(self.block_id)?,
+            section_id: self.section_id.map(BlockId::parse).transpose()?,
+            anchor_snapshot: self.anchor_snapshot,
+            quote: self
+                .quote
+                .map(|value| parse_json(value, "report_comment_threads.quote"))
+                .transpose()?,
+            status: CommentStatus::parse(&self.status).ok_or_else(|| {
+                StoreError::Internal(format!(
+                    "invalid comment status `{}` persisted in database",
+                    self.status
+                ))
+            })?,
+            created_rev: Revision::new(self.created_rev)?,
+            addressed_rev: self.addressed_rev.map(Revision::new).transpose()?,
+            anchor_detached: self.anchor_detached,
+            messages,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+fn build_comment_message(
+    message_id: String,
+    thread_id: String,
+    author_type: &str,
+    author: String,
+    body: String,
+    created_at: DateTime<Utc>,
+) -> Result<CommentMessage, StoreError> {
+    let author_type = CommentAuthorType::parse(author_type).ok_or_else(|| {
+        StoreError::Internal(format!(
+            "invalid comment author type `{author_type}` persisted in database"
+        ))
+    })?;
+    Ok(CommentMessage {
+        message_id,
+        thread_id,
+        author_type,
+        author,
+        body,
+        created_at,
+    })
+}
+
+fn comment_section_for_index(document: &ReportDocument, index: usize) -> Option<BlockId> {
+    let block = document.blocks.get(index)?;
+    if matches!(block.body, BlockKind::Heading { .. }) {
+        return Some(block.id.clone());
+    }
+    document
+        .blocks
+        .iter()
+        .take(index)
+        .rev()
+        .find(|candidate| matches!(candidate.body, BlockKind::Heading { .. }))
+        .map(|heading| heading.id.clone())
+}
+
+fn comment_anchor_snapshot(block: &Block) -> Option<String> {
+    let text = block.visible_text();
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let mut chars = text.chars();
+    let mut snapshot: String = chars.by_ref().take(160).collect();
+    if chars.next().is_some() {
+        snapshot.push('…');
+    }
+    Some(snapshot)
+}
+
+fn validate_comment_body(body: &str) -> Result<(), StoreError> {
+    if body.trim().is_empty() {
+        return Err(StoreError::InvalidRequest(
+            "comment body must not be empty".into(),
+        ));
+    }
+    if body.chars().count() > 20_000 {
+        return Err(StoreError::InvalidRequest(
+            "comment body must be at most 20000 characters".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn generate_comment_id(prefix: &str) -> String {
+    format!("{prefix}_{}", Uuid::new_v4().simple())
 }
 
 async fn lock_current_revision(
@@ -968,14 +1522,17 @@ async fn load_document_in_tx(
     };
 
     let source_rows = sqlx::query!(
-        "SELECT source_id, metadata FROM report_sources WHERE doc_id = $1 ORDER BY source_id",
+        "SELECT source_id, metadata, excerpt FROM report_sources WHERE doc_id = $1 ORDER BY source_id",
         doc_id
     )
     .fetch_all(&mut **tx)
     .await?;
     let mut sources = IndexMap::new();
     for row in source_rows {
-        let entry: SourceEntry = parse_json(row.metadata, "report_sources.metadata")?;
+        let mut entry: SourceEntry = parse_json(row.metadata, "report_sources.metadata")?;
+        if entry.excerpt.is_none() {
+            entry.excerpt = row.excerpt;
+        }
         sources.insert(SourceId::parse(row.source_id)?, entry);
     }
 
@@ -1410,12 +1967,13 @@ async fn persist_sources(
         .await?;
     for (source_id, source) in &after.sources {
         sqlx::query!(
-            r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata)
-               VALUES ($1, $2, $3, $4)"#,
+            r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata, excerpt)
+               VALUES ($1, $2, $3, $4, $5)"#,
             doc_id,
             source_id.as_str(),
             normalized_source_key(source),
-            serde_json::to_value(source)?
+            serde_json::to_value(source)?,
+            source.excerpt.as_deref()
         )
         .execute(&mut **tx)
         .await?;
@@ -1761,6 +2319,11 @@ fn merge_source(existing: &SourceEntry, incoming: &SourceEntry) -> SourceEntry {
             .clone()
             .filter(|value| !value.trim().is_empty())
             .or_else(|| existing.note.clone()),
+        excerpt: incoming
+            .excerpt
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| existing.excerpt.clone()),
     }
 }
 

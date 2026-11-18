@@ -7,6 +7,22 @@
       "description": "SSE `agent_presence` payload for live agent activity.",
       "$ref": "#/$defs/AgentPresenceEvent"
     },
+    "chart_data_table": {
+      "description": "Structured ECharts data table projected from a chart block.",
+      "$ref": "#/$defs/ChartDataTable"
+    },
+    "comment_message": {
+      "description": "One review-thread message.",
+      "$ref": "#/$defs/CommentMessage"
+    },
+    "comment_thread": {
+      "description": "Side-channel review thread returned by the comments REST API and MCP tools.",
+      "$ref": "#/$defs/CommentThread"
+    },
+    "comment_updated": {
+      "description": "SSE `comment_updated` payload for live review-thread changes.",
+      "$ref": "#/$defs/CommentUpdatedEvent"
+    },
     "computed": {
       "description": "Computed labels, table layouts, TOC tree and citation map for frontends.",
       "$ref": "#/$defs/ComputedDocumentMeta"
@@ -14,6 +30,14 @@
     "document": {
       "description": "Canonical stored/read document returned by `GET /api/docs/{doc_id}`.",
       "$ref": "#/$defs/ReportDocument"
+    },
+    "document_diff": {
+      "description": "Structured block-level diff between two revisions.",
+      "$ref": "#/$defs/DocumentDiffReport"
+    },
+    "document_metadata_diff": {
+      "description": "Non-block metadata flags included in a document diff.",
+      "$ref": "#/$defs/DocumentMetadataDiff"
     },
     "draft": {
       "description": "Offline authoring draft accepted by `apply_draft`.",
@@ -66,7 +90,13 @@
     "ephemeral_preview",
     "agent_presence",
     "ephemeral_clear",
+    "comment_updated",
     "ephemeral_payload",
+    "comment_thread",
+    "comment_message",
+    "document_diff",
+    "document_metadata_diff",
+    "chart_data_table",
     "draft",
     "patch_outcome",
     "lint"
@@ -121,6 +151,13 @@
       "description": "A fully resolved bibliography entry.",
       "type": "object",
       "properties": {
+        "excerpt": {
+          "description": "Optional verbatim evidence excerpt supplied with the source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "label": {
           "description": "Display label, for example `[1]` or `(Smith, 2024)`.",
           "type": "string"
@@ -285,6 +322,67 @@
           "$ref": "#/$defs/CustomHtmlBlock",
           "required": [
             "type"
+          ]
+        }
+      ]
+    },
+    "BlockDiffEntry": {
+      "description": "One block-level change between two snapshots.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "block": {
+              "$ref": "#/$defs/Block"
+            },
+            "type": {
+              "type": "string",
+              "const": "added"
+            }
+          },
+          "required": [
+            "type",
+            "block"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "block": {
+              "$ref": "#/$defs/Block"
+            },
+            "type": {
+              "type": "string",
+              "const": "removed"
+            }
+          },
+          "required": [
+            "type",
+            "block"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "after": {
+              "$ref": "#/$defs/Block"
+            },
+            "before": {
+              "$ref": "#/$defs/Block"
+            },
+            "block_id": {
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "modified"
+            }
+          },
+          "required": [
+            "type",
+            "block_id",
+            "before",
+            "after"
           ]
         }
       ]
@@ -601,6 +699,35 @@
         }
       ]
     },
+    "ChartDataTable": {
+      "description": "Renderer-agnostic tabular projection of an ECharts option.\n\nThe same tables power Markdown review and the frontend `computed.chart_tables` payload.",
+      "type": "object",
+      "properties": {
+        "headers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "headers",
+        "rows"
+      ]
+    },
     "ChartRequirements": {
       "description": "ECharts maps and extension series that the frontend must register before rendering.",
       "type": "object",
@@ -783,6 +910,172 @@
         }
       ]
     },
+    "CommentAuthorType": {
+      "description": "Who wrote a comment or reply.",
+      "type": "string",
+      "enum": [
+        "human",
+        "agent"
+      ]
+    },
+    "CommentMessage": {
+      "description": "One message in a review thread.",
+      "type": "object",
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "author_type": {
+          "$ref": "#/$defs/CommentAuthorType"
+        },
+        "body": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_id",
+        "thread_id",
+        "author_type",
+        "author",
+        "body",
+        "created_at"
+      ]
+    },
+    "CommentStatus": {
+      "description": "Review-thread lifecycle.\n\nAgents may move `open` to `addressed`; only the human REST surface may archive or reopen.",
+      "type": "string",
+      "enum": [
+        "open",
+        "addressed",
+        "archived"
+      ]
+    },
+    "CommentThread": {
+      "description": "A side-channel review thread anchored to a block.",
+      "type": "object",
+      "properties": {
+        "addressed_rev": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "anchor_detached": {
+          "description": "True when `block_id` no longer exists in the current document.",
+          "type": "boolean"
+        },
+        "anchor_snapshot": {
+          "description": "Truncated visible text captured when the thread was created.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "block_id": {
+          "$ref": "#/$defs/BlockId"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_rev": {
+          "$ref": "#/$defs/Revision"
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CommentMessage"
+          }
+        },
+        "quote": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextQuoteSelector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "section_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/CommentStatus"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "thread_id",
+        "doc_id",
+        "block_id",
+        "status",
+        "created_rev",
+        "anchor_detached",
+        "messages",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "CommentUpdatedEvent": {
+      "description": "Payload of an SSE `comment_updated` event.",
+      "type": "object",
+      "properties": {
+        "anchor_detached": {
+          "type": "boolean"
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "status": {
+          "$ref": "#/$defs/CommentStatus"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "doc_id",
+        "thread_id",
+        "status",
+        "anchor_detached",
+        "updated_at"
+      ]
+    },
     "ComputedDocumentMeta": {
       "description": "Everything the external frontend needs beyond the canonical Block AST.",
       "type": "object",
@@ -805,6 +1098,16 @@
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/ChartRequirements"
+          }
+        },
+        "chart_tables": {
+          "description": "Structured chart data tables grouped by chart block.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/ChartDataTable"
+            }
           }
         },
         "citation_map": {
@@ -987,6 +1290,86 @@
     "DocId": {
       "description": "Validated identifier.",
       "type": "string"
+    },
+    "DocumentDiffReport": {
+      "description": "Full block-level diff returned by `GET /api/docs/{doc_id}/diff`.",
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockDiffEntry"
+          }
+        },
+        "cover_changed": {
+          "type": "boolean"
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "from_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "order_changed": {
+          "description": "True when surviving blocks changed relative order.",
+          "type": "boolean"
+        },
+        "references_changed": {
+          "type": "boolean"
+        },
+        "sources_changed": {
+          "type": "boolean"
+        },
+        "theme_changed": {
+          "type": "boolean"
+        },
+        "to_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "toc_changed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "doc_id",
+        "from_revision",
+        "to_revision",
+        "blocks",
+        "cover_changed",
+        "toc_changed",
+        "theme_changed",
+        "references_changed",
+        "sources_changed",
+        "order_changed"
+      ]
+    },
+    "DocumentMetadataDiff": {
+      "description": "Non-block document fields that changed between two snapshots.",
+      "type": "object",
+      "properties": {
+        "cover_changed": {
+          "type": "boolean"
+        },
+        "references_changed": {
+          "type": "boolean"
+        },
+        "sources_changed": {
+          "type": "boolean"
+        },
+        "theme_changed": {
+          "type": "boolean"
+        },
+        "toc_changed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "cover_changed",
+        "toc_changed",
+        "theme_changed",
+        "references_changed",
+        "sources_changed"
+      ]
     },
     "EchartsBlock": {
       "description": "An ECharts chart block. `fallback_summary` is mandatory so non-JS renderers stay useful.",
@@ -1241,6 +1624,40 @@
             "doc_id",
             "preview_ids",
             "received_at"
+          ]
+        },
+        {
+          "description": "Payload of an SSE `comment_updated` event.",
+          "type": "object",
+          "properties": {
+            "anchor_detached": {
+              "type": "boolean"
+            },
+            "doc_id": {
+              "$ref": "#/$defs/DocId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "comment_updated"
+            },
+            "status": {
+              "$ref": "#/$defs/CommentStatus"
+            },
+            "thread_id": {
+              "type": "string"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "kind",
+            "doc_id",
+            "thread_id",
+            "status",
+            "anchor_detached",
+            "updated_at"
           ]
         }
       ]
@@ -2318,6 +2735,13 @@
             "null"
           ]
         },
+        "excerpt": {
+          "description": "Short verbatim evidence excerpt used by reviewers and agents.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "note": {
           "type": [
             "string",
@@ -2551,6 +2975,31 @@
         "leaf_columns",
         "header_depth",
         "total_width_pct"
+      ]
+    },
+    "TextQuoteSelector": {
+      "description": "Text-selection anchor that avoids brittle character offsets.",
+      "type": "object",
+      "properties": {
+        "exact": {
+          "type": "string"
+        },
+        "prefix": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "suffix": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "exact"
       ]
     },
     "ThemeConfig": {

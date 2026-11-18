@@ -252,6 +252,9 @@ pub struct SourceEntry {
     pub accessed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Short verbatim evidence excerpt used by reviewers and agents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
 }
 
 impl SourceEntry {
@@ -264,6 +267,7 @@ impl SourceEntry {
             date: None,
             accessed: None,
             note: None,
+            excerpt: None,
         }
     }
 

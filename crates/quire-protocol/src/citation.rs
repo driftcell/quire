@@ -87,6 +87,9 @@ pub struct BibliographyEntry {
     pub source: SourceEntry,
     /// Plain-text citation line, useful for LLM digests and non-HTML consumers.
     pub plain_text: String,
+    /// Optional verbatim evidence excerpt supplied with the source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -189,6 +192,7 @@ pub fn resolve_citations(document: &ReportDocument) -> CitationResolution {
             label,
             source: source.clone(),
             plain_text,
+            excerpt: source.excerpt.clone(),
         });
     }
 

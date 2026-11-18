@@ -10,15 +10,19 @@ use axum::{
         IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
-    routing::{get, post},
+    routing::{get, patch, post},
 };
 use chrono::Utc;
 use futures::Stream;
 use quire_protocol::{
-    ComputedDocumentMeta, EphemeralPayload, ReportDocument, compute_document_meta,
+    BlockId, CommentAuthorType, CommentStatus, CommentThread, ComputedDocumentMeta,
+    DocumentDiffReport, EphemeralPayload, ReportDocument, TextQuoteSelector, compute_document_meta,
+    diff_documents,
 };
 use quire_protocol::{DocId, Revision, SessionId};
-use quire_store::{ReportList, RevisionRecord, RollbackResult, StoreError};
+use quire_store::{
+    NewCommentReply, NewCommentThread, ReportList, RevisionRecord, RollbackResult, StoreError,
+};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -58,12 +62,23 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/docs/{doc_id}", get(get_document))
         .route("/api/docs/{doc_id}/events", get(document_events))
         .route("/api/docs/{doc_id}/revisions", get(list_revisions))
+        .route("/api/docs/{doc_id}/comments", get(list_comments))
+        .route("/api/docs/{doc_id}/diff", get(document_diff))
         .route("/api/sessions/{session_id}/events", get(session_events))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::ro_auth));
 
     let read_write = Router::new()
         .route("/api/docs/{doc_id}/rollback", post(rollback))
         .route("/api/docs/{doc_id}/ephemeral", post(ephemeral))
+        .route("/api/docs/{doc_id}/comments", post(create_comment))
+        .route(
+            "/api/docs/{doc_id}/comments/{thread_id}/replies",
+            post(reply_comment),
+        )
+        .route(
+            "/api/docs/{doc_id}/comments/{thread_id}",
+            patch(update_comment_status),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::rw_auth));
 
     let mcp_router = Router::new()
@@ -85,6 +100,7 @@ fn cors_layer(state: &AppState) -> CorsLayer {
         .allow_methods([
             axum::http::Method::GET,
             axum::http::Method::POST,
+            axum::http::Method::PATCH,
             axum::http::Method::OPTIONS,
         ])
         .allow_headers(Any);
@@ -277,6 +293,167 @@ async fn rollback(
 }
 
 const MAX_EPHEMERAL_BYTES: usize = 64 * 1024;
+
+#[derive(Debug, Serialize)]
+struct CommentListView {
+    doc_id: DocId,
+    comments: Vec<CommentThread>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CommentListQuery {
+    status: Option<String>,
+    block_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateCommentRequest {
+    block_id: String,
+    body: String,
+    #[serde(default)]
+    quote: Option<TextQuoteSelector>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplyCommentRequest {
+    body: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdateCommentStatusRequest {
+    status: String,
+}
+
+fn parse_comment_status(value: &str) -> Result<CommentStatus, ApiError> {
+    CommentStatus::parse(value).ok_or_else(|| {
+        ApiError(StoreError::InvalidRequest(format!(
+            "unknown comment status `{value}`; expected open, addressed, archived or all"
+        )))
+    })
+}
+
+async fn list_comments(
+    State(state): State<AppState>,
+    Path(doc_id): Path<DocId>,
+    Query(query): Query<CommentListQuery>,
+) -> Result<Json<CommentListView>, ApiError> {
+    let status = match query.status.as_deref() {
+        None | Some("all") => None,
+        Some(raw) => Some(parse_comment_status(raw)?),
+    };
+    let block_id = query.block_id.as_deref().map(BlockId::parse).transpose()?;
+    let mut comments = state
+        .store
+        .list_comment_threads(&doc_id, status, block_id.as_ref())
+        .await?;
+    if query.status.is_none() {
+        comments.retain(|thread| thread.status != CommentStatus::Archived);
+    }
+    Ok(Json(CommentListView { doc_id, comments }))
+}
+
+async fn create_comment(
+    State(state): State<AppState>,
+    Path(doc_id): Path<DocId>,
+    context: RequestContext,
+    Json(request): Json<CreateCommentRequest>,
+) -> Result<Json<CommentThread>, ApiError> {
+    let block_id = BlockId::parse(request.block_id)?;
+    if let Some(quote) = &request.quote {
+        quote
+            .validate()
+            .map_err(|reason| ApiError(StoreError::InvalidRequest(reason)))?;
+    }
+    let thread = state
+        .store
+        .create_comment_thread(
+            &doc_id,
+            NewCommentThread {
+                block_id,
+                author_type: CommentAuthorType::Human,
+                author: context.actor,
+                body: request.body,
+                quote: request.quote,
+            },
+        )
+        .await?;
+    state.publish_comment_updated(&thread).await;
+    Ok(Json(thread))
+}
+
+async fn reply_comment(
+    State(state): State<AppState>,
+    Path((doc_id, thread_id)): Path<(DocId, String)>,
+    context: RequestContext,
+    Json(request): Json<ReplyCommentRequest>,
+) -> Result<Json<CommentThread>, ApiError> {
+    let thread = state
+        .store
+        .reply_comment_thread(
+            &doc_id,
+            &thread_id,
+            NewCommentReply {
+                author_type: CommentAuthorType::Human,
+                author: context.actor,
+                body: request.body,
+                mark_addressed: false,
+                addressed_rev: None,
+            },
+        )
+        .await?;
+    state.publish_comment_updated(&thread).await;
+    Ok(Json(thread))
+}
+
+async fn update_comment_status(
+    State(state): State<AppState>,
+    Path((doc_id, thread_id)): Path<(DocId, String)>,
+    Json(request): Json<UpdateCommentStatusRequest>,
+) -> Result<Json<CommentThread>, ApiError> {
+    let status = parse_comment_status(&request.status)?;
+    let thread = state
+        .store
+        .update_comment_status(&doc_id, &thread_id, status)
+        .await?;
+    state.publish_comment_updated(&thread).await;
+    Ok(Json(thread))
+}
+
+#[derive(Debug, Deserialize)]
+struct DiffQuery {
+    #[serde(rename = "fromRev", alias = "from_rev")]
+    from_rev: i64,
+    #[serde(rename = "toRev", alias = "to_rev")]
+    to_rev: Option<i64>,
+}
+
+async fn document_diff(
+    State(state): State<AppState>,
+    Path(doc_id): Path<DocId>,
+    Query(query): Query<DiffQuery>,
+) -> Result<Json<DocumentDiffReport>, ApiError> {
+    let from_revision = Revision::new(query.from_rev)?;
+    let current = state.store.get_document(&doc_id).await?.revision;
+    let to_revision = Revision::new(query.to_rev.unwrap_or(current.get()))?;
+    if from_revision > current || to_revision > current {
+        return Err(ApiError(StoreError::InvalidRequest(format!(
+            "diff revisions must be between 0 and current_rev {}",
+            current.get()
+        ))));
+    }
+    let before = state
+        .store
+        .document_at_revision(&doc_id, from_revision)
+        .await?;
+    let after = state
+        .store
+        .document_at_revision(&doc_id, to_revision)
+        .await?;
+    Ok(Json(diff_documents(&before, &after)))
+}
 
 fn parse_ephemeral_body(doc_id: &DocId, body: &[u8]) -> Result<EphemeralPayload, StoreError> {
     let mut value: Value = serde_json::from_slice(body)

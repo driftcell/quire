@@ -565,7 +565,13 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     // 2. Lead agent cold start via MCP.
     let lead = McpClient::connect(http.clone(), &base, &session_id, "lead-orchestrator").await?;
     let tool_names = lead.list_tool_names().await?;
-    assert_eq!(tool_names.len(), 15, "tool names: {tool_names:?}");
+    assert_eq!(tool_names.len(), 18, "tool names: {tool_names:?}");
+    for comment_tool in ["list_comments", "add_comment", "reply_comment"] {
+        assert!(
+            tool_names.iter().any(|name| name == comment_tool),
+            "missing {comment_tool}: {tool_names:?}"
+        );
+    }
     let guide = lead
         .call_tool("get_protocol_guide", json!({"topic":"quickstart"}))
         .await?;
@@ -936,7 +942,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                 "title": "Market Outlook 2026",
                 "url": "https://example.com/market",
                 "authors": ["Katherine Johnson"],
-                "date": "2026-01-15"
+                "date": "2026-01-15",
+                "excerpt": "Enterprise demand accelerated through Q4."
             }
         },
         "blocks": [
@@ -1038,7 +1045,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                             "title": "Market Outlook 2026",
                             "url": "https://example.com/market",
                             "authors": ["Katherine Johnson"],
-                            "date": "2026-01-15"
+                            "date": "2026-01-15",
+                            "excerpt": "Enterprise demand accelerated through Q4."
                         },
                         {
                             "id": "sec_market_duplicate",
@@ -1397,6 +1405,32 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         2,
         "duplicate source must be canonicalized: {sources:?}"
     );
+    assert_eq!(
+        sources["sec_market"]["excerpt"].as_str(),
+        Some("Enterprise demand accelerated through Q4.")
+    );
+    let bibliography = final_doc["computed"]["bibliography"].as_array().unwrap();
+    assert!(bibliography.iter().any(|entry| {
+        entry["source_id"] == "sec_market"
+            && entry["excerpt"].as_str() == Some("Enterprise demand accelerated through Q4.")
+    }));
+    let chart_tables = &final_doc["computed"]["chart_tables"];
+    for chart_id in ["ch0_dataset", "ch1_chart"] {
+        assert!(
+            chart_tables[chart_id]
+                .as_array()
+                .is_some_and(|tables| !tables.is_empty()),
+            "missing computed chart tables for {chart_id}: {chart_tables}"
+        );
+    }
+    assert!(
+        chart_tables["ch0_dataset"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|table| table["headers"][0] == "Quarter"),
+        "dataset chart table must expose the Quarter header: {chart_tables}"
+    );
 
     let dataset_chart = final_doc["blocks"]
         .as_array()
@@ -1592,6 +1626,238 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         Some(0)
     );
     tokio::fs::remove_file(&draft_path).await?;
+
+    // 11. Side-channel comments: human review, writer edit/delete, agent addressed, human archive.
+    // Comment mutations must never move current_rev, so the writer's expected_revision below
+    // remains valid and proves there is no CAS interference.
+    let digest = reviewer
+        .call_tool("get_document_digest", json!({"doc_id": doc_id}))
+        .await?;
+    let comment_base_revision = digest["digest"]["current_rev"].as_i64().unwrap();
+    let comment_response = http
+        .post(format!("{base}/api/docs/{doc_id}/comments"))
+        .header("x-actor", "human-reviewer")
+        .json(&json!({
+            "block_id": "ch1_preview",
+            "body": "Please tighten this revenue sentence.",
+            "quote": {
+                "exact": "Revenue grew 18%",
+                "prefix": "",
+                "suffix": " year over year."
+            }
+        }))
+        .send()
+        .await?;
+    assert!(
+        comment_response.status().is_success(),
+        "comment create failed: {}",
+        comment_response.status()
+    );
+    let comment_thread = comment_response.json::<Value>().await?;
+    let thread_id = comment_thread["thread_id"].as_str().unwrap().to_string();
+    assert_eq!(comment_thread["status"].as_str(), Some("open"));
+    assert_eq!(
+        comment_thread["created_rev"].as_i64(),
+        Some(comment_base_revision)
+    );
+    assert_eq!(comment_thread["anchor_detached"].as_bool(), Some(false));
+    assert!(
+        comment_thread["anchor_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| snapshot.contains("Revenue grew 18%"))
+    );
+    let after_comment = http
+        .get(format!("{base}/api/docs/{doc_id}"))
+        .send()
+        .await?
+        .json::<Value>()
+        .await?;
+    assert_eq!(
+        after_comment["current_rev"].as_i64(),
+        Some(comment_base_revision),
+        "creating a comment must not create a revision"
+    );
+
+    let comment_edit = reviewer
+        .call_tool(
+            "apply_operations",
+            json!({
+                "doc_id": doc_id,
+                "expected_revision": comment_base_revision,
+                "summary": "address review and remove preview placeholder",
+                "ops": [
+                    {
+                        "type": "patch_block",
+                        "block_id": "ch1_summary",
+                        "patch": {"text": "Revenue grew 18% year over year [^sec_fin]."}
+                    },
+                    {
+                        "type": "append",
+                        "blocks": [{
+                            "id": "diff_added",
+                            "type": "paragraph",
+                            "text": "Added by the diff verification batch."
+                        }]
+                    },
+                    {"type": "delete_blocks", "block_ids": ["ch1_preview"]}
+                ]
+            }),
+        )
+        .await?;
+    let comment_edit_revision = comment_edit["new_revision"].as_i64().unwrap();
+    assert_eq!(comment_edit_revision, comment_base_revision + 1);
+
+    let diff = http
+        .get(format!(
+            "{base}/api/docs/{doc_id}/diff?fromRev={comment_base_revision}&toRev={comment_edit_revision}"
+        ))
+        .send()
+        .await?
+        .json::<Value>()
+        .await?;
+    assert_eq!(diff["from_revision"].as_i64(), Some(comment_base_revision));
+    assert_eq!(diff["to_revision"].as_i64(), Some(comment_edit_revision));
+    assert_eq!(diff["cover_changed"].as_bool(), Some(false));
+    assert_eq!(diff["order_changed"].as_bool(), Some(false));
+    let diff_blocks = diff["blocks"].as_array().unwrap();
+    assert!(diff_blocks.iter().any(|entry| {
+        entry["type"] == "modified"
+            && entry["block_id"] == "ch1_summary"
+            && entry["before"]["text"] != entry["after"]["text"]
+    }));
+    assert!(
+        diff_blocks
+            .iter()
+            .any(|entry| entry["type"] == "added" && entry["block"]["id"] == "diff_added")
+    );
+    assert!(
+        diff_blocks
+            .iter()
+            .any(|entry| { entry["type"] == "removed" && entry["block"]["id"] == "ch1_preview" })
+    );
+
+    let comment_reply = reviewer
+        .call_tool(
+            "reply_comment",
+            json!({
+                "doc_id": doc_id,
+                "thread_id": thread_id,
+                "body": "Tightened and committed in the delete batch.",
+                "mark_addressed": true,
+                "addressed_rev": comment_edit_revision
+            }),
+        )
+        .await?;
+    assert_eq!(comment_reply["status"].as_str(), Some("addressed"));
+    assert_eq!(
+        comment_reply["addressed_rev"].as_i64(),
+        Some(comment_edit_revision)
+    );
+    assert_eq!(comment_reply["anchor_detached"].as_bool(), Some(true));
+    assert!(
+        comment_reply["anchor_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| snapshot.contains("Revenue grew 18%"))
+    );
+    assert_eq!(comment_reply["messages"].as_array().map(Vec::len), Some(2));
+    let after_reply = http
+        .get(format!("{base}/api/docs/{doc_id}"))
+        .send()
+        .await?
+        .json::<Value>()
+        .await?;
+    assert_eq!(
+        after_reply["current_rev"].as_i64(),
+        Some(comment_edit_revision),
+        "replying must not create a revision"
+    );
+
+    let active_comments = reviewer
+        .call_tool("list_comments", json!({"doc_id": doc_id}))
+        .await?;
+    assert!(active_comments["comments"].as_array().unwrap().iter().any(
+        |thread| thread["thread_id"] == thread_id.as_str()
+            && thread["status"] == "addressed"
+            && thread["anchor_detached"] == true
+    ));
+
+    let archive_response = http
+        .patch(format!("{base}/api/docs/{doc_id}/comments/{thread_id}"))
+        .header("x-actor", "human-reviewer")
+        .json(&json!({"status": "archived"}))
+        .send()
+        .await?;
+    assert!(
+        archive_response.status().is_success(),
+        "comment archive failed: {}",
+        archive_response.status()
+    );
+    let archived_thread = archive_response.json::<Value>().await?;
+    assert_eq!(archived_thread["status"].as_str(), Some("archived"));
+    let after_archive = http
+        .get(format!("{base}/api/docs/{doc_id}"))
+        .send()
+        .await?
+        .json::<Value>()
+        .await?;
+    assert_eq!(
+        after_archive["current_rev"].as_i64(),
+        Some(comment_edit_revision),
+        "archiving must not create a revision"
+    );
+
+    let archived_comments = reviewer
+        .call_tool(
+            "list_comments",
+            json!({"doc_id": doc_id, "status": "archived"}),
+        )
+        .await?;
+    assert!(
+        archived_comments["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|thread| thread["thread_id"] == thread_id.as_str())
+    );
+    doc_sse
+        .wait_for_frame(|frame| {
+            frame.event.as_deref() == Some("comment_updated")
+                && json_string_field(&frame.data, "thread_id").as_deref()
+                    == Some(thread_id.as_str())
+                && json_string_field(&frame.data, "status").as_deref() == Some("archived")
+        })
+        .await?;
+
+    let agent_comment = reviewer
+        .call_tool(
+            "add_comment",
+            json!({
+                "doc_id": doc_id,
+                "block_id": "diff_added",
+                "body": "Agent note on the diff sentinel.",
+                "quote": {"exact": "diff verification batch"}
+            }),
+        )
+        .await?;
+    assert_eq!(agent_comment["status"].as_str(), Some("open"));
+    assert_eq!(
+        agent_comment["messages"][0]["author_type"].as_str(),
+        Some("agent")
+    );
+    assert_eq!(
+        agent_comment["created_rev"].as_i64(),
+        Some(comment_edit_revision)
+    );
+    assert_eq!(
+        http.get(format!("{base}/api/docs/{doc_id}"))
+            .send()
+            .await?
+            .json::<Value>()
+            .await?["current_rev"]
+            .as_i64(),
+        Some(comment_edit_revision),
+        "MCP add_comment must not create a revision"
+    );
 
     final_doc["_test"] = json!({"offline_markdown_chars": offline_markdown.chars().count()});
     println!(
