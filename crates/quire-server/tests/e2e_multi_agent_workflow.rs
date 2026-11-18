@@ -219,21 +219,22 @@ fn json_u64_field(data: &str, field: &str) -> Option<u64> {
         .and_then(|value| value.get(field).and_then(Value::as_u64))
 }
 
-fn json_cleared_preview_ids(data: &str) -> Vec<String> {
+fn json_string_array_field(data: &str, field: &str) -> Vec<String> {
     serde_json::from_str::<Value>(data)
         .ok()
         .and_then(|value| {
-            value
-                .get("cleared_preview_ids")
-                .and_then(Value::as_array)
-                .map(|ids| {
-                    ids.iter()
-                        .filter_map(Value::as_str)
-                        .map(str::to_string)
-                        .collect()
-                })
+            value.get(field).and_then(Value::as_array).map(|ids| {
+                ids.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect()
+            })
         })
         .unwrap_or_default()
+}
+
+fn json_cleared_preview_ids(data: &str) -> Vec<String> {
+    json_string_array_field(data, "cleared_preview_ids")
 }
 
 struct McpClient {
@@ -839,6 +840,85 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     assert!(
         preview_index < revision_index,
         "preview frames must arrive before the clearing revision"
+    );
+
+    // A no-op commit creates no revision, so previews are cleared by an immediate
+    // `ephemeral_clear` frame instead of waiting for ttl_ms to expire.
+    let noop_preview_id = unique("preview_noop");
+    let noop_preview_response = http
+        .post(format!("{base}/api/docs/{doc_id}/ephemeral"))
+        .json(&json!({
+            "kind": "preview",
+            "preview_id": noop_preview_id,
+            "actor": "sub-agent-a",
+            "anchor": {"type": "append_to_doc"},
+            "status": "streaming",
+            "block": {
+                "block_id": "ch1_noop_preview",
+                "block_type": "paragraph",
+                "text": "Transient text that never commits"
+            }
+        }))
+        .send()
+        .await?;
+    assert_eq!(noop_preview_response.status().as_u16(), 202);
+    let expected_noop_preview_id = noop_preview_id.clone();
+    doc_sse
+        .wait_for_frame(move |frame| {
+            frame.event.as_deref() == Some("ephemeral_preview")
+                && json_string_field(&frame.data, "preview_id").as_deref()
+                    == Some(expected_noop_preview_id.as_str())
+        })
+        .await?;
+
+    let noop_commit = lead
+        .call_tool(
+            "apply_operations",
+            json!({
+                "doc_id": doc_id,
+                "expected_revision": preview_revision,
+                "summary": "no-op preview cleanup",
+                "ops": [],
+                "preview_ids": [noop_preview_id]
+            }),
+        )
+        .await?;
+    assert_eq!(
+        noop_commit["new_revision"].as_i64(),
+        Some(preview_revision),
+        "a no-op commit must not create a revision"
+    );
+    assert!(
+        noop_commit["_next_hint"]
+            .as_str()
+            .is_some_and(|hint| hint.contains("no-op")),
+        "unexpected no-op hint: {noop_commit}"
+    );
+
+    doc_sse
+        .wait_for_frame(|frame| {
+            frame.event.as_deref() == Some("ephemeral_clear")
+                && json_string_array_field(&frame.data, "preview_ids")
+                    .iter()
+                    .any(|preview_id| preview_id == &noop_preview_id)
+        })
+        .await?;
+    let noop_frames = doc_sse.snapshot().await;
+    assert!(
+        !noop_frames.iter().any(|frame| {
+            frame.event.as_deref() == Some("revision")
+                && json_revision(&frame.data).is_some_and(|revision| revision > preview_revision)
+        }),
+        "a no-op commit must not emit a revision delta"
+    );
+    assert!(
+        !noop_frames.iter().any(|frame| {
+            frame.event.as_deref() == Some("revision")
+                && json_cleared_preview_ids(&frame.data)
+                    .iter()
+                    .any(|preview_id| preview_id == &noop_preview_id)
+        }),
+        "a no-op commit must clear previews through ephemeral_clear, not a revision"
     );
 
     // 4a. Sub-Agent A: offline draft flow.

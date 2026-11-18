@@ -8,10 +8,10 @@ use std::{
 use axum::http::request::Parts;
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, BlockId, BlockKind, COVER_VARIANTS, CoverConfig, Diagnostic, DocId, IdAssignment,
-    MarkdownOptions, MarkdownProjector, PatchOp, ProtocolError, ReportDocument, ReportDraft,
-    Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value,
-    is_valid_css_token_name, lint_document,
+    Block, BlockId, BlockKind, COVER_VARIANTS, CoverConfig, Diagnostic, DocId, EphemeralClearEvent,
+    EphemeralPayload, IdAssignment, MarkdownOptions, MarkdownProjector, PatchOp, ProtocolError,
+    ReportDocument, ReportDraft, Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS,
+    is_safe_css_token_value, is_valid_css_token_name, lint_document,
 };
 use quire_store::{
     ApplyResult, CommitExtras, SourceUpsert, StoreError, merge_source_entries,
@@ -33,6 +33,7 @@ use crate::{
     config::Config,
     error::{invalid_params, mcp_error},
     guide::{guide, guide_workflow},
+    state::AppState,
 };
 
 use super::QuireMcpServer;
@@ -551,11 +552,14 @@ impl QuireMcpServer {
                 &request.ops,
                 CommitExtras {
                     sources: source_upserts,
-                    cleared_preview_ids: preview_ids,
+                    cleared_preview_ids: preview_ids.clone(),
                 },
             )
             .await
             .map_err(mcp_error)?;
+        if result.outcome.no_op {
+            publish_ephemeral_clear(&self.state, &doc_id, &preview_ids).await;
+        }
         let touched = touched_blocks(&request.ops, &result.outcome.assigned_ids);
         let (blocking_errors, inline_warnings) =
             split_scoped_diagnostics(result.inline_warnings, &touched);
@@ -568,7 +572,7 @@ impl QuireMcpServer {
             )
         } else if result.outcome.no_op {
             format!(
-                "Batch was a no-op. New revision is {}.",
+                "Batch was a no-op; no revision was created. Current revision is {}.",
                 result.new_revision
             )
         } else if result.rebased {
@@ -1256,6 +1260,11 @@ fn draft_receipt(
             result.new_revision,
             blocking_errors.len()
         )
+    } else if result.outcome.no_op {
+        format!(
+            "Draft was a no-op; no revision was created. Current revision is {}.",
+            result.new_revision
+        )
     } else if result.rebased {
         format!(
             "Draft committed as revision {} after rebasing over {} revision(s) from base {}. {base_hint}",
@@ -1536,6 +1545,24 @@ fn normalize_preview_ids(raw: Vec<String>) -> Result<Vec<String>, ErrorData> {
     Ok(preview_ids)
 }
 
+/// Publish an immediate cleanup frame when a no-op commit leaves previews behind.
+async fn publish_ephemeral_clear(state: &AppState, doc_id: &DocId, preview_ids: &[String]) {
+    if preview_ids.is_empty() {
+        return;
+    }
+    let payload = EphemeralPayload::Clear {
+        event: EphemeralClearEvent::new(doc_id.clone(), preview_ids.to_vec()),
+    };
+    if let Err(error) = state
+        .store
+        .bus()
+        .publish_ephemeral(doc_id.as_str(), &payload)
+        .await
+    {
+        tracing::warn!(%error, %doc_id, "failed to publish ephemeral clear");
+    }
+}
+
 fn draft_source_upserts(
     draft: &ReportDraft,
     inline: Option<IndexMap<SourceId, SourceInput>>,
@@ -1721,6 +1748,9 @@ impl QuireMcpServer {
             )
             .await
             .map_err(mcp_error)?;
+        if result.outcome.no_op {
+            publish_ephemeral_clear(&self.state, target_doc_id, preview_ids).await;
+        }
         Ok(draft_receipt(
             result,
             &blocks,
@@ -1764,6 +1794,9 @@ impl QuireMcpServer {
             )
             .await
             .map_err(mcp_error)?;
+        if result.outcome.no_op {
+            publish_ephemeral_clear(&self.state, target_doc_id, preview_ids).await;
+        }
         Ok(draft_receipt(
             result,
             &blocks,
@@ -1814,6 +1847,9 @@ impl QuireMcpServer {
             )
             .await
             .map_err(mcp_error)?;
+        if result.outcome.no_op {
+            publish_ephemeral_clear(&self.state, target_doc_id, preview_ids).await;
+        }
         Ok(draft_receipt(
             result,
             &blocks,

@@ -19,6 +19,10 @@
       "description": "Offline authoring draft accepted by `apply_draft`.",
       "$ref": "#/$defs/ReportDraft"
     },
+    "ephemeral_clear": {
+      "description": "SSE `ephemeral_clear` payload for immediate placeholder cleanup.",
+      "$ref": "#/$defs/EphemeralClearEvent"
+    },
     "ephemeral_payload": {
       "description": "Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.",
       "$ref": "#/$defs/EphemeralPayload"
@@ -61,6 +65,7 @@
     "sync_required",
     "ephemeral_preview",
     "agent_presence",
+    "ephemeral_clear",
     "ephemeral_payload",
     "draft",
     "patch_outcome",
@@ -1076,8 +1081,33 @@
         "scatter"
       ]
     },
+    "EphemeralClearEvent": {
+      "description": "Immediate client-side cleanup for previews that will never become a revision.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "preview_ids": {
+          "description": "Preview IDs to remove from the frontend immediately.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "doc_id",
+        "preview_ids",
+        "received_at"
+      ]
+    },
     "EphemeralPayload": {
-      "description": "Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.\n\n`kind: \"ephemeral\"` is accepted as a legacy alias for `preview`, and `kind: \"agent_presence\"`\nas an alias for `presence`, so existing clients keep working.",
+      "description": "Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral` and forwarded over SSE.",
       "oneOf": [
         {
           "description": "Payload of an SSE `ephemeral_preview` event.\n\nPreview frames never enter the revision log. The server stamps `doc_id` and `received_at`\nfrom the request path and wall clock so producers cannot spoof either field.",
@@ -1180,6 +1210,36 @@
             "doc_id",
             "actor",
             "status",
+            "received_at"
+          ]
+        },
+        {
+          "description": "Immediate client-side cleanup for previews that will never become a revision.",
+          "type": "object",
+          "properties": {
+            "doc_id": {
+              "$ref": "#/$defs/DocId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "clear"
+            },
+            "preview_ids": {
+              "description": "Preview IDs to remove from the frontend immediately.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "received_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "kind",
+            "doc_id",
+            "preview_ids",
             "received_at"
           ]
         }
@@ -1469,6 +1529,7 @@
           ]
         }
       },
+      "additionalProperties": false,
       "required": [
         "block_type"
       ]
@@ -1853,6 +1914,7 @@
               "const": "append_to_section"
             }
           },
+          "additionalProperties": false,
           "required": [
             "type",
             "section_id"
@@ -1870,6 +1932,7 @@
               "const": "after_block"
             }
           },
+          "additionalProperties": false,
           "required": [
             "type",
             "block_id"
@@ -1887,6 +1950,7 @@
               "const": "before_block"
             }
           },
+          "additionalProperties": false,
           "required": [
             "type",
             "block_id"
@@ -1904,6 +1968,7 @@
               "const": "replace_block"
             }
           },
+          "additionalProperties": false,
           "required": [
             "type",
             "block_id"
@@ -1918,6 +1983,7 @@
               "const": "append_to_doc"
             }
           },
+          "additionalProperties": false,
           "required": [
             "type"
           ]

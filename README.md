@@ -130,12 +130,12 @@ for transient drafts.
 | GET | `/api/docs/{doc_id}/events?sinceRev=N` | replay + live SSE revisions/previews/presence |
 | GET | `/api/docs/{doc_id}/revisions?limit=N` | audit history |
 | POST | `/api/docs/{doc_id}/rollback` | admin rollback `{target_revision, actor?}` |
-| POST | `/api/docs/{doc_id}/ephemeral` | transient preview/presence pub/sub |
+| POST | `/api/docs/{doc_id}/ephemeral` | transient preview/presence/clear pub/sub |
 | GET | `/api/sessions/{session_id}/events` | session discovery SSE |
 | POST | `/mcp` | Streamable HTTP MCP transport |
 
-SSE event names: `revision`, `ephemeral_preview`, `agent_presence`, `doc_created`, `sync_required`,
-plus `: heartbeat` comments.
+SSE event names: `revision`, `ephemeral_preview`, `agent_presence`, `ephemeral_clear`,
+`doc_created`, `sync_required`, plus `: heartbeat` comments.
 
 ### Ephemeral typewriter previews
 
@@ -159,11 +159,14 @@ plus `: heartbeat` comments.
 }
 ```
 
-Presence uses `kind: "presence"` (`agent_presence` is accepted as an alias) with `actor`, `status`
-and an optional `section_id`. When the streamed block is committed, pass the preview IDs to
-`apply_operations` (or `apply_draft`) as `preview_ids`; the emitted `revision` delta then carries
-`cleared_preview_ids` so clients remove the ephemeral block and apply the committed revision in one
-frame without flicker.
+Presence uses `kind: "presence"` with `actor`, `status` and an optional `section_id`. When the
+streamed block is committed, pass the preview IDs to `apply_operations` (or `apply_draft`) as
+`preview_ids`; the emitted `revision` delta then carries `cleared_preview_ids` so clients remove the
+ephemeral block and apply the committed revision in one frame without flicker.
+
+If a commit resolves to a no-op, no revision is produced. The server then emits
+`event: ephemeral_clear` with `{"kind":"clear","preview_ids":[...]}` so clients can remove the
+streamed placeholders immediately instead of waiting for `ttl_ms` to expire.
 
 ### Canonical document response
 

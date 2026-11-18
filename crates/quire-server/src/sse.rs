@@ -4,9 +4,8 @@ use std::convert::Infallible;
 
 use axum::response::sse::Event;
 use futures::Stream;
-use quire_protocol::{DocId, Revision, SessionId, SyncRequiredDelta};
+use quire_protocol::{DocId, EphemeralPayload, Revision, SessionId, SyncRequiredDelta};
 use quire_store::{SessionStreamEntry, StreamRevision};
-use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
@@ -238,11 +237,28 @@ pub fn revision_stream(
                 }
                 message = ephemeral_rx.recv() => {
                     let Some(EphemeralMessage::Payload(payload)) = message else { continue };
-                    let value = serde_json::from_str::<Value>(&payload)
-                        .unwrap_or(Value::String(payload));
-                    let event_name = preview_event_name(&value);
+                    let payload = match serde_json::from_str::<EphemeralPayload>(&payload) {
+                        Ok(payload) => payload,
+                        Err(error) => {
+                            warn!(
+                                %error,
+                                doc_id = doc_id.as_str(),
+                                "discarding invalid ephemeral frame from Redis Pub/Sub"
+                            );
+                            continue;
+                        }
+                    };
+                    if let Err(reason) = payload.validate() {
+                        warn!(
+                            %reason,
+                            doc_id = doc_id.as_str(),
+                            "discarding semantically invalid ephemeral frame"
+                        );
+                        continue;
+                    }
+                    let event_name = payload.event_name();
                     debug!(doc_id = doc_id.as_str(), event_name, "forwarding ephemeral SSE frame");
-                    yield Ok(sse_json(event_name, &value));
+                    yield Ok(sse_json(event_name, &payload));
                 }
                 _ = heartbeat.tick() => {
                     yield Ok(Event::default().comment("heartbeat"));
@@ -333,35 +349,80 @@ pub fn session_event_name(event: &SessionStreamEntry) -> &str {
     &event.event.event
 }
 
-/// Resolve the SSE event name for a published ephemeral payload.
-pub fn preview_event_name(payload: &Value) -> &'static str {
-    match payload.get("kind").and_then(Value::as_str) {
-        Some("presence" | "agent_presence") => "agent_presence",
-        _ => "ephemeral_preview",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
+    use quire_protocol::{
+        AgentPresenceEvent, BlockId, EphemeralClearEvent, EphemeralPreviewEvent,
+        PartialBlockPreview, PreviewAnchor, PreviewStatus,
+    };
+
+    fn doc_id() -> DocId {
+        DocId::parse("report_1").unwrap()
+    }
+
+    fn preview_payload() -> EphemeralPayload {
+        EphemeralPayload::Preview {
+            event: EphemeralPreviewEvent {
+                doc_id: doc_id(),
+                preview_id: "tool_call_1".into(),
+                actor: "sub-agent-a".into(),
+                anchor: PreviewAnchor::AfterBlock {
+                    block_id: BlockId::parse("ch1").unwrap(),
+                },
+                status: PreviewStatus::Streaming,
+                seq: Some(1),
+                ttl_ms: Some(15_000),
+                block: PartialBlockPreview {
+                    block_id: None,
+                    block_type: "paragraph".into(),
+                    title: None,
+                    level: None,
+                    text: Some("Revenue".into()),
+                },
+                received_at: Utc::now(),
+            },
+        }
+    }
+
+    fn presence_payload() -> EphemeralPayload {
+        EphemeralPayload::Presence {
+            event: AgentPresenceEvent {
+                doc_id: doc_id(),
+                actor: "sub-agent-a".into(),
+                status: "writing".into(),
+                section_id: None,
+                received_at: Utc::now(),
+            },
+        }
+    }
+
+    fn clear_payload() -> EphemeralPayload {
+        EphemeralPayload::Clear {
+            event: EphemeralClearEvent::new(doc_id(), vec!["tool_call_1".into()]),
+        }
+    }
 
     #[test]
-    fn preview_kind_mapping() {
-        assert_eq!(
-            preview_event_name(&serde_json::json!({"kind":"presence"})),
-            "agent_presence"
-        );
-        assert_eq!(
-            preview_event_name(&serde_json::json!({"kind":"agent_presence"})),
-            "agent_presence"
-        );
-        assert_eq!(
-            preview_event_name(&serde_json::json!({"kind":"preview"})),
-            "ephemeral_preview"
-        );
-        assert_eq!(
-            preview_event_name(&serde_json::json!({"block_id":"b"})),
-            "ephemeral_preview"
-        );
+    fn canonical_payloads_route_to_event_names() {
+        assert_eq!(preview_payload().event_name(), "ephemeral_preview");
+        assert_eq!(presence_payload().event_name(), "agent_presence");
+        assert_eq!(clear_payload().event_name(), "ephemeral_clear");
+    }
+
+    #[test]
+    fn legacy_kind_aliases_are_rejected() {
+        for (payload, legacy_kind) in [
+            (preview_payload(), "ephemeral"),
+            (presence_payload(), "agent_presence"),
+        ] {
+            let mut value = serde_json::to_value(&payload).unwrap();
+            value["kind"] = legacy_kind.into();
+            assert!(
+                serde_json::from_value::<EphemeralPayload>(value).is_err(),
+                "`{legacy_kind}` must not be forwarded"
+            );
+        }
     }
 }

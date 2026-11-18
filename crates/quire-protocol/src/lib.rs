@@ -43,9 +43,9 @@ pub use computed::{
 pub use draft::{DraftError, ReportDraft};
 pub use error::ProtocolError;
 pub use events::{
-    AgentPresenceEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralPayload, EphemeralPreviewEvent,
-    PartialBlockPreview, PreviewAnchor, PreviewStatus, RevisionDelta, SessionDelta,
-    SyncRequiredDelta,
+    AgentPresenceEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralClearEvent, EphemeralPayload,
+    EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor, PreviewStatus, RevisionDelta,
+    SessionDelta, SyncRequiredDelta,
 };
 pub use ids::{BlockId, DocId, Rank, Revision, SessionId, SourceId};
 pub use linter::{Diagnostic, LintReport, LintSummary, Severity, lint_document};

@@ -575,6 +575,19 @@ impl PgReportStore {
         let outcome = apply_operations_in_place(&mut after, &effective_ops)?;
         let normalization_warnings = normalize_document(&mut after);
         validate_source_registry(&after.sources)?;
+        let mut warnings = normalization_warnings;
+        warnings.extend(inline_warnings(&after));
+        if outcome.no_op && after == before {
+            return Ok(ApplyResult {
+                new_revision: current_rev,
+                base_revision: expected_revision,
+                rebased: expected_revision < current_rev,
+                rebased_over: usize::try_from(current_rev.get() - expected_revision.get())
+                    .unwrap_or(0),
+                outcome,
+                inline_warnings: warnings,
+            });
+        }
         let new_revision = current_rev.next();
         after.revision = new_revision;
 
@@ -601,8 +614,6 @@ impl PgReportStore {
         .await?;
         tx.commit().await?;
 
-        let mut warnings = normalization_warnings;
-        warnings.extend(inline_warnings(&after));
         let event = RevisionEvent::new(doc_id.clone(), new_revision, actor, summary, forward_ops)
             .with_cleared_preview_ids(cleared_preview_ids);
         if let Err(error) = self.bus.publish_revision(&event).await {

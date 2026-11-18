@@ -11,9 +11,9 @@
 use std::{fs, path::Path};
 
 use quire_protocol::{
-    AgentPresenceEvent, ComputedDocumentMeta, EphemeralPayload, EphemeralPreviewEvent, LintReport,
-    PatchOp, PatchOutcome, ReportDocument, ReportDraft, RevisionDelta, SessionDelta,
-    SyncRequiredDelta,
+    AgentPresenceEvent, ComputedDocumentMeta, EphemeralClearEvent, EphemeralPayload,
+    EphemeralPreviewEvent, LintReport, PatchOp, PatchOutcome, ReportDocument, ReportDraft,
+    RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 use schemars::JsonSchema;
 
@@ -38,6 +38,8 @@ struct ProtocolContract {
     ephemeral_preview: EphemeralPreviewEvent,
     /// SSE `agent_presence` payload for live agent activity.
     agent_presence: AgentPresenceEvent,
+    /// SSE `ephemeral_clear` payload for immediate placeholder cleanup.
+    ephemeral_clear: EphemeralClearEvent,
     /// Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.
     ephemeral_payload: EphemeralPayload,
     /// Offline authoring draft accepted by `apply_draft`.

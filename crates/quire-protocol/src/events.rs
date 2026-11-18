@@ -63,7 +63,7 @@ impl RevisionDelta {
 
 /// Where an ephemeral preview block sits relative to the committed document.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PreviewAnchor {
     /// Append below the section heading identified by `section_id`.
     AppendToSection { section_id: BlockId },
@@ -92,6 +92,7 @@ pub enum PreviewStatus {
 /// the frontend can render a skeleton. `block_id` is pre-allocated when known and must match the
 /// eventual committed block for seamless replacement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PartialBlockPreview {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub block_id: Option<BlockId>,
@@ -141,22 +142,41 @@ pub struct AgentPresenceEvent {
     pub received_at: DateTime<Utc>,
 }
 
-/// Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.
-///
-/// `kind: "ephemeral"` is accepted as a legacy alias for `preview`, and `kind: "agent_presence"`
-/// as an alias for `presence`, so existing clients keep working.
+/// Immediate client-side cleanup for previews that will never become a revision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct EphemeralClearEvent {
+    pub doc_id: DocId,
+    /// Preview IDs to remove from the frontend immediately.
+    pub preview_ids: Vec<String>,
+    pub received_at: DateTime<Utc>,
+}
+
+impl EphemeralClearEvent {
+    /// Build a clear event stamped at the current server time.
+    pub fn new(doc_id: DocId, preview_ids: Vec<String>) -> Self {
+        Self {
+            doc_id,
+            preview_ids,
+            received_at: Utc::now(),
+        }
+    }
+}
+
+/// Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral` and forwarded over SSE.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EphemeralPayload {
-    #[serde(alias = "ephemeral")]
     Preview {
         #[serde(flatten)]
         event: EphemeralPreviewEvent,
     },
-    #[serde(alias = "agent_presence")]
     Presence {
         #[serde(flatten)]
         event: AgentPresenceEvent,
+    },
+    Clear {
+        #[serde(flatten)]
+        event: EphemeralClearEvent,
     },
 }
 
@@ -166,6 +186,7 @@ impl EphemeralPayload {
         match self {
             Self::Preview { .. } => "ephemeral_preview",
             Self::Presence { .. } => "agent_presence",
+            Self::Clear { .. } => "ephemeral_clear",
         }
     }
 
@@ -180,6 +201,10 @@ impl EphemeralPayload {
             Self::Presence { event: presence } => {
                 presence.doc_id = doc_id.clone();
                 presence.received_at = received_at;
+            }
+            Self::Clear { event: clear } => {
+                clear.doc_id = doc_id.clone();
+                clear.received_at = received_at;
             }
         }
     }
@@ -204,6 +229,18 @@ impl EphemeralPayload {
                 }
                 if presence.status.trim().is_empty() {
                     return Err("status must not be empty".into());
+                }
+            }
+            Self::Clear { event: clear } => {
+                if clear.preview_ids.is_empty() {
+                    return Err("preview_ids must not be empty".into());
+                }
+                if clear
+                    .preview_ids
+                    .iter()
+                    .any(|preview_id| preview_id.trim().is_empty())
+                {
+                    return Err("preview_ids must not contain empty values".into());
                 }
             }
         }
@@ -259,6 +296,16 @@ mod tests {
                 level: None,
                 text: Some("Revenue grew 18%".into()),
             },
+            received_at: Utc::now(),
+        }
+    }
+
+    fn presence_event() -> AgentPresenceEvent {
+        AgentPresenceEvent {
+            doc_id: doc_id("report_1"),
+            actor: "sub-agent-a".into(),
+            status: "writing".into(),
+            section_id: Some(block_id("ch1_intro")),
             received_at: Utc::now(),
         }
     }
@@ -320,34 +367,72 @@ mod tests {
     }
 
     #[test]
-    fn legacy_preview_kind_alias_is_accepted() {
-        let mut json = serde_json::to_value(preview_event()).unwrap();
-        json["kind"] = "ephemeral".into();
-        let decoded: EphemeralPayload = serde_json::from_value(json).unwrap();
-        assert!(matches!(decoded, EphemeralPayload::Preview { .. }));
+    fn legacy_kind_aliases_are_rejected() {
+        let preview = EphemeralPayload::Preview {
+            event: preview_event(),
+        };
+        let presence = EphemeralPayload::Presence {
+            event: presence_event(),
+        };
+        for (payload, legacy_kind) in [(preview, "ephemeral"), (presence, "agent_presence")] {
+            let mut json = serde_json::to_value(&payload).unwrap();
+            json["kind"] = legacy_kind.into();
+            assert!(
+                serde_json::from_value::<EphemeralPayload>(json).is_err(),
+                "`{legacy_kind}` must not be accepted as a wire kind"
+            );
+        }
     }
 
     #[test]
-    fn presence_accepts_both_wire_kinds() {
-        let presence = AgentPresenceEvent {
-            doc_id: doc_id("report_1"),
-            actor: "sub-agent-a".into(),
-            status: "writing".into(),
-            section_id: Some(block_id("ch1_intro")),
-            received_at: Utc::now(),
+    fn presence_roundtrips_with_canonical_kind() {
+        let payload = EphemeralPayload::Presence {
+            event: presence_event(),
         };
-        for kind in ["presence", "agent_presence"] {
-            let mut json = serde_json::to_value(&presence).unwrap();
-            json["kind"] = kind.into();
-            let decoded: EphemeralPayload = serde_json::from_value(json).unwrap();
-            assert_eq!(decoded.event_name(), "agent_presence");
-            assert_eq!(
-                decoded,
-                EphemeralPayload::Presence {
-                    event: presence.clone()
-                }
-            );
-        }
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["kind"], "presence");
+        let decoded: EphemeralPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, payload);
+        assert_eq!(decoded.event_name(), "agent_presence");
+    }
+
+    #[test]
+    fn clear_payload_roundtrips_with_kind_tag() {
+        let payload = EphemeralPayload::Clear {
+            event: EphemeralClearEvent::new(
+                doc_id("report_1"),
+                vec!["tool_call_7".into(), "tool_call_8".into()],
+            ),
+        };
+        let json = serde_json::to_value(&payload).unwrap();
+        assert_eq!(json["kind"], "clear");
+        assert_eq!(json["preview_ids"][0], "tool_call_7");
+        assert_eq!(payload.event_name(), "ephemeral_clear");
+        let decoded: EphemeralPayload = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, payload);
+        assert!(decoded.validate().is_ok());
+    }
+
+    #[test]
+    fn clear_requires_preview_ids() {
+        let payload = EphemeralPayload::Clear {
+            event: EphemeralClearEvent::new(doc_id("report_1"), Vec::new()),
+        };
+        assert!(payload.validate().is_err());
+        let payload = EphemeralPayload::Clear {
+            event: EphemeralClearEvent::new(doc_id("report_1"), vec![" ".into()]),
+        };
+        assert!(payload.validate().is_err());
+    }
+
+    #[test]
+    fn preview_block_rejects_unknown_fields() {
+        let block = serde_json::json!({
+            "block_type": "paragraph",
+            "text": "Revenue",
+            "bogus": true
+        });
+        assert!(serde_json::from_value::<PartialBlockPreview>(block).is_err());
     }
 
     #[test]
