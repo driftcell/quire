@@ -15,8 +15,9 @@ use std::{
 
 use base64::Engine as _;
 use quire_runtime::{
-    Config, KbService, ModelRegistry, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
-    RuntimeService, RuntimeStore, StaticQuireControl, ToolCallRecord,
+    Config, KbService, MockStreamProvider, ModelRegistry, ModelStreamEvent, ModelsDevImportRequest,
+    ProviderInput, ProviderProtocol, RuntimeService, RuntimeStore, StaticQuireControl,
+    ToolCallRecord,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
 };
@@ -731,5 +732,98 @@ async fn knowledge_update_is_injected_once_and_synced_version_advances() {
             .any(|message| message.content.starts_with("<knowledge_update>"))
     );
     service.kb().delete_document(&document_id).await.unwrap();
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn streaming_tokens_are_coalesced_and_flushed_before_tool_and_turn_events() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let mut events = Vec::new();
+    for _ in 0..30 {
+        events.push(ModelStreamEvent::ThinkingDelta("t".into()));
+    }
+    for _ in 0..50 {
+        events.push(ModelStreamEvent::TextDelta("x".into()));
+    }
+    events.push(ModelStreamEvent::ToolCallStarted {
+        tool_call_id: "tc_stream".into(),
+        tool_name: "describe_task".into(),
+        input_preview: "{\"title\":\"Review\"}".into(),
+        truncated: false,
+    });
+    let service =
+        service.with_model_stream_provider(Arc::new(MockStreamProvider::new(vec![events])));
+    let session = service
+        .create_session(&unique("coalesce"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let request = SendMessageRequest {
+        client_msg_id: unique("coalesce-msg"),
+        content: "Stream fifty fragments".into(),
+        attachment_ids: Vec::new(),
+    };
+    service
+        .post_message(&session.session_id, &request)
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let events = store
+        .list_events(&session.session_id, 0, 500)
+        .await
+        .unwrap();
+    let thinking_count = events
+        .iter()
+        .filter(|event| matches!(event.kind, SessionEventKind::ThinkingDelta { .. }))
+        .count();
+    let text_deltas: Vec<&str> = events
+        .iter()
+        .filter_map(|event| match &event.kind {
+            SessionEventKind::TextDelta { delta } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect();
+    let text_count = text_deltas.len();
+    assert_eq!(thinking_count, 1);
+    assert_eq!(text_count, 1);
+    assert_eq!(text_deltas.concat(), "x".repeat(50));
+    assert!(thinking_count + text_count < 80);
+
+    let last_text_seq = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                SessionEventKind::ThinkingDelta { .. } | SessionEventKind::TextDelta { .. }
+            )
+        })
+        .map(|event| event.seq)
+        .max()
+        .unwrap();
+    let tool_seq = events
+        .iter()
+        .find(|event| matches!(event.kind, SessionEventKind::ToolCallStarted { .. }))
+        .map(|event| event.seq)
+        .unwrap();
+    let finished_seq = events
+        .iter()
+        .find(|event| matches!(event.kind, SessionEventKind::TurnFinished))
+        .map(|event| event.seq)
+        .unwrap();
+    assert!(last_text_seq < tool_seq, "text must flush before tool call");
+    assert!(
+        tool_seq < finished_seq,
+        "tool event must precede turn finish"
+    );
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert_eq!(
+        detail
+            .messages
+            .iter()
+            .find(|message| message.role == quire_session_protocol::MessageRole::Assistant)
+            .map(|message| message.content.as_str()),
+        Some("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+    );
     service.delete_session(&session.session_id).await.unwrap();
 }

@@ -1,9 +1,14 @@
 //! Session orchestration, run lifecycle, recovery and prompt-cache handling.
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::Path,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 use base64::Engine as _;
+use futures::StreamExt;
 use quire_session_protocol::{
     MessageRole, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
     SessionStatus, SessionSummary, ToolCallDetail,
@@ -16,8 +21,10 @@ use crate::{
     bus::InterruptCommand,
     config::Config,
     control::{RunRegistry, spawn_interrupt_listener},
+    delta::{CoalescedDelta, DeltaCoalescer, DeltaKind},
     error::{RuntimeError, RuntimeResult},
     kb::{KbService, SeedReport},
+    model_stream::{ModelStreamEvent, ModelStreamProvider, ModelTurnRequest, StubStreamProvider},
     models::ModelRegistry,
     prompt::{ContextMessage, ResumeContext, build_resume_context},
     rig_agent::McpHttpClient,
@@ -106,6 +113,7 @@ pub struct RuntimeService {
     runs: RunRegistry,
     config: Arc<Config>,
     quire: Arc<dyn QuireControl>,
+    model_stream: Arc<dyn ModelStreamProvider>,
 }
 
 impl RuntimeService {
@@ -123,6 +131,7 @@ impl RuntimeService {
             runs: RunRegistry::default(),
             config,
             quire,
+            model_stream: Arc::new(StubStreamProvider),
         }
     }
 
@@ -136,6 +145,11 @@ impl RuntimeService {
 
     pub fn models(&self) -> &ModelRegistry {
         &self.models
+    }
+
+    pub fn with_model_stream_provider(mut self, provider: Arc<dyn ModelStreamProvider>) -> Self {
+        self.model_stream = provider;
+        self
     }
 
     pub fn config(&self) -> &Config {
@@ -546,7 +560,7 @@ impl RuntimeService {
         content: &str,
         token: &CancellationToken,
     ) -> RuntimeResult<()> {
-        let mut session = self.store.get_session_summary(session_id).await?;
+        let session = self.store.get_session_summary(session_id).await?;
         if session.doc_id.is_none() {
             let linked = self
                 .quire
@@ -564,7 +578,6 @@ impl RuntimeService {
                 },
             )
             .await?;
-            session = self.store.get_session_summary(session_id).await?;
         }
         let (pinned, synced_version) = self.ensure_pinned_prompt(session_id).await?;
         let kb_version = self.kb.current_version().await?;
@@ -598,30 +611,110 @@ impl RuntimeService {
         if token.is_cancelled() {
             return Ok(());
         }
-        self.emit(
-            session_id,
-            run_id,
-            "main",
-            None,
-            SessionEventKind::ThinkingDelta {
-                delta: "Preparing the next report action.".into(),
-            },
-        )
-        .await?;
-        let response = format!(
-            "Runtime accepted the request for `{}`. Connect a rig model provider to stream the full answer.",
-            session.title
-        );
-        self.emit(
-            session_id,
-            run_id,
-            "main",
-            None,
-            SessionEventKind::TextDelta {
-                delta: response.clone(),
-            },
-        )
-        .await?;
+        let mut coalescer = DeltaCoalescer::default();
+        let request = ModelTurnRequest {
+            session_id: session_id.to_string(),
+            run_id: run_id.to_string(),
+            agent_id: "main".into(),
+            system_prompt: context.pinned_system_prompt.clone(),
+            user_message: content.to_string(),
+        };
+        let mut stream = self.model_stream.stream_turn(request).await?;
+        let mut tick = tokio::time::interval(Duration::from_millis(50));
+        let mut response = String::new();
+        loop {
+            tokio::select! {
+                _ = token.cancelled() => {
+                    let deltas = coalescer.flush_all();
+                    self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                    return Ok(());
+                }
+                _ = tick.tick() => {
+                    let deltas = coalescer.flush_due(Instant::now());
+                    self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                }
+                item = stream.next() => {
+                    match item {
+                        Some(Ok(ModelStreamEvent::ThinkingDelta(delta))) => {
+                            let deltas = coalescer.push(
+                                Instant::now(),
+                                run_id,
+                                "main",
+                                DeltaKind::Thinking,
+                                &delta,
+                            );
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                        }
+                        Some(Ok(ModelStreamEvent::TextDelta(delta))) => {
+                            response.push_str(&delta);
+                            let deltas = coalescer.push(
+                                Instant::now(),
+                                run_id,
+                                "main",
+                                DeltaKind::Text,
+                                &delta,
+                            );
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                        }
+                        Some(Ok(ModelStreamEvent::ToolCallStarted {
+                            tool_call_id,
+                            tool_name,
+                            input_preview,
+                            truncated,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                SessionEventKind::ToolCallStarted {
+                                    tool_call_id,
+                                    tool_name,
+                                    input_preview,
+                                    truncated,
+                                },
+                            )
+                            .await?;
+                        }
+                        Some(Ok(ModelStreamEvent::ToolCallFinished {
+                            tool_call_id,
+                            status,
+                            output_preview,
+                            truncated,
+                            duration_ms,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                SessionEventKind::ToolCallFinished {
+                                    tool_call_id,
+                                    status,
+                                    output_preview,
+                                    truncated,
+                                    duration_ms,
+                                },
+                            )
+                            .await?;
+                        }
+                        Some(Err(error)) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            return Err(error);
+                        }
+                        None => break,
+                    }
+                }
+            }
+        }
+        let deltas = coalescer.flush_all();
+        self.emit_coalesced(session_id, run_id, "main", deltas)
+            .await?;
         if token.is_cancelled() {
             return Ok(());
         }
@@ -687,6 +780,23 @@ impl RuntimeService {
                 .await?;
         }
         self.store.finish_run(run_id, "completed", None).await?;
+        Ok(())
+    }
+
+    async fn emit_coalesced(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        agent_id: &str,
+        deltas: Vec<CoalescedDelta>,
+    ) -> RuntimeResult<()> {
+        for delta in deltas {
+            let kind = match delta.kind {
+                DeltaKind::Thinking => SessionEventKind::ThinkingDelta { delta: delta.delta },
+                DeltaKind::Text => SessionEventKind::TextDelta { delta: delta.delta },
+            };
+            self.emit(session_id, run_id, agent_id, None, kind).await?;
+        }
         Ok(())
     }
 

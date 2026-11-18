@@ -9,6 +9,7 @@ pub mod delta;
 pub mod error;
 pub mod http;
 pub mod kb;
+pub mod model_stream;
 pub mod models;
 pub mod prompt;
 pub mod rig_agent;
@@ -25,6 +26,10 @@ pub use config::Config;
 pub use delta::{CoalescedDelta, DeltaCoalescer, DeltaKind};
 pub use error::{RuntimeError, RuntimeResult};
 pub use kb::KbService;
+pub use model_stream::{
+    MockStreamProvider, ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest,
+    StubStreamProvider,
+};
 pub use models::{
     ModelInput, ModelRecord, ModelRegistry, ModelRouter, ModelsDevImportReport,
     ModelsDevImportRequest, ProviderInput, ProviderProtocol, ProviderRecord, ResolvedModel,
