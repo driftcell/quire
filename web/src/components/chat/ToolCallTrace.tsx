@@ -54,7 +54,7 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
     <Trace className="my-1">
       <TraceCollapsible open={open} onOpenChange={setOpen}>
         <TraceCollapsibleTrigger>
-          <TraceLine status={lineStatus}>
+          <TraceLine status={lineStatus} className="text-xs leading-5">
             <TraceIcon>
               {item.status === "running" ? (
                 <Loader2Icon className="size-3.5 animate-spin" />

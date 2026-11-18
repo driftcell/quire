@@ -49,6 +49,7 @@ export function ThinkingTrace({
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const startedAtRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
 
   const expanded = open ?? (isStreaming || isActive);
@@ -62,6 +63,7 @@ export function ThinkingTrace({
     if (!isStreaming) {
       return undefined;
     }
+    stickToBottomRef.current = true;
     if (startedAtRef.current === null) {
       startedAtRef.current = Date.now();
     }
@@ -89,6 +91,21 @@ export function ThinkingTrace({
     el.scrollTop = el.scrollHeight;
   }, [content, expanded, isStreaming]);
 
+  useEffect(() => {
+    const inner = innerRef.current;
+    const el = scrollRef.current;
+    if (!inner || !el || !expanded || !isStreaming) {
+      return undefined;
+    }
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [expanded, isStreaming]);
+
   if (!content.trim()) {
     return null;
   }
@@ -97,7 +114,10 @@ export function ThinkingTrace({
     <Trace className="my-1">
       <TraceCollapsible open={expanded} onOpenChange={setOpen}>
         <TraceCollapsibleTrigger>
-          <TraceLine status={isStreaming ? "running" : undefined}>
+          <TraceLine
+            status={isStreaming ? "running" : undefined}
+            className="text-xs leading-5"
+          >
             <TraceIcon>
               {isStreaming ? (
                 <LoaderCircleIcon className="size-3.5 animate-spin" />
@@ -125,7 +145,9 @@ export function ThinkingTrace({
             }}
             className={`scroll-fade ${THINKING_PROSE} max-h-32 overflow-y-auto pr-2 text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
           >
-            <Streamdown controls={STREAMDOWN_CONTROLS}>{content}</Streamdown>
+            <div ref={innerRef}>
+              <Streamdown controls={STREAMDOWN_CONTROLS}>{content}</Streamdown>
+            </div>
           </div>
         </TraceCollapsibleContent>
       </TraceCollapsible>

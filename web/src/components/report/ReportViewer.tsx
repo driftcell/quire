@@ -1150,14 +1150,7 @@ export function ReportViewer({
           {visiblePages.map(({ page, pageIdx }) => (
             <div
               key={page.pageNumber}
-              style={
-                suppressChrome
-                  ? undefined
-                  : {
-                      width: `${Math.round(A4_PAGE_WIDTH_PX * pageScale)}px`,
-                      height: `${Math.round(A4_PAGE_HEIGHT_PX * pageScale)}px`,
-                    }
-              }
+              style={suppressChrome ? undefined : { zoom: pageScale }}
               className="relative shrink-0"
             >
               <section
@@ -1165,8 +1158,6 @@ export function ReportViewer({
                   width: `${A4_PAGE_WIDTH_PX}px`,
                   minHeight: `${A4_PAGE_HEIGHT_PX}px`,
                   padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
-                  transform: suppressChrome ? undefined : `scale(${pageScale})`,
-                  transformOrigin: "top left",
                 }}
                 className="a4-page relative flex flex-col justify-between bg-white text-neutral-900 shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
               >

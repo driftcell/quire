@@ -10,10 +10,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   BookOpenIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   MessageSquareQuoteIcon,
   PanelLeftIcon,
-  PanelRightCloseIcon,
-  PanelRightOpenIcon,
+  PanelRightIcon,
   PrinterIcon,
   ScrollTextIcon,
 } from "lucide-react";
@@ -715,15 +716,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               </Badge>
             )}
           </div>
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="收起右侧对话栏"
-            onClick={() => updatePrefs({ rightSidebarOpen: false })}
-          >
-            <PanelRightCloseIcon className="size-4 text-muted-foreground" />
-          </Button>
         </div>
       )}
 
@@ -808,33 +800,114 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             : "relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
         }
       >
-        {!leftSidebarOpen && !isMobile && (
-          <div className="absolute top-3 left-3 z-20">
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="outline"
-              aria-label="展开左侧会话栏"
-              className="bg-background/90 shadow-xs backdrop-blur"
-              onClick={toggleSidebar}
-            >
-              <PanelLeftIcon className="size-4" />
-            </Button>
-          </div>
-        )}
+        {!isMobile && (
+          <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b bg-background/95 px-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label={
+                  leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"
+                }
+                onClick={toggleSidebar}
+              >
+                <PanelLeftIcon className="size-4 text-muted-foreground" />
+              </Button>
+              <span className="truncate text-sm font-medium">
+                {docQuery.data.document.cover.title || effectiveDocId}
+              </span>
+              <Badge
+                variant="outline"
+                className="shrink-0 text-[11px] tabular-nums"
+              >
+                版本 {docQuery.data.current_rev}
+              </Badge>
+            </div>
 
-        {!prefs.rightSidebarOpen && !isMobile && (
-          <div className="absolute top-3 right-3 z-20">
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="outline"
-              aria-label="展开右侧对话栏"
-              className="bg-background/90 shadow-xs backdrop-blur"
-              onClick={() => updatePrefs({ rightSidebarOpen: true })}
-            >
-              <PanelRightOpenIcon className="size-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={
+                    prefs.reportViewMode === "continuous" ? "default" : "ghost"
+                  }
+                  onClick={() => updatePrefs({ reportViewMode: "continuous" })}
+                >
+                  <ScrollTextIcon className="mr-1 size-3.5" />
+                  连续
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={
+                    prefs.reportViewMode === "paged" ? "default" : "ghost"
+                  }
+                  onClick={() => updatePrefs({ reportViewMode: "paged" })}
+                >
+                  <BookOpenIcon className="mr-1 size-3.5" />
+                  分页
+                </Button>
+              </div>
+
+              <TocOutline
+                placement="bottom"
+                nodes={docQuery.data.computed.toc_tree}
+                activeActorsBySection={activeActorsBySection}
+                comments={commentsQuery.data ?? []}
+                onJumpToSection={jumpToSection}
+              />
+
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label="批注列表"
+                className="relative"
+                onClick={() => {
+                  setSelectedCommentBlock(null);
+                  setCommentsOpen(true);
+                }}
+              >
+                <MessageSquareQuoteIcon className="size-4" />
+                {openCommentsCount > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
+                    {openCommentsCount}
+                  </span>
+                )}
+              </Button>
+
+              <Button
+                size="icon-sm"
+                variant="ghost"
+                aria-label="导出 PDF / 打印视图"
+                nativeButton={false}
+                render={
+                  <Link
+                    to="/docs/$docId/print"
+                    params={{ docId: effectiveDocId }}
+                    target="_blank"
+                  />
+                }
+              >
+                <PrinterIcon className="size-4" />
+              </Button>
+
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label={
+                  prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"
+                }
+                onClick={() =>
+                  updatePrefs({ rightSidebarOpen: !prefs.rightSidebarOpen })
+                }
+              >
+                <PanelRightIcon className="size-4 text-muted-foreground" />
+              </Button>
+            </div>
           </div>
         )}
 
@@ -849,84 +922,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               setFloatingComment(anchor);
             }}
           />
-        </div>
-
-        <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center pb-3">
-          <div className="pointer-events-auto flex items-center gap-1 rounded-full border bg-background/95 px-2.5 py-1 shadow-md backdrop-blur">
-            <TocOutline
-              placement="top"
-              nodes={docQuery.data.computed.toc_tree}
-              activeActorsBySection={activeActorsBySection}
-              comments={commentsQuery.data ?? []}
-              onJumpToSection={jumpToSection}
-            />
-
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label="批注列表"
-              className="relative"
-              onClick={() => {
-                setSelectedCommentBlock(null);
-                setCommentsOpen(true);
-              }}
-            >
-              <MessageSquareQuoteIcon className="size-4" />
-              {openCommentsCount > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
-                  {openCommentsCount}
-                </span>
-              )}
-            </Button>
-
-            <div className="mx-0.5 h-4 w-px bg-border" />
-
-            <Button
-              type="button"
-              size="xs"
-              variant={
-                prefs.reportViewMode === "continuous" ? "secondary" : "ghost"
-              }
-              className="rounded-full"
-              onClick={() => updatePrefs({ reportViewMode: "continuous" })}
-            >
-              <ScrollTextIcon className="mr-1 size-3.5" />
-              连续
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant={prefs.reportViewMode === "paged" ? "secondary" : "ghost"}
-              className="rounded-full"
-              onClick={() => updatePrefs({ reportViewMode: "paged" })}
-            >
-              <BookOpenIcon className="mr-1 size-3.5" />
-              分页
-            </Button>
-
-            <div className="mx-0.5 h-4 w-px bg-border" />
-
-            <span className="px-1.5 text-[11px] text-muted-foreground tabular-nums">
-              版本 {docQuery.data.current_rev}
-            </span>
-
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="导出 PDF / 打印视图"
-              nativeButton={false}
-              render={
-                <Link
-                  to="/docs/$docId/print"
-                  params={{ docId: effectiveDocId }}
-                  target="_blank"
-                />
-              }
-            >
-              <PrinterIcon className="size-4" />
-            </Button>
-          </div>
         </div>
       </div>
     ) : null;
@@ -960,10 +955,44 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       <div
         className={
           hasReportData && !isMobile
-            ? "min-h-0 min-w-0 flex-1 overflow-hidden p-2"
-            : "min-h-0 min-w-0 flex-1 overflow-hidden"
+            ? "relative min-h-0 min-w-0 flex-1 overflow-hidden p-2"
+            : "relative min-h-0 min-w-0 flex-1 overflow-hidden"
         }
       >
+        {!isMobile && (
+          <button
+            type="button"
+            title={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            aria-label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            onClick={toggleSidebar}
+            className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+          >
+            {leftSidebarOpen ? (
+              <ChevronLeftIcon className="size-3.5" />
+            ) : (
+              <ChevronRightIcon className="size-3.5" />
+            )}
+          </button>
+        )}
+        {hasReportData && !isMobile && (
+          <button
+            type="button"
+            title={prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
+            aria-label={
+              prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"
+            }
+            onClick={() =>
+              updatePrefs({ rightSidebarOpen: !prefs.rightSidebarOpen })
+            }
+            className="focus-visible:ring-ring absolute top-1/2 right-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+          >
+            {prefs.rightSidebarOpen ? (
+              <ChevronRightIcon className="size-3.5" />
+            ) : (
+              <ChevronLeftIcon className="size-3.5" />
+            )}
+          </button>
+        )}
         {!hasReportData ? (
           chatPane
         ) : isMobile ? (
