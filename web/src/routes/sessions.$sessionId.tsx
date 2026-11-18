@@ -50,6 +50,7 @@ import {
   FloatingCommentPopover,
   type FloatingCommentAnchor,
 } from "@/components/report/FloatingCommentPopover";
+import { PageChromeDialog } from "@/components/report/PageChromeDialog";
 import { ReportViewer } from "@/components/report/ReportViewer";
 import { TocOutline } from "@/components/report/TocOutline";
 import { Badge } from "@/components/ui/badge";
@@ -893,6 +894,13 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               >
                 <PrinterIcon className="size-4" />
               </Button>
+
+              {prefs.reportViewMode === "paged" && effectiveDocId && (
+                <PageChromeDialog
+                  docId={effectiveDocId}
+                  themePageChrome={docQuery.data?.document.theme.page_chrome}
+                />
+              )}
 
               <Button
                 type="button"

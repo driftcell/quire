@@ -23,6 +23,7 @@ import {
 } from "@/components/report/SelectionQuoteToolbar";
 import { TableBlockView } from "@/components/report/TableBlockView";
 import {
+  A4_CONTENT_HEIGHT_PX,
   A4_CONTENT_WIDTH_PX,
   A4_PAGE_HEIGHT_PX,
   A4_PAGE_WIDTH_PX,
@@ -38,9 +39,17 @@ import type {
   CommentThread,
   ComputedDocumentMeta,
   EphemeralPreviewEvent,
+  PageChromeConfig,
   TextQuoteSelector,
 } from "@/contracts/report-protocol";
 import type { ReportBlock, ReportDocumentView } from "@/lib/document";
+import {
+  formatPageTemplate,
+  hasPageFooter,
+  hasPageHeader,
+  normalizePageChromeConfig,
+  usePageChromeConfig,
+} from "@/lib/pageChrome";
 import type { ReportViewMode } from "@/lib/preferences";
 
 export interface ReportViewerProps {
@@ -51,6 +60,7 @@ export interface ReportViewerProps {
   comments?: CommentThread[];
   printMode?: boolean;
   previewMode?: boolean;
+  pageChrome?: PageChromeConfig;
   pageFilter?: number;
   onPagesReady?: (totalPages: number) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
@@ -74,7 +84,7 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
       return (
         <h1
           id={`block-${blockId}`}
-          className="mt-8 mb-4 text-2xl font-bold tracking-tight"
+          className="mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-[var(--rpt-ink)]"
         >
           {content}
         </h1>
@@ -83,14 +93,17 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
       return (
         <h2
           id={`block-${blockId}`}
-          className="mt-7 mb-3 border-b border-black/10 pb-1.5 text-xl font-semibold dark:border-white/10"
+          className="mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-[var(--rpt-ink)]"
         >
           {content}
         </h2>
       );
     case 3:
       return (
-        <h3 id={`block-${blockId}`} className="mt-5 mb-2 text-lg font-semibold">
+        <h3
+          id={`block-${blockId}`}
+          className="mt-5 mb-2 text-[15px] font-semibold text-[var(--rpt-ink)]"
+        >
           {content}
         </h3>
       );
@@ -98,14 +111,17 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
       return (
         <h4
           id={`block-${blockId}`}
-          className="mt-4 mb-1.5 text-base font-semibold"
+          className="mt-4 mb-1.5 text-[14px] font-semibold text-[var(--rpt-ink)]"
         >
           {content}
         </h4>
       );
     default:
       return (
-        <h5 id={`block-${blockId}`} className="mt-3 mb-1 text-sm font-semibold">
+        <h5
+          id={`block-${blockId}`}
+          className="mt-3 mb-1 text-[13px] font-semibold text-[var(--rpt-ink)]"
+        >
           {content}
         </h5>
       );
@@ -455,6 +471,19 @@ function referenceDomain(url: string | null | undefined): string | null {
   }
 }
 
+function CoverCustomHtml({ html }: { html: string }) {
+  const setHost = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) {
+        node.innerHTML = html;
+      }
+    },
+    [html],
+  );
+
+  return <div ref={setHost} className="report-custom-cover-html" />;
+}
+
 function findBlockElement(node: Node | null): HTMLElement | null {
   let curr: Node | null = node;
   while (curr) {
@@ -529,7 +558,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
     bodyNode = (
       <p
         id={`block-${block.id}`}
-        className="my-3 text-[15px] leading-7 text-current/90"
+        className="my-3 text-[14.5px] leading-[1.82] tracking-[0.01em] text-[var(--rpt-ink)]"
       >
         {renderInline(block.text)}
       </p>
@@ -538,7 +567,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
     bodyNode = (
       <blockquote
         id={`block-${block.id}`}
-        className="my-4 border-l-4 border-current/25 pl-4 text-[15px] leading-7 italic opacity-90"
+        className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-[var(--rpt-surface)] px-4 py-3 text-[14px] leading-[1.75] text-[var(--rpt-ink)]"
       >
         {renderInline(block.text)}
       </blockquote>
@@ -675,12 +704,24 @@ export function ReportViewer({
   comments = [],
   printMode = false,
   previewMode = false,
+  pageChrome,
   pageFilter,
   onPagesReady,
   onOpenCommentForBlock,
   onAskAgentWithQuote,
 }: ReportViewerProps) {
   const suppressChrome = printMode || previewMode;
+  const resolvedPageChrome = usePageChromeConfig(
+    document.doc_id,
+    document.theme.page_chrome,
+  );
+  const effectivePageChrome = pageChrome
+    ? normalizePageChromeConfig(pageChrome)
+    : resolvedPageChrome;
+  const effectivePageHeight = hasPageHeader(effectivePageChrome)
+    ? A4_CONTENT_HEIGHT_PX - 28
+    : A4_CONTENT_HEIGHT_PX;
+  const showFooter = hasPageFooter(effectivePageChrome);
   const rootRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [measurements, setMeasurements] = useState<PageMeasurements>({
@@ -839,8 +880,15 @@ export function ReportViewer({
   }, [document.doc_id, customCss]);
 
   const themeVars: Record<string, string> = {};
-  for (const [k, v] of Object.entries(document.theme.tokens ?? {})) {
+  const themeTokens = document.theme.tokens ?? {};
+  for (const [k, v] of Object.entries(themeTokens)) {
     themeVars[k] = v;
+  }
+  if (
+    themeTokens["--rpt-accent"] === undefined &&
+    themeTokens["--rpt-primary"] !== undefined
+  ) {
+    themeVars["--rpt-accent"] = themeTokens["--rpt-primary"];
   }
 
   const bibliographyById = useMemo(() => {
@@ -919,28 +967,150 @@ export function ReportViewer({
 
   const renderCover = () => {
     const cover = document.cover;
-    if (!cover.enabled || !cover.title) {
+    if (!cover.enabled) {
       return null;
     }
-    const kicker = cover.meta?.kicker;
     const authors = cover.authors ?? [];
+    if (cover.custom_html) {
+      let html = cover.custom_html;
+      const replacements: Record<string, string> = {
+        title: cover.title ?? "",
+        subtitle: cover.subtitle ?? "",
+        date: cover.date ?? "",
+        signature: cover.meta?.signature?.trim() || authors.join("、"),
+      };
+      for (const [key, value] of Object.entries(replacements)) {
+        html = html.replaceAll(`{{${key}}}`, value);
+      }
+      return (
+        <div className="mb-10">
+          <CoverCustomHtml html={html} />
+        </div>
+      );
+    }
+    if (!cover.title) {
+      return null;
+    }
+
+    const variant = cover.variant ?? "classic";
+    const kicker = cover.meta?.kicker?.trim();
+    const unit =
+      cover.meta?.unit?.trim() ||
+      cover.meta?.organization?.trim() ||
+      cover.meta?.institution?.trim() ||
+      null;
+    const metaEntries = [
+      authors.length > 0 ? `作者：${authors.join("、")}` : null,
+      unit ? `单位：${unit}` : null,
+      cover.date ? `日期：${cover.date}` : null,
+    ].filter((entry): entry is string => entry !== null);
+    const metaClass =
+      variant === "modern"
+        ? "rounded-full border border-[var(--rpt-border)] bg-[var(--rpt-surface)] px-2.5 py-0.5"
+        : "";
+    const renderMeta = (className: string) =>
+      metaEntries.length > 0 ? (
+        <div
+          className={`flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--rpt-muted)] ${className}`}
+        >
+          {metaEntries.map((entry) => (
+            <span key={entry} className={metaClass}>
+              {entry}
+            </span>
+          ))}
+        </div>
+      ) : null;
+
+    if (variant === "modern") {
+      return (
+        <header className="mb-10 flex gap-4 border-b border-[var(--rpt-border)] pb-6">
+          <div className="w-1 shrink-0 rounded-full bg-[var(--rpt-accent)]" />
+          <div className="min-w-0 flex-1">
+            {kicker && (
+              <div className="mb-2 text-[11px] font-semibold tracking-[0.2em] text-[var(--rpt-accent)] uppercase">
+                {kicker}
+              </div>
+            )}
+            <h1 className="text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
+              {cover.title}
+            </h1>
+            {cover.subtitle && (
+              <p className="mt-2 text-sm text-[var(--rpt-muted)]">
+                {cover.subtitle}
+              </p>
+            )}
+            {renderMeta("mt-4")}
+          </div>
+        </header>
+      );
+    }
+
+    if (variant === "minimal") {
+      return (
+        <header className="mb-10 border-b border-[var(--rpt-border)] pb-5">
+          {kicker && (
+            <div className="mb-2 text-[11px] font-medium tracking-[0.24em] text-[var(--rpt-muted)] uppercase">
+              {kicker}
+            </div>
+          )}
+          <h1 className="text-2xl leading-snug font-semibold tracking-tight text-[var(--rpt-ink)]">
+            {cover.title}
+          </h1>
+          {cover.subtitle && (
+            <p className="mt-2 text-sm text-[var(--rpt-muted)]">
+              {cover.subtitle}
+            </p>
+          )}
+          {renderMeta("mt-3")}
+        </header>
+      );
+    }
+
+    if (variant === "split") {
+      return (
+        <header className="mb-10 grid gap-5 border-b-2 border-[var(--rpt-accent)] pb-6 sm:grid-cols-[1.6fr_1fr] sm:gap-8">
+          <div className="min-w-0">
+            {kicker && (
+              <div className="mb-2 text-[11px] font-semibold tracking-[0.22em] text-[var(--rpt-accent)] uppercase">
+                {kicker}
+              </div>
+            )}
+            <h1 className="text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
+              {cover.title}
+            </h1>
+            {cover.subtitle && (
+              <p className="mt-2 text-sm text-[var(--rpt-muted)]">
+                {cover.subtitle}
+              </p>
+            )}
+          </div>
+          <div className="flex flex-col justify-end gap-y-1 border-[var(--rpt-border)] text-xs text-[var(--rpt-muted)] sm:border-l sm:pl-6">
+            {metaEntries.map((entry) => (
+              <span key={entry}>{entry}</span>
+            ))}
+          </div>
+        </header>
+      );
+    }
+
     return (
-      <header className="mb-8 border-b border-black/15 pb-6 dark:border-white/15">
+      <header className="mb-10 text-center">
         {kicker && (
-          <div className="mb-2 text-xs font-semibold tracking-wider text-primary uppercase">
+          <div className="mb-2 text-[11px] font-semibold tracking-[0.28em] text-[var(--rpt-accent)] uppercase">
             {kicker}
           </div>
         )}
-        <h1 className="text-3xl font-bold tracking-tight">{cover.title}</h1>
+        <h1 className="mx-auto max-w-[92%] text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
+          {cover.title}
+        </h1>
         {cover.subtitle && (
-          <p className="mt-2 text-base text-muted-foreground">
-            {cover.subtitle}
+          <p className="mt-3 text-sm text-[var(--rpt-muted)]">
+            —— {cover.subtitle} ——
           </p>
         )}
-        <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted-foreground">
-          {authors.length > 0 && <span>作者：{authors.join("、")}</span>}
-          {cover.date && <span>日期：{cover.date}</span>}
-        </div>
+        {renderMeta("mt-5 justify-center")}
+        <div className="mt-6 border-t border-[var(--rpt-border)]" />
+        <div className="mt-1 border-t-2 border-[var(--rpt-accent)]" />
       </header>
     );
   };
@@ -951,9 +1121,9 @@ export function ReportViewer({
       return null;
     }
     return (
-      <section className="mt-10 border-t border-black/15 pt-6 dark:border-white/15">
-        <h2 className="mb-4 flex items-center gap-2 text-base font-semibold">
-          <BookOpenIcon className="size-4 text-primary" />
+      <section className="mt-10 border-t border-[var(--rpt-border)] pt-6">
+        <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-[var(--rpt-ink)]">
+          <BookOpenIcon className="size-4 text-[var(--rpt-accent)]" />
           <span>{references.title || "参考资料"}</span>
         </h2>
         <ol className="space-y-3.5 text-xs leading-relaxed">
@@ -981,7 +1151,7 @@ export function ReportViewer({
                       href={source.url}
                       target="_blank"
                       rel="noreferrer noopener"
-                      className="font-medium text-foreground underline-offset-2 hover:text-blue-700 hover:underline dark:hover:text-blue-300"
+                      className="font-medium text-[var(--rpt-ink)] underline-offset-2 hover:text-[var(--rpt-accent)] hover:underline"
                     >
                       {source.title}
                     </a>
@@ -1005,12 +1175,17 @@ export function ReportViewer({
                           href={source.url}
                           target="_blank"
                           rel="noreferrer noopener"
-                          className="inline-flex items-center gap-0.5 text-blue-600 hover:underline dark:text-blue-400"
+                          className="inline-flex items-center gap-0.5 text-[var(--rpt-muted)] hover:text-[var(--rpt-accent)] hover:underline"
                         >
                           {domain ?? "链接"}
                           <ExternalLinkIcon className="size-2.5" />
                         </a>
                       )}
+                    </div>
+                  )}
+                  {entry.excerpt && (
+                    <div className="mt-1 rounded bg-[var(--rpt-surface)] px-2 py-1 text-[11px] leading-relaxed text-[var(--rpt-muted)]">
+                      “{entry.excerpt}”
                     </div>
                   )}
                 </div>
@@ -1024,8 +1199,8 @@ export function ReportViewer({
 
   const pages = useMemo(() => {
     if (!isPaged) return [];
-    return paginateBlocks(document.blocks, measurements);
-  }, [isPaged, document.blocks, measurements]);
+    return paginateBlocks(document.blocks, measurements, effectivePageHeight);
+  }, [isPaged, document.blocks, measurements, effectivePageHeight]);
 
   const pagedMixedItems = useMemo(() => {
     if (!isPaged) return [];
@@ -1063,6 +1238,7 @@ export function ReportViewer({
     <div
       ref={rootRef}
       style={themeVars}
+      data-theme-preset={document.theme.preset ?? "default"}
       className="report-root relative w-full"
     >
       {quoteAction &&
@@ -1122,7 +1298,7 @@ export function ReportViewer({
       )}
 
       {!isPaged ? (
-        <article className="mx-auto w-full max-w-[760px] px-5 py-8 sm:px-10">
+        <article className="mx-auto w-full max-w-[760px] bg-white px-5 py-8 text-[var(--rpt-ink)] shadow-sm ring-1 ring-black/5 sm:px-10">
           {renderCover()}
           {continuousItems.map((item) => (
             <div key={item.key}>
@@ -1147,54 +1323,107 @@ export function ReportViewer({
         </article>
       ) : (
         <div className="flex flex-col items-center gap-6 py-6 print:gap-0 print:py-0">
-          {visiblePages.map(({ page, pageIdx }) => (
-            <div
-              key={page.pageNumber}
-              style={suppressChrome ? undefined : { zoom: pageScale }}
-              className="relative shrink-0"
-            >
-              <section
-                style={{
-                  width: `${A4_PAGE_WIDTH_PX}px`,
-                  minHeight: `${A4_PAGE_HEIGHT_PX}px`,
-                  padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
-                }}
-                className="a4-page relative flex flex-col justify-between bg-white text-neutral-900 shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
+          {visiblePages.map(({ page, pageIdx }) => {
+            const pageContext = {
+              page: page.pageNumber,
+              total: pages.length,
+              title: document.cover.title || document.doc_id,
+              subtitle: document.cover.subtitle ?? "",
+              date: document.cover.date ?? "",
+              kicker: document.cover.meta?.kicker ?? "",
+              authors: (document.cover.authors ?? []).join("、"),
+            };
+            return (
+              <div
+                key={page.pageNumber}
+                style={suppressChrome ? undefined : { zoom: pageScale }}
+                className="relative shrink-0"
               >
-                <div className="flex-1">
-                  {page.includeCover && renderCover()}
-                  {(pagedMixedItems[pageIdx] ?? []).map((item) => (
-                    <div key={item.key}>
-                      {item.preview ? (
-                        <EhemeralBlock preview={item.preview} />
-                      ) : item.slice ? (
-                        <ReportBlockItem
-                          slice={item.slice}
-                          isPaged
-                          printMode={suppressChrome}
-                          computed={computed}
-                          bibliographyById={bibliographyById}
-                          commentCount={
-                            openCountByBlock.get(item.slice.block.id) ?? 0
-                          }
-                          blockQuotes={quotesByBlock.get(item.slice.block.id)}
-                          onCitationClick={scrollToSource}
-                          onOpenCommentForBlock={onOpenCommentForBlock}
-                        />
-                      ) : null}
-                    </div>
-                  ))}
-                  {page.includeBibliography && renderBibliography()}
-                </div>
-                <footer className="mt-4 flex items-center justify-between border-t border-black/10 pt-2 text-[11px] text-neutral-500">
-                  <span>{document.cover.title || document.doc_id}</span>
-                  <span className="tabular-nums">
-                    第 {page.pageNumber} 页 / 共 {pages.length} 页
-                  </span>
-                </footer>
-              </section>
-            </div>
-          ))}
+                <section
+                  style={{
+                    width: `${A4_PAGE_WIDTH_PX}px`,
+                    minHeight: `${A4_PAGE_HEIGHT_PX}px`,
+                    padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
+                  }}
+                  className="a4-page relative flex flex-col justify-between bg-white text-[var(--rpt-ink)] shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
+                >
+                  <div className="flex-1">
+                    {hasPageHeader(effectivePageChrome) &&
+                      (pageIdx > 0 ||
+                        !effectivePageChrome.hide_header_on_first_page) && (
+                        <div className="mb-3 grid grid-cols-3 items-center gap-2 border-b border-[var(--rpt-border)] pb-1 text-[10px] tracking-[0.06em] text-[var(--rpt-muted)]">
+                          <div className="truncate text-left">
+                            {formatPageTemplate(
+                              effectivePageChrome.header.left,
+                              pageContext,
+                            )}
+                          </div>
+                          <div className="truncate text-center">
+                            {formatPageTemplate(
+                              effectivePageChrome.header.center,
+                              pageContext,
+                            )}
+                          </div>
+                          <div className="truncate text-right">
+                            {formatPageTemplate(
+                              effectivePageChrome.header.right,
+                              pageContext,
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    {page.includeCover && renderCover()}
+                    {(pagedMixedItems[pageIdx] ?? []).map((item) => (
+                      <div key={item.key}>
+                        {item.preview ? (
+                          <EhemeralBlock preview={item.preview} />
+                        ) : item.slice ? (
+                          <ReportBlockItem
+                            slice={item.slice}
+                            isPaged
+                            printMode={suppressChrome}
+                            computed={computed}
+                            bibliographyById={bibliographyById}
+                            commentCount={
+                              openCountByBlock.get(item.slice.block.id) ?? 0
+                            }
+                            blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                            onCitationClick={scrollToSource}
+                            onOpenCommentForBlock={onOpenCommentForBlock}
+                          />
+                        ) : null}
+                      </div>
+                    ))}
+                    {page.includeBibliography && renderBibliography()}
+                  </div>
+                  {showFooter &&
+                    (pageIdx > 0 ||
+                      !effectivePageChrome.hide_footer_on_first_page) && (
+                      <footer className="mt-4 grid grid-cols-3 items-center gap-2 border-t border-[var(--rpt-border)] pt-2 text-[11px] text-[var(--rpt-muted)]">
+                        <span className="truncate text-left">
+                          {formatPageTemplate(
+                            effectivePageChrome.footer.left,
+                            pageContext,
+                          )}
+                        </span>
+                        <span className="truncate text-center tabular-nums">
+                          {formatPageTemplate(
+                            effectivePageChrome.footer.center,
+                            pageContext,
+                          )}
+                        </span>
+                        <span className="truncate text-right tabular-nums">
+                          {formatPageTemplate(
+                            effectivePageChrome.footer.right,
+                            pageContext,
+                          )}
+                        </span>
+                      </footer>
+                    )}
+                </section>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

@@ -1906,6 +1906,54 @@
         }
       ]
     },
+    "PageChromeConfig": {
+      "description": "A4 paged header/footer configuration stored under `theme.page_chrome`.",
+      "type": "object",
+      "properties": {
+        "footer": {
+          "$ref": "#/$defs/PageChromeSlots",
+          "default": {
+            "center": "",
+            "left": "",
+            "right": ""
+          }
+        },
+        "header": {
+          "$ref": "#/$defs/PageChromeSlots",
+          "default": {
+            "center": "",
+            "left": "",
+            "right": ""
+          }
+        },
+        "hide_footer_on_first_page": {
+          "type": "boolean",
+          "default": false
+        },
+        "hide_header_on_first_page": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "PageChromeSlots": {
+      "description": "A three-slot page header or footer row.",
+      "type": "object",
+      "properties": {
+        "center": {
+          "type": "string",
+          "default": ""
+        },
+        "left": {
+          "type": "string",
+          "default": ""
+        },
+        "right": {
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
     "PartialBlockPreview": {
       "description": "Incrementally streamed block content rendered before the revision is committed.\n\nText blocks carry partial `text`; tables and charts may only carry `title` while streaming so\nthe frontend can render a skeleton. `block_id` is pre-allocated when known and must match the\neventual committed block for seamless replacement.",
       "type": "object",
@@ -3009,6 +3057,17 @@
         "custom_css": {
           "description": "Arbitrary CSS. It is automatically scoped under `.report-root`.",
           "type": "string"
+        },
+        "page_chrome": {
+          "description": "Optional A4 paged header/footer slots with template placeholders.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageChromeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "preset": {
           "description": "Built-in preset name. Unknown presets fall back to `default`.",

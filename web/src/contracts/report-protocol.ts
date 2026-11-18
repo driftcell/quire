@@ -846,6 +846,10 @@ export interface ThemeConfig {
    */
   custom_css?: string;
   /**
+   * Optional A4 paged header/footer slots with template placeholders.
+   */
+  page_chrome?: PageChromeConfig | null;
+  /**
    * Built-in preset name. Unknown presets fall back to `default`.
    */
   preset?: string;
@@ -855,6 +859,34 @@ export interface ThemeConfig {
   tokens?: {
     [k: string]: string;
   };
+  [k: string]: unknown;
+}
+/**
+ * A4 paged header/footer configuration stored under `theme.page_chrome`.
+ */
+export interface PageChromeConfig {
+  footer?: PageChromeSlots;
+  header?: PageChromeSlots1;
+  hide_footer_on_first_page?: boolean;
+  hide_header_on_first_page?: boolean;
+  [k: string]: unknown;
+}
+/**
+ * A three-slot page header or footer row.
+ */
+export interface PageChromeSlots {
+  center?: string;
+  left?: string;
+  right?: string;
+  [k: string]: unknown;
+}
+/**
+ * A three-slot page header or footer row.
+ */
+export interface PageChromeSlots1 {
+  center?: string;
+  left?: string;
+  right?: string;
   [k: string]: unknown;
 }
 /**
@@ -971,6 +1003,10 @@ export interface ThemeConfig1 {
    * Arbitrary CSS. It is automatically scoped under `.report-root`.
    */
   custom_css?: string;
+  /**
+   * Optional A4 paged header/footer slots with template placeholders.
+   */
+  page_chrome?: PageChromeConfig | null;
   /**
    * Built-in preset name. Unknown presets fall back to `default`.
    */
@@ -1265,6 +1301,10 @@ export interface ThemeConfig2 {
    * Arbitrary CSS. It is automatically scoped under `.report-root`.
    */
   custom_css?: string;
+  /**
+   * Optional A4 paged header/footer slots with template placeholders.
+   */
+  page_chrome?: PageChromeConfig | null;
   /**
    * Built-in preset name. Unknown presets fall back to `default`.
    */

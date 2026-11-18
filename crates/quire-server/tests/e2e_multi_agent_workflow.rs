@@ -565,11 +565,16 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     // 2. Lead agent cold start via MCP.
     let lead = McpClient::connect(http.clone(), &base, &session_id, "lead-orchestrator").await?;
     let tool_names = lead.list_tool_names().await?;
-    assert_eq!(tool_names.len(), 18, "tool names: {tool_names:?}");
-    for comment_tool in ["list_comments", "add_comment", "reply_comment"] {
+    assert_eq!(tool_names.len(), 19, "tool names: {tool_names:?}");
+    for required_tool in [
+        "list_comments",
+        "add_comment",
+        "reply_comment",
+        "configure_page_chrome",
+    ] {
         assert!(
-            tool_names.iter().any(|name| name == comment_tool),
-            "missing {comment_tool}: {tool_names:?}"
+            tool_names.iter().any(|name| name == required_tool),
+            "missing {required_tool}: {tool_names:?}"
         );
     }
     let guide = lead

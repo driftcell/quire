@@ -109,7 +109,7 @@ function CitationGroup({
 
   if (printMode) {
     return (
-      <sup className="ml-0.5 text-[11px] font-medium text-blue-600">
+      <sup className="ml-0.5 text-[11px] font-normal text-neutral-500 tabular-nums">
         {label}
       </sup>
     );

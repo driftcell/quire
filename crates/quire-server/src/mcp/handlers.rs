@@ -10,9 +10,9 @@ use indexmap::IndexMap;
 use quire_protocol::{
     Block, BlockId, BlockKind, COVER_VARIANTS, CommentAuthorType, CommentStatus, CoverConfig,
     Diagnostic, DocId, EphemeralClearEvent, EphemeralPayload, IdAssignment, MarkdownOptions,
-    MarkdownProjector, PatchOp, ProtocolError, ReportDocument, ReportDraft, Revision, Severity,
-    SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value, is_valid_css_token_name,
-    lint_document,
+    MarkdownProjector, PageChromeConfig, PatchOp, ProtocolError, ReportDocument, ReportDraft,
+    Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value,
+    is_valid_css_token_name, lint_document,
 };
 use quire_store::{
     ApplyResult, CommitExtras, NewCommentReply, NewCommentThread, SourceUpsert, StoreError,
@@ -869,7 +869,59 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 14: update style and CSS
+    // Tool 14: configure page chrome
+    // ---------------------------------------------------------------------
+    #[tool(
+        name = "configure_page_chrome",
+        description = "Configure A4 paged header and footer slots (left/center/right) with template placeholders ({page}, {total}, {title}, {subtitle}, {date}, {kicker}, {authors}) and first-page visibility."
+    )]
+    pub async fn configure_page_chrome(
+        &self,
+        Extension(parts): Extension<Parts>,
+        Parameters(request): Parameters<ConfigurePageChromeParams>,
+    ) -> Result<Json<ConfigurePageChromeReceipt>, ErrorData> {
+        let actor = request_context(&parts)?.actor;
+        let doc_id = parse_doc_id(&request.doc_id)?;
+        if let Some(expected) = request.base_revision {
+            let current = self
+                .state
+                .store
+                .get_document(&doc_id)
+                .await
+                .map_err(mcp_error)?;
+            let current_revision = current.revision.get();
+            if u64::try_from(current_revision).ok() != Some(expected) {
+                return Err(invalid_params(
+                    format!(
+                        "base_revision {expected} does not match current revision {current_revision}"
+                    ),
+                    "Reload the document and retry with the current revision.",
+                    Some(json!({"current_revision": current_revision})),
+                ));
+            }
+        }
+        let (result, updated) = self
+            .apply_with_reload(&doc_id, &actor, "configure_page_chrome", |document| {
+                let mut theme = document.theme.clone();
+                theme.page_chrome = Some(merge_page_chrome(theme.page_chrome.as_ref(), &request));
+                Ok(vec![PatchOp::SetTheme { theme }])
+            })
+            .await?;
+        let page_chrome = updated.theme.page_chrome.clone().unwrap_or_default();
+        let _next_hint = format!(
+            "Page chrome committed at revision {}. Slots support {{page}}, {{total}}, {{title}}, {{subtitle}}, {{date}}, {{kicker}} and {{authors}}.",
+            result.new_revision
+        );
+        Ok(Json(ConfigurePageChromeReceipt {
+            doc_id: doc_id.to_string(),
+            revision: result.new_revision.get(),
+            page_chrome,
+            _next_hint,
+        }))
+    }
+
+    // ---------------------------------------------------------------------
+    // Tool 15: update style and CSS
     // ---------------------------------------------------------------------
     #[tool(
         name = "update_style_and_css",
@@ -1997,9 +2049,30 @@ impl QuireMcpServer {
     }
 }
 
+fn merge_page_chrome(
+    current: Option<&PageChromeConfig>,
+    request: &ConfigurePageChromeParams,
+) -> PageChromeConfig {
+    let mut chrome = current.cloned().unwrap_or_default();
+    if let Some(header) = request.header.clone() {
+        chrome.header = header;
+    }
+    if let Some(footer) = request.footer.clone() {
+        chrome.footer = footer;
+    }
+    if let Some(hide) = request.hide_header_on_first_page {
+        chrome.hide_header_on_first_page = hide;
+    }
+    if let Some(hide) = request.hide_footer_on_first_page {
+        chrome.hide_footer_on_first_page = hide;
+    }
+    chrome
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{generate_doc_id, slugify_title};
+    use super::*;
+    use quire_protocol::PageChromeSlots;
 
     #[test]
     fn slugify_title_drops_non_ascii_characters() {
@@ -2016,5 +2089,40 @@ mod tests {
         if let Ok(doc_id) = generated {
             assert!(doc_id.as_str().starts_with("report-"));
         }
+    }
+
+    #[test]
+    fn page_chrome_merges_only_supplied_fields() {
+        let current = PageChromeConfig {
+            header: PageChromeSlots {
+                left: "{kicker}".into(),
+                center: String::new(),
+                right: "{title}".into(),
+            },
+            footer: PageChromeSlots {
+                left: "{title}".into(),
+                center: String::new(),
+                right: "第 {page} 页".into(),
+            },
+            hide_header_on_first_page: true,
+            hide_footer_on_first_page: false,
+        };
+        let request = ConfigurePageChromeParams {
+            doc_id: "doc".into(),
+            header: None,
+            footer: Some(PageChromeSlots {
+                left: String::new(),
+                center: "— {page} / {total} —".into(),
+                right: String::new(),
+            }),
+            hide_header_on_first_page: Some(false),
+            hide_footer_on_first_page: None,
+            base_revision: None,
+        };
+        let merged = merge_page_chrome(Some(&current), &request);
+        assert_eq!(merged.header.left, "{kicker}");
+        assert_eq!(merged.footer.center, "— {page} / {total} —");
+        assert!(!merged.hide_header_on_first_page);
+        assert!(!merged.hide_footer_on_first_page);
     }
 }

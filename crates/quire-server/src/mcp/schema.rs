@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 use indexmap::IndexMap;
 use quire_protocol::{
     Block, CitationStyle, CommentStatus, CommentThread, CoverConfig, IdAssignment, LintReport,
-    PatchOp, ReferencesConfig, SourceEntry, SourceId, TextQuoteSelector, ThemeSummary, TocConfig,
+    PageChromeConfig, PageChromeSlots, PatchOp, ReferencesConfig, SourceEntry, SourceId,
+    TextQuoteSelector, ThemeSummary, TocConfig,
 };
 use quire_store::ReportSummary;
 use schemars::JsonSchema;
@@ -511,6 +512,38 @@ pub struct ConfigureReferencesReceipt {
     pub references: ReferencesConfig,
     /// Registered source IDs that are not cited by any block.
     pub orphan_sources: Vec<String>,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `configure_page_chrome`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConfigurePageChromeParams {
+    pub doc_id: String,
+    /// Header slots. Omit to keep the current header.
+    #[serde(default)]
+    pub header: Option<PageChromeSlots>,
+    /// Footer slots. Omit to keep the current footer.
+    #[serde(default)]
+    pub footer: Option<PageChromeSlots>,
+    /// Hide the header on the first page. Omit to keep the current setting.
+    #[serde(default)]
+    pub hide_header_on_first_page: Option<bool>,
+    /// Hide the footer on the first page. Omit to keep the current setting.
+    #[serde(default)]
+    pub hide_footer_on_first_page: Option<bool>,
+    /// Optional expected revision for optimistic concurrency.
+    #[serde(default)]
+    pub base_revision: Option<u64>,
+}
+
+/// Output for `configure_page_chrome`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ConfigurePageChromeReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    pub page_chrome: PageChromeConfig,
     #[serde(rename = "_next_hint")]
     pub _next_hint: String,
 }

@@ -92,7 +92,7 @@ export const TableBlockView = memo(function TableBlockView({
             ? { minWidth: `${sizing.minTableWidthPx}px` }
             : undefined
         }
-        className="w-full table-fixed border-collapse text-sm"
+        className="w-full table-fixed border-collapse border-t-2 border-neutral-800 text-sm dark:border-neutral-200"
       >
         <colgroup>
           {leafCols.map((col, idx) => (
@@ -108,7 +108,11 @@ export const TableBlockView = memo(function TableBlockView({
           {headerRows.map((row, rowIdx) => (
             <tr
               key={rowIdx}
-              className="border-b-2 border-current/20 bg-black/[0.03] dark:bg-white/[0.04]"
+              className={
+                rowIdx === headerRows.length - 1
+                  ? "border-b border-neutral-700 bg-[var(--rpt-surface)] dark:border-neutral-300"
+                  : "border-b border-black/15 bg-[var(--rpt-surface)]"
+              }
             >
               {row.map((cell, cellIdx) => (
                 <th
@@ -116,7 +120,7 @@ export const TableBlockView = memo(function TableBlockView({
                   colSpan={cell.colspan}
                   rowSpan={cell.rowspan}
                   style={{ textAlign: cell.align }}
-                  className="border border-black/10 px-2.5 py-2 font-semibold break-words dark:border-white/10"
+                  className="px-3 py-2 text-[13px] font-semibold break-words"
                 >
                   {cell.label}
                 </th>
@@ -137,7 +141,7 @@ export const TableBlockView = memo(function TableBlockView({
               <tr
                 key={rowStart + rIdx}
                 data-measure-row-index={rowStart + rIdx}
-                className="border-b border-black/10 even:bg-black/[0.015] dark:border-white/10 dark:even:bg-white/[0.02]"
+                className="border-b border-black/[0.06] even:bg-black/[0.012] dark:border-white/[0.08] dark:even:bg-white/[0.015]"
               >
                 {leafCols.map((col) => {
                   const formatted = formatCell(rowObj[col.key]);
@@ -146,7 +150,7 @@ export const TableBlockView = memo(function TableBlockView({
                       key={col.key}
                       title={formatted.tooltip}
                       style={{ textAlign: formatted.align ?? col.align }}
-                      className={`border border-black/10 px-2.5 py-1.5 break-words tabular-nums dark:border-white/10 ${formatted.className ?? ""}`}
+                      className={`px-3 py-2 text-[13px] leading-5 break-words tabular-nums ${formatted.className ?? ""}`}
                     >
                       {col.data_type === "badge" && formatted.text ? (
                         <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap">
@@ -163,7 +167,10 @@ export const TableBlockView = memo(function TableBlockView({
           })}
         </tbody>
         {summaryRows.length > 0 && (
-          <tfoot data-measure-tfoot="true">
+          <tfoot
+            data-measure-tfoot="true"
+            className="border-t border-neutral-700 dark:border-neutral-300"
+          >
             {summaryRows.map((row, sIdx) => {
               const rowObj: Record<string, CellValue> = Array.isArray(row)
                 ? Object.fromEntries(
@@ -172,10 +179,15 @@ export const TableBlockView = memo(function TableBlockView({
                 : isCellRecord(row)
                   ? row
                   : {};
+              const isLast = sIdx === summaryRows.length - 1;
               return (
                 <tr
                   key={sIdx}
-                  className="border-t-2 border-current/25 bg-black/[0.04] font-semibold dark:bg-white/[0.06]"
+                  className={`bg-[var(--rpt-surface)] font-semibold ${
+                    isLast
+                      ? "border-b-2 border-neutral-800 dark:border-neutral-200"
+                      : ""
+                  }`}
                 >
                   {leafCols.map((col) => {
                     const formatted = formatCell(rowObj[col.key]);
@@ -183,7 +195,7 @@ export const TableBlockView = memo(function TableBlockView({
                       <td
                         key={col.key}
                         style={{ textAlign: formatted.align ?? col.align }}
-                        className="border border-black/10 px-2.5 py-1.5 break-words tabular-nums dark:border-white/10"
+                        className="px-3 py-2 text-[13px] leading-5 break-words tabular-nums"
                       >
                         {formatted.text}
                       </td>

@@ -13,7 +13,7 @@ import {
   useInteractions,
   useRole,
 } from "@floating-ui/react";
-import { BookOpenIcon, Globe2Icon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 
 export interface CitationRef {
   citeId: string;
@@ -97,7 +97,7 @@ export function CitationHoverCard({
               setOpen(false);
             },
             className:
-              "rounded px-0.5 text-[11px] font-medium text-blue-600 no-underline transition-colors hover:bg-blue-50 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none dark:text-blue-400 dark:hover:bg-blue-950/50",
+              "rounded px-1 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
           })}
         >
           {label}
@@ -117,8 +117,7 @@ export function CitationHoverCard({
             })}
           >
             <div className="flex items-center justify-between border-b px-3 py-2">
-              <div className="flex items-center gap-1.5 text-xs font-semibold">
-                <BookOpenIcon className="size-3.5 text-primary" />
+              <div className="text-xs font-semibold">
                 引用了 {refs.length} 个来源
               </div>
               <button
@@ -135,41 +134,36 @@ export function CitationHoverCard({
                 const domain = sourceDomain(ref.url);
                 return (
                   <div key={ref.citeId} className="flex gap-2 px-3 py-2.5">
-                    <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-                      <Globe2Icon className="size-3.5" />
-                    </span>
+                    <button
+                      type="button"
+                      title="定位到文末"
+                      onClick={() => {
+                        onLocate(ref.sourceId);
+                        setOpen(false);
+                      }}
+                      className="mt-0.5 shrink-0 self-start rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground tabular-nums transition-colors hover:bg-muted-foreground/15 hover:text-foreground"
+                    >
+                      {ref.badge}
+                    </button>
                     <div className="min-w-0 flex-1 space-y-0.5">
-                      <div className="flex items-start gap-2">
-                        {ref.url ? (
-                          <a
-                            href={ref.url}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="line-clamp-2 min-w-0 text-xs font-medium text-blue-700 hover:underline dark:text-blue-300"
-                          >
-                            {ref.title}
-                          </a>
-                        ) : (
-                          <span className="line-clamp-2 min-w-0 text-xs font-medium">
-                            {ref.title}
-                          </span>
-                        )}
-                        <button
-                          type="button"
-                          title="定位到文末"
-                          onClick={() => {
-                            onLocate(ref.sourceId);
-                            setOpen(false);
-                          }}
-                          className="ml-auto shrink-0 rounded bg-muted px-1 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-muted-foreground/15 hover:text-foreground"
+                      {ref.url ? (
+                        <a
+                          href={ref.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="line-clamp-2 min-w-0 text-xs font-medium text-foreground underline-offset-2 hover:underline"
                         >
-                          {ref.badge}
-                        </button>
-                      </div>
+                          {ref.title}
+                        </a>
+                      ) : (
+                        <span className="line-clamp-2 min-w-0 text-xs font-medium">
+                          {ref.title}
+                        </span>
+                      )}
                       {(domain || ref.authors || ref.date) && (
                         <div className="truncate text-[11px] text-muted-foreground">
                           {domain && (
-                            <span className="text-blue-600 dark:text-blue-400">
+                            <span className="text-muted-foreground hover:text-foreground">
                               {domain}
                             </span>
                           )}
@@ -180,7 +174,7 @@ export function CitationHoverCard({
                         </div>
                       )}
                       {ref.excerpt && (
-                        <div className="mt-1 line-clamp-3 border-l-2 border-amber-500/60 pl-2 text-[11px] leading-relaxed text-muted-foreground italic">
+                        <div className="mt-1 line-clamp-3 border-l-2 border-muted-foreground/30 pl-2 text-[11px] leading-relaxed text-muted-foreground italic">
                           {ref.excerpt}
                         </div>
                       )}

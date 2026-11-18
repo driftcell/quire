@@ -1,4 +1,4 @@
-//! Quire MCP tool server (18 domain tools) mounted at `/mcp`.
+//! Quire MCP tool server (19 domain tools) mounted at `/mcp`.
 //!
 //! The implementation is split into `schema` (request/response contracts and compact receipts)
 //! and `handlers` (tool methods plus rebase/draft helpers).
@@ -36,7 +36,7 @@ pub struct QuireMcpServer {
 }
 
 impl QuireMcpServer {
-    /// Construct the MCP server and register all 18 domain tools on the router.
+    /// Construct the MCP server and register all 19 domain tools on the router.
     pub fn new(state: AppState) -> Self {
         Self {
             state,

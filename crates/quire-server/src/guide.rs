@@ -218,6 +218,13 @@ SOURCES
 - `configure_references(doc_id, enabled=true, style="author_year")` switches labels to (Smith, 2025).
 - Invalid source ids produce `DANGLING_SOURCE_ID` with the full valid source_id list.
 
+PAGE CHROME
+- `configure_page_chrome(doc_id, header={"left":"{kicker}","center":"","right":"{title}"}, footer={"left":"{authors}","center":"第 {page} 页 / 共 {total} 页","right":"{date}"}, hide_header_on_first_page=true)`.
+- Slots: header/footer each have `left`, `center`, `right`. Omit a slot object to keep its current value.
+- Placeholders: `{page}`, `{total}`, `{title}`, `{subtitle}`, `{date}`, `{kicker}`, `{authors}`.
+- First-page visibility: `hide_header_on_first_page` defaults true; `hide_footer_on_first_page` defaults false.
+- The frontend also exposes a visual editor for human reviewers; MCP values are the document defaults.
+
 THEME TOKENS
 {
   "preset": "editorial",
@@ -246,6 +253,7 @@ STYLE FIELDS
         recommended_tools: vec![
             "upsert_sources".into(),
             "configure_references".into(),
+            "configure_page_chrome".into(),
             "update_style_and_css".into(),
             "lint_document".into(),
         ],

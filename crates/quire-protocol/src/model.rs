@@ -115,6 +115,30 @@ impl Default for TocConfig {
     }
 }
 
+/// A three-slot page header or footer row.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PageChromeSlots {
+    #[serde(default)]
+    pub left: String,
+    #[serde(default)]
+    pub center: String,
+    #[serde(default)]
+    pub right: String,
+}
+
+/// A4 paged header/footer configuration stored under `theme.page_chrome`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PageChromeConfig {
+    #[serde(default)]
+    pub header: PageChromeSlots,
+    #[serde(default)]
+    pub footer: PageChromeSlots,
+    #[serde(default = "default_true")]
+    pub hide_header_on_first_page: bool,
+    #[serde(default)]
+    pub hide_footer_on_first_page: bool,
+}
+
 /// Theme configuration. Tokens are CSS custom properties applied to `.report-root`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeConfig {
@@ -127,6 +151,9 @@ pub struct ThemeConfig {
     /// Arbitrary CSS. It is automatically scoped under `.report-root`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub custom_css: String,
+    /// Optional A4 paged header/footer slots with template placeholders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_chrome: Option<PageChromeConfig>,
 }
 
 fn default_preset() -> String {
@@ -139,6 +166,7 @@ impl Default for ThemeConfig {
             preset: default_preset(),
             tokens: BTreeMap::new(),
             custom_css: String::new(),
+            page_chrome: None,
         }
     }
 }
@@ -418,5 +446,20 @@ mod tests {
     #[test]
     fn default_references_break_before_page() {
         assert!(ReferencesConfig::default().page_break_before);
+    }
+
+    #[test]
+    fn page_chrome_roundtrips_with_serde_defaults() {
+        let value = serde_json::json!({
+            "header": {"left": "{kicker}", "center": "", "right": "{title}"},
+            "footer": {"left": "{authors}", "center": "{page}/{total}", "right": "{date}"}
+        });
+        let config: PageChromeConfig = serde_json::from_value(value).expect("page chrome config");
+        assert!(config.hide_header_on_first_page);
+        assert!(!config.hide_footer_on_first_page);
+        assert_eq!(config.header.left, "{kicker}");
+        let serialized = serde_json::to_value(&config).expect("serialize page chrome");
+        assert_eq!(serialized["footer"]["center"], "{page}/{total}");
+        assert!(ThemeConfig::default().page_chrome.is_none());
     }
 }

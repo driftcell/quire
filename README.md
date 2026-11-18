@@ -14,7 +14,7 @@ dependency. Rendering and visual preview belong to the external frontend.
 | `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, linter, draft parser |
 | `quire-store` | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher |
 | `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json` |
-| `quire-server` | Axum REST/SSE endpoints and the 18-tool `rmcp` server mounted at `/mcp` |
+| `quire-server` | Axum REST/SSE endpoints and the 19-tool `rmcp` server mounted at `/mcp` |
 | `quire-runtime` | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE |
 
 ## Quickstart
@@ -114,7 +114,7 @@ blocks, so a citation can be registered in the same call that references it. Emp
 block IDs are auto-assigned and reported in `assigned_ids`; clients do not need to invent stable IDs
 for transient drafts.
 
-## MCP tools (18)
+## MCP tools (19)
 
 | Tool | Purpose |
 | --- | --- |
@@ -131,6 +131,7 @@ for transient drafts.
 | `set_cover` | partial cover update |
 | `configure_toc` | enable/title/depth/variant |
 | `configure_references` | bibliography style/page break + orphan sources |
+| `configure_page_chrome` | A4 header/footer slots, placeholders and first-page visibility |
 | `update_style_and_css` | presets, tokens, validated scoped CSS |
 | `lint_document` | zero-browser static validation |
 | `list_comments` | side-channel review threads with anchors + `anchor_detached` |

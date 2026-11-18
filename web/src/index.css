@@ -10,33 +10,35 @@
 /* Report body isolation boundary                                            */
 /* ------------------------------------------------------------------------- */
 .report-root {
-  font-family: var(
-    --rpt-font-body,
-    "Geist Variable",
-    "PingFang SC",
-    "Noto Sans SC",
-    "Hiragino Sans GB",
-    "Microsoft YaHei",
-    system-ui,
-    sans-serif
-  );
-  color: var(--rpt-ink, inherit);
+  --rpt-accent: #1e3a5f;
+  --rpt-ink: #1f2937;
+  --rpt-muted: #64748b;
+  --rpt-border: #cbd5e1;
+  --rpt-surface: #f8fafc;
+  --rpt-font-heading:
+    "Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
+  --rpt-font-body:
+    "Geist Variable", "PingFang SC", "Noto Sans SC", "Hiragino Sans GB",
+    "Microsoft YaHei", system-ui, sans-serif;
+  font-family: var(--rpt-font-body);
+  color: var(--rpt-ink);
+}
+
+.report-root[data-theme-preset="briefing"] {
+  --rpt-accent: #991b1b;
+}
+
+.report-root[data-theme-preset="modern"] {
+  --rpt-accent: #0f4c81;
+  --rpt-font-heading: var(--rpt-font-body);
 }
 
 .report-root h1,
 .report-root h2,
 .report-root h3,
-.report-root h4 {
-  font-family: var(
-    --rpt-font-heading,
-    var(
-      --rpt-font-body,
-      "Geist Variable",
-      "PingFang SC",
-      "Noto Sans SC",
-      sans-serif
-    )
-  );
+.report-root h4,
+.report-root h5 {
+  font-family: var(--rpt-font-heading);
 }
 
 @media print {

@@ -21,6 +21,7 @@ import {
   type FloatingCommentAnchor,
 } from "@/components/report/FloatingCommentPopover";
 import { ReportViewer } from "@/components/report/ReportViewer";
+import { PageChromeDialog } from "@/components/report/PageChromeDialog";
 import { TocOutline } from "@/components/report/TocOutline";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -165,6 +166,12 @@ function DocumentPage() {
           >
             <PrinterIcon className="size-4" />
           </Button>
+          {prefs.reportViewMode === "paged" && docQuery.data && (
+            <PageChromeDialog
+              docId={docId}
+              themePageChrome={docQuery.data.document.theme.page_chrome}
+            />
+          )}
         </div>
       </header>
 
