@@ -83,11 +83,26 @@ pub(crate) fn entries(value: Option<&Value>) -> Vec<&Value> {
 }
 
 /// Number of selectable coordinate-system instances for an option key.
+///
+/// Cartesian axes and grids have an implicit default instance, so they may be omitted.
+/// Radar/polar have no implicit component and report zero when absent; callers can use
+/// [`configured_axis_count`] to distinguish "absent" from "one configured instance".
 pub(crate) fn axis_count(option: &Value, key: &str) -> usize {
+    configured_axis_count(option, key).unwrap_or({
+        if matches!(key, "xAxis" | "yAxis" | "grid") {
+            1
+        } else {
+            0
+        }
+    })
+}
+
+/// Number of explicitly configured coordinate-system instances, or `None` when absent.
+pub(crate) fn configured_axis_count(option: &Value, key: &str) -> Option<usize> {
     match option.get(key) {
-        Some(Value::Array(items)) => items.len().max(1),
-        Some(Value::Object(_)) => 1,
-        _ => 1,
+        Some(Value::Array(items)) if !items.is_empty() => Some(items.len()),
+        Some(Value::Object(_)) => Some(1),
+        _ => None,
     }
 }
 
@@ -174,6 +189,9 @@ pub(crate) fn required_extensions(option: &Value) -> BTreeSet<String> {
 }
 
 /// Recursively find the first JavaScript callback string. Returns its JSON-ish path.
+///
+/// Data payloads (dataset sources, series data/links/edges/nodes, axis categories, names and
+/// display text) are skipped: they are legitimate business strings and never execute as code.
 pub(crate) fn find_js_function_string(value: &Value, path: &str) -> Option<String> {
     match value {
         Value::String(text) if looks_like_js_function(text) => Some(path.to_string()),
@@ -182,6 +200,9 @@ pub(crate) fn find_js_function_string(value: &Value, path: &str) -> Option<Strin
             .enumerate()
             .find_map(|(index, item)| find_js_function_string(item, &format!("{path}[{index}]"))),
         Value::Object(map) => map.iter().find_map(|(key, value)| {
+            if is_data_payload_key(key) {
+                return None;
+            }
             let child = if path.is_empty() {
                 key.clone()
             } else {
@@ -193,11 +214,83 @@ pub(crate) fn find_js_function_string(value: &Value, path: &str) -> Option<Strin
     }
 }
 
-/// Detect inline JavaScript callbacks while allowing ECharts string templates.
+fn is_data_payload_key(key: &str) -> bool {
+    matches!(
+        key,
+        "data"
+            | "source"
+            | "links"
+            | "edges"
+            | "nodes"
+            | "name"
+            | "text"
+            | "subtext"
+            | "dimensions"
+            | "encode"
+            | "id"
+            | "type"
+            | "map"
+    )
+}
+
+/// Detect inline JavaScript callbacks while allowing ECharts string templates and prose.
 pub(crate) fn looks_like_js_function(text: &str) -> bool {
-    if text.contains("=>") || text.contains("function(") {
+    let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
+    if compact.contains("function(") {
         return true;
     }
-    let compact: String = text.chars().filter(|ch| !ch.is_whitespace()).collect();
-    compact.contains("function(") || compact.contains("=>")
+    contains_arrow_function(text)
+}
+
+fn contains_arrow_function(text: &str) -> bool {
+    let mut remaining = text;
+    while let Some((left, right)) = remaining.split_once("=>") {
+        if arrow_left_is_function_params(left, right) {
+            return true;
+        }
+        remaining = right;
+    }
+    false
+}
+
+fn arrow_left_is_function_params(left: &str, right: &str) -> bool {
+    let left = left.trim_end();
+    if left.ends_with(')') {
+        return true;
+    }
+    let Some(token) = left
+        .rsplit(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$')))
+        .next()
+    else {
+        return false;
+    };
+    if token.is_empty() {
+        return false;
+    }
+    let head = left.strip_suffix(token).unwrap_or_default().trim_end();
+    let boundary_ok = head.is_empty()
+        || head.ends_with([
+            '(', '[', '{', ',', ';', ':', '=', '?', '!', '&', '|', '+', '-', '*', '/', '%', '<',
+            '>',
+        ]);
+    if !boundary_ok {
+        return false;
+    }
+    // Single-character tokens are ambiguous. Treat lowercase identifiers (`x => x`) as JS and
+    // the canonical uppercase prose case (`A => B`) as business text unless the body is JS-like.
+    if token.chars().count() > 1 || right_looks_like_js_expression(right) {
+        return true;
+    }
+    token
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || matches!(ch, '_' | '$'))
+}
+
+fn right_looks_like_js_expression(right: &str) -> bool {
+    let right = right.trim_start();
+    !right.is_empty()
+        && (right.contains([
+            '(', '[', '{', '.', ';', '+', '-', '*', '/', '%', '!', '?', ':', '=', '&', '|', '<',
+            '>',
+        ]) || right.contains("return"))
 }

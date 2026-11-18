@@ -775,8 +775,10 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     });
 
     let agent_b = tokio::spawn(async move {
-        let (upsert, ops) = tokio::join!(
-            b_client.call_tool(
+        // Register sources before appending citations so post-commit lint never sees a
+        // transient dangling source. Agent A still runs concurrently with this sequence.
+        let upsert = b_client
+            .call_tool(
                 "upsert_sources",
                 json!({
                     "doc_id": doc_for_b,
@@ -797,8 +799,10 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                         }
                     ]
                 }),
-            ),
-            b_client.call_tool(
+            )
+            .await?;
+        let ops = b_client
+            .call_tool(
                 "apply_operations",
                 json!({
                     "doc_id": doc_for_b,
@@ -827,8 +831,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                     ]
                 }),
             )
-        );
-        Ok::<_, anyhow::Error>((upsert?, ops?))
+            .await?;
+        Ok::<_, anyhow::Error>((upsert, ops))
     });
 
     let (a_result, b_result) = tokio::join!(agent_a, agent_b);

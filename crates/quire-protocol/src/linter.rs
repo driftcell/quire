@@ -12,8 +12,8 @@ use crate::{
     },
     citation::{CitationLocation, scan_document_citations},
     echarts::{
-        axis_count, find_js_function_string, has_data_source, is_valid_series_type, merged_option,
-        series as chart_series,
+        axis_count, configured_axis_count, find_js_function_string, has_data_source,
+        is_valid_series_type, merged_option, series as chart_series,
     },
     ids::BlockId,
     model::{ReportDocument, is_safe_css_token_value, is_valid_css_token_name},
@@ -646,8 +646,6 @@ impl Linter<'_> {
                 ("xAxisIndex", "xAxis"),
                 ("yAxisIndex", "yAxis"),
                 ("gridIndex", "grid"),
-                ("polarIndex", "polar"),
-                ("radarIndex", "radar"),
             ] {
                 let Some(raw_index) = series.get(field).and_then(serde_json::Value::as_i64) else {
                     continue;
@@ -663,6 +661,59 @@ impl Linter<'_> {
                         ),
                         format!(
                             "Use an index in 0..={}. Add another `{axis_key}` entry only when the chart truly needs it.",
+                            count.saturating_sub(1)
+                        ),
+                        Some(block.id.clone()),
+                        Some(format!("blocks[{index}].series[{series_index}].{field}")),
+                    );
+                }
+            }
+
+            let coordinate_system = series
+                .get("coordinateSystem")
+                .and_then(serde_json::Value::as_str);
+            let needs_radar = kind == Some("radar")
+                || series.get("radarIndex").is_some()
+                || coordinate_system == Some("radar");
+            let needs_polar =
+                series.get("polarIndex").is_some() || coordinate_system == Some("polar");
+            for (component, field, needed) in [
+                ("radar", "radarIndex", needs_radar),
+                ("polar", "polarIndex", needs_polar),
+            ] {
+                if !needed {
+                    continue;
+                }
+                let Some(count) = configured_axis_count(&option, component) else {
+                    self.error(
+                        "ECHARTS_COORDINATE_MISSING",
+                        format!(
+                            "chart `{}` series[{series_index}] uses `{component}` coordinates but has no top-level `{component}`",
+                            block.id
+                        ),
+                        format!(
+                            "Add a `{component}` object/array to the option (for radar, include `indicator`), or remove the `{field}`/coordinateSystem usage."
+                        ),
+                        Some(block.id.clone()),
+                        Some(format!("blocks[{index}].{component}")),
+                    );
+                    continue;
+                };
+                let raw_index = series
+                    .get(field)
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0);
+                let count = i64::try_from(count).unwrap_or(i64::MAX);
+                if raw_index < 0 || raw_index >= count {
+                    self.error(
+                        "ECHARTS_INDEX_OUT_OF_RANGE",
+                        format!(
+                            "chart `{}` series[{series_index}].{field} is {raw_index}, but only {count} `{component}` entr{} exist",
+                            block.id,
+                            if count == 1 { "y" } else { "ies" }
+                        ),
+                        format!(
+                            "Use an index in 0..={}, or add another `{component}` configuration.",
                             count.saturating_sub(1)
                         ),
                         Some(block.id.clone()),
@@ -1254,10 +1305,92 @@ mod tests {
         assert!(has_code(&report, "ECHARTS_JS_FUNCTION_STRING"));
 
         let report = chart_diagnostics(serde_json::json!({
-            "tooltip": {"formatter": "(value) => value"},
+            "tooltip": {"formatter": "(p) => p.name"},
             "series": [{"type": "bar", "data": [10]}]
         }));
         assert!(has_code(&report, "ECHARTS_JS_FUNCTION_STRING"));
+
+        let report = chart_diagnostics(serde_json::json!({
+            "tooltip": {"formatter": "function(p) { return p.name; }"},
+            "series": [{"type": "bar", "data": [10]}]
+        }));
+        assert!(has_code(&report, "ECHARTS_JS_FUNCTION_STRING"));
+
+        let report = chart_diagnostics(serde_json::json!({
+            "tooltip": {"formatter": "value => value"},
+            "series": [{"type": "bar", "data": [10]}]
+        }));
+        assert!(has_code(&report, "ECHARTS_JS_FUNCTION_STRING"));
+    }
+
+    #[test]
+    fn echarts_ignores_js_like_business_text_in_data_fields() {
+        let report = chart_diagnostics(serde_json::json!({
+            "title": {"text": "A => B"},
+            "dataset": {"source": [
+                ["Path", "Value"],
+                ["Step A => Step B", 1]
+            ]},
+            "xAxis": {"data": ["Step A => Step B"]},
+            "series": [
+                {
+                    "type": "bar",
+                    "name": "A => B",
+                    "data": [{"name": "A => B", "value": 10}]
+                },
+                {
+                    "type": "graph",
+                    "name": "Step A => Step B",
+                    "data": [{"name": "A => B"}],
+                    "links": [
+                        {"source": "A => B", "target": "B => C", "value": 1}
+                    ]
+                }
+            ]
+        }));
+        assert!(
+            !has_code(&report, "ECHARTS_JS_FUNCTION_STRING"),
+            "{:?}",
+            report.diagnostics
+        );
+        assert!(!crate::echarts::looks_like_js_function("A => B"));
+        assert!(!crate::echarts::looks_like_js_function("Step A => Step B"));
+        assert!(crate::echarts::looks_like_js_function("value => value"));
+        assert!(crate::echarts::looks_like_js_function("x => x"));
+        assert!(crate::echarts::looks_like_js_function("(p) => p.name"));
+        assert!(crate::echarts::looks_like_js_function(
+            "function(p) { return p.name; }"
+        ));
+    }
+
+    #[test]
+    fn echarts_requires_radar_and_polar_components() {
+        let report = chart_diagnostics(serde_json::json!({
+            "series": [
+                {"type": "radar", "data": [{"name": "Plan", "value": [1, 2]}]},
+                {"type": "line", "radarIndex": 0, "data": [1]},
+                {"type": "line", "polarIndex": 0, "data": [1]}
+            ]
+        }));
+        assert!(has_code(&report, "ECHARTS_COORDINATE_MISSING"));
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.code == "ECHARTS_COORDINATE_MISSING")
+                .count()
+                >= 3
+        );
+
+        let report = chart_diagnostics(serde_json::json!({
+            "radar": [{"indicator": [{"name": "Revenue"}]}],
+            "series": [{
+                "type": "radar",
+                "radarIndex": 2,
+                "data": [{"name": "Plan", "value": [1]}]
+            }]
+        }));
+        assert!(has_code(&report, "ECHARTS_INDEX_OUT_OF_RANGE"));
     }
 
     #[test]
@@ -1275,6 +1408,13 @@ mod tests {
         assert!(has_code(&report, "ECHARTS_SERIES_TYPE_INVALID"));
         assert!(has_code(&report, "ECHARTS_MATRIX_MISSING"));
         assert!(has_code(&report, "ECHARTS_INDEX_OUT_OF_RANGE"));
+
+        let empty = serde_json::json!({});
+        assert_eq!(axis_count(&empty, "xAxis"), 1);
+        assert_eq!(axis_count(&empty, "yAxis"), 1);
+        assert_eq!(axis_count(&empty, "grid"), 1);
+        assert_eq!(axis_count(&empty, "radar"), 0);
+        assert_eq!(axis_count(&empty, "polar"), 0);
     }
 
     #[test]
