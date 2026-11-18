@@ -10,8 +10,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   BookOpenIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
   MessageSquareQuoteIcon,
   PanelLeftIcon,
   PanelRightIcon,
@@ -967,40 +965,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             : "relative min-h-0 min-w-0 flex-1 overflow-hidden"
         }
       >
-        {!isMobile && (
-          <button
-            type="button"
-            title={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            aria-label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            onClick={toggleSidebar}
-            className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-          >
-            {leftSidebarOpen ? (
-              <ChevronLeftIcon className="size-3.5" />
-            ) : (
-              <ChevronRightIcon className="size-3.5" />
-            )}
-          </button>
-        )}
-        {hasReportData && !isMobile && (
-          <button
-            type="button"
-            title={prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
-            aria-label={
-              prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"
-            }
-            onClick={() =>
-              updatePrefs({ rightSidebarOpen: !prefs.rightSidebarOpen })
-            }
-            className="focus-visible:ring-ring absolute top-1/2 right-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-          >
-            {prefs.rightSidebarOpen ? (
-              <ChevronRightIcon className="size-3.5" />
-            ) : (
-              <ChevronLeftIcon className="size-3.5" />
-            )}
-          </button>
-        )}
         {!hasReportData ? (
           chatPane
         ) : isMobile ? (
