@@ -187,6 +187,9 @@ P90 visual-width heuristic (`CJK = 2.0`, ASCII = 1.0), `fit`/`grow` weights and
 - Fractional base-62 ranks use PostgreSQL `COLLATE "C"` ordering; inserting/moving touches one block row.
 - Revisions store both `forward_ops` and exact `inverse_ops`. Rollback replays inverse ops in reverse
   order into a new revision; history is never rewritten.
+- Mutation receipts expose `base_revision`, `rebased`, `rebased_over`, `committed`, and writer-scoped
+  `blocking_errors`, so parallel agents can prove a Smart CAS rebase and distinguish committed
+  writes from lint-clean writes. `apply_draft` accepts optional `expected_revision`.
 - Redis `XADD` happens after commit while holding a per-document publication lock, so Stream entries
   arrive in exact revision order.
 - The canonical JSON Schema is generated from the Rust types:

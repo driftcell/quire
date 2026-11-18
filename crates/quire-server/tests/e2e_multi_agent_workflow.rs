@@ -839,13 +839,22 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let (draft_receipt, offline_markdown) = a_result??;
     let (upsert_receipt, ops_receipt) = b_result??;
     assert!(draft_receipt["new_revision"].as_i64().unwrap() >= lead_revision);
+    assert_eq!(draft_receipt["committed"].as_bool(), Some(true));
+    assert!(draft_receipt["base_revision"].is_number());
+    assert!(draft_receipt["rebased"].is_boolean());
+    assert!(draft_receipt["blocking_errors"].is_array());
+    assert_eq!(ops_receipt["committed"].as_bool(), Some(true));
+    assert!(ops_receipt["base_revision"].is_number());
+    assert!(ops_receipt["rebased"].is_boolean());
+    assert!(ops_receipt["rebased_over"].is_number());
+    assert!(ops_receipt["blocking_errors"].is_array());
     // Compact apply receipts stay well below ~100 tokens (~4 bytes/token).
     assert!(
-        draft_receipt.to_string().len() < 500,
+        draft_receipt.to_string().len() < 600,
         "draft receipt is not compact: {draft_receipt}"
     );
     assert!(
-        ops_receipt.to_string().len() < 500,
+        ops_receipt.to_string().len() < 600,
         "operations receipt is not compact: {ops_receipt}"
     );
     assert!(offline_markdown.contains("_Chart data: Revenue, Margin (bar, line)_"));
@@ -901,7 +910,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .call_tool("get_document_digest", json!({"doc_id": doc_id}))
         .await?;
     let revision_before_bad_chart = digest["digest"]["current_rev"].as_i64().unwrap();
-    reviewer
+    let bad_chart_receipt = reviewer
         .call_tool(
             "apply_operations",
             json!({
@@ -929,6 +938,32 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             }),
         )
         .await?;
+    assert_eq!(bad_chart_receipt["committed"].as_bool(), Some(true));
+    assert_eq!(
+        bad_chart_receipt["base_revision"].as_i64(),
+        Some(revision_before_bad_chart)
+    );
+    let blocking_errors = bad_chart_receipt["blocking_errors"].as_array().unwrap();
+    assert!(
+        blocking_errors
+            .iter()
+            .all(|diagnostic| diagnostic["block_id"] == "b_bad_chart"),
+        "blocking errors must be scoped to the written block: {blocking_errors:?}"
+    );
+    for code in [
+        "ECHARTS_JS_FUNCTION_STRING",
+        "ECHARTS_SERIES_TYPE_INVALID",
+        "ECHARTS_MATRIX_MISSING",
+        "ECHARTS_INDEX_OUT_OF_RANGE",
+        "ECHARTS_DATA_MISSING",
+    ] {
+        assert!(
+            blocking_errors
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == code),
+            "missing {code} in blocking_errors: {blocking_errors:?}"
+        );
+    }
     let bad_chart_lint = reviewer
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;

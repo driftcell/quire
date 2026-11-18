@@ -46,6 +46,12 @@ pub struct CreateResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyResult {
     pub new_revision: Revision,
+    /// Revision supplied by the caller (or read immediately before the write for drafts).
+    pub base_revision: Revision,
+    /// True when the write landed on top of newer revisions via Smart CAS.
+    pub rebased: bool,
+    /// Number of committed revisions skipped by a successful rebase.
+    pub rebased_over: usize,
     pub outcome: PatchOutcome,
     pub inline_warnings: Vec<Diagnostic>,
 }

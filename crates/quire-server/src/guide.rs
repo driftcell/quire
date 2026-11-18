@@ -6,9 +6,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GuideTopic {
+    #[serde(alias = "start", alias = "intro", alias = "overview")]
     Quickstart,
+    #[serde(
+        alias = "blocks",
+        alias = "tables",
+        alias = "charts",
+        alias = "tables_and_chart"
+    )]
     TablesAndCharts,
+    #[serde(alias = "citations", alias = "css", alias = "sources")]
     CitationsAndCss,
+    #[serde(alias = "parallel", alias = "concurrency", alias = "agents")]
     ParallelWorkflow,
 }
 
@@ -75,8 +84,10 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
 
 3. AUTHOR
    - Mutate only through `apply_operations(doc_id, expected_revision, summary, ops)`.
-   - Ops: insert_after, insert_before, append, patch_block, replace_range, delete_blocks, move_block.
+   - Ops: insert_after, insert_before, append, append_to_section, patch_block, replace_range, delete_blocks, move_block.
+   - Section append example: `{"type":"append_to_section","section_id":"ch1","blocks":[...]}`.
    - `expected_revision` enables Smart CAS: disjoint block edits rebase automatically; overlapping edits return conflict details with latest blocks.
+   - Successful receipts report `base_revision`, `rebased`, and `rebased_over`. Errors are split into `blocking_errors` (committed but not lint-clean) and non-blocking `inline_warnings`, scoped to the blocks you touched.
    - Patch block text/style/source IDs; use `option_patch` for charts, `append_rows` / `update_cell` for tables.
    - Register citations with `upsert_sources`, or pass an inline `sources` map to `apply_operations` / `apply_draft` so registration commits atomically with the blocks. Inline syntax is `[^source_id]`.
 
@@ -138,7 +149,7 @@ Rules:
 - `sizing`: fit (P90 content width) | grow (weighted share). Defaults: fit, weight 1.0.
 - Alignment is inferred and can be overridden with `align` / `header_align`.
 - Title rules: put the title in outer `title` ONLY (the alias `caption` is accepted for legacy input). Numbering is automatic (`表 N` / `图 N`); never hardcode it. `note` is an explanatory footnote.
-- Compact shorthand is accepted: `{"headers":["Region","Revenue"],"rows":[["EMEA","$900"]]}`. Column keys/types are inferred.
+- Compact shorthand is accepted: `{"headers":["Region","Revenue"],"rows":[["EMEA","$900"]],"summary_rows":[["Total","$900"]]}`. Column keys/types are inferred and array-form summary rows are normalized to row objects.
 - The server pre-computes spans and normalized `<colgroup>` percentages in `computed.table_layouts`; frontends must not recalculate them.
 - Table patch: `{"type":"patch_block","block_id":"financials","patch":{"append_rows":[...],"update_cell":{"row_index":0,"column_key":"q1","value":1250000}}}`. The same `patch` object can set outer `title` (legacy alias `caption`), `numbering` and `note` for tables, charts and custom HTML.
 
@@ -175,6 +186,9 @@ Rules:
 - Formatter strings are allowed and encouraged, for example `"formatter": "{b}: {c} ({d}%)"`. JavaScript callbacks are forbidden: strings containing `function(` or `=>` fail lint with `ECHARTS_JS_FUNCTION_STRING`.
 - Static-report chrome is removed automatically: `toolbox` is stripped during normalization/normalization warnings. Do not design interactions that require it.
 - Indexed series must stay in range: `xAxisIndex`, `yAxisIndex`, `gridIndex`, `polarIndex` and `radarIndex` are validated against their configured arrays. A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object.
+- Matrix example:
+  `{"matrix":{"x":{"data":["A","B"]},"y":{"data":["C","D"]}},"series":[{"type":"custom","coordinateSystem":"matrix","data":[1,2]}]}`.
+  Missing `matrix` reports `ECHARTS_MATRIX_MISSING`; missing `radar`/`polar` components report `ECHARTS_COORDINATE_MISSING`.
 - Every chart needs a real data source: `series[*].data`, `series[*].links`/`edges`, or a non-empty `dataset.source`. Otherwise lint reports `ECHARTS_DATA_MISSING`.
 - Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge. The same patch can update `mode`, `preset`, `height`, `title`, `numbering`, `note` and `fallback_summary`.
 - `read_as_markdown(include_chart_data=true)` expands dataset, Cartesian, relation, radar and hierarchy data into tables for reviewers.
@@ -252,13 +266,17 @@ OWNERSHIP
 SMART CAS
 - Pass the revision you read. If another agent committed first, the server inspects intervening revisions.
 - Disjoint block IDs -> automatic rebase; your batch commits at current_rev + 1.
+- Receipts prove the rebase with `base_revision`, `rebased: true`, and `rebased_over: <count>`.
 - Overlapping IDs -> REVISION_CONFLICT with `current_revision`, `conflicting_block_ids`, `conflicting_revisions`, and `latest_blocks`.
 - Recovery: re-read digest/Markdown, patch the returned latest block (or re-send expected_revision=current_revision) and retry.
+- A committed write can still have `blocking_errors`; these are lint errors scoped to blocks you touched. Fix them before declaring done.
 
 OFFLINE DRAFTS
 - Sub-agents may write `draft.json` (same ReportDocument JSON shape, optional `doc_id`/`title`).
-- `read_as_markdown(draft_file_path=...)` validates/project without touching the database.
-- `apply_draft(draft_file_path, target_doc_id, mode="append_section")` merges atomically enough for review; empty or colliding block IDs are auto-assigned and returned in `assigned_ids`. Mutation receipts are compact: `{new_revision, assigned_ids, inline_warnings, _next_hint}`.
+- `draft_file_path` must resolve under `QUIRE_WORKSPACE_DIR`; absolute paths inside that root are accepted, paths outside it are rejected.
+- `read_as_markdown(draft_file_path=...)` validates/projects without touching the database.
+- `apply_draft(draft_file_path, target_doc_id, mode="append_section", expected_revision=N)` merges atomically. Omit `expected_revision` to read current, or supply it to make CAS explicit. `append_section` appends after the current last block, not into a specific section; use `apply_operations` with `append_to_section` for section-targeted writes.
+- Empty or colliding block IDs are auto-assigned and returned in `assigned_ids`. Draft receipts also include `base_revision`, `rebased`, `rebased_over`, `blocking_errors`.
 - Source URLs/titles are deduplicated; use `canonical_id_map` for citations.
 
 REVIEW LOOP
@@ -285,6 +303,19 @@ FRONTEND CONTRACT
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn guide_topic_accepts_common_agent_aliases() {
+        let blocks: GuideTopic =
+            serde_json::from_value(serde_json::json!("blocks")).expect("blocks alias");
+        let charts: GuideTopic =
+            serde_json::from_value(serde_json::json!("charts")).expect("charts alias");
+        let agents: GuideTopic =
+            serde_json::from_value(serde_json::json!("agents")).expect("agents alias");
+        assert_eq!(blocks, GuideTopic::TablesAndCharts);
+        assert_eq!(charts, GuideTopic::TablesAndCharts);
+        assert_eq!(agents, GuideTopic::ParallelWorkflow);
+    }
 
     #[test]
     fn all_guides_are_non_empty_and_have_next_hints() {

@@ -257,6 +257,16 @@ async fn smart_cas_rebases_disjoint_parallel_writes_and_rejects_conflicts() {
         [2, 3],
         "both disjoint writes must succeed"
     );
+    let (earlier, later) = if first.new_revision < second.new_revision {
+        (&first, &second)
+    } else {
+        (&second, &first)
+    };
+    assert!(!earlier.rebased, "first writer should not rebase");
+    assert_eq!(earlier.base_revision.get(), 1);
+    assert!(later.rebased, "second disjoint writer must report a rebase");
+    assert_eq!(later.base_revision.get(), 1);
+    assert_eq!(later.rebased_over, 1);
 
     let conflict = store
         .apply_operations(

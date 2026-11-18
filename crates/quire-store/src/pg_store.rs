@@ -569,6 +569,9 @@ impl PgReportStore {
 
         Ok(ApplyResult {
             new_revision,
+            base_revision: expected_revision,
+            rebased: expected_revision < current_rev,
+            rebased_over: usize::try_from(current_rev.get() - expected_revision.get()).unwrap_or(0),
             outcome,
             inline_warnings: warnings,
         })

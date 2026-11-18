@@ -1,16 +1,17 @@
 //! MCP tool implementations, Smart CAS reload helpers and draft ingestion utilities.
 
 use std::{
-    collections::{BTreeMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     path::Path,
 };
 
 use axum::http::request::Parts;
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, BlockId, BlockKind, COVER_VARIANTS, CoverConfig, DocId, IdAssignment, MarkdownOptions,
-    MarkdownProjector, PatchOp, ProtocolError, ReportDocument, ReportDraft, Revision, SourceEntry,
-    SourceId, TOC_VARIANTS, is_safe_css_token_value, is_valid_css_token_name, lint_document,
+    Block, BlockId, BlockKind, COVER_VARIANTS, CoverConfig, Diagnostic, DocId, IdAssignment,
+    MarkdownOptions, MarkdownProjector, PatchOp, ProtocolError, ReportDocument, ReportDraft,
+    Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value,
+    is_valid_css_token_name, lint_document,
 };
 use quire_store::{
     ApplyResult, SourceUpsert, StoreError, merge_source_entries, normalized_source_key,
@@ -215,6 +216,7 @@ impl QuireMcpServer {
                 invalid_params(error.to_string(), "Check X-Session-Id and X-Actor.", None)
             })?
             .actor;
+        let expected_revision = request.expected_revision.map(parse_revision).transpose()?;
         match request.mode {
             DraftMode::CreateOrReplace if request.target_doc_id.is_none() => {
                 self.create_from_draft(draft, request.sources, &parts, &actor)
@@ -230,8 +232,19 @@ impl QuireMcpServer {
                 })?)?;
                 let mut attempt = 0;
                 loop {
+                    let base = if attempt == 0 {
+                        expected_revision
+                    } else {
+                        None
+                    };
                     match self
-                        .replace_with_draft(&target, draft.clone(), request.sources.clone(), &actor)
+                        .replace_with_draft(
+                            &target,
+                            draft.clone(),
+                            request.sources.clone(),
+                            &actor,
+                            base,
+                        )
                         .await
                     {
                         Ok(receipt) => break Ok(receipt),
@@ -253,8 +266,19 @@ impl QuireMcpServer {
                 })?)?;
                 let mut attempt = 0;
                 loop {
+                    let base = if attempt == 0 {
+                        expected_revision
+                    } else {
+                        None
+                    };
                     match self
-                        .append_draft(&target, draft.clone(), request.sources.clone(), &actor)
+                        .append_draft(
+                            &target,
+                            draft.clone(),
+                            request.sources.clone(),
+                            &actor,
+                            base,
+                        )
                         .await
                     {
                         Ok(receipt) => break Ok(receipt),
@@ -290,6 +314,11 @@ impl QuireMcpServer {
                 })?)?;
                 let mut attempt = 0;
                 loop {
+                    let base = if attempt == 0 {
+                        expected_revision
+                    } else {
+                        None
+                    };
                     match self
                         .replace_range_with_draft(
                             &target,
@@ -298,6 +327,7 @@ impl QuireMcpServer {
                             &end,
                             request.sources.clone(),
                             &actor,
+                            base,
                         )
                         .await
                     {
@@ -520,10 +550,25 @@ impl QuireMcpServer {
             )
             .await
             .map_err(mcp_error)?;
-        let _next_hint = if result.outcome.no_op {
+        let touched = touched_blocks(&request.ops, &result.outcome.assigned_ids);
+        let (blocking_errors, inline_warnings) =
+            split_scoped_diagnostics(result.inline_warnings, &touched);
+        let _next_hint = if !blocking_errors.is_empty() {
+            format!(
+                "Committed as revision {} with {} blocking error(s). Fix `blocking_errors`, then lint again and continue at expected_revision={}.",
+                result.new_revision,
+                blocking_errors.len(),
+                result.new_revision
+            )
+        } else if result.outcome.no_op {
             format!(
                 "Batch was a no-op. New revision is {}.",
                 result.new_revision
+            )
+        } else if result.rebased {
+            format!(
+                "Committed as revision {} after rebasing over {} revision(s) from base {}. Continue at expected_revision={}.",
+                result.new_revision, result.rebased_over, result.base_revision, result.new_revision
             )
         } else {
             format!(
@@ -533,8 +578,13 @@ impl QuireMcpServer {
         };
         Ok(Json(ApplyOperationsReceipt {
             new_revision: result.new_revision.get(),
+            base_revision: result.base_revision.get(),
+            rebased: result.rebased,
+            rebased_over: result.rebased_over,
+            committed: true,
             assigned_ids: result.outcome.assigned_ids,
-            inline_warnings: result.inline_warnings,
+            inline_warnings,
+            blocking_errors,
             _next_hint,
         }))
     }
@@ -1147,6 +1197,83 @@ fn is_retryable_conflict(error: &ErrorData) -> bool {
         .is_some_and(|code| matches!(code, "REVISION_CONFLICT" | "REVISION_AHEAD"))
 }
 
+fn touched_blocks(ops: &[PatchOp], assigned: &[IdAssignment]) -> BTreeSet<BlockId> {
+    let mut touched: BTreeSet<BlockId> = ops.iter().flat_map(PatchOp::touched_block_ids).collect();
+    touched.extend(
+        assigned
+            .iter()
+            .map(|assignment| assignment.assigned.clone()),
+    );
+    touched
+}
+
+fn touched_draft_blocks(blocks: &[Block], assigned: &[IdAssignment]) -> BTreeSet<BlockId> {
+    let mut touched: BTreeSet<BlockId> = blocks.iter().map(|block| block.id.clone()).collect();
+    touched.extend(
+        assigned
+            .iter()
+            .map(|assignment| assignment.assigned.clone()),
+    );
+    touched
+}
+
+fn split_scoped_diagnostics(
+    diagnostics: Vec<Diagnostic>,
+    touched: &BTreeSet<BlockId>,
+) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
+    let scoped: Vec<Diagnostic> = if touched.is_empty() {
+        diagnostics
+    } else {
+        diagnostics
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic
+                    .block_id
+                    .as_ref()
+                    .is_some_and(|block_id| touched.contains(block_id))
+            })
+            .collect()
+    };
+    scoped
+        .into_iter()
+        .partition(|diagnostic| diagnostic.severity == Severity::Error)
+}
+
+fn draft_receipt(
+    result: ApplyResult,
+    blocks: &[Block],
+    base_hint: String,
+) -> Json<ApplyDraftReceipt> {
+    let touched = touched_draft_blocks(blocks, &result.outcome.assigned_ids);
+    let (blocking_errors, inline_warnings) =
+        split_scoped_diagnostics(result.inline_warnings, &touched);
+    let _next_hint = if !blocking_errors.is_empty() {
+        format!(
+            "Draft committed as revision {} with {} blocking error(s); fix `blocking_errors`, then lint again.",
+            result.new_revision,
+            blocking_errors.len()
+        )
+    } else if result.rebased {
+        format!(
+            "Draft committed as revision {} after rebasing over {} revision(s) from base {}. {base_hint}",
+            result.new_revision, result.rebased_over, result.base_revision
+        )
+    } else {
+        base_hint
+    };
+    Json(ApplyDraftReceipt {
+        new_revision: result.new_revision.get(),
+        base_revision: result.base_revision.get(),
+        rebased: result.rebased,
+        rebased_over: result.rebased_over,
+        committed: true,
+        assigned_ids: result.outcome.assigned_ids,
+        inline_warnings,
+        blocking_errors,
+        _next_hint,
+    })
+}
+
 /// Map a structured protocol failure into an MCP error that exposes stable recovery fields.
 fn protocol_error(error: ProtocolError) -> ErrorData {
     let code = error.code();
@@ -1454,22 +1581,39 @@ impl QuireMcpServer {
         };
         document.cover.title = title;
         document.cover.enabled = true;
-        let inline_warnings = quire_protocol::normalize::normalize_document(&mut document);
+        let normalization_warnings = quire_protocol::normalize::normalize_document(&mut document);
         let result = self
             .state
             .store
             .create_document(&document, actor, None)
             .await
             .map_err(mcp_error)?;
-        let _next_hint = format!(
-            "Draft created report `{}` at revision {}. Run lint_document, then continue at expected_revision={}.",
-            result.doc_id, result.revision, result.revision
-        );
+        let touched = touched_draft_blocks(&blocks, &assigned_ids);
+        let (blocking_errors, inline_warnings) =
+            split_scoped_diagnostics(normalization_warnings, &touched);
         let revision = result.revision.get();
+        let _next_hint = if blocking_errors.is_empty() {
+            format!(
+                "Draft created report `{}` at revision {}. Run lint_document, then continue at expected_revision={}.",
+                result.doc_id, result.revision, result.revision
+            )
+        } else {
+            format!(
+                "Draft created report `{}` at revision {} with {} blocking error(s); fix `blocking_errors` before continuing.",
+                result.doc_id,
+                result.revision,
+                blocking_errors.len()
+            )
+        };
         Ok(Json(ApplyDraftReceipt {
             new_revision: revision,
+            base_revision: 0,
+            rebased: false,
+            rebased_over: 0,
+            committed: true,
             assigned_ids,
             inline_warnings,
+            blocking_errors,
             _next_hint,
         }))
     }
@@ -1480,6 +1624,7 @@ impl QuireMcpServer {
         draft: ReportDraft,
         inline_sources: Option<IndexMap<SourceId, SourceInput>>,
         actor: &str,
+        expected_revision: Option<Revision>,
     ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
         let existing = self
             .state
@@ -1538,7 +1683,7 @@ impl QuireMcpServer {
             .store
             .apply_operations_with_sources(
                 target_doc_id,
-                existing.revision,
+                expected_revision.unwrap_or(existing.revision),
                 actor,
                 "replace report from draft",
                 &ops,
@@ -1546,16 +1691,11 @@ impl QuireMcpServer {
             )
             .await
             .map_err(mcp_error)?;
-        let _next_hint = format!(
-            "Draft replaced report content at revision {}. Run lint_document.",
-            result.new_revision
-        );
-        Ok(Json(ApplyDraftReceipt {
-            new_revision: result.new_revision.get(),
-            assigned_ids: result.outcome.assigned_ids,
-            inline_warnings: result.inline_warnings,
-            _next_hint,
-        }))
+        Ok(draft_receipt(
+            result,
+            &blocks,
+            "Run lint_document and read_as_markdown.".to_string(),
+        ))
     }
 
     async fn append_draft(
@@ -1564,6 +1704,7 @@ impl QuireMcpServer {
         draft: ReportDraft,
         inline_sources: Option<IndexMap<SourceId, SourceInput>>,
         actor: &str,
+        expected_revision: Option<Revision>,
     ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
         let existing = self
             .state
@@ -1581,7 +1722,7 @@ impl QuireMcpServer {
             .store
             .apply_operations_with_sources(
                 target_doc_id,
-                existing.revision,
+                expected_revision.unwrap_or(existing.revision),
                 actor,
                 "append draft section",
                 &ops,
@@ -1589,18 +1730,16 @@ impl QuireMcpServer {
             )
             .await
             .map_err(mcp_error)?;
-        let _next_hint = format!(
-            "Draft appended at revision {}. Call lint_document and read_as_markdown.",
-            result.new_revision
-        );
-        Ok(Json(ApplyDraftReceipt {
-            new_revision: result.new_revision.get(),
-            assigned_ids: result.outcome.assigned_ids,
-            inline_warnings: result.inline_warnings,
-            _next_hint,
-        }))
+        Ok(draft_receipt(
+            result,
+            &blocks,
+            "Call lint_document and read_as_markdown.".to_string(),
+        ))
     }
 
+    // Range drafts genuinely need all coordinates; bundling them into a one-use struct would
+    // make the MCP handler harder to follow.
+    #[allow(clippy::too_many_arguments)]
     async fn replace_range_with_draft(
         &self,
         target_doc_id: &DocId,
@@ -1609,6 +1748,7 @@ impl QuireMcpServer {
         end_id: &BlockId,
         inline_sources: Option<IndexMap<SourceId, SourceInput>>,
         actor: &str,
+        expected_revision: Option<Revision>,
     ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
         let existing = self
             .state
@@ -1628,7 +1768,7 @@ impl QuireMcpServer {
             .store
             .apply_operations_with_sources(
                 target_doc_id,
-                existing.revision,
+                expected_revision.unwrap_or(existing.revision),
                 actor,
                 "replace range from draft",
                 &ops,
@@ -1636,15 +1776,10 @@ impl QuireMcpServer {
             )
             .await
             .map_err(mcp_error)?;
-        let _next_hint = format!(
-            "Draft replaced range {}..{} at revision {}. Run lint_document.",
-            start_id, end_id, result.new_revision
-        );
-        Ok(Json(ApplyDraftReceipt {
-            new_revision: result.new_revision.get(),
-            assigned_ids: result.outcome.assigned_ids,
-            inline_warnings: result.inline_warnings,
-            _next_hint,
-        }))
+        Ok(draft_receipt(
+            result,
+            &blocks,
+            format!("Draft replaced range {start_id}..{end_id}. Run lint_document."),
+        ))
     }
 }

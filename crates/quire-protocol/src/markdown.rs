@@ -5,10 +5,7 @@
 //! flattened to GFM, citations are expanded to footnote markers with source titles, and chart
 //! series are projected into compact data tables for numeric verification.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Write as _,
-};
+use std::{collections::BTreeMap, fmt::Write as _};
 
 use thiserror::Error;
 
@@ -500,11 +497,14 @@ fn dataset_shape(rows: &[&serde_json::Value]) -> Option<(Vec<String>, Vec<Vec<St
     let object_rows: Vec<&serde_json::Map<String, serde_json::Value>> =
         rows.iter().filter_map(|row| row.as_object()).collect();
     if object_rows.len() == rows.len() && !object_rows.is_empty() {
-        let mut keys = BTreeSet::new();
+        let mut header: Vec<String> = Vec::new();
         for row in &object_rows {
-            keys.extend(row.keys().cloned());
+            for key in row.keys() {
+                if !header.contains(key) {
+                    header.push(key.clone());
+                }
+            }
         }
-        let header: Vec<String> = keys.into_iter().collect();
         let body: Vec<Vec<String>> = object_rows
             .iter()
             .map(|row| {

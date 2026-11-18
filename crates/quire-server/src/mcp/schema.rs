@@ -145,11 +145,16 @@ pub enum DraftMode {
 /// Input for `apply_draft`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyDraftParams {
-    /// Workspace-relative path to draft.json.
+    /// Path to draft.json. Relative paths resolve under `QUIRE_WORKSPACE_DIR`; absolute paths
+    /// are accepted only when they also resolve inside that workspace.
     pub draft_file_path: String,
     /// Existing report to merge into (required except create_or_replace new report).
     #[serde(default)]
     pub target_doc_id: Option<String>,
+    /// Optional Smart CAS base revision. Omit to read the current revision; supply a digest's
+    /// `current_rev` to make a concurrent draft merge explicit and inspectable.
+    #[serde(default)]
+    pub expected_revision: Option<i64>,
     /// Merge strategy.
     pub mode: DraftMode,
     /// First block ID to replace (replace_range only).
@@ -168,10 +173,21 @@ pub struct ApplyDraftParams {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ApplyDraftReceipt {
     pub new_revision: i64,
+    /// Revision used as the Smart CAS base (0 for a newly created report).
+    pub base_revision: i64,
+    /// True when the draft landed after rebasing over newer committed revisions.
+    pub rebased: bool,
+    /// Number of committed revisions skipped by a successful rebase.
+    pub rebased_over: usize,
+    /// True when the draft was committed; inspect `blocking_errors` before continuing.
+    pub committed: bool,
     /// Block IDs that were auto-prefixed because they were pending or colliding.
     pub assigned_ids: Vec<IdAssignment>,
-    /// Non-fatal normalization warnings produced while merging.
+    /// Non-blocking warnings/info diagnostics scoped to blocks written by this draft.
     pub inline_warnings: Vec<quire_protocol::Diagnostic>,
+    /// Lint errors scoped to blocks written by this draft. A non-empty list means the write
+    /// committed but the document is not clean yet.
+    pub blocking_errors: Vec<quire_protocol::Diagnostic>,
     #[serde(rename = "_next_hint")]
     pub _next_hint: String,
 }
@@ -296,10 +312,21 @@ pub struct ApplyOperationsParams {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ApplyOperationsReceipt {
     pub new_revision: i64,
+    /// Revision supplied as `expected_revision`.
+    pub base_revision: i64,
+    /// True when Smart CAS committed the batch on top of newer revisions.
+    pub rebased: bool,
+    /// Number of committed revisions skipped by a successful rebase.
+    pub rebased_over: usize,
+    /// True when the batch committed; inspect `blocking_errors` before continuing.
+    pub committed: bool,
     /// Block IDs auto-assigned by the patch engine.
     pub assigned_ids: Vec<IdAssignment>,
-    /// Non-fatal warnings from normalization and post-commit linting.
+    /// Non-blocking warnings/info diagnostics scoped to blocks touched by this batch.
     pub inline_warnings: Vec<quire_protocol::Diagnostic>,
+    /// Lint errors scoped to blocks touched by this batch. A non-empty list means the batch
+    /// committed but the document is not clean yet.
+    pub blocking_errors: Vec<quire_protocol::Diagnostic>,
     #[serde(rename = "_next_hint")]
     pub _next_hint: String,
 }
