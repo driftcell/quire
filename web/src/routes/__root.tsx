@@ -59,7 +59,7 @@ function RootLayout() {
           onOpenChange={handleLeftOpenChange}
         >
           <AppSidebar />
-          <SidebarInset className="flex h-svh flex-col overflow-hidden">
+          <SidebarInset className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-muted/30">
             <Outlet />
           </SidebarInset>
         </SidebarProvider>

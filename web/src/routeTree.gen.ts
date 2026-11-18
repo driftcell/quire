@@ -12,7 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DocsDocIdRouteImport } from './routes/docs.$docId'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
-import { Route as DocsDocIdPrintRouteImport } from './routes/docs.$docId.print'
+import { Route as DocsDocIdPrintRouteImport } from './routes/docs.$docId_.print'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -30,29 +30,29 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocsDocIdPrintRoute = DocsDocIdPrintRouteImport.update({
-  id: '/print',
-  path: '/print',
-  getParentRoute: () => DocsDocIdRoute,
+  id: '/docs/$docId_/print',
+  path: '/docs/$docId/print',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/docs/$docId': typeof DocsDocIdRouteWithChildren
+  '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/docs/$docId/print': typeof DocsDocIdPrintRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/docs/$docId': typeof DocsDocIdRouteWithChildren
+  '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/docs/$docId/print': typeof DocsDocIdPrintRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/docs/$docId': typeof DocsDocIdRouteWithChildren
+  '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
-  '/docs/$docId/print': typeof DocsDocIdPrintRoute
+  '/docs/$docId_/print': typeof DocsDocIdPrintRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -65,13 +65,14 @@ export interface FileRouteTypes {
     | '/'
     | '/docs/$docId'
     | '/sessions/$sessionId'
-    | '/docs/$docId/print'
+    | '/docs/$docId_/print'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  DocsDocIdRoute: typeof DocsDocIdRouteWithChildren
+  DocsDocIdRoute: typeof DocsDocIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
+  DocsDocIdPrintRoute: typeof DocsDocIdPrintRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -97,32 +98,21 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/docs/$docId/print': {
-      id: '/docs/$docId/print'
-      path: '/print'
+    '/docs/$docId_/print': {
+      id: '/docs/$docId_/print'
+      path: '/docs/$docId/print'
       fullPath: '/docs/$docId/print'
       preLoaderRoute: typeof DocsDocIdPrintRouteImport
-      parentRoute: typeof DocsDocIdRoute
+      parentRoute: typeof rootRouteImport
     }
   }
 }
 
-interface DocsDocIdRouteChildren {
-  DocsDocIdPrintRoute: typeof DocsDocIdPrintRoute
-}
-
-const DocsDocIdRouteChildren: DocsDocIdRouteChildren = {
-  DocsDocIdPrintRoute: DocsDocIdPrintRoute,
-}
-
-const DocsDocIdRouteWithChildren = DocsDocIdRoute._addFileChildren(
-  DocsDocIdRouteChildren,
-)
-
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  DocsDocIdRoute: DocsDocIdRouteWithChildren,
+  DocsDocIdRoute: DocsDocIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
+  DocsDocIdPrintRoute: DocsDocIdPrintRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

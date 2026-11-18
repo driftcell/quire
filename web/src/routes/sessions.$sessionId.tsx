@@ -5,7 +5,8 @@ import {
   BookOpenIcon,
   MessageSquareQuoteIcon,
   PanelLeftIcon,
-  PanelRightIcon,
+  PanelRightCloseIcon,
+  PanelRightOpenIcon,
   PrinterIcon,
   ScrollTextIcon,
 } from "lucide-react";
@@ -97,7 +98,7 @@ function SessionWorkspaceRoute() {
 function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
-  const { toggleSidebar } = useSidebar();
+  const { open: leftSidebarOpen, toggleSidebar } = useSidebar();
 
   const [prefs, setPrefs] = useState(() => loadPreferences());
   const updatePrefs = useCallback((patch: Partial<typeof prefs>) => {
@@ -190,7 +191,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     afterSeqRef.current = lastEventSeq;
   }, [lastEventSeq]);
 
-  // Subscribe to Session SSE (stable connection across query invalidations)
   useEffect(() => {
     if (!sessionQuery.isSuccess) return undefined;
 
@@ -420,7 +420,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     currentRevRef.current = currentRev;
   }, [currentRev]);
 
-  // Subscribe to Report SSE once doc_id is bound
   useEffect(() => {
     if (!effectiveDocId || !docQuery.isSuccess) return undefined;
     const timers = previewTimersRef.current;
@@ -608,7 +607,37 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     commentsQuery.data?.filter((c) => c.status !== "archived").length ?? 0;
 
   const chatPane = (
-    <div className="flex h-full flex-col bg-background">
+    <div
+      className={
+        hasReportData && !isMobile
+          ? "flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
+          : "flex h-full min-w-0 flex-col bg-background"
+      }
+    >
+      {hasReportData && !isMobile && (
+        <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-medium">
+              {sessionQuery.data?.title ?? "加载中..."}
+            </span>
+            {effectiveRunStatus === "running" && (
+              <Badge variant="secondary" className="text-[11px]">
+                生成中
+              </Badge>
+            )}
+          </div>
+          <Button
+            type="button"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="收起右侧对话栏"
+            onClick={() => updatePrefs({ rightSidebarOpen: false })}
+          >
+            <PanelRightCloseIcon className="size-4 text-muted-foreground" />
+          </Button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto overscroll-contain px-4">
         <div
           className={hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"}
@@ -629,6 +658,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           />
         </div>
       </div>
+
       <div className="shrink-0 border-t bg-background/95 p-3">
         <div
           className={hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"}
@@ -663,134 +693,169 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const reportPane =
     docQuery.data && effectiveDocId ? (
-      <div className="h-full overflow-y-auto overscroll-contain bg-muted/20">
-        <ReportViewer
-          document={docQuery.data.document}
-          computed={docQuery.data.computed}
-          viewMode={prefs.reportViewMode}
-          ephemeralPreviews={ephemeralPreviews}
-          comments={commentsQuery.data}
-          onOpenCommentForBlock={(anchor) => {
-            setFloatingComment(anchor);
-          }}
-        />
+      <div
+        className={
+          isMobile
+            ? "relative flex h-full min-w-0 flex-col overflow-hidden bg-background"
+            : "relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
+        }
+      >
+        {!leftSidebarOpen && !isMobile && (
+          <div className="absolute top-3 left-3 z-20">
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="outline"
+              aria-label="展开左侧会话栏"
+              className="bg-background/90 shadow-xs backdrop-blur"
+              onClick={toggleSidebar}
+            >
+              <PanelLeftIcon className="size-4" />
+            </Button>
+          </div>
+        )}
+
+        {!prefs.rightSidebarOpen && !isMobile && (
+          <div className="absolute top-3 right-3 z-20">
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="outline"
+              aria-label="展开右侧对话栏"
+              className="bg-background/90 shadow-xs backdrop-blur"
+              onClick={() => updatePrefs({ rightSidebarOpen: true })}
+            >
+              <PanelRightOpenIcon className="size-4" />
+            </Button>
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto overscroll-contain">
+          <ReportViewer
+            document={docQuery.data.document}
+            computed={docQuery.data.computed}
+            viewMode={prefs.reportViewMode}
+            ephemeralPreviews={ephemeralPreviews}
+            comments={commentsQuery.data}
+            onOpenCommentForBlock={(anchor) => {
+              setFloatingComment(anchor);
+            }}
+          />
+        </div>
+
+        <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center pb-3">
+          <div className="pointer-events-auto flex items-center gap-1 rounded-full border bg-background/95 px-2.5 py-1 shadow-md backdrop-blur">
+            <TocOutline
+              placement="top"
+              nodes={docQuery.data.computed.toc_tree}
+              activeActorsBySection={activeActorsBySection}
+              comments={commentsQuery.data ?? []}
+              onJumpToSection={jumpToSection}
+            />
+
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="批注列表"
+              className="relative"
+              onClick={() => {
+                setSelectedCommentBlock(null);
+                setCommentsOpen(true);
+              }}
+            >
+              <MessageSquareQuoteIcon className="size-4" />
+              {openCommentsCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
+                  {openCommentsCount}
+                </span>
+              )}
+            </Button>
+
+            <div className="mx-0.5 h-4 w-px bg-border" />
+
+            <Button
+              type="button"
+              size="xs"
+              variant={
+                prefs.reportViewMode === "continuous" ? "secondary" : "ghost"
+              }
+              className="rounded-full"
+              onClick={() => updatePrefs({ reportViewMode: "continuous" })}
+            >
+              <ScrollTextIcon className="mr-1 size-3.5" />
+              连续
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={prefs.reportViewMode === "paged" ? "secondary" : "ghost"}
+              className="rounded-full"
+              onClick={() => updatePrefs({ reportViewMode: "paged" })}
+            >
+              <BookOpenIcon className="mr-1 size-3.5" />
+              分页
+            </Button>
+
+            <div className="mx-0.5 h-4 w-px bg-border" />
+
+            <span className="px-1.5 text-[11px] text-muted-foreground tabular-nums">
+              版本 {docQuery.data.current_rev}
+            </span>
+
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="导出 PDF / 打印视图"
+              nativeButton={false}
+              render={
+                <Link
+                  to="/docs/$docId/print"
+                  params={{ docId: effectiveDocId }}
+                  target="_blank"
+                />
+              }
+            >
+              <PrinterIcon className="size-4" />
+            </Button>
+          </div>
+        </div>
       </div>
     ) : null;
 
   return (
-    <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="切换左侧会话栏"
-            onClick={toggleSidebar}
-          >
-            <PanelLeftIcon className="size-4" />
-          </Button>
-          <span className="truncate text-sm font-medium">
-            {sessionQuery.data?.title ?? "加载中..."}
-          </span>
-          {effectiveRunStatus === "running" && (
-            <Badge variant="secondary" className="text-[11px]">
-              生成中
-            </Badge>
-          )}
-        </div>
+    <div className="flex h-full min-w-0 flex-col overflow-hidden">
+      {(!hasReportData || isMobile) && (
+        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b bg-background px-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="切换左侧会话栏"
+              onClick={toggleSidebar}
+            >
+              <PanelLeftIcon className="size-4" />
+            </Button>
+            <span className="truncate text-sm font-medium">
+              {sessionQuery.data?.title ?? "加载中..."}
+            </span>
+            {effectiveRunStatus === "running" && (
+              <Badge variant="secondary" className="text-[11px]">
+                生成中
+              </Badge>
+            )}
+          </div>
+        </header>
+      )}
 
-        <div className="flex items-center gap-1">
-          {hasReportData && effectiveDocId && (
-            <>
-              <div className="hidden items-center rounded-lg border bg-muted/40 p-0.5 sm:flex">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant={
-                    prefs.reportViewMode === "continuous" ? "default" : "ghost"
-                  }
-                  onClick={() => updatePrefs({ reportViewMode: "continuous" })}
-                >
-                  <ScrollTextIcon className="mr-1 size-3.5" />
-                  连续
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant={
-                    prefs.reportViewMode === "paged" ? "default" : "ghost"
-                  }
-                  onClick={() => updatePrefs({ reportViewMode: "paged" })}
-                >
-                  <BookOpenIcon className="mr-1 size-3.5" />
-                  分页
-                </Button>
-              </div>
-
-              {docQuery.data && (
-                <TocOutline
-                  nodes={docQuery.data.computed.toc_tree}
-                  activeActorsBySection={activeActorsBySection}
-                  comments={commentsQuery.data ?? []}
-                  onJumpToSection={jumpToSection}
-                />
-              )}
-
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label="批注列表"
-                className="relative"
-                onClick={() => {
-                  setSelectedCommentBlock(null);
-                  setCommentsOpen(true);
-                }}
-              >
-                <MessageSquareQuoteIcon className="size-4" />
-                {openCommentsCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
-                    {openCommentsCount}
-                  </span>
-                )}
-              </Button>
-
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                aria-label="导出 PDF / 打印视图"
-                nativeButton={false}
-                render={
-                  <Link
-                    to="/docs/$docId/print"
-                    params={{ docId: effectiveDocId }}
-                    target="_blank"
-                  />
-                }
-              >
-                <PrinterIcon className="size-4" />
-              </Button>
-
-              {!isMobile && (
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label="切换右侧对话栏"
-                  onClick={() =>
-                    updatePrefs({ rightSidebarOpen: !prefs.rightSidebarOpen })
-                  }
-                >
-                  <PanelRightIcon className="size-4" />
-                </Button>
-              )}
-            </>
-          )}
-        </div>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div
+        className={
+          hasReportData && !isMobile
+            ? "min-h-0 min-w-0 flex-1 overflow-hidden p-2"
+            : "min-h-0 min-w-0 flex-1 overflow-hidden"
+        }
+      >
         {!hasReportData ? (
           chatPane
         ) : isMobile ? (
@@ -803,7 +868,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             }}
             className="flex h-full flex-col"
           >
-            <div className="border-b px-3 py-1.5">
+            <div className="border-b bg-background px-3 py-1.5">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="report">报告预览</TabsTrigger>
                 <TabsTrigger value="chat">Agent 对话</TabsTrigger>
@@ -823,18 +888,26 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             </TabsContent>
           </Tabs>
         ) : prefs.rightSidebarOpen ? (
-          <ResizablePanelGroup orientation="horizontal" className="h-full">
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="h-full min-w-0 gap-1.5"
+          >
             <ResizablePanel
-              defaultSize={100 - prefs.rightPanelPct}
-              minSize={35}
+              defaultSize={`${100 - prefs.rightPanelPct}%`}
+              minSize="35%"
+              className="min-w-0"
             >
               {reportPane}
             </ResizablePanel>
-            <ResizableHandle withHandle />
+            <ResizableHandle
+              withHandle
+              className="w-1.5 bg-transparent after:hidden"
+            />
             <ResizablePanel
-              defaultSize={prefs.rightPanelPct}
-              minSize={22}
-              maxSize={55}
+              defaultSize={`${prefs.rightPanelPct}%`}
+              minSize="22%"
+              maxSize="55%"
+              className="min-w-0"
               onResize={(size) => {
                 const pct = typeof size === "number" ? size : size.asPercentage;
                 if (pct >= 20 && pct <= 60) {

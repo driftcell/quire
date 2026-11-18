@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   FileTextIcon,
   KeyRoundIcon,
-  MessageSquarePlusIcon,
+  PanelLeftCloseIcon,
+  PlusIcon,
   Trash2Icon,
 } from "lucide-react";
 import { deleteSession, listSessions } from "@/api/runtime";
@@ -31,8 +32,12 @@ import {
   SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
-import type { ActiveRunStatus } from "@/contracts/session-protocol";
+import type {
+  ActiveRunStatus,
+  SessionSummary,
+} from "@/contracts/session-protocol";
 import { getAuthTokens, saveAuthTokens } from "@/lib/auth";
 
 function statusDotClass(status: ActiveRunStatus): string {
@@ -50,11 +55,43 @@ function statusDotClass(status: ActiveRunStatus): string {
   }
 }
 
+function groupSessionsByDate(sessions: SessionSummary[]) {
+  const now = new Date();
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+  const startOfYesterday = startOfToday - 86_400_000;
+
+  const today: SessionSummary[] = [];
+  const yesterday: SessionSummary[] = [];
+  const earlier: SessionSummary[] = [];
+
+  for (const s of sessions) {
+    const ts = Date.parse(s.updated_at || s.created_at);
+    if (Number.isNaN(ts) || ts >= startOfToday) {
+      today.push(s);
+    } else if (ts >= startOfYesterday) {
+      yesterday.push(s);
+    } else {
+      earlier.push(s);
+    }
+  }
+
+  return [
+    { label: "今天", items: today },
+    { label: "昨天", items: yesterday },
+    { label: "更早", items: earlier },
+  ].filter((g) => g.items.length > 0);
+}
+
 export function AppSidebar() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const activeSessionId = params.sessionId;
+  const { toggleSidebar } = useSidebar();
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions"],
@@ -72,12 +109,28 @@ export function AppSidebar() {
     },
   });
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        void navigate({ to: "/" });
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate]);
+
+  const groups = useMemo(
+    () => groupSessionsByDate(sessionsQuery.data ?? []),
+    [sessionsQuery.data],
+  );
+
   const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
   const [tokens, setTokens] = useState(() => getAuthTokens());
 
   return (
     <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="border-b px-3 py-2.5">
+      <SidebarHeader className="gap-2.5 border-b px-3 py-2.5">
         <div className="flex items-center justify-between">
           <Link to="/" className="flex items-center gap-2 font-semibold">
             <span className="flex size-6 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
@@ -89,59 +142,78 @@ export function AppSidebar() {
             type="button"
             size="icon-sm"
             variant="ghost"
-            aria-label="新建报告会话"
-            onClick={() => {
-              void navigate({ to: "/" });
-            }}
+            aria-label="收起左侧会话栏"
+            onClick={toggleSidebar}
           >
-            <MessageSquarePlusIcon className="size-4" />
+            <PanelLeftCloseIcon className="size-4 text-muted-foreground" />
           </Button>
         </div>
+
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="w-full justify-between bg-background font-normal shadow-2xs"
+          onClick={() => {
+            void navigate({ to: "/" });
+          }}
+        >
+          <span className="flex items-center gap-1.5 text-xs">
+            <PlusIcon className="size-3.5" />
+            <span>新建会话</span>
+          </span>
+          <kbd className="rounded bg-muted px-1.5 py-0.5 font-sans text-[10px] text-muted-foreground">
+            ⌘ N
+          </kbd>
+        </Button>
       </SidebarHeader>
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>会话列表</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {sessionsQuery.data?.map((session) => (
-                <SidebarMenuItem key={session.session_id}>
-                  <SidebarMenuButton
-                    isActive={activeSessionId === session.session_id}
-                    render={
-                      <Link
-                        to="/sessions/$sessionId"
-                        params={{ sessionId: session.session_id }}
+      <SidebarContent className="overscroll-contain">
+        {groups.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((session) => (
+                  <SidebarMenuItem key={session.session_id}>
+                    <SidebarMenuButton
+                      isActive={activeSessionId === session.session_id}
+                      render={
+                        <Link
+                          to="/sessions/$sessionId"
+                          params={{ sessionId: session.session_id }}
+                        />
+                      }
+                    >
+                      <span
+                        className={`size-2 shrink-0 rounded-full ${statusDotClass(session.active_run_status)}`}
                       />
-                    }
-                  >
-                    <span
-                      className={`size-2 shrink-0 rounded-full ${statusDotClass(session.active_run_status)}`}
-                    />
-                    <span className="truncate">{session.title}</span>
-                    {session.doc_id && (
-                      <FileTextIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
-                    )}
-                  </SidebarMenuButton>
-                  <SidebarMenuAction
-                    showOnHover
-                    aria-label={`删除 ${session.title}`}
-                    onClick={() => {
-                      deleteMutation.mutate(session.session_id);
-                    }}
-                  >
-                    <Trash2Icon className="size-3.5" />
-                  </SidebarMenuAction>
-                </SidebarMenuItem>
-              ))}
-              {sessionsQuery.data?.length === 0 && (
-                <div className="px-3 py-4 text-xs text-muted-foreground">
-                  暂无会话，发送第一条消息即可创建。
-                </div>
-              )}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+                      <span className="truncate">{session.title}</span>
+                      {session.doc_id && (
+                        <FileTextIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+                      )}
+                    </SidebarMenuButton>
+                    <SidebarMenuAction
+                      showOnHover
+                      aria-label={`删除 ${session.title}`}
+                      onClick={() => {
+                        deleteMutation.mutate(session.session_id);
+                      }}
+                    >
+                      <Trash2Icon className="size-3.5" />
+                    </SidebarMenuAction>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
+
+        {sessionsQuery.data?.length === 0 && (
+          <div className="px-4 py-6 text-xs text-muted-foreground">
+            暂无会话，发送第一条消息即可创建。
+          </div>
+        )}
       </SidebarContent>
 
       <SidebarFooter className="border-t p-2">

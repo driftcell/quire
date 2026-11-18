@@ -1,5 +1,10 @@
-import { memo, useEffect, useMemo, useRef } from "react";
-import { CompassIcon, FileTextIcon, UsersIcon } from "lucide-react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ArrowDownIcon,
+  CompassIcon,
+  FileTextIcon,
+  UsersIcon,
+} from "lucide-react";
 import { Streamdown } from "streamdown";
 import { QuestionCard } from "@/components/chat/QuestionCard";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
@@ -145,6 +150,7 @@ export function SessionStreamView({
   onJumpToSection,
 }: SessionStreamViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
   const attachmentMap = useMemo(() => {
     const map = new Map<string, AttachmentMeta>();
@@ -160,6 +166,22 @@ export function SessionStreamView({
     [messages],
   );
 
+  useEffect(() => {
+    const el = bottomRef.current;
+    if (!el) return undefined;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const first = entries[0];
+        if (first) {
+          setAtBottom(first.isIntersecting);
+        }
+      },
+      { threshold: 0.1 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
   const scrollSignal = [
     visibleMessages.length,
     liveMain?.text.length ?? 0,
@@ -169,15 +191,15 @@ export function SessionStreamView({
   ].join(":");
 
   useEffect(() => {
-    if (scrollSignal.length === 0) {
+    if (scrollSignal.length === 0 || !atBottom) {
       return undefined;
     }
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     return undefined;
-  }, [scrollSignal]);
+  }, [scrollSignal, atBottom]);
 
   return (
-    <div className="flex flex-col gap-4 py-4">
+    <div className="relative flex flex-col gap-4 py-4">
       {visibleMessages.map((msg) => (
         <HistoricalMessageItem
           key={msg.message_id}
@@ -311,7 +333,25 @@ export function SessionStreamView({
         />
       )}
 
-      <div ref={bottomRef} />
+      {!atBottom && (
+        <div className="pointer-events-none sticky bottom-3 z-20 flex justify-center">
+          <button
+            type="button"
+            onClick={() => {
+              bottomRef.current?.scrollIntoView({
+                behavior: "smooth",
+                block: "end",
+              });
+            }}
+            className="pointer-events-auto inline-flex items-center gap-1 rounded-full border bg-background/95 px-3 py-1 text-xs font-medium shadow-md backdrop-blur hover:bg-accent"
+          >
+            <ArrowDownIcon className="size-3.5" />
+            <span>跳到最新</span>
+          </button>
+        </div>
+      )}
+
+      <div ref={bottomRef} className="h-px" />
     </div>
   );
 }

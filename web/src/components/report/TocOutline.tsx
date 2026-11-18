@@ -9,6 +9,7 @@ export interface TocOutlineProps {
   activeActorsBySection: Map<string, string[]>;
   comments: CommentThread[];
   onJumpToSection: (blockId: string) => void;
+  placement?: "top" | "bottom";
 }
 
 function countCommentsInSubtree(
@@ -63,7 +64,10 @@ function TocBranch({
                 </span>
               )}
               {commentCount > 0 && (
-                <Badge variant="outline" className="h-4 px-1 text-[10px]">
+                <Badge
+                  variant="outline"
+                  className="h-4 px-1 text-[10px] tabular-nums"
+                >
                   {commentCount}
                 </Badge>
               )}
@@ -89,6 +93,7 @@ export function TocOutline({
   activeActorsBySection,
   comments,
   onJumpToSection,
+  placement = "bottom",
 }: TocOutlineProps) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -130,6 +135,11 @@ export function TocOutline({
     }
   }
 
+  const popoverPosClass =
+    placement === "top"
+      ? "bottom-full left-1/2 mb-2 -translate-x-1/2"
+      : "top-full right-0 mt-1.5";
+
   return (
     <div ref={containerRef} className="relative">
       <Button
@@ -143,7 +153,9 @@ export function TocOutline({
         <ListTreeIcon className="size-4" />
       </Button>
       {open && (
-        <div className="bg-popover text-popover-foreground absolute top-full right-0 z-50 mt-1.5 w-72 rounded-xl border p-3 shadow-lg">
+        <div
+          className={`bg-popover text-popover-foreground absolute z-50 w-72 rounded-xl border p-3 shadow-lg ${popoverPosClass}`}
+        >
           <div className="mb-2 flex items-center justify-between text-xs font-semibold">
             <span>目录大纲与写作状态</span>
             {activeActorsBySection.size > 0 && (
@@ -153,7 +165,7 @@ export function TocOutline({
               </span>
             )}
           </div>
-          <div className="max-h-80 overflow-y-auto">
+          <div className="max-h-80 overflow-y-auto overscroll-contain">
             <TocBranch
               nodes={nodes}
               depth={0}

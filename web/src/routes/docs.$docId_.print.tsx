@@ -5,7 +5,7 @@ import { getDocument } from "@/api/quire";
 import { ReportViewer } from "@/components/report/ReportViewer";
 import { Button } from "@/components/ui/button";
 
-export const Route = createFileRoute("/docs/$docId/print")({
+export const Route = createFileRoute("/docs/$docId_/print")({
   component: DocumentPrintPage,
 });
 

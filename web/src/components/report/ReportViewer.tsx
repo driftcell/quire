@@ -428,9 +428,42 @@ export function ReportViewer({
     coverHeight: 0,
     bibliographyHeight: 0,
   });
+  const [pageScale, setPageScale] = useState(1);
   const [quoteAction, setQuoteAction] = useState<FloatingQuoteAction | null>(
     null,
   );
+
+  const isPaged = viewMode === "paged" || printMode;
+
+  useEffect(() => {
+    if (!isPaged || printMode) {
+      const resetFrame = window.requestAnimationFrame(() => setPageScale(1));
+      return () => window.cancelAnimationFrame(resetFrame);
+    }
+    const el = rootRef.current;
+    if (!el) return undefined;
+
+    const updateScale = (width: number) => {
+      if (width <= 0) return;
+      const next = Math.min(1, Math.max(0.45, (width - 32) / A4_PAGE_WIDTH_PX));
+      setPageScale(next);
+    };
+
+    const frame = window.requestAnimationFrame(() => {
+      updateScale(el.getBoundingClientRect().width);
+    });
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        updateScale(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [isPaged, printMode]);
 
   const { openCountByBlock, quotesByBlock } = useMemo(() => {
     const counts = new Map<string, number>();
@@ -474,7 +507,7 @@ export function ReportViewer({
   );
 
   useLayoutEffect(() => {
-    if (viewMode !== "paged" && !printMode) {
+    if (!isPaged) {
       return undefined;
     }
     const container = measureRef.current;
@@ -527,7 +560,7 @@ export function ReportViewer({
       bibliographyHeight: bibEl ? bibEl.getBoundingClientRect().height : 0,
     });
     return undefined;
-  }, [layoutSignature, viewMode, printMode]);
+  }, [layoutSignature, isPaged]);
 
   const customCss = document.theme.custom_css;
 
@@ -701,8 +734,6 @@ export function ReportViewer({
     );
   };
 
-  const isPaged = viewMode === "paged" || printMode;
-
   const pages = useMemo(() => {
     if (!isPaged) return [];
     return paginateBlocks(document.blocks, measurements);
@@ -769,7 +800,7 @@ export function ReportViewer({
       )}
 
       {!isPaged ? (
-        <article className="mx-auto w-full max-w-[760px] px-4 py-8 sm:px-8">
+        <article className="mx-auto w-full max-w-[760px] px-5 py-8 sm:px-10">
           {renderCover()}
           {continuousItems.map((item) => (
             <div key={item.key}>
@@ -794,40 +825,56 @@ export function ReportViewer({
       ) : (
         <div className="flex flex-col items-center gap-6 py-6 print:gap-0 print:py-0">
           {pages.map((page) => (
-            <section
+            <div
               key={page.pageNumber}
-              style={{
-                width: `${A4_PAGE_WIDTH_PX}px`,
-                minHeight: `${A4_PAGE_HEIGHT_PX}px`,
-                padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
-              }}
-              className="a4-page relative flex flex-col justify-between bg-white text-neutral-900 shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
+              style={
+                printMode
+                  ? undefined
+                  : {
+                      width: `${Math.round(A4_PAGE_WIDTH_PX * pageScale)}px`,
+                      height: `${Math.round(A4_PAGE_HEIGHT_PX * pageScale)}px`,
+                    }
+              }
+              className="relative shrink-0"
             >
-              <div className="flex-1">
-                {page.includeCover && renderCover()}
-                {page.items.map((slice, idx) => (
-                  <div key={`${slice.block.id}-${slice.rowStart ?? 0}-${idx}`}>
-                    <ReportBlockItem
-                      slice={slice}
-                      isPaged
-                      printMode={printMode}
-                      computed={computed}
-                      commentCount={openCountByBlock.get(slice.block.id) ?? 0}
-                      blockQuotes={quotesByBlock.get(slice.block.id)}
-                      onCitationClick={scrollToSource}
-                      onOpenCommentForBlock={onOpenCommentForBlock}
-                    />
-                  </div>
-                ))}
-                {page.includeBibliography && renderBibliography()}
-              </div>
-              <footer className="mt-4 flex items-center justify-between border-t border-black/10 pt-2 text-[11px] text-neutral-500">
-                <span>{document.cover.title || document.doc_id}</span>
-                <span className="tabular-nums">
-                  第 {page.pageNumber} 页 / 共 {pages.length} 页
-                </span>
-              </footer>
-            </section>
+              <section
+                style={{
+                  width: `${A4_PAGE_WIDTH_PX}px`,
+                  minHeight: `${A4_PAGE_HEIGHT_PX}px`,
+                  padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
+                  transform: printMode ? undefined : `scale(${pageScale})`,
+                  transformOrigin: "top left",
+                }}
+                className="a4-page relative flex flex-col justify-between bg-white text-neutral-900 shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
+              >
+                <div className="flex-1">
+                  {page.includeCover && renderCover()}
+                  {page.items.map((slice, idx) => (
+                    <div
+                      key={`${slice.block.id}-${slice.rowStart ?? 0}-${idx}`}
+                    >
+                      <ReportBlockItem
+                        slice={slice}
+                        isPaged
+                        printMode={printMode}
+                        computed={computed}
+                        commentCount={openCountByBlock.get(slice.block.id) ?? 0}
+                        blockQuotes={quotesByBlock.get(slice.block.id)}
+                        onCitationClick={scrollToSource}
+                        onOpenCommentForBlock={onOpenCommentForBlock}
+                      />
+                    </div>
+                  ))}
+                  {page.includeBibliography && renderBibliography()}
+                </div>
+                <footer className="mt-4 flex items-center justify-between border-t border-black/10 pt-2 text-[11px] text-neutral-500">
+                  <span>{document.cover.title || document.doc_id}</span>
+                  <span className="tabular-nums">
+                    第 {page.pageNumber} 页 / 共 {pages.length} 页
+                  </span>
+                </footer>
+              </section>
+            </div>
           ))}
         </div>
       )}
