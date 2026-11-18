@@ -8,11 +8,13 @@ import {
 } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { usePanelRef } from "react-resizable-panels";
 import {
   BookOpenIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
   MessageSquareQuoteIcon,
   PanelLeftIcon,
-  PanelRightIcon,
   PrinterIcon,
   ScrollTextIcon,
 } from "lucide-react";
@@ -123,6 +125,38 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       });
     });
   }, []);
+
+  const [rightPanelAnimating, setRightPanelAnimating] = useState(false);
+  const rightPanelRef = usePanelRef();
+  const rightPanelWasOpenRef = useRef(prefs.rightSidebarOpen);
+
+  useEffect(() => {
+    if (!rightPanelAnimating) {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setRightPanelAnimating(false), 350);
+    return () => window.clearTimeout(timer);
+  }, [rightPanelAnimating]);
+
+  useEffect(() => {
+    const panel = rightPanelRef.current;
+    if (!panel) {
+      return;
+    }
+    if (prefs.rightSidebarOpen) {
+      if (!rightPanelWasOpenRef.current) {
+        panel.resize(`${prefs.rightPanelPct}%`);
+      }
+    } else if (rightPanelWasOpenRef.current) {
+      panel.collapse();
+    }
+    rightPanelWasOpenRef.current = prefs.rightSidebarOpen;
+  }, [prefs.rightSidebarOpen, prefs.rightPanelPct, rightPanelRef]);
+
+  const toggleRightSidebar = () => {
+    setRightPanelAnimating(true);
+    updatePrefs({ rightSidebarOpen: !prefs.rightSidebarOpen });
+  };
 
   const sessionQuery = useQuery({
     queryKey: ["session", sessionId],
@@ -795,36 +829,25 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       <div
         className={
           isMobile
-            ? "relative flex h-full min-w-0 flex-col overflow-hidden bg-background"
-            : "relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
+            ? "@container relative flex h-full min-w-0 flex-col overflow-hidden bg-background"
+            : "@container relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
         }
       >
         {!isMobile && (
           <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b bg-background/95 px-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label={
-                  leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"
-                }
-                onClick={toggleSidebar}
-              >
-                <PanelLeftIcon className="size-4 text-muted-foreground" />
-              </Button>
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
               <span className="truncate text-sm font-medium">
                 {docQuery.data.document.cover.title || effectiveDocId}
               </span>
               <Badge
                 variant="outline"
-                className="shrink-0 text-[11px] tabular-nums"
+                className="hidden shrink-0 text-[11px] tabular-nums @min-[420px]:inline-flex"
               >
                 版本 {docQuery.data.current_rev}
               </Badge>
             </div>
 
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
                 <Button
                   type="button"
@@ -834,8 +857,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   }
                   onClick={() => updatePrefs({ reportViewMode: "continuous" })}
                 >
-                  <ScrollTextIcon className="mr-1 size-3.5" />
-                  连续
+                  <ScrollTextIcon className="size-3.5 @min-[560px]:mr-1" />
+                  <span className="hidden @min-[560px]:inline">连续</span>
                 </Button>
                 <Button
                   type="button"
@@ -845,8 +868,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   }
                   onClick={() => updatePrefs({ reportViewMode: "paged" })}
                 >
-                  <BookOpenIcon className="mr-1 size-3.5" />
-                  分页
+                  <BookOpenIcon className="size-3.5 @min-[560px]:mr-1" />
+                  <span className="hidden @min-[560px]:inline">分页</span>
                 </Button>
               </div>
 
@@ -899,22 +922,26 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                   themePageChrome={docQuery.data?.document.theme.page_chrome}
                 />
               )}
-
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label={
-                  prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"
-                }
-                onClick={() =>
-                  updatePrefs({ rightSidebarOpen: !prefs.rightSidebarOpen })
-                }
-              >
-                <PanelRightIcon className="size-4 text-muted-foreground" />
-              </Button>
             </div>
           </div>
+        )}
+
+        {!isMobile && (
+          <button
+            type="button"
+            title={prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
+            aria-label={
+              prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"
+            }
+            onClick={toggleRightSidebar}
+            className="focus-visible:ring-ring absolute top-1/2 right-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+          >
+            {prefs.rightSidebarOpen ? (
+              <ChevronRightIcon className="size-3.5" />
+            ) : (
+              <ChevronLeftIcon className="size-3.5" />
+            )}
+          </button>
         )}
 
         <div className="flex-1 overflow-y-auto overscroll-contain">
@@ -965,6 +992,21 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             : "relative min-h-0 min-w-0 flex-1 overflow-hidden"
         }
       >
+        {!isMobile && (
+          <button
+            type="button"
+            title={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            aria-label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            onClick={toggleSidebar}
+            className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+          >
+            {leftSidebarOpen ? (
+              <ChevronLeftIcon className="size-3.5" />
+            ) : (
+              <ChevronRightIcon className="size-3.5" />
+            )}
+          </button>
+        )}
         {!hasReportData ? (
           chatPane
         ) : isMobile ? (
@@ -996,39 +1038,69 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               {chatPane}
             </TabsContent>
           </Tabs>
-        ) : prefs.rightSidebarOpen ? (
+        ) : (
           <ResizablePanelGroup
             orientation="horizontal"
-            className="h-full min-w-0 gap-1.5"
+            className={`h-full min-w-0 ${
+              rightPanelAnimating
+                ? "[&_[data-panel]]:transition-[flex-grow] [&_[data-panel]]:duration-300 [&_[data-panel]]:ease-out"
+                : ""
+            }`}
           >
             <ResizablePanel
-              defaultSize={`${100 - prefs.rightPanelPct}%`}
+              defaultSize={`${
+                prefs.rightSidebarOpen ? 100 - prefs.rightPanelPct : 100
+              }%`}
               minSize="35%"
               className="min-w-0"
             >
               {reportPane}
             </ResizablePanel>
             <ResizableHandle
-              withHandle
-              className="w-1.5 bg-transparent after:hidden"
+              disabled={!prefs.rightSidebarOpen}
+              className={`bg-transparent after:hidden transition-[width] duration-300 ease-out ${
+                prefs.rightSidebarOpen ? "w-1.5" : "w-0"
+              }`}
             />
             <ResizablePanel
-              defaultSize={`${prefs.rightPanelPct}%`}
+              panelRef={rightPanelRef}
+              collapsible
+              collapsedSize="0%"
+              defaultSize={
+                prefs.rightSidebarOpen ? `${prefs.rightPanelPct}%` : "0%"
+              }
               minSize="22%"
               maxSize="55%"
-              className="min-w-0"
+              className="min-w-0 overflow-hidden"
               onResize={(size) => {
                 const pct = typeof size === "number" ? size : size.asPercentage;
-                if (pct >= 20 && pct <= 60) {
+                if (
+                  !rightPanelAnimating &&
+                  pct <= 1 &&
+                  prefs.rightSidebarOpen
+                ) {
+                  updatePrefs({ rightSidebarOpen: false });
+                  return;
+                }
+                if (
+                  !rightPanelAnimating &&
+                  prefs.rightSidebarOpen &&
+                  pct >= 20 &&
+                  pct <= 60
+                ) {
                   updatePrefs({ rightPanelPct: Math.round(pct) });
                 }
               }}
             >
-              {chatPane}
+              <div
+                className="h-full min-w-0"
+                inert={!prefs.rightSidebarOpen}
+                aria-hidden={!prefs.rightSidebarOpen}
+              >
+                {chatPane}
+              </div>
             </ResizablePanel>
           </ResizablePanelGroup>
-        ) : (
-          reportPane
         )}
       </div>
 
