@@ -1,0 +1,130 @@
+//! Revision, stream and receipt types shared by storage, HTTP and MCP layers.
+
+use std::collections::BTreeMap;
+
+use chrono::{DateTime, Utc};
+use indexmap::IndexMap;
+use quire_protocol::{
+    BlockId, Diagnostic, DocId, PatchOutcome, ReportDocument, Revision, SessionId, SourceEntry,
+    SourceId,
+};
+use serde::{Deserialize, Serialize};
+
+use crate::error::RevisionConflict;
+
+/// Revision delta broadcast by the SSE `revision` event and persisted in Redis Streams.
+///
+/// The wire type lives in `quire-protocol` so the generated frontend schema and the server
+/// serialize the exact same struct.
+pub use quire_protocol::RevisionDelta as RevisionEvent;
+
+/// Session discovery payload broadcast by the SSE `doc_created` event.
+pub use quire_protocol::SessionDelta as SessionEvent;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevisionRecord {
+    pub doc_id: DocId,
+    pub revision: Revision,
+    pub actor: String,
+    pub summary: String,
+    pub forward_ops: serde_json::Value,
+    pub inverse_ops: serde_json::Value,
+    /// Complete set of block IDs read/written by this revision; used by Smart CAS.
+    pub affected_block_ids: Vec<BlockId>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateResult {
+    pub doc_id: DocId,
+    pub revision: Revision,
+    pub title: String,
+    pub session_id: Option<SessionId>,
+    pub idempotent_replay: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApplyResult {
+    pub new_revision: Revision,
+    pub outcome: PatchOutcome,
+    pub inline_warnings: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RollbackResult {
+    pub new_revision: Revision,
+    pub target_revision: Revision,
+    pub replayed_revisions: usize,
+    pub outcome: PatchOutcome,
+    pub inline_warnings: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSnapshot {
+    pub document: ReportDocument,
+    pub current_rev: Revision,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportSummary {
+    pub doc_id: DocId,
+    pub title: String,
+    pub session_id: Option<SessionId>,
+    pub current_rev: Revision,
+    pub block_count: i64,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReportList {
+    pub reports: Vec<ReportSummary>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceUpsert {
+    pub source_id: SourceId,
+    pub source: SourceEntry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertSourcesResult {
+    pub canonical_id_map: BTreeMap<SourceId, SourceId>,
+    pub revision: Revision,
+    pub changed: bool,
+    pub sources: IndexMap<SourceId, SourceEntry>,
+    pub inline_warnings: Vec<Diagnostic>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamRevision {
+    pub stream_id: String,
+    pub event: RevisionEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionStreamEntry {
+    pub stream_id: String,
+    pub event: SessionEvent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockHistoryState {
+    pub rank: String,
+    pub block: Option<quire_protocol::Block>,
+}
+
+/// Internal diff used when persisting only changed rows.
+#[derive(Debug, Default)]
+pub(crate) struct DocumentDiff {
+    pub deleted_block_ids: Vec<BlockId>,
+    pub changed_blocks: Vec<quire_protocol::Block>,
+    pub changed_ranks: BTreeMap<BlockId, quire_protocol::Rank>,
+}
+
+/// Helper for callers that need a conflict receipt without panicking.
+pub fn conflict_error(conflict: RevisionConflict) -> crate::error::StoreError {
+    crate::error::StoreError::Conflict(Box::new(conflict))
+}

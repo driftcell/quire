@@ -1,0 +1,28 @@
+[package]
+name = "quire-store"
+description = "Quire: PostgreSQL row-per-block persistence, Smart CAS revisions and Redis Streams event bus"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+quire-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+sqlx.workspace = true
+redis.workspace = true
+zstd.workspace = true
+tracing.workspace = true
+chrono.workspace = true
+futures.workspace = true
+indexmap.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }
+dotenvy = "0.15"
+
+[lints]
+workspace = true

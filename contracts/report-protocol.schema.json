@@ -1,0 +1,2065 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Quire Report Protocol",
+  "type": "object",
+  "properties": {
+    "computed": {
+      "description": "Computed labels, table layouts, TOC tree and citation map for frontends.",
+      "$ref": "#/$defs/ComputedDocumentMeta"
+    },
+    "document": {
+      "description": "Canonical stored/read document returned by `GET /api/docs/{doc_id}`.",
+      "$ref": "#/$defs/ReportDocument"
+    },
+    "draft": {
+      "description": "Offline authoring draft accepted by `apply_draft`.",
+      "$ref": "#/$defs/ReportDraft"
+    },
+    "lint": {
+      "description": "Static validation report returned by `lint_document`.",
+      "$ref": "#/$defs/LintReport"
+    },
+    "patch_op": {
+      "description": "Declarative patch operation submitted to `apply_operations`.",
+      "$ref": "#/$defs/PatchOp"
+    },
+    "patch_outcome": {
+      "description": "Receipt returned by the in-memory patch engine.",
+      "$ref": "#/$defs/PatchOutcome"
+    },
+    "revision_delta": {
+      "description": "SSE `revision` delta payload.",
+      "$ref": "#/$defs/RevisionDelta"
+    },
+    "session_delta": {
+      "description": "SSE `doc_created` session delta payload.",
+      "$ref": "#/$defs/SessionDelta"
+    },
+    "sync_required": {
+      "description": "SSE `sync_required` payload emitted when replay detects a gap.",
+      "$ref": "#/$defs/SyncRequiredDelta"
+    }
+  },
+  "required": [
+    "document",
+    "computed",
+    "patch_op",
+    "revision_delta",
+    "session_delta",
+    "sync_required",
+    "draft",
+    "patch_outcome",
+    "lint"
+  ],
+  "$defs": {
+    "Align": {
+      "type": "string",
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ]
+    },
+    "BibliographyEntry": {
+      "description": "A fully resolved bibliography entry.",
+      "type": "object",
+      "properties": {
+        "label": {
+          "description": "Display label, for example `[1]` or `(Smith, 2024)`.",
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "plain_text": {
+          "description": "Plain-text citation line, useful for LLM digests and non-HTML consumers.",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceEntry"
+        },
+        "source_id": {
+          "$ref": "#/$defs/SourceId"
+        }
+      },
+      "required": [
+        "source_id",
+        "number",
+        "label",
+        "source",
+        "plain_text"
+      ]
+    },
+    "Block": {
+      "description": "A report block with common metadata shared by all variants.",
+      "type": "object",
+      "properties": {
+        "class_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Short semantic ID, for example `q3-revenue`. Empty/missing IDs are auto-assigned on insert.",
+          "$ref": "#/$defs/BlockId",
+          "default": "b_pending"
+        },
+        "source_ids": {
+          "description": "Citation source IDs attached to the whole block.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceId"
+          }
+        },
+        "source_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "style": {
+          "$ref": "#/$defs/BlockStyle",
+          "default": {}
+        }
+      },
+      "oneOf": [
+        {
+          "description": "Section heading. Level 1..=6; headings auto-generate the TOC.",
+          "type": "object",
+          "properties": {
+            "level": {
+              "description": "Heading depth 1..=6.",
+              "type": "integer",
+              "format": "uint8",
+              "default": 2,
+              "maximum": 255,
+              "minimum": 0
+            },
+            "text": {
+              "description": "Heading text. Inline Markdown is supported.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "heading"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "description": "Prose paragraph with inline Markdown and `[^source_id]` citations.",
+          "type": "object",
+          "properties": {
+            "text": {
+              "description": "Paragraph text. Supports **bold**, *italic*, `code`, links and citations.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "paragraph"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "description": "Pull quote with the same inline Markdown/citation support as paragraphs.",
+          "type": "object",
+          "properties": {
+            "text": {
+              "description": "Quote text.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "quote"
+            }
+          },
+          "required": [
+            "type",
+            "text"
+          ]
+        },
+        {
+          "description": "Recursive multi-level table. Never compute colspan/rowspan manually.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "table"
+            }
+          },
+          "$ref": "#/$defs/TableBlock",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "ECharts chart with mandatory fallback summary.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "echarts"
+            }
+          },
+          "$ref": "#/$defs/EchartsBlock",
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Trusted raw HTML with mandatory fallback text.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "custom_html"
+            }
+          },
+          "$ref": "#/$defs/CustomHtmlBlock",
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "BlockFraming": {
+      "description": "Pre-computed outer framing for a numbered visual block.",
+      "type": "object",
+      "properties": {
+        "attribution": {
+          "description": "Formatted source attribution/note line, when sources or a note exist.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "block_id": {
+          "$ref": "#/$defs/BlockId"
+        },
+        "label": {
+          "description": "Exact label shared with Markdown projection, for example `表 1` or `图 2`.",
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "numbering": {
+          "$ref": "#/$defs/NumberingKind"
+        }
+      },
+      "required": [
+        "block_id",
+        "numbering",
+        "number",
+        "label"
+      ]
+    },
+    "BlockId": {
+      "description": "Validated identifier.",
+      "type": "string"
+    },
+    "BlockPatch": {
+      "description": "Partial patch for a single block.",
+      "type": "object",
+      "properties": {
+        "append_rows": {
+          "description": "Append rows to a table's body.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/CellValue"
+            }
+          }
+        },
+        "class_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback_summary": {
+          "description": "Replace the ECharts fallback summary.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback_text": {
+          "description": "Replace custom HTML fallback text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "level": {
+          "description": "Heading level (1..=6).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "note": {
+          "description": "Replace the explanatory footnote. Empty string clears it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numbering": {
+          "description": "Replace automatic figure/table numbering; `null` leaves it unchanged and `\"none\"` disables.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberingKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "option_patch": {
+          "description": "Deep-merged into an ECharts block's existing `option_patch`."
+        },
+        "source_ids": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/SourceId"
+          }
+        },
+        "source_note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "style": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockStylePatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "description": "Heading, paragraph or quote text.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "description": "Replace the outer visual title. Empty string clears it. `caption` is accepted as a legacy\nalias.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "update_cell": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CellUpdate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "BlockStyle": {
+      "description": "Common style controls available on every block.",
+      "type": "object",
+      "properties": {
+        "column_widths": {
+          "description": "Per-leaf-column CSS widths, keyed by leaf column key. Accepts `%`, `px`, `rem` or numbers.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "keep_together": {
+          "description": "Prevent this block from being split across pages where the renderer supports it.",
+          "type": "boolean"
+        },
+        "page_break_before": {
+          "type": "boolean"
+        },
+        "variant": {
+          "description": "Optional renderer hint, for example `callout` or `numbered`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "BlockStylePatch": {
+      "description": "Partial style update. Omitted fields are preserved; empty string variants clear the field.",
+      "type": "object",
+      "properties": {
+        "column_widths": {
+          "description": "Per-leaf-column CSS widths keyed by column key. Example: `{\"region\":\"24%\",\"q1\":\"120px\"}`.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "keep_together": {
+          "description": "Prevent page splitting where supported.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "page_break_before": {
+          "description": "Force a page break before this block.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "variant": {
+          "description": "Renderer hint. Empty string clears it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CellUpdate": {
+      "description": "Update one table cell by row index and leaf key.",
+      "type": "object",
+      "properties": {
+        "column_key": {
+          "description": "Leaf column key whose cell should be replaced.",
+          "type": "string"
+        },
+        "row_index": {
+          "description": "Zero-based row index within `rows` (or `summary_rows` when `summary = true`).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "summary": {
+          "description": "Update `summary_rows` instead of body `rows`.",
+          "type": "boolean"
+        },
+        "value": {
+          "description": "New primitive or rich cell value.",
+          "$ref": "#/$defs/CellValue"
+        }
+      },
+      "required": [
+        "row_index",
+        "column_key",
+        "value"
+      ]
+    },
+    "CellValue": {
+      "description": "A table cell value. Untagged so agents can submit plain strings/numbers or rich cells.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "format": "int64"
+        },
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/RichCell"
+        }
+      ]
+    },
+    "CitationMapEntry": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "source_id": {
+          "$ref": "#/$defs/SourceId"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "number",
+        "label",
+        "title",
+        "source_id"
+      ]
+    },
+    "CitationStyle": {
+      "description": "Bibliographic label style.",
+      "type": "string",
+      "enum": [
+        "numeric",
+        "author_year"
+      ]
+    },
+    "ColumnDataType": {
+      "description": "Inferred or explicit data type of a table column.",
+      "oneOf": [
+        {
+          "description": "Free-form text, left aligned.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "Numeric value, right aligned.",
+          "type": "string",
+          "const": "number"
+        },
+        {
+          "description": "Currency amount, right aligned.",
+          "type": "string",
+          "const": "currency"
+        },
+        {
+          "description": "Percentage, right aligned.",
+          "type": "string",
+          "const": "percent"
+        },
+        {
+          "description": "Date string, center aligned.",
+          "type": "string",
+          "const": "date"
+        },
+        {
+          "description": "Short status token rendered as a badge, center aligned.",
+          "type": "string",
+          "const": "badge"
+        }
+      ]
+    },
+    "ColumnNode": {
+      "description": "A column node in a possibly multi-level table header.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "description": "Body cell alignment override.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "children": {
+          "description": "Child columns for a grouped/multi-level header. Empty means this node is a leaf.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ColumnNode"
+          }
+        },
+        "data_type": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColumnDataType"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "header_align": {
+          "description": "Header cell alignment override.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "key": {
+          "description": "Stable leaf key. Must be unique among all leaf columns. Groups may omit it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "Human-readable header label.",
+          "type": "string"
+        },
+        "sizing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ColumnSizing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "weight": {
+          "description": "Relative width weight for `grow` columns (and a multiplier for `fit` columns).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        }
+      },
+      "required": [
+        "label"
+      ]
+    },
+    "ColumnSizing": {
+      "description": "How a leaf column participates in width distribution.",
+      "oneOf": [
+        {
+          "description": "Size close to its P90 content width.",
+          "type": "string",
+          "const": "fit"
+        },
+        {
+          "description": "Take a weighted share of available table width.",
+          "type": "string",
+          "const": "grow"
+        }
+      ]
+    },
+    "ComputedDocumentMeta": {
+      "description": "Everything the external frontend needs beyond the canonical Block AST.",
+      "type": "object",
+      "properties": {
+        "bibliography": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BibliographyEntry"
+          }
+        },
+        "block_framing": {
+          "description": "Auto-numbering labels and source attribution for table/figure blocks.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlockFraming"
+          }
+        },
+        "citation_map": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/CitationMapEntry"
+          }
+        },
+        "table_layouts": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/TableLayout"
+          }
+        },
+        "toc_tree": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TocNode"
+          }
+        }
+      },
+      "required": [
+        "table_layouts",
+        "citation_map",
+        "bibliography",
+        "toc_tree",
+        "block_framing"
+      ]
+    },
+    "CoverConfig": {
+      "description": "Configuration for the generated cover page.",
+      "type": "object",
+      "properties": {
+        "authors": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "custom_html": {
+          "description": "Full HTML override for the cover body. When present it replaces the generated cover body.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "date": {
+          "description": "Human-readable publication date. Free-form on purpose (for example \"Q3 2026\").",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "meta": {
+          "description": "Optional key/value metadata rendered on the cover.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "default": ""
+        },
+        "variant": {
+          "description": "One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.",
+          "type": "string",
+          "default": "classic"
+        }
+      }
+    },
+    "CustomHtmlBlock": {
+      "description": "Raw HTML block. Custom HTML is trusted at render time, but must supply a fallback summary.",
+      "type": "object",
+      "properties": {
+        "css": {
+          "description": "Optional CSS scoped under `.report-root` by the frontend.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback_text": {
+          "description": "Non-empty plain-text/Markdown fallback. Required for lint cleanliness and agent review.",
+          "type": "string",
+          "default": ""
+        },
+        "html": {
+          "description": "Raw HTML trusted by the external renderer.",
+          "type": "string"
+        },
+        "note": {
+          "description": "Explanatory footnote rendered below the block.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numbering": {
+          "description": "`none` by default for freeform HTML; `figure` opts into `图 N` numbering.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberingKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "description": "Outer title. Put titles here only; never duplicate them inside the HTML.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "html"
+      ]
+    },
+    "Diagnostic": {
+      "type": "object",
+      "properties": {
+        "block_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code": {
+          "type": "string"
+        },
+        "hint": {
+          "description": "Actionable next step, including valid IDs/enums when possible.",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "description": "JSON-ish path such as `blocks.financials.columns`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "valid_values": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "code",
+        "severity",
+        "message",
+        "hint"
+      ]
+    },
+    "DocId": {
+      "description": "Validated identifier.",
+      "type": "string"
+    },
+    "EchartsBlock": {
+      "description": "An ECharts chart block. `fallback_summary` is mandatory so non-JS renderers stay useful.",
+      "type": "object",
+      "properties": {
+        "fallback_summary": {
+          "description": "Mandatory one-sentence numeric summary for reviewers, Markdown projection and non-JS use.",
+          "type": "string",
+          "default": ""
+        },
+        "height": {
+          "description": "Canvas height in pixels, recommended 120..=2000.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 360,
+          "minimum": 0
+        },
+        "mode": {
+          "description": "`preset` starts from a built-in chart skeleton; `option` supplies the full option object.",
+          "$ref": "#/$defs/EchartsMode",
+          "default": "preset"
+        },
+        "note": {
+          "description": "Explanatory footnote rendered below the chart.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numbering": {
+          "description": "`figure` by default; use `none` to suppress the `图 N` label.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberingKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "option": {
+          "description": "Full ECharts option object when `mode` is `option`."
+        },
+        "option_patch": {
+          "description": "Deep-merged onto the base option. Arrays replace arrays, objects merge recursively."
+        },
+        "preset": {
+          "description": "Built-in skeleton such as bar, line, pie or donut.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EchartsPreset"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "title": {
+          "description": "Optional chart title.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "EchartsMode": {
+      "description": "Selects how an ECharts option is assembled.",
+      "oneOf": [
+        {
+          "description": "Start from the named preset and optionally apply `option_patch`.",
+          "type": "string",
+          "const": "preset"
+        },
+        {
+          "description": "Use `option` as the full option object, optionally merged with `option_patch`.",
+          "type": "string",
+          "const": "option"
+        }
+      ]
+    },
+    "EchartsPreset": {
+      "description": "Built-in ECharts presets. Series data can be supplied through `option_patch`.",
+      "type": "string",
+      "enum": [
+        "bar",
+        "horizontal_bar",
+        "line",
+        "area",
+        "pie",
+        "donut",
+        "scatter"
+      ]
+    },
+    "IdAssignment": {
+      "description": "Mapping produced when an empty or colliding block ID was auto-assigned.",
+      "type": "object",
+      "properties": {
+        "assigned": {
+          "description": "Final unique semantic ID.",
+          "$ref": "#/$defs/BlockId"
+        },
+        "requested": {
+          "description": "Original ID, or `None` when the caller omitted/emptied it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "assigned"
+      ]
+    },
+    "LayoutHeaderCell": {
+      "description": "A resolved multi-level table header cell.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "$ref": "#/$defs/Align"
+        },
+        "colspan": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "data_type": {
+          "$ref": "#/$defs/ColumnDataType"
+        },
+        "is_group": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "rowspan": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "colspan",
+        "rowspan",
+        "data_type",
+        "align",
+        "is_group"
+      ]
+    },
+    "LayoutLeafColumn": {
+      "description": "A layout-ready leaf column with normalized percentage width.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "$ref": "#/$defs/Align"
+        },
+        "data_type": {
+          "$ref": "#/$defs/ColumnDataType"
+        },
+        "header_align": {
+          "$ref": "#/$defs/Align"
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "key": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sizing": {
+          "$ref": "#/$defs/ColumnSizing"
+        },
+        "weight": {
+          "type": "number",
+          "format": "float"
+        },
+        "width_css": {
+          "type": "string"
+        },
+        "width_pct": {
+          "description": "Normalized percentage. All leaves in a layout sum to 100.00.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "key",
+        "label",
+        "path",
+        "data_type",
+        "sizing",
+        "weight",
+        "align",
+        "header_align",
+        "index",
+        "width_pct",
+        "width_css"
+      ]
+    },
+    "LintReport": {
+      "type": "object",
+      "properties": {
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Diagnostic"
+          }
+        },
+        "summary": {
+          "$ref": "#/$defs/LintSummary"
+        }
+      },
+      "required": [
+        "diagnostics",
+        "summary"
+      ]
+    },
+    "LintSummary": {
+      "type": "object",
+      "properties": {
+        "errors": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "infos": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "errors",
+        "warnings",
+        "infos"
+      ]
+    },
+    "NumberingKind": {
+      "description": "Automatic figure/table numbering kind.",
+      "oneOf": [
+        {
+          "description": "Number as a figure (`图 1`).",
+          "type": "string",
+          "const": "figure"
+        },
+        {
+          "description": "Number as a table (`表 1`).",
+          "type": "string",
+          "const": "table"
+        },
+        {
+          "description": "Do not number.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "PatchOp": {
+      "description": "A declarative mutation. Deserialized with a `type` discriminator.\n\nThe large `PatchBlock` variant is intentional: boxing it would force every JSON caller and\nstore adapter to unwrap an extra pointer for a cold error path.",
+      "oneOf": [
+        {
+          "description": "Insert blocks immediately after an existing anchor block.",
+          "type": "object",
+          "properties": {
+            "blocks": {
+              "description": "New blocks in display order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Block"
+              }
+            },
+            "target_id": {
+              "description": "Existing block ID used as the anchor.",
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "insert_after"
+            }
+          },
+          "required": [
+            "type",
+            "target_id",
+            "blocks"
+          ]
+        },
+        {
+          "description": "Insert blocks immediately before an existing anchor block.",
+          "type": "object",
+          "properties": {
+            "blocks": {
+              "description": "New blocks in display order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Block"
+              }
+            },
+            "target_id": {
+              "description": "Existing block ID used as the anchor.",
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "insert_before"
+            }
+          },
+          "required": [
+            "type",
+            "target_id",
+            "blocks"
+          ]
+        },
+        {
+          "description": "Append blocks at the end of the report.",
+          "type": "object",
+          "properties": {
+            "blocks": {
+              "description": "New blocks in display order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Block"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "append"
+            }
+          },
+          "required": [
+            "type",
+            "blocks"
+          ]
+        },
+        {
+          "description": "Insert blocks at the end of a heading section (before the next heading of the same or\nhigher level, or at end-of-document).",
+          "type": "object",
+          "properties": {
+            "blocks": {
+              "description": "New blocks in display order.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Block"
+              }
+            },
+            "section_id": {
+              "description": "Heading block that owns the section.",
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "append_to_section"
+            }
+          },
+          "required": [
+            "type",
+            "section_id",
+            "blocks"
+          ]
+        },
+        {
+          "description": "Partially update one existing block.",
+          "type": "object",
+          "properties": {
+            "block_id": {
+              "description": "Target block ID.",
+              "$ref": "#/$defs/BlockId"
+            },
+            "patch": {
+              "description": "Partial patch. Unsupported fields return a self-healing error.",
+              "$ref": "#/$defs/BlockPatch"
+            },
+            "type": {
+              "type": "string",
+              "const": "patch_block"
+            }
+          },
+          "required": [
+            "type",
+            "block_id",
+            "patch"
+          ]
+        },
+        {
+          "description": "Replace an inclusive range with new blocks.",
+          "type": "object",
+          "properties": {
+            "blocks": {
+              "description": "Replacement blocks. Empty means delete the range.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Block"
+              }
+            },
+            "end_id": {
+              "description": "Last block ID in the replaced range (inclusive).",
+              "$ref": "#/$defs/BlockId"
+            },
+            "start_id": {
+              "description": "First block ID in the replaced range.",
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "replace_range"
+            }
+          },
+          "required": [
+            "type",
+            "start_id",
+            "end_id",
+            "blocks"
+          ]
+        },
+        {
+          "description": "Delete one or more blocks.",
+          "type": "object",
+          "properties": {
+            "block_ids": {
+              "description": "Block IDs to delete. All must exist.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/BlockId"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "delete_blocks"
+            }
+          },
+          "required": [
+            "type",
+            "block_ids"
+          ]
+        },
+        {
+          "description": "Move one block. `after_id: null` moves it to the top.",
+          "type": "object",
+          "properties": {
+            "after_id": {
+              "description": "Anchor block; null means the beginning of the report.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BlockId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "block_id": {
+              "description": "Block ID to move.",
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "move_block"
+            }
+          },
+          "required": [
+            "type",
+            "block_id"
+          ]
+        },
+        {
+          "description": "Server-side configuration operation. Dedicated MCP tools use this internally so that\nconfiguration changes are revisioned, streamed and reversible just like block changes.",
+          "type": "object",
+          "properties": {
+            "cover": {
+              "description": "Complete replacement cover config.",
+              "$ref": "#/$defs/CoverConfig"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_cover"
+            }
+          },
+          "required": [
+            "type",
+            "cover"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "toc": {
+              "description": "Complete replacement TOC config.",
+              "$ref": "#/$defs/TocConfig"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_toc"
+            }
+          },
+          "required": [
+            "type",
+            "toc"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "references": {
+              "description": "Complete replacement bibliography config.",
+              "$ref": "#/$defs/ReferencesConfig"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_references"
+            }
+          },
+          "required": [
+            "type",
+            "references"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "theme": {
+              "description": "Complete replacement theme config.",
+              "$ref": "#/$defs/ThemeConfig"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_theme"
+            }
+          },
+          "required": [
+            "type",
+            "theme"
+          ]
+        },
+        {
+          "description": "Replace the full source registry. Used for rollback and source deduplication.",
+          "type": "object",
+          "properties": {
+            "sources": {
+              "description": "Complete replacement source registry keyed by source_id.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/SourceEntry"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "set_sources"
+            }
+          },
+          "required": [
+            "type",
+            "sources"
+          ]
+        }
+      ]
+    },
+    "PatchOutcome": {
+      "description": "Receipt for an applied mutation batch.",
+      "type": "object",
+      "properties": {
+        "affected_block_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
+        "assigned_ids": {
+          "description": "Block IDs auto-assigned because the submitted ID was empty or colliding.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IdAssignment"
+          }
+        },
+        "deleted_block_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
+        "id_mapping": {
+          "description": "Map of submitted block IDs to final IDs. `apply_operations` is identity; `apply_draft`\nmay prefix collisions.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
+        "inserted_block_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
+        "metadata_changed": {
+          "type": "boolean"
+        },
+        "moved_block_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
+        "no_op": {
+          "type": "boolean"
+        },
+        "updated_block_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        }
+      },
+      "required": [
+        "inserted_block_ids",
+        "updated_block_ids",
+        "deleted_block_ids",
+        "moved_block_ids",
+        "affected_block_ids",
+        "id_mapping",
+        "metadata_changed",
+        "no_op",
+        "assigned_ids"
+      ]
+    },
+    "ReferencesConfig": {
+      "description": "End-of-report bibliography configuration.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "page_break_before": {
+          "type": "boolean",
+          "default": true
+        },
+        "style": {
+          "$ref": "#/$defs/CitationStyle",
+          "default": "numeric"
+        },
+        "title": {
+          "type": "string",
+          "default": "References"
+        }
+      }
+    },
+    "ReportDocument": {
+      "description": "The root report document. Blocks are stored in display order.",
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "cover": {
+          "$ref": "#/$defs/CoverConfig",
+          "default": {
+            "authors": [],
+            "enabled": false,
+            "title": "",
+            "variant": "classic"
+          }
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "references": {
+          "$ref": "#/$defs/ReferencesConfig",
+          "default": {
+            "enabled": true,
+            "page_break_before": true,
+            "style": "numeric",
+            "title": "References"
+          }
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision",
+          "default": 0
+        },
+        "session_id": {
+          "description": "Optional agent session used for frontend session discovery (`X-Session-Id`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SessionId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SourceEntry"
+          }
+        },
+        "theme": {
+          "$ref": "#/$defs/ThemeConfig",
+          "default": {
+            "preset": "default"
+          }
+        },
+        "toc": {
+          "$ref": "#/$defs/TocConfig",
+          "default": {
+            "enabled": true,
+            "max_depth": 3,
+            "title": "Contents",
+            "variant": "standard"
+          }
+        }
+      },
+      "required": [
+        "doc_id"
+      ]
+    },
+    "ReportDraft": {
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "cover": {
+          "$ref": "#/$defs/CoverConfig",
+          "default": {
+            "authors": [],
+            "enabled": false,
+            "title": "",
+            "variant": "classic"
+          }
+        },
+        "doc_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "references": {
+          "$ref": "#/$defs/ReferencesConfig",
+          "default": {
+            "enabled": true,
+            "page_break_before": true,
+            "style": "numeric",
+            "title": "References"
+          }
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/SourceEntry"
+          }
+        },
+        "theme": {
+          "$ref": "#/$defs/ThemeConfig",
+          "default": {
+            "preset": "default"
+          }
+        },
+        "title": {
+          "description": "Convenience title for agents; copied into `cover.title` when that field is empty.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toc": {
+          "$ref": "#/$defs/TocConfig",
+          "default": {
+            "enabled": true,
+            "max_depth": 3,
+            "title": "Contents",
+            "variant": "standard"
+          }
+        }
+      }
+    },
+    "Revision": {
+      "description": "Monotonic non-negative report revision.",
+      "type": "integer",
+      "format": "int64"
+    },
+    "RevisionDelta": {
+      "description": "Payload of an SSE `revision` event.\n\nEmitted after each committed revision, in strictly ascending revision order.",
+      "type": "object",
+      "properties": {
+        "actor": {
+          "description": "Agent or admin identity recorded for the audit trail.",
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "ops": {
+          "description": "Forward patch operations; metadata-only revisions may carry an empty array."
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_id",
+        "revision",
+        "actor",
+        "summary",
+        "ops",
+        "created_at"
+      ]
+    },
+    "RichCell": {
+      "description": "A rich table cell with presentation hints. At least one of `text` or `number` is expected.",
+      "type": "object",
+      "properties": {
+        "align": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Align"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "class_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "number": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tooltip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "SessionDelta": {
+      "description": "Payload of an SSE `doc_created` event on the session discovery stream.",
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "event": {
+          "description": "Event name, always `doc_created`.",
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "session_id": {
+          "$ref": "#/$defs/SessionId"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event",
+        "session_id",
+        "doc_id",
+        "title",
+        "revision",
+        "created_at"
+      ]
+    },
+    "SessionId": {
+      "description": "Validated identifier.",
+      "type": "string"
+    },
+    "Severity": {
+      "type": "string",
+      "enum": [
+        "error",
+        "warning",
+        "info"
+      ]
+    },
+    "SourceEntry": {
+      "description": "A citation source. Source IDs live in the key of [`ReportDocument::sources`].",
+      "type": "object",
+      "properties": {
+        "accessed": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "date": {
+          "description": "Publication date, preferably ISO-8601 (`2026-03-01`) but free-form is accepted.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publisher": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "SourceId": {
+      "description": "Validated identifier.",
+      "type": "string"
+    },
+    "SyncRequiredDelta": {
+      "description": "Payload of an SSE `sync_required` event.\n\nSent when replay detects a gap or a storage failure. Clients must fetch a full snapshot\nfrom `GET /api/docs/{doc_id}` before resuming from a new revision cursor.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "hint": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "since_revision": {
+          "description": "Last revision the stream delivered before detecting the gap.",
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "doc_id",
+        "since_revision",
+        "reason",
+        "hint"
+      ]
+    },
+    "TableBlock": {
+      "description": "Table block payload. Header layout is computed by the table compiler, not by the agent.\n\nAccepts the full canonical schema (`columns` + row objects) or a compact shorthand\n(`headers` + row arrays). Shorthand column keys/types are inferred from cell values.",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "description": "Recursive header tree. Agents declare groups/leaves; spans are pre-computed.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ColumnNode"
+          }
+        },
+        "note": {
+          "description": "Explanatory footnote rendered below the table.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "numbering": {
+          "description": "`table` by default; use `none` to suppress the `表 N` label.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberingKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows": {
+          "description": "Body rows keyed by leaf column key. Example: `[{\"region\":\"EMEA\",\"q1\":800000}]`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/CellValue"
+            }
+          }
+        },
+        "summary_rows": {
+          "description": "Footer rows (totals, averages) with the same key shape as `rows`.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/CellValue"
+            }
+          }
+        },
+        "title": {
+          "description": "Outer table title. Put titles here only, never inside custom HTML.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "columns"
+      ]
+    },
+    "TableLayout": {
+      "type": "object",
+      "properties": {
+        "header_depth": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "header_rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/LayoutHeaderCell"
+            }
+          }
+        },
+        "leaf_columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LayoutLeafColumn"
+          }
+        },
+        "table_block_id": {
+          "$ref": "#/$defs/BlockId"
+        },
+        "total_width_pct": {
+          "description": "Always 100.00 when at least one leaf exists.",
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "table_block_id",
+        "header_rows",
+        "leaf_columns",
+        "header_depth",
+        "total_width_pct"
+      ]
+    },
+    "ThemeConfig": {
+      "description": "Theme configuration. Tokens are CSS custom properties applied to `.report-root`.",
+      "type": "object",
+      "properties": {
+        "custom_css": {
+          "description": "Arbitrary CSS. It is automatically scoped under `.report-root`.",
+          "type": "string"
+        },
+        "preset": {
+          "description": "Built-in preset name. Unknown presets fall back to `default`.",
+          "type": "string",
+          "default": "default"
+        },
+        "tokens": {
+          "description": "Additional or overriding CSS custom properties, for example `--rpt-primary`.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "TocConfig": {
+      "description": "Table-of-contents configuration.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "max_depth": {
+          "description": "Maximum heading depth to include. Protocol range is 1..=3.",
+          "type": "integer",
+          "format": "uint8",
+          "default": 3,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "title": {
+          "type": "string",
+          "default": "Contents"
+        },
+        "variant": {
+          "description": "One of `standard`, `numbered`, `dotted`; unknown values render as standard.",
+          "type": "string",
+          "default": "standard"
+        }
+      }
+    },
+    "TocNode": {
+      "type": "object",
+      "properties": {
+        "block_id": {
+          "$ref": "#/$defs/BlockId"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TocNode"
+          }
+        },
+        "level": {
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "number": {
+          "description": "Hierarchical number such as `2.1`; frontends may hide it for the standard variant.",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "block_id",
+        "level",
+        "text",
+        "number"
+      ]
+    }
+  }
+}

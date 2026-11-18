@@ -1,0 +1,527 @@
+//! MCP tool input schemas and compact receipts.
+//!
+//! Every tool has one `*Params` input struct and one `*Receipt` output struct. `schemars`
+//! turns the `///` comments below into JSON Schema descriptions, so keep them short and
+//! actionable for agents that discover tools dynamically.
+
+use std::collections::BTreeMap;
+
+use indexmap::IndexMap;
+use quire_protocol::{
+    Block, CitationStyle, CoverConfig, IdAssignment, LintReport, PatchOp, ReferencesConfig,
+    SourceEntry, SourceId, ThemeSummary, TocConfig,
+};
+use quire_store::ReportSummary;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::guide::GuideTopic;
+
+/// Input for `get_protocol_guide`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GuideParams {
+    /// Topic to disclose: quickstart, tables_and_charts, citations_and_css or parallel_workflow.
+    pub topic: GuideTopic,
+}
+
+/// Output for `get_protocol_guide`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GuideReceipt {
+    /// Disclosed topic.
+    pub topic: GuideTopic,
+    /// Markdown guide text with examples and common mistakes.
+    pub guide: String,
+    /// Tools relevant to this workflow stage.
+    pub recommended_tools: Vec<String>,
+    /// Current INIT -> SCHEMA -> AUTHOR -> VERIFY state machine.
+    pub workflow: crate::guide::GuideWorkflow,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `create_report`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateReportParams {
+    /// Human-readable report title, for example "Q3 Revenue Review".
+    pub title: String,
+    /// Optional frontend theme preset, for example "editorial" or "technical".
+    #[serde(default)]
+    pub theme_preset: Option<String>,
+    /// Render a cover page. Default true.
+    #[serde(default)]
+    pub enable_cover: Option<bool>,
+    /// Enable the auto-generated TOC. Default true.
+    #[serde(default)]
+    pub enable_toc: Option<bool>,
+    /// Optional initial blocks (full Block AST). IDs must be unique semantic strings.
+    #[serde(default)]
+    pub initial_blocks: Option<Vec<Block>>,
+    /// Stable de-duplication key for retries.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
+    /// Optional caller-supplied doc_id; otherwise generated from the title.
+    #[serde(default)]
+    pub doc_id: Option<String>,
+}
+
+/// Output for `create_report`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CreateReportReceipt {
+    pub doc_id: String,
+    /// New revision, always 1 for a fresh report.
+    pub revision: i64,
+    pub title: String,
+    /// Session bound from the `X-Session-Id` HTTP header.
+    pub session_id: Option<String>,
+    /// True when `idempotency_key` matched an earlier create call.
+    pub idempotent_replay: bool,
+    /// Compact outline of the created document.
+    pub digest: DocumentDigest,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `list_reports`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListReportsParams {
+    /// Case-insensitive doc_id/title substring.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Page size, 1..=100, default 20.
+    #[serde(default)]
+    pub limit: Option<i64>,
+}
+
+/// Output for `list_reports`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListReportsReceipt {
+    pub reports: Vec<ReportSummaryView>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// One report row inside `ListReportsReceipt`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReportSummaryView {
+    pub doc_id: String,
+    pub title: String,
+    pub session_id: Option<String>,
+    pub current_rev: i64,
+    pub block_count: i64,
+    /// RFC 3339 timestamp of the latest revision.
+    pub updated_at: String,
+}
+
+impl From<ReportSummary> for ReportSummaryView {
+    fn from(summary: ReportSummary) -> Self {
+        Self {
+            doc_id: summary.doc_id.to_string(),
+            title: summary.title,
+            session_id: summary
+                .session_id
+                .map(|session| session.as_str().to_string()),
+            current_rev: summary.current_rev.get(),
+            block_count: summary.block_count,
+            updated_at: summary.updated_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Merge strategy for `apply_draft`.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DraftMode {
+    /// Create a new report, or replace the whole document body.
+    CreateOrReplace,
+    /// Append draft blocks after the current last block.
+    AppendSection,
+    /// Replace an inclusive block-ID range.
+    ReplaceRange,
+}
+
+/// Input for `apply_draft`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplyDraftParams {
+    /// Workspace-relative path to draft.json.
+    pub draft_file_path: String,
+    /// Existing report to merge into (required except create_or_replace new report).
+    #[serde(default)]
+    pub target_doc_id: Option<String>,
+    /// Merge strategy.
+    pub mode: DraftMode,
+    /// First block ID to replace (replace_range only).
+    #[serde(default)]
+    pub start_block_id: Option<String>,
+    /// Last block ID to replace (replace_range only).
+    #[serde(default)]
+    pub end_block_id: Option<String>,
+    /// Optional additional sources upserted in the same transaction as the draft blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<BTreeMap<SourceId, SourceInput>>")]
+    pub sources: Option<IndexMap<SourceId, SourceInput>>,
+}
+
+/// Output for `apply_draft`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ApplyDraftReceipt {
+    pub new_revision: i64,
+    /// Block IDs that were auto-prefixed because they were pending or colliding.
+    pub assigned_ids: Vec<IdAssignment>,
+    /// Non-fatal normalization warnings produced while merging.
+    pub inline_warnings: Vec<quire_protocol::Diagnostic>,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `get_document_digest`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DigestParams {
+    pub doc_id: String,
+    /// Optional case-insensitive keyword filter over id/type/text.
+    #[serde(default)]
+    pub query: Option<String>,
+}
+
+/// Output for `get_document_digest`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DigestReceipt {
+    pub digest: DocumentDigest,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Low-token summary of one block.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct BlockDigest {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub block_type: String,
+    /// Heading level, when the block is a heading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level: Option<u8>,
+    /// First 30 characters of visible text.
+    pub snippet_30: String,
+    pub char_count: usize,
+    /// Source IDs referenced by this block.
+    pub source_ids: Vec<String>,
+}
+
+/// Low-token outline of a report: revision, theme, TOC and block summaries.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct DocumentDigest {
+    pub doc_id: String,
+    pub title: String,
+    pub session_id: Option<String>,
+    pub current_rev: i64,
+    pub theme: ThemeSummary,
+    pub toc: TocConfig,
+    pub block_count: usize,
+    pub source_count: usize,
+    pub blocks: Vec<BlockDigest>,
+}
+
+/// Input for `read_as_markdown`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadMarkdownParams {
+    /// Existing report ID (mutually exclusive with draft_file_path).
+    #[serde(default)]
+    pub doc_id: Option<String>,
+    /// Workspace-relative offline draft path (mutually exclusive with doc_id).
+    #[serde(default)]
+    pub draft_file_path: Option<String>,
+    /// Project one matching heading section.
+    #[serde(default)]
+    pub section_heading: Option<String>,
+    /// Project specific block IDs, in document order. Example: `["ch1_summary"]`.
+    #[serde(default)]
+    pub block_ids: Option<Vec<String>>,
+    /// Expand ECharts series into Markdown data tables. Default true.
+    #[serde(default)]
+    pub include_chart_data: Option<bool>,
+}
+
+/// Output for `read_as_markdown`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReadMarkdownReceipt {
+    /// `doc:<id>` for online reports or `draft:<path>` for offline drafts.
+    pub source: String,
+    pub doc_id: Option<String>,
+    pub revision: i64,
+    pub markdown_chars: usize,
+    /// Markdown projection with `<!-- block:id | type:... -->` anchors.
+    pub markdown: String,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `read_blocks`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReadBlocksParams {
+    pub doc_id: String,
+    /// Block IDs to fetch, for example `["financials","kpi-grid"]`.
+    pub block_ids: Vec<String>,
+}
+
+/// Output for `read_blocks`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ReadBlocksReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    /// Full canonical protocol JSON for the requested blocks.
+    pub blocks: Vec<Block>,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `apply_operations`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ApplyOperationsParams {
+    pub doc_id: String,
+    /// Revision you read. Smart CAS rebases disjoint edits; overlapping edits return a conflict.
+    pub expected_revision: i64,
+    /// Short intent summary, for example "write chapter 2 revenue section".
+    pub summary: String,
+    /// Declarative patch operations. Example: `[{"type":"append","blocks":[...]}]`.
+    pub ops: Vec<PatchOp>,
+    /// Optional sources upserted atomically in the same transaction as the blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<BTreeMap<SourceId, SourceInput>>")]
+    pub sources: Option<IndexMap<SourceId, SourceInput>>,
+}
+
+/// Output for `apply_operations`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ApplyOperationsReceipt {
+    pub new_revision: i64,
+    /// Block IDs auto-assigned by the patch engine.
+    pub assigned_ids: Vec<IdAssignment>,
+    /// Non-fatal warnings from normalization and post-commit linting.
+    pub inline_warnings: Vec<quire_protocol::Diagnostic>,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `rollback_revision`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RollbackParams {
+    pub doc_id: String,
+    /// Target revision in 1..current_revision-1.
+    pub target_revision: i64,
+}
+
+/// Output for `rollback_revision`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RollbackReceipt {
+    pub doc_id: String,
+    /// New monotonic revision created by the rollback.
+    pub new_revision: i64,
+    pub target_revision: i64,
+    /// Number of inverse-op revisions replayed.
+    pub replayed_revisions: usize,
+    pub digest: DocumentDigest,
+    pub inline_warnings: Vec<quire_protocol::Diagnostic>,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Source payload accepted by `upsert_sources` and inline source maps.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct SourceInput {
+    /// Stable short source ID, e.g. "sec10". Required by `upsert_sources`; optional when the
+    /// source is supplied as a map value (`sources: {"sec10": {...}}`).
+    #[serde(default, alias = "source_id", skip_serializing_if = "Option::is_none")]
+    pub id: Option<SourceId>,
+    #[serde(flatten)]
+    pub entry: SourceEntry,
+}
+
+/// Input for `upsert_sources`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpsertSourcesParams {
+    /// Report that owns the sources.
+    pub doc_id: String,
+    /// Sources to register/update. Duplicate URLs or normalized titles map to one canonical ID.
+    pub sources: Vec<SourceInput>,
+}
+
+/// Output for `upsert_sources`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UpsertSourcesReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    /// False when every source already existed and no revision was created.
+    pub changed: bool,
+    /// Requested source ID -> canonical source ID.
+    pub canonical_id_map: BTreeMap<String, String>,
+    pub source_count: usize,
+    pub inline_warnings: Vec<quire_protocol::Diagnostic>,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `set_cover`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetCoverParams {
+    pub doc_id: String,
+    /// Partial cover fields. Omitted fields are preserved.
+    pub cover_patch: CoverPatch,
+}
+
+/// Partial cover update; omitted fields are preserved.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct CoverPatch {
+    /// Enable or disable the cover.
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// classic | modern | minimal | split | custom
+    #[serde(default)]
+    pub variant: Option<String>,
+    /// Cover title. Must be non-empty when supplied.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Subtitle; empty string clears it.
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    /// Author line, for example `["Ada Lovelace"]`.
+    #[serde(default)]
+    pub authors: Option<Vec<String>>,
+    /// Publication date; empty string clears it.
+    #[serde(default)]
+    pub date: Option<String>,
+    /// Key/value metadata, for example `{"classification":"internal"}`.
+    #[serde(default)]
+    pub meta: Option<BTreeMap<String, String>>,
+    /// Raw HTML override for the cover body; empty string clears it.
+    #[serde(default)]
+    pub custom_html: Option<String>,
+}
+
+/// Output for `set_cover`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SetCoverReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    pub cover: CoverConfig,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `configure_toc`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConfigureTocParams {
+    pub doc_id: String,
+    /// Enable or disable the generated TOC.
+    pub enabled: bool,
+    /// TOC heading, for example `"Contents"`.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Heading depth to include, 1..=3.
+    #[serde(default)]
+    pub max_depth: Option<u8>,
+    /// standard | numbered | dotted
+    #[serde(default)]
+    pub variant: Option<String>,
+}
+
+/// Output for `configure_toc`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ConfigureTocReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    pub toc: TocConfig,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `configure_references`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConfigureReferencesParams {
+    pub doc_id: String,
+    /// Enable or disable the bibliography section.
+    pub enabled: bool,
+    /// Bibliography heading, for example `"References"`.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// numeric | author_year
+    #[serde(default)]
+    pub style: Option<CitationStyle>,
+    /// Start the bibliography on a new page.
+    #[serde(default)]
+    pub page_break_before: Option<bool>,
+}
+
+/// Output for `configure_references`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ConfigureReferencesReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    pub references: ReferencesConfig,
+    /// Registered source IDs that are not cited by any block.
+    pub orphan_sources: Vec<String>,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// How `update_style_and_css` merges custom CSS.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CssMode {
+    /// Append to the existing custom CSS block.
+    Append,
+    /// Replace the existing custom CSS block.
+    Replace,
+}
+
+/// Input for `update_style_and_css`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateStyleParams {
+    pub doc_id: String,
+    /// Theme preset, for example `editorial`, `technical` or `default`.
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// Merge into existing CSS custom properties. Example: `{"--rpt-primary":"#0b3d91"}`.
+    #[serde(default)]
+    pub tokens_patch: BTreeMap<String, String>,
+    /// Arbitrary CSS scoped to `.report-root` by the frontend. Validated before saving.
+    #[serde(default)]
+    pub custom_css: Option<String>,
+    /// append (default) or replace.
+    #[serde(default = "default_css_mode")]
+    pub css_mode: CssMode,
+}
+
+fn default_css_mode() -> CssMode {
+    CssMode::Append
+}
+
+/// Output for `update_style_and_css`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UpdateStyleReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    pub theme: ThemeSummary,
+    pub token_count: usize,
+    pub has_custom_css: bool,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
+/// Input for `lint_document`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LintParams {
+    pub doc_id: String,
+}
+
+/// Output for `lint_document`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LintReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    /// Diagnostics plus error/warning summary.
+    pub report: LintReport,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
