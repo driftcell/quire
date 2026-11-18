@@ -30,15 +30,18 @@ fmt-check:
 check:
     cargo check --workspace
 
-# Regenerate the canonical JSON Schema contract.
+# Regenerate the canonical JSON Schema contracts.
 schema:
     cargo run -p quire-protocol --example export_schema
+    cargo run -p quire-session-protocol --example export_session_schema
 
 # Unit tests that do not need live PostgreSQL/Redis.
 test-unit:
     cargo test -p quire-protocol
+    cargo test -p quire-session-protocol
     cargo test -p quire-store --lib
     cargo test -p quire-server --lib
+    cargo test -p quire-runtime --lib
 
 # Full test suite; requires `just up` and `just migrate`.
 test:
@@ -46,6 +49,12 @@ test:
 
 test-protocol:
     cargo test -p quire-protocol
+
+test-session-protocol:
+    cargo test -p quire-session-protocol
+
+test-runtime:
+    cargo test -p quire-runtime
 
 test-store:
     cargo test -p quire-store
@@ -59,6 +68,10 @@ verify: fmt-check clippy test
 # Start the API/MCP server.
 server:
     cargo run -p quire-server --bin quire-server
+
+# Start the independent session/agent runtime.
+runtime:
+    cargo run -p quire-runtime --bin quire-runtime
 
 # End-to-end multi-agent scenario (requires the full stack).
 e2e:

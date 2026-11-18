@@ -1,0 +1,716 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Quire Session Protocol",
+  "type": "object",
+  "properties": {
+    "attachment_meta": {
+      "$ref": "#/$defs/AttachmentMeta"
+    },
+    "send_message_request": {
+      "$ref": "#/$defs/SendMessageRequest"
+    },
+    "session_detail": {
+      "$ref": "#/$defs/SessionDetail"
+    },
+    "session_event": {
+      "$ref": "#/$defs/SessionEvent"
+    },
+    "session_message": {
+      "$ref": "#/$defs/SessionMessage"
+    },
+    "session_summary": {
+      "$ref": "#/$defs/SessionSummary"
+    },
+    "tool_call_detail": {
+      "$ref": "#/$defs/ToolCallDetail"
+    }
+  },
+  "required": [
+    "session_event",
+    "session_summary",
+    "session_detail",
+    "session_message",
+    "attachment_meta",
+    "send_message_request",
+    "tool_call_detail"
+  ],
+  "$defs": {
+    "ActiveRunStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "interrupted",
+        "failed"
+      ]
+    },
+    "AttachmentMeta": {
+      "type": "object",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "attachment_id",
+        "filename",
+        "mime_type",
+        "size_bytes"
+      ]
+    },
+    "ContextUsage": {
+      "type": "object",
+      "properties": {
+        "cached_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "context_limit": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "context_used": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "context_used",
+        "context_limit"
+      ]
+    },
+    "MessageRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant",
+        "tool",
+        "system"
+      ]
+    },
+    "SendMessageRequest": {
+      "type": "object",
+      "properties": {
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "client_msg_id": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "client_msg_id",
+        "content"
+      ]
+    },
+    "SessionDetail": {
+      "type": "object",
+      "properties": {
+        "active_run_status": {
+          "$ref": "#/$defs/ActiveRunStatus"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AttachmentMeta"
+          }
+        },
+        "context_usage": {
+          "$ref": "#/$defs/ContextUsage",
+          "default": {
+            "cached_tokens": 0,
+            "context_limit": 0,
+            "context_used": 0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "doc_id": {
+          "description": "Quire report bound to this session. `None` until the first run auto-binds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_event_seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "linked_doc_id": {
+          "description": "Frontend-friendly alias of the bound report ID.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionMessage"
+          }
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "session_id",
+        "title",
+        "status",
+        "active_run_status",
+        "last_event_seq",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "SessionEvent": {
+      "description": "Common envelope for every Session-SSE frame.",
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "description": "`\"main\"` or a stable subagent identifier.",
+          "type": "string"
+        },
+        "parent_run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "turn_started"
+            }
+          },
+          "required": [
+            "event"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "turn_finished"
+            }
+          },
+          "required": [
+            "event"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "event": {
+              "type": "string",
+              "const": "turn_failed"
+            },
+            "recoverable": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "error",
+            "recoverable"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "after_seq": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "event": {
+              "type": "string",
+              "const": "sync_required"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "after_seq",
+            "reason"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delta": {
+              "type": "string"
+            },
+            "event": {
+              "type": "string",
+              "const": "thinking_delta"
+            }
+          },
+          "required": [
+            "event",
+            "delta"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "delta": {
+              "type": "string"
+            },
+            "event": {
+              "type": "string",
+              "const": "text_delta"
+            }
+          },
+          "required": [
+            "event",
+            "delta"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "detail": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event": {
+              "type": "string",
+              "const": "task_focus"
+            },
+            "section_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "title"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "tool_call_started"
+            },
+            "input_preview": {
+              "type": "string"
+            },
+            "tool_call_id": {
+              "type": "string"
+            },
+            "tool_name": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "tool_call_id",
+            "tool_name",
+            "input_preview",
+            "truncated"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "duration_ms": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "event": {
+              "type": "string",
+              "const": "tool_call_finished"
+            },
+            "output_preview": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "tool_call_id": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "tool_call_id",
+            "status",
+            "output_preview",
+            "truncated",
+            "duration_ms"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "agent_name": {
+              "type": "string"
+            },
+            "event": {
+              "type": "string",
+              "const": "subagent_started"
+            },
+            "section_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "subagent_run_id": {
+              "type": "string"
+            },
+            "task": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "subagent_run_id",
+            "agent_name",
+            "task"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "subagent_finished"
+            },
+            "status": {
+              "type": "string"
+            },
+            "subagent_run_id": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "subagent_run_id",
+            "status",
+            "summary"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "cached_tokens": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "context_limit": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "context_used": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "event": {
+              "type": "string",
+              "const": "context_usage"
+            },
+            "input_tokens": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "output_tokens": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "event",
+            "input_tokens",
+            "output_tokens",
+            "cached_tokens",
+            "context_used",
+            "context_limit"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "doc_id": {
+              "type": "string"
+            },
+            "event": {
+              "type": "string",
+              "const": "doc_linked"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "doc_id",
+            "title"
+          ]
+        }
+      ],
+      "required": [
+        "seq",
+        "run_id",
+        "agent_id",
+        "timestamp"
+      ]
+    },
+    "SessionMessage": {
+      "type": "object",
+      "properties": {
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "content": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "message_id": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole"
+        },
+        "run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "message_id",
+        "session_id",
+        "role",
+        "content",
+        "created_at"
+      ]
+    },
+    "SessionStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "archived"
+      ]
+    },
+    "SessionSummary": {
+      "type": "object",
+      "properties": {
+        "active_run_status": {
+          "$ref": "#/$defs/ActiveRunStatus"
+        },
+        "context_usage": {
+          "$ref": "#/$defs/ContextUsage",
+          "default": {
+            "cached_tokens": 0,
+            "context_limit": 0,
+            "context_used": 0,
+            "input_tokens": 0,
+            "output_tokens": 0
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "doc_id": {
+          "description": "Quire report bound to this session. `None` until the first run auto-binds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_event_seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "linked_doc_id": {
+          "description": "Frontend-friendly alias of the bound report ID.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        },
+        "title": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "session_id",
+        "title",
+        "status",
+        "active_run_status",
+        "last_event_seq",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "ToolCallDetail": {
+      "type": "object",
+      "properties": {
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input": {
+          "default": null
+        },
+        "output": {
+          "default": null
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "session_id",
+        "run_id",
+        "tool_name",
+        "status",
+        "duration_ms",
+        "created_at"
+      ]
+    }
+  }
+}

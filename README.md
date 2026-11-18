@@ -13,7 +13,9 @@ dependency. Rendering and visual preview belong to the external frontend.
 | --- | --- |
 | `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, linter, draft parser |
 | `quire-store` | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher |
+| `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json` |
 | `quire-server` | Axum REST/SSE endpoints and the 18-tool `rmcp` server mounted at `/mcp` |
+| `quire-runtime` | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE |
 
 ## Quickstart
 
@@ -22,6 +24,7 @@ cp .env.example .env
 just up          # PostgreSQL 16 + Redis 7 via docker compose
 just migrate     # SQLx migrations
 just server      # quire-server on BIND_ADDR (default 0.0.0.0:8080)
+just runtime     # quire-runtime on 127.0.0.1:8081 (auto-runs its own migrations)
 ```
 
 The server also auto-runs embedded migrations on startup (`AUTO_MIGRATE=true` by default).
@@ -75,6 +78,11 @@ frontend metadata.
 | `SSE_HEARTBEAT_SECS` | `15` | SSE heartbeat interval |
 | `AUTO_MIGRATE` | `true` | Run embedded SQLx migrations at boot |
 | `MCP_JSON_RESPONSE` | `true` | Prefer JSON responses for simple MCP request/response calls |
+| `RUNTIME_BIND_ADDR` | `127.0.0.1:8081` | Independent agent-runtime HTTP bind address |
+| `QUIRE_BASE_URL` | `http://127.0.0.1:8080` | Quire server used by the runtime for MCP/document calls |
+| `RUNTIME_MODEL` | `stub/echo` | Default model name recorded for runtime agents |
+| `RUNTIME_SSE_REPLAY_LIMIT` | `500` | Maximum Session-SSE replay frames before `sync_required` |
+| `RUNTIME_PREVIEW_THROTTLE_MS` | `65` | Tool-argument preview throttle (clamped to 50–80 ms) |
 
 ## Agent workflow
 
@@ -176,8 +184,27 @@ If a commit resolves to a no-op, no revision is produced. The server then emits
 `event: ephemeral_clear` with `{"kind":"clear","preview_ids":[...]}` so clients can remove the
 streamed placeholders immediately instead of waiting for `ttl_ms` to expire.
 
-### Review comments
+## Agent runtime
 
+`quire-runtime` is an independent backend; it talks to `quire-server` over MCP/HTTP and never links
+the server or `rig` into the report engine. It owns:
+
+- PostgreSQL tables for `agent_sessions`, messages, attachments, runs, `session_events`,
+  `agent_tool_calls`, knowledge documents, agent definitions, skills and skill resources.
+- `POST/GET/PATCH/DELETE /api/sessions`, message/attachment/retry/compact/interrupt endpoints and
+  `GET /api/sessions/{id}/events?afterSeq=N` (PostgreSQL replay, then Redis live tail).
+- `/api/kb/docs`, `/api/kb/agents` and `/api/kb/skills` CRUD with monotonic KB versions, idempotent
+  filesystem seeding and moka cache invalidation over Redis.
+- Crash recovery: startup marks orphaned `running` runs `interrupted` and appends a recoverable
+  `turn_failed` event.
+- Frozen prompt-cache prefixes: resume injects `<knowledge_update>` before the new user message
+  instead of rewriting the pinned system prompt.
+- rig-core `DynamicTool` adapters over Quire MCP tools, built-in skill/task/subagent tools and a
+  `SandboxProvider` abstraction with a local stub implementation.
+
+Session contracts and SSE envelopes are exported to `contracts/session-protocol.schema.json`.
+
+### Review comments
 Comments are side-channel data: they never enter `report_blocks`, never increment
 `report_documents.current_rev`, and never participate in Smart CAS. `block_id` is a soft `TEXT`
 reference plus a truncated `anchor_snapshot` and nearest-heading `section_id`; deleting the block

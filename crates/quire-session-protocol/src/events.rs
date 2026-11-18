@@ -1,0 +1,226 @@
+//! Unified Session-SSE envelope and event payloads.
+
+use chrono::{DateTime, Utc};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+/// Common envelope for every Session-SSE frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionEvent {
+    pub seq: u64,
+    pub run_id: String,
+    /// `"main"` or a stable subagent identifier.
+    pub agent_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_run_id: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    #[serde(flatten)]
+    pub kind: SessionEventKind,
+}
+
+impl SessionEvent {
+    pub fn new(
+        seq: u64,
+        run_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        parent_run_id: Option<String>,
+        kind: SessionEventKind,
+    ) -> Self {
+        Self {
+            seq,
+            run_id: run_id.into(),
+            agent_id: agent_id.into(),
+            parent_run_id,
+            timestamp: Utc::now(),
+            kind,
+        }
+    }
+
+    pub const fn event_name(&self) -> &'static str {
+        self.kind.event_name()
+    }
+}
+
+/// Event variants carried inside [`SessionEvent`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub enum SessionEventKind {
+    TurnStarted,
+    TurnFinished,
+    TurnFailed {
+        error: String,
+        recoverable: bool,
+    },
+    SyncRequired {
+        after_seq: u64,
+        reason: String,
+    },
+    ThinkingDelta {
+        delta: String,
+    },
+    TextDelta {
+        delta: String,
+    },
+    TaskFocus {
+        title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        section_id: Option<String>,
+    },
+    ToolCallStarted {
+        tool_call_id: String,
+        tool_name: String,
+        input_preview: String,
+        truncated: bool,
+    },
+    ToolCallFinished {
+        tool_call_id: String,
+        status: String,
+        output_preview: String,
+        truncated: bool,
+        duration_ms: u64,
+    },
+    SubagentStarted {
+        subagent_run_id: String,
+        agent_name: String,
+        task: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        section_id: Option<String>,
+    },
+    SubagentFinished {
+        subagent_run_id: String,
+        status: String,
+        summary: String,
+    },
+    ContextUsage {
+        input_tokens: u64,
+        output_tokens: u64,
+        cached_tokens: u64,
+        context_used: u64,
+        context_limit: u64,
+    },
+    DocLinked {
+        doc_id: String,
+        title: String,
+    },
+}
+
+impl SessionEventKind {
+    pub const fn event_name(&self) -> &'static str {
+        match self {
+            Self::TurnStarted => "turn_started",
+            Self::TurnFinished => "turn_finished",
+            Self::TurnFailed { .. } => "turn_failed",
+            Self::SyncRequired { .. } => "sync_required",
+            Self::ThinkingDelta { .. } => "thinking_delta",
+            Self::TextDelta { .. } => "text_delta",
+            Self::TaskFocus { .. } => "task_focus",
+            Self::ToolCallStarted { .. } => "tool_call_started",
+            Self::ToolCallFinished { .. } => "tool_call_finished",
+            Self::SubagentStarted { .. } => "subagent_started",
+            Self::SubagentFinished { .. } => "subagent_finished",
+            Self::ContextUsage { .. } => "context_usage",
+            Self::DocLinked { .. } => "doc_linked",
+        }
+    }
+
+    pub const fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            Self::TurnFinished | Self::TurnFailed { .. } | Self::SyncRequired { .. }
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_event_roundtrips_with_flattened_envelope() {
+        let event = SessionEvent::new(
+            12,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::ToolCallStarted {
+                tool_call_id: "tc_1".into(),
+                tool_name: "apply_operations".into(),
+                input_preview: "{\"ops\":[".into(),
+                truncated: true,
+            },
+        );
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["event"], "tool_call_started");
+        assert_eq!(json["seq"], 12);
+        assert_eq!(json["agent_id"], "main");
+        assert_eq!(json["tool_call_id"], "tc_1");
+        let decoded: SessionEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, event);
+        assert_eq!(decoded.event_name(), "tool_call_started");
+    }
+
+    #[test]
+    fn sync_required_is_terminal_and_roundtrips() {
+        let event = SessionEvent::new(
+            9,
+            "run_main",
+            "main",
+            Some("run_parent".into()),
+            SessionEventKind::SyncRequired {
+                after_seq: 8,
+                reason: "replay window exceeded".into(),
+            },
+        );
+        assert!(event.kind.is_terminal());
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["event"], "sync_required");
+        assert_eq!(json["after_seq"], 8);
+        let decoded: SessionEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn context_usage_event_has_token_fields() {
+        let event = SessionEvent::new(
+            3,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::ContextUsage {
+                input_tokens: 100,
+                output_tokens: 20,
+                cached_tokens: 60,
+                context_used: 120,
+                context_limit: 200_000,
+            },
+        );
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["cached_tokens"], 60);
+        assert_eq!(json["context_limit"], 200_000);
+    }
+
+    #[test]
+    fn schema_exports_every_event_variant() {
+        let schema = schemars::schema_for!(SessionEvent);
+        let rendered = serde_json::to_string(&schema).unwrap();
+        for event in [
+            "turn_started",
+            "turn_finished",
+            "turn_failed",
+            "sync_required",
+            "thinking_delta",
+            "text_delta",
+            "task_focus",
+            "tool_call_started",
+            "tool_call_finished",
+            "subagent_started",
+            "subagent_finished",
+            "context_usage",
+            "doc_linked",
+        ] {
+            assert!(rendered.contains(event), "missing {event} in schema");
+        }
+    }
+}

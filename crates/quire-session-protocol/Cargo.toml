@@ -1,0 +1,20 @@
+[package]
+name = "quire-session-protocol"
+description = "Quire: pure session, SSE and agent-runtime wire contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, features = ["chrono04"] }
+chrono.workspace = true
+
+[[example]]
+name = "export_session_schema"
+path = "examples/export_session_schema.rs"
+
+[lints]
+workspace = true
