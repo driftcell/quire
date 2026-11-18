@@ -784,7 +784,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
               rect: toViewportRect(event.currentTarget.getBoundingClientRect()),
             });
           }}
-          className={`focus-visible:ring-ring absolute top-1 -right-1 z-10 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px] tabular-nums shadow-xs transition-opacity focus-visible:ring-2 focus-visible:outline-none print:hidden ${
+          className={`focus-visible:ring-ring absolute top-1 left-full z-10 ml-2 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px] tabular-nums shadow-xs transition-opacity focus-visible:ring-2 focus-visible:outline-none print:hidden ${
             commentCount > 0
               ? "border-amber-500/50 text-amber-700 opacity-100 dark:text-amber-300"
               : "text-muted-foreground opacity-0 group-hover/block:opacity-100 focus-visible:opacity-100"
