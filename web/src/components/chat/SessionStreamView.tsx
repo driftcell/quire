@@ -501,11 +501,11 @@ export function SessionStreamView({
     if (optimisticMessages.length === 0) {
       return persisted;
     }
-    const recentPersistedContents = new Set(
-      persisted.slice(-5).map((m) => `${m.role}:${m.content}`),
+    const persistedContents = new Set(
+      persisted.map((m) => `${m.role}:${m.content}`),
     );
     const pending = optimisticMessages.filter(
-      (opt) => !recentPersistedContents.has(`${opt.role}:${opt.content}`),
+      (opt) => !persistedContents.has(`${opt.role}:${opt.content}`),
     );
     return [...persisted, ...pending];
   }, [messages, optimisticMessages]);

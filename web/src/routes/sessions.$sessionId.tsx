@@ -690,7 +690,12 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         attachment_ids: attachmentIds,
       });
       setLivePendingQuestion(null);
-      void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["session", sessionId],
+      });
+      setOptimisticMessages((prev) =>
+        prev.filter((m) => m.message_id !== tempId),
+      );
     } catch (err) {
       setOptimisticMessages((prev) =>
         prev.filter((m) => m.message_id !== tempId),
