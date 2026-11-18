@@ -4,27 +4,63 @@ use std::{collections::VecDeque, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use futures::Stream;
+use quire_session_protocol::ContextUsage;
+use serde_json::Value;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
-use crate::error::{RuntimeError, RuntimeResult};
+use crate::{
+    error::{RuntimeError, RuntimeResult},
+    prompt::ContextMessage,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ModelStreamEvent {
     ThinkingDelta(String),
     TextDelta(String),
+    TaskFocus {
+        title: String,
+        detail: Option<String>,
+        section_id: Option<String>,
+    },
+    SubagentStarted {
+        subagent_run_id: String,
+        agent_name: String,
+        task: String,
+        section_id: Option<String>,
+    },
+    SubagentFinished {
+        subagent_run_id: String,
+        status: String,
+        summary: String,
+    },
+    /// An event produced inside a subagent. The service attributes it to the subagent while
+    /// keeping the parent run as its envelope.
+    SubagentEvent {
+        subagent_run_id: String,
+        agent_name: String,
+        event: Box<ModelStreamEvent>,
+    },
     ToolCallStarted {
         tool_call_id: String,
         tool_name: String,
         input_preview: String,
         truncated: bool,
+        input: Value,
     },
     ToolCallFinished {
         tool_call_id: String,
+        tool_name: String,
         status: String,
         output_preview: String,
         truncated: bool,
         duration_ms: u64,
+        input: Value,
+        output: Value,
+        error: Option<String>,
     },
+    /// Real upstream token counts plus the resolved model context limit.
+    Usage(ContextUsage),
 }
 
 #[derive(Debug, Clone)]
@@ -34,6 +70,18 @@ pub struct ModelTurnRequest {
     pub agent_id: String,
     pub system_prompt: String,
     pub user_message: String,
+    /// Full model context assembled from session history and resume reminders.
+    pub history: Vec<ContextMessage>,
+    /// Bound Quire report, injected into the preamble to avoid duplicate create_report calls.
+    pub doc_id: Option<String>,
+    /// Session KB branch used for agent/skill lookup and branch-aware tools.
+    pub kb_branch: Option<String>,
+    /// Resolved model route for the primary agent.
+    pub model_route: String,
+    /// Tool allow-list from the primary agent definition.
+    pub allowed_tools: Vec<String>,
+    /// Cancels model streaming, tool execution and subagent inference.
+    pub cancellation: CancellationToken,
 }
 
 pub type ModelEventStream =

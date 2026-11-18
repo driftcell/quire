@@ -35,6 +35,7 @@ pub use models::{
     ModelInput, ModelRecord, ModelRegistry, ModelRouter, ModelsDevImportReport,
     ModelsDevImportRequest, ProviderInput, ProviderProtocol, ProviderRecord, ResolvedModel,
 };
+pub use rig_agent::RigModelStreamProvider;
 pub use service::{
     HttpQuireControl, QuireControl, RuntimeService, SessionInspection, StaticQuireControl,
     ToolCallRecord,

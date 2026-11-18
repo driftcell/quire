@@ -18,14 +18,16 @@ use std::{
 
 use base64::Engine as _;
 use quire_runtime::{
-    Config, KbService, MockStreamProvider, ModelRegistry, ModelStreamEvent, ModelsDevImportRequest,
-    ProviderInput, ProviderProtocol, RuntimeError, RuntimeService, RuntimeStore,
-    StaticQuireControl, ToolCallRecord,
+    Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
+    ModelStreamProvider, ModelTurnRequest, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
+    RuntimeError, RuntimeService, RuntimeStore, StaticQuireControl, ToolCallRecord,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
 };
-use quire_session_protocol::{ActiveRunStatus, SendMessageRequest, SessionEventKind};
+use quire_session_protocol::{
+    ActiveRunStatus, ContextUsage, MessageRole, SendMessageRequest, SessionEventKind,
+};
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
@@ -305,6 +307,38 @@ impl AdminMcpClient {
             .and_then(Value::as_str)
             .expect("tool result content");
         serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()))
+    }
+}
+
+struct RecordingStreamProvider {
+    requests: Arc<Mutex<Vec<ModelTurnRequest>>>,
+    events: Vec<ModelStreamEvent>,
+}
+
+impl RecordingStreamProvider {
+    fn new(events: Vec<ModelStreamEvent>) -> (Self, Arc<Mutex<Vec<ModelTurnRequest>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        (
+            Self {
+                requests: requests.clone(),
+                events,
+            },
+            requests,
+        )
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for RecordingStreamProvider {
+    async fn stream_turn(
+        &self,
+        request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        self.requests.lock().await.push(request);
+        let events = self.events.clone();
+        Ok(Box::pin(futures::stream::iter(
+            events.into_iter().map(Ok).collect::<Vec<_>>(),
+        )))
     }
 }
 
@@ -956,6 +990,7 @@ async fn streaming_tokens_are_coalesced_and_flushed_before_tool_and_turn_events(
         tool_name: "describe_task".into(),
         input_preview: "{\"title\":\"Review\"}".into(),
         truncated: false,
+        input: json!({"title": "Review"}),
     });
     let service =
         service.with_model_stream_provider(Arc::new(MockStreamProvider::new(vec![events])));
@@ -1567,4 +1602,202 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
         .unwrap();
     service.kb().delete_document(&doc_id).await.unwrap();
     remove_branch(&store, &branch_name).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let branch = unique("rig-context");
+    service
+        .kb()
+        .create_branch(&branch, "Rig context test", None)
+        .await
+        .unwrap();
+    service
+        .kb()
+        .upsert_agent_on(
+            &branch,
+            "main",
+            "stub/echo",
+            "BRANCH AGENT PROMPT",
+            &["describe_task".into(), "apply_operations".into()],
+            true,
+        )
+        .await
+        .unwrap();
+    let session = service
+        .create_session_on_branch(
+            &unique("rig-context-session"),
+            Some("runtime-doc"),
+            Some(&branch),
+        )
+        .await
+        .unwrap();
+    let initial_version = service.kb().current_version().await.unwrap();
+    store
+        .set_pinned_prompt(&session.session_id, "PINNED FOR RIG", initial_version)
+        .await
+        .unwrap();
+    let bump_doc = unique("rig-context-kb");
+    service
+        .kb()
+        .upsert_document(&bump_doc, "Rig context", "KB advanced for resume")
+        .await
+        .unwrap();
+
+    let tool_call_id = unique("tc-context");
+    let tool_input = json!({
+        "doc_id": "runtime-doc",
+        "expected_revision": 1,
+        "summary": "context test",
+        "ops": []
+    });
+    let events = vec![
+        ModelStreamEvent::TextDelta("main answer".into()),
+        ModelStreamEvent::TaskFocus {
+            title: "Review chapter".into(),
+            detail: Some("checking citations".into()),
+            section_id: Some("ch1".into()),
+        },
+        ModelStreamEvent::SubagentStarted {
+            subagent_run_id: "run_sub_ctx".into(),
+            agent_name: "reviewer".into(),
+            task: "review chapter".into(),
+            section_id: Some("ch1".into()),
+        },
+        ModelStreamEvent::SubagentEvent {
+            subagent_run_id: "run_sub_ctx".into(),
+            agent_name: "reviewer".into(),
+            event: Box::new(ModelStreamEvent::TextDelta("subagent answer".into())),
+        },
+        ModelStreamEvent::ToolCallStarted {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: "apply_operations".into(),
+            input_preview: tool_input.to_string(),
+            truncated: false,
+            input: tool_input.clone(),
+        },
+        ModelStreamEvent::ToolCallFinished {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: "apply_operations".into(),
+            status: "completed".into(),
+            output_preview: "{\"committed\":true}".into(),
+            truncated: false,
+            duration_ms: 12,
+            input: tool_input,
+            output: json!({"committed": true}),
+            error: None,
+        },
+        ModelStreamEvent::SubagentFinished {
+            subagent_run_id: "run_sub_ctx".into(),
+            status: "completed".into(),
+            summary: "subagent answer".into(),
+        },
+        ModelStreamEvent::Usage(ContextUsage {
+            input_tokens: 111,
+            output_tokens: 22,
+            cached_tokens: 33,
+            context_used: 133,
+            context_limit: 123_456,
+        }),
+    ];
+    let (provider, requests) = RecordingStreamProvider::new(events);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let (_, _, run_id) = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("rig-context-message"),
+                content: "Use the full rig context".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let run_id = run_id.expect("run id");
+    wait_for_idle(&store, &session.session_id).await;
+
+    let requests = requests.lock().await;
+    let request = requests.first().expect("recorded model turn request");
+    assert_eq!(request.doc_id.as_deref(), Some("runtime-doc"));
+    assert_eq!(request.kb_branch.as_deref(), Some(branch.as_str()));
+    assert_eq!(request.model_route, "stub/echo");
+    assert_eq!(
+        request.allowed_tools,
+        vec!["describe_task".to_string(), "apply_operations".to_string()]
+    );
+    assert!(
+        request
+            .history
+            .iter()
+            .any(|message| message.role == MessageRole::System
+                && message.content.starts_with("<knowledge_update>"))
+    );
+    assert_eq!(
+        request
+            .history
+            .last()
+            .map(|message| (message.role, message.content.as_str())),
+        Some((MessageRole::User, "Use the full rig context"))
+    );
+    drop(requests);
+
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert_eq!(detail.summary.context_usage.input_tokens, 111);
+    assert_eq!(detail.summary.context_usage.output_tokens, 22);
+    assert_eq!(detail.summary.context_usage.cached_tokens, 33);
+    assert_eq!(detail.summary.context_usage.context_used, 133);
+    assert_eq!(detail.summary.context_usage.context_limit, 123_456);
+    let tool_call = service
+        .get_tool_call(&session.session_id, &tool_call_id)
+        .await
+        .unwrap();
+    assert_eq!(tool_call.input["summary"], "context test");
+    assert_eq!(tool_call.output["committed"], true);
+    assert_eq!(tool_call.status, "completed");
+
+    let events = store
+        .list_events(&session.session_id, 0, 200)
+        .await
+        .unwrap();
+    let seq = |predicate: &dyn Fn(&quire_session_protocol::SessionEvent) -> bool| {
+        events
+            .iter()
+            .find(|event| predicate(event))
+            .map(|event| event.seq)
+            .expect("expected event")
+    };
+    let task_focus = seq(&|event| matches!(event.kind, SessionEventKind::TaskFocus { .. }));
+    let subagent_started =
+        seq(&|event| matches!(event.kind, SessionEventKind::SubagentStarted { .. }));
+    let subagent_text = seq(&|event| {
+        event.agent_id == "reviewer" && matches!(event.kind, SessionEventKind::TextDelta { .. })
+    });
+    let tool_started = seq(&|event| matches!(event.kind, SessionEventKind::ToolCallStarted { .. }));
+    let tool_finished =
+        seq(&|event| matches!(event.kind, SessionEventKind::ToolCallFinished { .. }));
+    let subagent_finished =
+        seq(&|event| matches!(event.kind, SessionEventKind::SubagentFinished { .. }));
+    let context_usage = seq(&|event| matches!(event.kind, SessionEventKind::ContextUsage { .. }));
+    let turn_finished = seq(&|event| matches!(event.kind, SessionEventKind::TurnFinished));
+    assert!(task_focus < subagent_started);
+    assert!(subagent_started < subagent_text);
+    assert!(subagent_text < tool_started);
+    assert!(tool_started < tool_finished);
+    assert!(tool_finished < subagent_finished);
+    assert!(subagent_finished < context_usage);
+    assert!(context_usage < turn_finished);
+    let subagent_event = events
+        .iter()
+        .find(|event| event.agent_id == "reviewer")
+        .expect("subagent event");
+    assert_eq!(
+        subagent_event.parent_run_id.as_deref(),
+        Some(run_id.as_str())
+    );
+
+    service.delete_session(&session.session_id).await.unwrap();
+    remove_branch(&store, &branch).await;
+    service.kb().delete_document(&bump_doc).await.unwrap();
 }

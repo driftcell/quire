@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use quire_runtime::{
-    Config, HttpQuireControl, KbService, ModelRegistry, RuntimeService, RuntimeStore, http,
+    Config, HttpQuireControl, KbService, ModelRegistry, RigModelStreamProvider, RuntimeService,
+    RuntimeStore, http,
 };
 use tracing::info;
 
@@ -30,19 +31,32 @@ async fn main() -> anyhow::Result<()> {
         store.migrate().await.context("run runtime migrations")?;
     }
     let kb = KbService::new(store.clone());
-    let models = ModelRegistry::new(
+    let models = Arc::new(ModelRegistry::new(
         store.clone(),
         config.master_key.clone(),
         &config.models_dev_url,
-    );
+    ));
+    if let Err(error) = models.resolve(&config.default_model).await {
+        tracing::warn!(
+            %error,
+            model = %config.default_model,
+            "default model route is not active; register a provider/model before starting sessions"
+        );
+    }
     let quire = HttpQuireControl::new(&config.quire_base_url, config.quire_rw_token.clone());
+    let runtime_config = Arc::new(config.clone());
     let service = RuntimeService::new(
         store,
-        kb,
-        Arc::new(models),
-        Arc::new(config.clone()),
+        kb.clone(),
+        models.clone(),
+        runtime_config.clone(),
         Arc::new(quire),
     );
+    let service = service.with_model_stream_provider(Arc::new(RigModelStreamProvider::new(
+        kb,
+        models,
+        runtime_config,
+    )));
     let recovered = service.boot().await.context("runtime boot recovery")?;
     let seed = service.seed().await.context("runtime knowledge seed")?;
     info!(

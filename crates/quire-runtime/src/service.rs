@@ -10,10 +10,11 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
 use quire_session_protocol::{
-    MessageRole, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
-    SessionStatus, SessionSummary, ToolCallDetail,
+    ContextUsage, MessageRole, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind,
+    SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
 };
 use secrecy::SecretString;
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -594,13 +595,14 @@ impl RuntimeService {
         content: &str,
         token: &CancellationToken,
     ) -> RuntimeResult<()> {
-        let session = self.store.get_session_summary(session_id).await?;
+        let mut session = self.store.get_session_summary(session_id).await?;
         if session.doc_id.is_none() {
             let linked = self
                 .quire
                 .create_report(session_id, "main", &session.title)
                 .await?;
             self.store.bind_doc(session_id, &linked.doc_id).await?;
+            session.doc_id = Some(linked.doc_id.clone());
             self.emit(
                 session_id,
                 run_id,
@@ -645,6 +647,13 @@ impl RuntimeService {
         if token.is_cancelled() {
             return Ok(());
         }
+        let branch = session.kb_branch.clone();
+        let agent = self.kb.get_agent_on(branch.as_deref(), "main").await?;
+        let model_route = agent
+            .as_ref()
+            .map(|agent| agent.model.clone())
+            .unwrap_or_else(|| self.config.default_model.clone());
+        let allowed_tools = agent.map(|agent| agent.allowed_tools).unwrap_or_default();
         let mut coalescer = DeltaCoalescer::default();
         let request = ModelTurnRequest {
             session_id: session_id.to_string(),
@@ -652,10 +661,17 @@ impl RuntimeService {
             agent_id: "main".into(),
             system_prompt: context.pinned_system_prompt.clone(),
             user_message: content.to_string(),
+            history: context.messages.clone(),
+            doc_id: session.doc_id.clone(),
+            kb_branch: branch.clone(),
+            model_route: model_route.clone(),
+            allowed_tools,
+            cancellation: token.clone(),
         };
         let mut stream = self.model_stream.stream_turn(request).await?;
         let mut tick = tokio::time::interval(Duration::from_millis(50));
         let mut response = String::new();
+        let mut reported_usage = None;
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
@@ -690,35 +706,137 @@ impl RuntimeService {
                             );
                             self.emit_coalesced(session_id, run_id, "main", deltas).await?;
                         }
+                        Some(Ok(ModelStreamEvent::TaskFocus {
+                            title,
+                            detail,
+                            section_id,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                SessionEventKind::TaskFocus {
+                                    title,
+                                    detail,
+                                    section_id,
+                                },
+                            )
+                            .await?;
+                        }
+                        Some(Ok(ModelStreamEvent::SubagentStarted {
+                            subagent_run_id,
+                            agent_name,
+                            task,
+                            section_id,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                &agent_name,
+                                Some(run_id),
+                                SessionEventKind::SubagentStarted {
+                                    subagent_run_id,
+                                    agent_name: agent_name.clone(),
+                                    task,
+                                    section_id,
+                                },
+                            )
+                            .await?;
+                        }
+                        Some(Ok(ModelStreamEvent::SubagentFinished {
+                            subagent_run_id,
+                            status,
+                            summary,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                Some(run_id),
+                                SessionEventKind::SubagentFinished {
+                                    subagent_run_id,
+                                    status,
+                                    summary,
+                                },
+                            )
+                            .await?;
+                        }
+                        Some(Ok(ModelStreamEvent::SubagentEvent {
+                            subagent_run_id,
+                            agent_name,
+                            event,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.handle_subagent_event(
+                                session_id,
+                                run_id,
+                                &subagent_run_id,
+                                &agent_name,
+                                *event,
+                            )
+                            .await?;
+                        }
                         Some(Ok(ModelStreamEvent::ToolCallStarted {
                             tool_call_id,
                             tool_name,
                             input_preview,
                             truncated,
+                            input,
                         })) => {
                             let deltas = coalescer.flush_all();
                             self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
+                            self.record_stream_tool_started(
                                 session_id,
                                 run_id,
                                 "main",
                                 None,
-                                SessionEventKind::ToolCallStarted {
-                                    tool_call_id,
-                                    tool_name,
-                                    input_preview,
-                                    truncated,
-                                },
+                                &tool_call_id,
+                                &tool_name,
+                                &input_preview,
+                                truncated,
+                                input,
                             )
                             .await?;
                         }
                         Some(Ok(ModelStreamEvent::ToolCallFinished {
                             tool_call_id,
+                            tool_name,
                             status,
                             output_preview,
                             truncated,
                             duration_ms,
+                            input,
+                            output,
+                            error,
                         })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.record_stream_tool_finished(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                &tool_call_id,
+                                &tool_name,
+                                &status,
+                                &output_preview,
+                                truncated,
+                                duration_ms,
+                                input,
+                                output,
+                                error,
+                            )
+                            .await?;
+                        }
+                        Some(Ok(ModelStreamEvent::Usage(usage))) => {
                             let deltas = coalescer.flush_all();
                             self.emit_coalesced(session_id, run_id, "main", deltas).await?;
                             self.emit(
@@ -726,15 +844,16 @@ impl RuntimeService {
                                 run_id,
                                 "main",
                                 None,
-                                SessionEventKind::ToolCallFinished {
-                                    tool_call_id,
-                                    status,
-                                    output_preview,
-                                    truncated,
-                                    duration_ms,
+                                SessionEventKind::ContextUsage {
+                                    input_tokens: usage.input_tokens,
+                                    output_tokens: usage.output_tokens,
+                                    cached_tokens: usage.cached_tokens,
+                                    context_used: usage.context_used,
+                                    context_limit: usage.context_limit,
                                 },
                             )
                             .await?;
+                            reported_usage = Some(usage);
                         }
                         Some(Err(error)) => {
                             let deltas = coalescer.flush_all();
@@ -755,47 +874,34 @@ impl RuntimeService {
         self.store
             .insert_assistant_message(session_id, &response, run_id)
             .await?;
-        let agent_model = self
-            .kb
-            .get_agent_on(session.kb_branch.as_deref(), "main")
-            .await?
-            .map(|agent| agent.model)
-            .unwrap_or_else(|| self.config.default_model.clone());
-        let context_limit = match self.models.resolve(&agent_model).await {
-            Ok(model) => u64::try_from(model.context_limit).unwrap_or(200_000),
-            Err(error) => {
-                warn!(%error, model = agent_model, "model route unavailable; using fallback context limit");
-                200_000
+        let usage = match reported_usage {
+            Some(usage) => usage,
+            None => {
+                let usage = self
+                    .fallback_usage(
+                        &model_route,
+                        &context.pinned_system_prompt,
+                        content,
+                        &response,
+                    )
+                    .await;
+                self.emit(
+                    session_id,
+                    run_id,
+                    "main",
+                    None,
+                    SessionEventKind::ContextUsage {
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        cached_tokens: usage.cached_tokens,
+                        context_used: usage.context_used,
+                        context_limit: usage.context_limit,
+                    },
+                )
+                .await?;
+                usage
             }
         };
-        let usage = quire_session_protocol::ContextUsage {
-            input_tokens: u64::try_from(content.chars().count() / 4).unwrap_or(0),
-            output_tokens: u64::try_from(response.chars().count() / 4).unwrap_or(0),
-            cached_tokens: u64::try_from(context.pinned_system_prompt.chars().count() / 4)
-                .unwrap_or(0),
-            context_used: u64::try_from(
-                (context.pinned_system_prompt.chars().count()
-                    + content.chars().count()
-                    + response.chars().count())
-                    / 4,
-            )
-            .unwrap_or(0),
-            context_limit,
-        };
-        self.emit(
-            session_id,
-            run_id,
-            "main",
-            None,
-            SessionEventKind::ContextUsage {
-                input_tokens: usage.input_tokens,
-                output_tokens: usage.output_tokens,
-                cached_tokens: usage.cached_tokens,
-                context_used: usage.context_used,
-                context_limit: usage.context_limit,
-            },
-        )
-        .await?;
         self.store.update_context_usage(session_id, &usage).await?;
         if token.is_cancelled() {
             return Ok(());
@@ -815,6 +921,292 @@ impl RuntimeService {
         }
         self.store.finish_run(run_id, "completed", None).await?;
         Ok(())
+    }
+
+    async fn handle_subagent_event(
+        &self,
+        session_id: &str,
+        parent_run_id: &str,
+        subagent_run_id: &str,
+        agent_name: &str,
+        event: ModelStreamEvent,
+    ) -> RuntimeResult<()> {
+        let parent = Some(parent_run_id);
+        match event {
+            ModelStreamEvent::ThinkingDelta(delta) => {
+                self.emit(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    SessionEventKind::ThinkingDelta { delta },
+                )
+                .await?;
+            }
+            ModelStreamEvent::TextDelta(delta) => {
+                self.emit(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    SessionEventKind::TextDelta { delta },
+                )
+                .await?;
+            }
+            ModelStreamEvent::TaskFocus {
+                title,
+                detail,
+                section_id,
+            } => {
+                self.emit(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    SessionEventKind::TaskFocus {
+                        title,
+                        detail,
+                        section_id,
+                    },
+                )
+                .await?;
+            }
+            ModelStreamEvent::SubagentStarted {
+                subagent_run_id: nested_id,
+                agent_name: nested_name,
+                task,
+                section_id,
+            } => {
+                self.emit(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    SessionEventKind::SubagentStarted {
+                        subagent_run_id: nested_id,
+                        agent_name: nested_name,
+                        task,
+                        section_id,
+                    },
+                )
+                .await?;
+            }
+            ModelStreamEvent::SubagentFinished {
+                subagent_run_id: nested_id,
+                status,
+                summary,
+            } => {
+                self.emit(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    SessionEventKind::SubagentFinished {
+                        subagent_run_id: nested_id,
+                        status,
+                        summary,
+                    },
+                )
+                .await?;
+            }
+            ModelStreamEvent::SubagentEvent {
+                subagent_run_id: nested_id,
+                agent_name: nested_name,
+                event,
+            } => {
+                Box::pin(self.handle_subagent_event(
+                    session_id,
+                    parent_run_id,
+                    &nested_id,
+                    &nested_name,
+                    *event,
+                ))
+                .await?;
+            }
+            ModelStreamEvent::ToolCallStarted {
+                tool_call_id,
+                tool_name,
+                input_preview,
+                truncated,
+                input,
+            } => {
+                self.record_stream_tool_started(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    &tool_call_id,
+                    &tool_name,
+                    &input_preview,
+                    truncated,
+                    input,
+                )
+                .await?;
+            }
+            ModelStreamEvent::ToolCallFinished {
+                tool_call_id,
+                tool_name,
+                status,
+                output_preview,
+                truncated,
+                duration_ms,
+                input,
+                output,
+                error,
+            } => {
+                self.record_stream_tool_finished(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    &tool_call_id,
+                    &tool_name,
+                    &status,
+                    &output_preview,
+                    truncated,
+                    duration_ms,
+                    input,
+                    output,
+                    error,
+                )
+                .await?;
+            }
+            ModelStreamEvent::Usage(usage) => {
+                self.emit(
+                    session_id,
+                    subagent_run_id,
+                    agent_name,
+                    parent,
+                    SessionEventKind::ContextUsage {
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        cached_tokens: usage.cached_tokens,
+                        context_used: usage.context_used,
+                        context_limit: usage.context_limit,
+                    },
+                )
+                .await?;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn record_stream_tool_started(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        agent_id: &str,
+        parent_run_id: Option<&str>,
+        tool_call_id: &str,
+        tool_name: &str,
+        input_preview: &str,
+        truncated: bool,
+        input: Value,
+    ) -> RuntimeResult<()> {
+        let detail = ToolCallDetail {
+            tool_call_id: tool_call_id.to_string(),
+            session_id: session_id.to_string(),
+            run_id: run_id.to_string(),
+            tool_name: tool_name.to_string(),
+            status: "running".into(),
+            input,
+            output: Value::Null,
+            error: None,
+            duration_ms: 0,
+            created_at: chrono::Utc::now(),
+        };
+        self.store.save_tool_call(&detail).await?;
+        self.emit(
+            session_id,
+            run_id,
+            agent_id,
+            parent_run_id,
+            SessionEventKind::ToolCallStarted {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                input_preview: input_preview.to_string(),
+                truncated,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn record_stream_tool_finished(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        agent_id: &str,
+        parent_run_id: Option<&str>,
+        tool_call_id: &str,
+        tool_name: &str,
+        status: &str,
+        output_preview: &str,
+        truncated: bool,
+        duration_ms: u64,
+        input: Value,
+        output: Value,
+        error: Option<String>,
+    ) -> RuntimeResult<()> {
+        let detail = ToolCallDetail {
+            tool_call_id: tool_call_id.to_string(),
+            session_id: session_id.to_string(),
+            run_id: run_id.to_string(),
+            tool_name: tool_name.to_string(),
+            status: status.to_string(),
+            input,
+            output,
+            error: error.clone(),
+            duration_ms,
+            created_at: chrono::Utc::now(),
+        };
+        self.store.save_tool_call(&detail).await?;
+        self.emit(
+            session_id,
+            run_id,
+            agent_id,
+            parent_run_id,
+            SessionEventKind::ToolCallFinished {
+                tool_call_id: tool_call_id.to_string(),
+                status: status.to_string(),
+                output_preview: output_preview.to_string(),
+                truncated,
+                duration_ms,
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn fallback_usage(
+        &self,
+        model_route: &str,
+        system_prompt: &str,
+        content: &str,
+        response: &str,
+    ) -> ContextUsage {
+        let context_limit = match self.models.resolve(model_route).await {
+            Ok(model) => u64::try_from(model.context_limit).unwrap_or(0),
+            Err(error) => {
+                warn!(%error, model = model_route, "model route unavailable; using offline context limit");
+                200_000
+            }
+        };
+        ContextUsage {
+            input_tokens: u64::try_from(content.chars().count() / 4).unwrap_or(0),
+            output_tokens: u64::try_from(response.chars().count() / 4).unwrap_or(0),
+            cached_tokens: u64::try_from(system_prompt.chars().count() / 4).unwrap_or(0),
+            context_used: u64::try_from(
+                (system_prompt.chars().count()
+                    + content.chars().count()
+                    + response.chars().count())
+                    / 4,
+            )
+            .unwrap_or(0),
+            context_limit,
+        }
     }
 
     async fn emit_coalesced(

@@ -214,6 +214,10 @@ the server or `rig` into the report engine. It owns:
   instead of rewriting the pinned system prompt.
 - rig-core `DynamicTool` adapters over Quire MCP tools, built-in skill/task/subagent tools and a
   `SandboxProvider` abstraction with a local stub implementation.
+- `RigModelStreamProvider` is the default production model engine: it resolves branch-scoped agent
+  definitions and model routes, drives rig-core streaming multi-turn tool loops, runs subagents
+  concurrently with `JoinSet`, reports real token usage/context limits, persists full tool
+  input/output, and streams partial block previews to Quire's ephemeral preview endpoint.
 
 Session contracts and SSE envelopes are exported to `contracts/session-protocol.schema.json`.
 
