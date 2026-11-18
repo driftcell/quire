@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BrainIcon, LoaderCircleIcon } from "lucide-react";
-import { Streamdown, type ControlsConfig } from "streamdown";
 import {
   Trace,
   TraceCollapsible,
@@ -21,14 +20,6 @@ export interface ThinkingTraceProps {
 }
 
 const STICK_TO_BOTTOM_THRESHOLD_PX = 16;
-
-const STREAMDOWN_CONTROLS: ControlsConfig = {
-  table: false,
-  code: true,
-};
-
-const THINKING_PROSE =
-  "prose prose-sm dark:prose-invert max-w-none text-xs leading-5 prose-p:my-1 prose-p:text-xs prose-headings:text-xs prose-ul:my-1 prose-li:my-0.5";
 
 function formatDurationSeconds(totalSeconds: number): string {
   if (totalSeconds < 60) {
@@ -79,17 +70,11 @@ export function ThinkingTrace({
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (
-      !content ||
-      !el ||
-      !expanded ||
-      !isStreaming ||
-      !stickToBottomRef.current
-    ) {
+    if (!el || !expanded || !isStreaming || !stickToBottomRef.current) {
       return;
     }
     el.scrollTop = el.scrollHeight;
-  }, [content, expanded, isStreaming]);
+  }, [expanded, isStreaming]);
 
   useEffect(() => {
     const inner = innerRef.current;
@@ -111,12 +96,12 @@ export function ThinkingTrace({
   }
 
   return (
-    <Trace className="my-1">
+    <Trace>
       <TraceCollapsible open={expanded} onOpenChange={setOpen}>
         <TraceCollapsibleTrigger>
           <TraceLine
             status={isStreaming ? "running" : undefined}
-            className="text-xs leading-5"
+            className="h-6 text-xs leading-5"
           >
             <TraceIcon>
               {isStreaming ? (
@@ -133,7 +118,7 @@ export function ThinkingTrace({
             )}
           </TraceLine>
         </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent className="mt-1 pl-5">
+        <TraceCollapsibleContent className="mt-1 pl-6">
           <div
             ref={scrollRef}
             onScroll={() => {
@@ -143,10 +128,10 @@ export function ThinkingTrace({
                 el.scrollHeight - el.scrollTop - el.clientHeight <=
                 STICK_TO_BOTTOM_THRESHOLD_PX;
             }}
-            className={`scroll-fade ${THINKING_PROSE} max-h-32 overflow-y-auto pr-2 text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`}
+            className="scroll-fade max-h-32 overflow-y-auto pr-2 text-xs leading-5 text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           >
-            <div ref={innerRef}>
-              <Streamdown controls={STREAMDOWN_CONTROLS}>{content}</Streamdown>
+            <div ref={innerRef} className="whitespace-pre-wrap break-words">
+              {content}
             </div>
           </div>
         </TraceCollapsibleContent>

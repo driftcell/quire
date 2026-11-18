@@ -182,12 +182,16 @@ const VISIBLE_RECENT_TOOLS = 4;
 
 const ToolCallList = memo(function ToolCallList({
   sessionId,
-  tools,
+  tools: rawTools,
 }: {
   sessionId: string;
   tools: ToolCallTraceItem[];
 }) {
   const [expanded, setExpanded] = useState(false);
+  const tools = useMemo(
+    () => rawTools.filter((t) => t.toolName !== "describe_task"),
+    [rawTools],
+  );
 
   if (tools.length === 0) {
     return null;
@@ -309,10 +313,10 @@ function HistoricalRunTrace({
         durationMs={trace.duration_ms ?? undefined}
       />
       {hasExecution && (
-        <Trace className="my-1">
+        <Trace>
           <TraceCollapsible defaultOpen={false}>
             <TraceCollapsibleTrigger>
-              <TraceLine>
+              <TraceLine className="h-6 text-xs leading-5">
                 <TraceIcon>
                   <ListTreeIcon className="size-3.5" />
                 </TraceIcon>
@@ -329,6 +333,7 @@ function HistoricalRunTrace({
                   <TraceCollapsible defaultOpen={false}>
                     <TraceCollapsibleTrigger>
                       <TraceLine
+                        className="h-6 text-xs leading-5"
                         status={
                           subagent.status === "failed" ? "error" : undefined
                         }
@@ -537,9 +542,9 @@ export function SessionStreamView({
               <MessageScrollerItem messageId="live-main">
                 <MessageGroup>
                   <Message align="start">
-                    <MessageContent className="w-full space-y-2">
+                    <MessageContent className="w-full space-y-1">
                       {liveMain.isStreaming && (
-                        <div className="flex w-full items-center justify-between gap-2 text-xs text-muted-foreground">
+                        <div className="flex h-6 w-full items-center justify-between gap-2 text-xs leading-5 text-muted-foreground">
                           <button
                             type="button"
                             onClick={() => {
@@ -547,9 +552,11 @@ export function SessionStreamView({
                                 onJumpToSection?.(liveMain.taskFocus.sectionId);
                               }
                             }}
-                            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
                           >
-                            <SparklesIcon className="size-3.5 shrink-0 text-primary" />
+                            <span className="flex size-4 shrink-0 items-center justify-center">
+                              <SparklesIcon className="size-3.5 text-primary" />
+                            </span>
                             <span className="shimmer truncate font-medium">
                               {liveMain.taskFocus?.title ?? "正在处理"}
                             </span>
@@ -600,14 +607,16 @@ export function SessionStreamView({
                       />
 
                       {hasExecutionDetails && (
-                        <div className="text-xs text-muted-foreground">
+                        <div className="text-xs leading-5 text-muted-foreground">
                           <button
                             type="button"
                             aria-expanded={detailsOpen}
                             onClick={() => setDetailsOpen((o) => !o)}
-                            className="group flex items-center gap-1.5 py-0.5 hover:text-foreground"
+                            className="group flex h-6 items-center gap-2 transition-colors hover:text-foreground"
                           >
-                            <ListTreeIcon className="size-3.5" />
+                            <span className="flex size-4 shrink-0 items-center justify-center">
+                              <ListTreeIcon className="size-3.5" />
+                            </span>
                             <span>执行详情</span>
                             <ChevronRightIcon
                               className={`size-3.5 transition-transform duration-150 ${
@@ -632,6 +641,7 @@ export function SessionStreamView({
                                       >
                                         <TraceCollapsibleTrigger>
                                           <TraceLine
+                                            className="h-6 text-xs leading-5"
                                             status={
                                               sub.status === "running"
                                                 ? "running"

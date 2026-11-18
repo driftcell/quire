@@ -795,7 +795,13 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         )}
       </div>
 
-      <div className="shrink-0 border-t bg-background/95 p-3">
+      <div
+        className={
+          hasReportData
+            ? "shrink-0 bg-background/95 px-3 pt-1 pb-3"
+            : "shrink-0 bg-background/95 px-4 pt-1 pb-5"
+        }
+      >
         <div
           className={hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"}
         >
