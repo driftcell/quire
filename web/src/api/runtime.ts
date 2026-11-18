@@ -1,0 +1,284 @@
+import type {
+  AttachmentMeta,
+  CreateSessionRequest,
+  QuestionAnswer,
+  SendMessageRequest,
+  SessionDetail,
+  SessionMessage,
+  SessionStatus,
+  SessionSummary,
+  ToolCallDetail,
+} from "@/contracts/session-protocol";
+import { bearerHeaders, getAuthTokens } from "@/lib/auth";
+import { isRecord } from "@/lib/guards";
+
+export class ApiError extends Error {
+  status: number;
+  code: string;
+  hint?: string;
+
+  constructor(status: number, code: string, message: string, hint?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+    this.hint = hint;
+  }
+}
+
+function buildHeaders(
+  token: string,
+  initHeaders: HeadersInit | undefined,
+): Headers {
+  const headers = new Headers(initHeaders);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  for (const [key, value] of Object.entries(bearerHeaders(token))) {
+    headers.set(key, value);
+  }
+  return headers;
+}
+
+async function runtimeFetch<T>(
+  path: string,
+  decode: (raw: unknown) => T,
+  init: RequestInit = {},
+): Promise<T> {
+  const { runtimeToken } = getAuthTokens();
+  const response = await fetch(path, {
+    ...init,
+    headers: buildHeaders(runtimeToken, init.headers),
+  });
+  if (!response.ok) {
+    let code = `HTTP_${response.status}`;
+    let message = response.statusText || "Request failed";
+    let hint: string | undefined;
+    try {
+      const body: unknown = await response.json();
+      if (isRecord(body)) {
+        const error = isRecord(body.error) ? body.error : body;
+        if (typeof error.code === "string") code = error.code;
+        if (typeof error.message === "string") message = error.message;
+        if (typeof error.hint === "string") hint = error.hint;
+      }
+    } catch {
+      // Non-JSON error body.
+    }
+    throw new ApiError(response.status, code, message, hint);
+  }
+  if (response.status === 204) {
+    return decode(undefined);
+  }
+  const raw: unknown = await response.json();
+  return decode(raw);
+}
+
+function decodeWith<T>(
+  raw: unknown,
+  guard: (value: unknown) => value is T,
+  label: string,
+): T {
+  if (!guard(raw)) {
+    throw new Error(`Malformed ${label} response`);
+  }
+  return raw;
+}
+
+function isSessionSummary(value: unknown): value is SessionSummary {
+  return (
+    isRecord(value) &&
+    typeof value.session_id === "string" &&
+    typeof value.title === "string"
+  );
+}
+
+function isSessionSummaryList(value: unknown): value is SessionSummary[] {
+  return Array.isArray(value) && value.every(isSessionSummary);
+}
+
+function isSessionDetail(value: unknown): value is SessionDetail {
+  return (
+    isRecord(value) &&
+    typeof value.session_id === "string" &&
+    typeof value.title === "string"
+  );
+}
+
+function isSessionMessage(value: unknown): value is SessionMessage {
+  return (
+    isRecord(value) &&
+    typeof value.message_id === "string" &&
+    typeof value.content === "string"
+  );
+}
+
+function isAttachmentMeta(value: unknown): value is AttachmentMeta {
+  return isRecord(value) && typeof value.attachment_id === "string";
+}
+
+function isToolCallDetail(value: unknown): value is ToolCallDetail {
+  return isRecord(value) && typeof value.tool_call_id === "string";
+}
+
+export interface PostMessageResponse {
+  message: SessionMessage;
+  inserted: boolean;
+  run_id?: string;
+}
+
+function isPostMessageResponse(value: unknown): value is PostMessageResponse {
+  return isRecord(value) && isSessionMessage(value.message);
+}
+
+export function listSessions(
+  limit = 50,
+  offset = 0,
+): Promise<SessionSummary[]> {
+  return runtimeFetch(`/api/sessions?limit=${limit}&offset=${offset}`, (raw) =>
+    decodeWith(raw, isSessionSummaryList, "session list"),
+  );
+}
+
+export function createSession(
+  body: CreateSessionRequest,
+): Promise<SessionSummary> {
+  return runtimeFetch(
+    "/api/sessions",
+    (raw) => decodeWith(raw, isSessionSummary, "session"),
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function getSession(sessionId: string): Promise<SessionDetail> {
+  return runtimeFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, (raw) =>
+    decodeWith(raw, isSessionDetail, "session"),
+  );
+}
+
+export function updateSession(
+  sessionId: string,
+  patch: { title?: string; status?: SessionStatus },
+): Promise<SessionSummary> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+    (raw) => decodeWith(raw, isSessionSummary, "session"),
+    {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    },
+  );
+}
+
+export function deleteSession(sessionId: string): Promise<void> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+    () => undefined,
+    { method: "DELETE" },
+  );
+}
+
+export function postMessage(
+  sessionId: string,
+  body: SendMessageRequest,
+): Promise<PostMessageResponse> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/messages`,
+    (raw) => decodeWith(raw, isPostMessageResponse, "message"),
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function interruptSession(
+  sessionId: string,
+  runId?: string,
+): Promise<SessionDetail> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/interrupt`,
+    (raw) => decodeWith(raw, isSessionDetail, "session"),
+    {
+      method: "POST",
+      body: JSON.stringify(runId ? { run_id: runId } : {}),
+    },
+  );
+}
+
+export function retrySession(sessionId: string): Promise<SessionDetail> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/retry`,
+    (raw) => decodeWith(raw, isSessionDetail, "session"),
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+}
+
+export function compactSession(sessionId: string): Promise<SessionDetail> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/compact`,
+    (raw) => decodeWith(raw, isSessionDetail, "session"),
+    {
+      method: "POST",
+      body: JSON.stringify({}),
+    },
+  );
+}
+
+export function getToolCall(
+  sessionId: string,
+  toolCallId: string,
+): Promise<ToolCallDetail> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/tool-calls/${encodeURIComponent(toolCallId)}`,
+    (raw) => decodeWith(raw, isToolCallDetail, "tool call"),
+  );
+}
+
+export function answerQuestion(
+  sessionId: string,
+  questionId: string,
+  payload: { answers: QuestionAnswer[]; skipped: boolean },
+): Promise<SessionDetail> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/questions/${encodeURIComponent(questionId)}/answer`,
+    (raw) => decodeWith(raw, isSessionDetail, "session"),
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function uploadAttachment(
+  sessionId: string,
+  file: File,
+): Promise<AttachmentMeta> {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...slice);
+  }
+  const content_base64 = window.btoa(binary);
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/attachments`,
+    (raw) => decodeWith(raw, isAttachmentMeta, "attachment"),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        filename: file.name,
+        mime_type: file.type || "application/octet-stream",
+        size_bytes: file.size,
+        content_base64,
+      }),
+    },
+  );
+}

@@ -8,10 +8,42 @@
 /* ------------------------------------------------------------------------- */
 /* Report body isolation boundary                                            */
 /* ------------------------------------------------------------------------- */
-/* Report content is rendered inside `.report-root`. Keep every report-body   */
-/* style scoped under that selector so it never leaks into the App Shell.    */
 .report-root {
-  /* Report typography, prose, tables, charts and citation styling land here. */
+  font-family: var(--rpt-font-body, "Geist Variable", system-ui, sans-serif);
+  color: var(--rpt-ink, inherit);
+}
+
+.report-root h1,
+.report-root h2,
+.report-root h3,
+.report-root h4 {
+  font-family: var(
+    --rpt-font-heading,
+    var(--rpt-font-body, "Geist Variable", sans-serif)
+  );
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .a4-page {
+    break-after: page;
+    page-break-after: always;
+    box-shadow: none !important;
+  }
+
+  .a4-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
 }
 
 @theme inline {

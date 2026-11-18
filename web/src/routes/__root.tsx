@@ -1,12 +1,21 @@
+import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { createRootRoute, Link, Outlet } from "@tanstack/react-router";
+import {
+  createRootRoute,
+  Link,
+  Outlet,
+  useRouterState,
+} from "@tanstack/react-router";
+import { AppSidebar } from "@/components/layout/AppSidebar";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { loadPreferences, savePreferences } from "@/lib/preferences";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: 1,
-      staleTime: 30_000,
+      staleTime: 15_000,
     },
   },
 });
@@ -17,35 +26,43 @@ export const Route = createRootRoute({
 });
 
 function RootLayout() {
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
+  const isPrintRoute = pathname.endsWith("/print");
+
+  const [prefs, setPrefs] = useState(() => loadPreferences());
+
+  const handleLeftOpenChange = (open: boolean) => {
+    setPrefs((prev) => {
+      const next = { ...prev, leftSidebarOpen: open };
+      savePreferences(next);
+      return next;
+    });
+  };
+
+  if (isPrintRoute) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Outlet />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <div className="flex min-h-svh flex-col bg-background text-foreground">
-          <header className="border-b">
-            <nav className="mx-auto flex h-14 w-full max-w-6xl items-center gap-6 px-6">
-              <Link to="/" className="font-heading text-base font-semibold">
-                Quire
-              </Link>
-              <Link
-                to="/docs/$docId"
-                params={{ docId: "example" }}
-                className="text-sm text-muted-foreground hover:text-foreground"
-              >
-                Reports
-              </Link>
-              <Link
-                to="/sessions/$sessionId"
-                params={{ sessionId: "example" }}
-                className="text-sm text-muted-foreground hover:text-foreground"
-              >
-                Sessions
-              </Link>
-            </nav>
-          </header>
-          <main className="flex-1">
+        <SidebarProvider
+          open={prefs.leftSidebarOpen}
+          onOpenChange={handleLeftOpenChange}
+        >
+          <AppSidebar />
+          <SidebarInset className="flex h-svh flex-col overflow-hidden">
             <Outlet />
-          </main>
-        </div>
+          </SidebarInset>
+        </SidebarProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

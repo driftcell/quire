@@ -23,7 +23,7 @@ export default defineConfig({
   server: {
     proxy: {
       // quire-server: read-only report and documentation APIs.
-      "/api/docs": "http://127.0.0.1:8080",
+      "/api/docs": "http://127.0.0.1:8082",
       // quire-runtime: sessions, knowledge bases, models, MCP and attachments.
       "/api/sessions": "http://127.0.0.1:8081",
       "/api/kb": "http://127.0.0.1:8081",
