@@ -33,11 +33,13 @@ use tokio::{
     task::JoinSet,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::{
     config::Config,
     error::{RuntimeError, RuntimeResult},
     kb::KbService,
+    mcp_registry::McpRegistry,
     model_stream::{ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest},
     models::ModelRegistry,
     prompt::ContextMessage,
@@ -72,7 +74,7 @@ impl McpToolDescriptor {
 pub struct McpHttpClient {
     http: reqwest::Client,
     base_url: String,
-    token: SecretString,
+    token: Option<SecretString>,
     x_session_id: String,
     agent_id: String,
     mcp_session_id: Arc<Mutex<Option<String>>>,
@@ -83,6 +85,15 @@ impl McpHttpClient {
     pub fn new(
         base_url: impl Into<String>,
         token: SecretString,
+        x_session_id: impl Into<String>,
+        agent_id: impl Into<String>,
+    ) -> Self {
+        Self::new_optional(base_url, Some(token), x_session_id, agent_id)
+    }
+
+    pub fn new_optional(
+        base_url: impl Into<String>,
+        token: Option<SecretString>,
         x_session_id: impl Into<String>,
         agent_id: impl Into<String>,
     ) -> Self {
@@ -97,18 +108,23 @@ impl McpHttpClient {
         }
     }
 
+    fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.token {
+            Some(token) => request.header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", token.expose_secret()),
+            ),
+            None => request,
+        }
+    }
+
     async fn ensure_initialized(&self) -> RuntimeResult<()> {
         if self.mcp_session_id.lock().await.is_some() {
             return Ok(());
         }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let response = self
-            .http
-            .post(format!("{}/mcp", self.base_url))
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", self.token.expose_secret()),
-            )
+            .authorized(self.http.post(format!("{}/mcp", self.base_url)))
             .header("accept", "application/json, text/event-stream")
             .header("mcp-protocol-version", "2025-11-25")
             .header("x-session-id", &self.x_session_id)
@@ -140,12 +156,7 @@ impl McpHttpClient {
             *self.mcp_session_id.lock().await = Some(session_id.clone());
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
             let _ = self
-                .http
-                .post(format!("{}/mcp", self.base_url))
-                .header(
-                    reqwest::header::AUTHORIZATION,
-                    format!("Bearer {}", self.token.expose_secret()),
-                )
+                .authorized(self.http.post(format!("{}/mcp", self.base_url)))
                 .header("accept", "application/json, text/event-stream")
                 .header("mcp-protocol-version", "2025-11-25")
                 .header("x-session-id", &self.x_session_id)
@@ -162,12 +173,7 @@ impl McpHttpClient {
         self.ensure_initialized().await?;
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let mut request = self
-            .http
-            .post(format!("{}/mcp", self.base_url))
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", self.token.expose_secret()),
-            )
+            .authorized(self.http.post(format!("{}/mcp", self.base_url)))
             .header("accept", "application/json, text/event-stream")
             .header("mcp-protocol-version", "2025-11-25")
             .header("x-session-id", &self.x_session_id)
@@ -670,9 +676,19 @@ pub struct RigModelStreamProvider {
 }
 
 impl RigModelStreamProvider {
-    pub fn new(kb: KbService, models: Arc<ModelRegistry>, config: Arc<Config>) -> Self {
+    pub fn new(
+        kb: KbService,
+        models: Arc<ModelRegistry>,
+        config: Arc<Config>,
+        mcp: Arc<McpRegistry>,
+    ) -> Self {
         Self {
-            core: Arc::new(RigModelCore { kb, models, config }),
+            core: Arc::new(RigModelCore {
+                kb,
+                models,
+                config,
+                mcp,
+            }),
         }
     }
 }
@@ -709,6 +725,7 @@ struct RigModelCore {
     kb: KbService,
     models: Arc<ModelRegistry>,
     config: Arc<Config>,
+    mcp: Arc<McpRegistry>,
 }
 
 #[derive(Clone)]
@@ -850,20 +867,33 @@ impl RigModelCore {
                 ))
             })?;
         let mut tools = self.build_tools(&execution, scope.clone(), Arc::clone(&self))?;
-        let remote_allowed: Vec<String> = execution
-            .allowed_tools
-            .iter()
-            .filter(|name| !BUILTIN_TOOLS.contains(&name.as_str()))
-            .cloned()
-            .collect();
-        if !remote_allowed.is_empty() {
-            let client = McpHttpClient::new(
-                &self.config.quire_base_url,
-                self.config.quire_rw_token.clone(),
+        for binding in self.mcp.tools_for_agent(&execution.allowed_tools).await? {
+            let allowed: Vec<String> = binding
+                .tool_names
+                .iter()
+                .filter(|name| !BUILTIN_TOOLS.contains(&name.as_str()))
+                .cloned()
+                .collect();
+            if allowed.is_empty() {
+                continue;
+            }
+            let client = McpHttpClient::new_optional(
+                &binding.url,
+                binding.auth_token,
                 &execution.session_id,
                 &execution.agent_id,
             );
-            tools.extend(build_rig_tools(client, &remote_allowed).await?);
+            match build_rig_tools(client, &allowed).await {
+                Ok(mut remote) => tools.append(&mut remote),
+                Err(error) => {
+                    warn!(
+                        %error,
+                        server_id = %binding.server_id,
+                        server_name = %binding.name,
+                        "skipping unavailable MCP server while assembling tools"
+                    );
+                }
+            }
         }
         let tool_map: BTreeMap<String, DynamicTool> = tools
             .into_iter()

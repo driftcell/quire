@@ -222,6 +222,9 @@ the server or `rig` into the report engine. It owns:
   durable in `SessionDetail.pending_question`; answers/skips resume through
   `POST /api/sessions/{id}/questions/{question_id}/answer`, while a normal new message dismisses the
   card and starts a fresh turn.
+- Global MCP registry (`mcp_servers` / `mcp_tools`) with idempotent `quire-report` seeding, tool
+  discovery/sync, per-tool global kill switches, masked auth refs and moka + Redis invalidation.
+  Agent tool selection is the triple intersection of enabled server, enabled tool and allow-list.
 
 Session contracts and SSE envelopes are exported to `contracts/session-protocol.schema.json`.
 

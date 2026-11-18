@@ -26,6 +26,7 @@ use crate::{
         KbItemKind, KbItemSummary, KbPromoteReport, KbRollbackReport, KbSnapshotSummary,
         SkillDefinitionRecord,
     },
+    mcp_registry::{McpServerInput, McpServerRecord, McpSyncReport, McpToolRecord},
     models::{
         ModelRecord, ModelsDevImportRequest, ProviderInput, ProviderProtocol, ProviderRecord,
     },
@@ -45,6 +46,10 @@ resolve them inside the draft branch and retry.
 
 ROLLBACK: kb_rollback_active without a version restores the latest earlier snapshot. Pass a version
 from kb_list_branches.recent_snapshots for a specific restore point.
+
+MCP REGISTRY: mcp_list_servers -> mcp_upsert_server -> mcp_sync_tools -> mcp_list_tools ->
+mcp_set_tool_enabled. Server and tool switches are global and intersect with each agent's
+allowed_tools. Auth token references are always masked.
 
 Every receipt includes `_next_hint`."#;
 
@@ -248,6 +253,32 @@ pub struct SessionsInspectParams {
     pub session_id: String,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpSyncParams {
+    /// Registered MCP server ID.
+    pub server_id: String,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpListToolsParams {
+    /// Optional server filter.
+    #[serde(default)]
+    pub server_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpSetToolEnabledParams {
+    /// Registered MCP server ID.
+    pub server_id: String,
+    /// Tool name returned by mcp_list_tools.
+    pub tool_name: String,
+    /// Global enable switch.
+    pub enabled: bool,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct KbListBranchesReceipt {
     /// Current production branch.
@@ -403,6 +434,42 @@ pub struct SessionsInspectReceipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_run: Option<RunSummaryView>,
     pub context_usage: ContextUsage,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct McpServersReceipt {
+    /// Auth token references are always masked.
+    pub servers: Vec<McpServerRecord>,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct McpServerReceipt {
+    pub server: McpServerRecord,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct McpSyncReceipt {
+    pub report: McpSyncReport,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct McpToolsReceipt {
+    pub tools: Vec<McpToolRecord>,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct McpToolReceipt {
+    pub tool: McpToolRecord,
     #[serde(rename = "_next_hint")]
     pub next_hint: String,
 }
@@ -808,6 +875,115 @@ impl AdminMcpServer {
             models: report.models,
             next_hint,
         }))
+    }
+
+    // ---------------------------------------------------------------------
+    // Global MCP registry
+    // ---------------------------------------------------------------------
+
+    #[tool(
+        name = "mcp_list_servers",
+        description = "List registered MCP servers. Auth token references are always masked."
+    )]
+    pub async fn mcp_list_servers(
+        &self,
+        Parameters(_request): Parameters<EmptyParams>,
+    ) -> Result<Json<McpServersReceipt>, ErrorData> {
+        let servers = self
+            .service
+            .mcp()
+            .list_servers()
+            .await
+            .map_err(admin_error)?;
+        let next_hint =
+            "Call mcp_sync_tools after registering a server, then inspect mcp_list_tools."
+                .to_string();
+        Ok(Json(McpServersReceipt { servers, next_hint }))
+    }
+
+    #[tool(
+        name = "mcp_upsert_server",
+        description = "Create or update an MCP server. Raw tokens are encrypted and never returned."
+    )]
+    pub async fn mcp_upsert_server(
+        &self,
+        Parameters(request): Parameters<McpServerInput>,
+    ) -> Result<Json<McpServerReceipt>, ErrorData> {
+        let server = self
+            .service
+            .mcp()
+            .upsert_server(request)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!(
+            "Server `{}` saved. Run mcp_sync_tools to discover its tool list.",
+            server.server_id
+        );
+        Ok(Json(McpServerReceipt { server, next_hint }))
+    }
+
+    #[tool(
+        name = "mcp_sync_tools",
+        description = "Discover a server's tools and sync descriptions/schemas while preserving admin enable switches."
+    )]
+    pub async fn mcp_sync_tools(
+        &self,
+        Parameters(request): Parameters<McpSyncParams>,
+    ) -> Result<Json<McpSyncReceipt>, ErrorData> {
+        let report = self
+            .service
+            .mcp()
+            .sync_server_tools(&request.server_id)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!(
+            "Discovered {} tools ({} new, {} updated). Use mcp_set_tool_enabled to disable unsafe tools.",
+            report.discovered, report.created, report.updated
+        );
+        Ok(Json(McpSyncReceipt { report, next_hint }))
+    }
+
+    #[tool(
+        name = "mcp_list_tools",
+        description = "List synced MCP tools and their global enable switch."
+    )]
+    pub async fn mcp_list_tools(
+        &self,
+        Parameters(request): Parameters<McpListToolsParams>,
+    ) -> Result<Json<McpToolsReceipt>, ErrorData> {
+        let tools = self
+            .service
+            .mcp()
+            .list_tools(request.server_id.as_deref())
+            .await
+            .map_err(admin_error)?;
+        let next_hint =
+            "Call mcp_set_tool_enabled with the server_id/tool_name to change the global switch."
+                .to_string();
+        Ok(Json(McpToolsReceipt { tools, next_hint }))
+    }
+
+    #[tool(
+        name = "mcp_set_tool_enabled",
+        description = "Globally enable or disable one MCP tool. Disabled tools are filtered even when agent-allowed."
+    )]
+    pub async fn mcp_set_tool_enabled(
+        &self,
+        Parameters(request): Parameters<McpSetToolEnabledParams>,
+    ) -> Result<Json<McpToolReceipt>, ErrorData> {
+        let tool = self
+            .service
+            .mcp()
+            .set_tool_enabled(&request.server_id, &request.tool_name, request.enabled)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!(
+            "Tool `{}:{}` is now {}. The next agent run sees the updated global switch.",
+            tool.server_id,
+            tool.tool_name,
+            if tool.enabled { "enabled" } else { "disabled" }
+        );
+        Ok(Json(McpToolReceipt { tool, next_hint }))
     }
 
     // ---------------------------------------------------------------------

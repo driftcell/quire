@@ -592,6 +592,19 @@ fn mask_api_key_ref(value: &str) -> String {
     }
 }
 
+/// Mask a generic `env:` / `enc:` / raw secret reference for public records.
+pub fn mask_secret_ref(value: &str) -> String {
+    mask_api_key_ref(value)
+}
+
+/// Normalize a generic secret reference, encrypting raw values with the runtime master key.
+pub fn normalize_secret_ref(
+    value: &str,
+    master_key: Option<&SecretString>,
+) -> RuntimeResult<String> {
+    normalize_api_key_ref(value, master_key)
+}
+
 fn normalize_api_key_ref(value: &str, master_key: Option<&SecretString>) -> RuntimeResult<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {

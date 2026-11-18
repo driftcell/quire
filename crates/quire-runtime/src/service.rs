@@ -27,6 +27,7 @@ use crate::{
     delta::{CoalescedDelta, DeltaCoalescer, DeltaKind},
     error::{RuntimeError, RuntimeResult},
     kb::{KbService, SeedReport},
+    mcp_registry::McpRegistry,
     model_stream::{ModelStreamEvent, ModelStreamProvider, ModelTurnRequest, StubStreamProvider},
     models::ModelRegistry,
     prompt::{ContextMessage, ResumeContext, build_resume_context},
@@ -120,6 +121,7 @@ pub struct RuntimeService {
     store: RuntimeStore,
     kb: KbService,
     models: Arc<ModelRegistry>,
+    mcp: Arc<McpRegistry>,
     runs: RunRegistry,
     config: Arc<Config>,
     quire: Arc<dyn QuireControl>,
@@ -134,10 +136,12 @@ impl RuntimeService {
         config: Arc<Config>,
         quire: Arc<dyn QuireControl>,
     ) -> Self {
+        let mcp = Arc::new(McpRegistry::new(store.clone(), config.master_key.clone()));
         Self {
             store,
             kb,
             models,
+            mcp,
             runs: RunRegistry::default(),
             config,
             quire,
@@ -157,6 +161,19 @@ impl RuntimeService {
         &self.models
     }
 
+    pub fn mcp(&self) -> &McpRegistry {
+        &self.mcp
+    }
+
+    pub fn mcp_registry(&self) -> Arc<McpRegistry> {
+        Arc::clone(&self.mcp)
+    }
+
+    pub fn with_mcp_registry(mut self, mcp: Arc<McpRegistry>) -> Self {
+        self.mcp = mcp;
+        self
+    }
+
     pub fn with_model_stream_provider(mut self, provider: Arc<dyn ModelStreamProvider>) -> Self {
         self.model_stream = provider;
         self
@@ -173,15 +190,21 @@ impl RuntimeService {
     pub async fn boot(&self) -> RuntimeResult<usize> {
         let _handle = self.kb.spawn_invalidation_listener();
         let _models = self.models.spawn_invalidation_listener();
+        let _mcp = self.mcp.spawn_invalidation_listener();
         let _interrupt = spawn_interrupt_listener(self.store.bus().clone(), self.runs.clone());
         let recovered = self.store.recover_running_runs().await?;
         Ok(recovered)
     }
 
     pub async fn seed(&self) -> RuntimeResult<SeedReport> {
-        self.kb
+        let report = self
+            .kb
             .seed(&self.config.workspace_dir, &self.config.default_model)
-            .await
+            .await?;
+        self.mcp
+            .seed_default_quire_report(&self.config.quire_base_url)
+            .await?;
+        Ok(report)
     }
 
     pub async fn create_session(

@@ -25,6 +25,7 @@ use quire_runtime::{
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
+    mcp_registry::{McpServerInput, McpServerPatch},
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, QuestionItem, QuestionOption, SendMessageRequest,
@@ -49,6 +50,37 @@ fn unique(prefix: &str) -> String {
             .unwrap()
             .as_nanos()
     )
+}
+
+async fn mock_mcp_tools_list(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
+    let id = body.get("id").cloned().unwrap_or(Value::Null);
+    let method = body
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let result = match method {
+        "initialize" => json!({
+            "protocolVersion": "2025-11-25",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "mock-mcp", "version": "1.0"}
+        }),
+        "tools/list" => json!({
+            "tools": [
+                {
+                    "name": "alpha_tool",
+                    "description": "Alpha tool",
+                    "inputSchema": {"type": "object"}
+                },
+                {
+                    "name": "beta_tool",
+                    "description": "Beta tool",
+                    "inputSchema": {"type": "object"}
+                }
+            ]
+        }),
+        _ => json!({}),
+    };
+    axum::Json(json!({"jsonrpc": "2.0", "id": id, "result": result}))
 }
 
 fn database_url() -> String {
@@ -1459,6 +1491,11 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
         "models_upsert_provider",
         "models_list",
         "models_import_models_dev",
+        "mcp_list_servers",
+        "mcp_upsert_server",
+        "mcp_sync_tools",
+        "mcp_list_tools",
+        "mcp_set_tool_enabled",
         "sessions_list",
         "sessions_inspect",
     ] {
@@ -2126,4 +2163,228 @@ async fn new_message_dismisses_pending_question_and_starts_a_new_turn() {
     }));
     drop(requests);
     service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn seed_registers_quire_report_mcp_without_overwriting_admin_state() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    service.mcp().delete_server("quire-report").await.unwrap();
+    service.seed().await.unwrap();
+    let server = service
+        .mcp()
+        .get_server("quire-report")
+        .await
+        .unwrap()
+        .expect("seeded quire-report server");
+    assert!(server.enabled);
+    assert_eq!(server.url, service.config().quire_base_url);
+    assert_eq!(
+        server.auth_token_masked.as_deref(),
+        Some("env:QUIRE_RW_TOKEN")
+    );
+
+    service
+        .mcp()
+        .patch_server(
+            "quire-report",
+            McpServerPatch {
+                enabled: Some(false),
+                ..McpServerPatch::default()
+            },
+        )
+        .await
+        .unwrap();
+    service.seed().await.unwrap();
+    let disabled = service
+        .mcp()
+        .get_server("quire-report")
+        .await
+        .unwrap()
+        .expect("seeded quire-report server");
+    assert!(
+        !disabled.enabled,
+        "seed must not overwrite an admin-disabled server"
+    );
+    service.mcp().delete_server("quire-report").await.unwrap();
+    let _ = sqlx::query("DELETE FROM mcp_servers WHERE server_id = 'quire-report'")
+        .execute(store.pool())
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let server_id = unique("mcp-registry");
+    service
+        .mcp()
+        .upsert_server(McpServerInput {
+            server_id: server_id.clone(),
+            name: "Registry test".into(),
+            url: "https://example.invalid/mcp".into(),
+            auth_token_ref: None,
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    for tool_name in ["danger_tool", "safe_tool"] {
+        sqlx::query(
+            r#"INSERT INTO mcp_tools (server_id, tool_name, description, enabled)
+               VALUES ($1, $2, $3, TRUE)"#,
+        )
+        .bind(&server_id)
+        .bind(tool_name)
+        .bind(format!("{tool_name} description"))
+        .execute(store.pool())
+        .await
+        .unwrap();
+    }
+
+    let allowed = vec!["danger_tool".to_string()];
+    let before = service.mcp().tools_for_agent(&allowed).await.unwrap();
+    assert_eq!(before.len(), 1);
+    assert!(
+        before[0]
+            .tool_names
+            .iter()
+            .any(|name| name == "danger_tool")
+    );
+
+    let mut invalidation = store.bus().subscribe_mcp_invalidation().await.unwrap();
+    service
+        .mcp()
+        .set_tool_enabled(&server_id, "danger_tool", false)
+        .await
+        .unwrap();
+    let published = tokio::time::timeout(Duration::from_secs(5), invalidation.next_invalidation())
+        .await
+        .unwrap()
+        .expect("tool toggle must publish MCP invalidation");
+    assert!(published.version > 0);
+    assert!(
+        service
+            .mcp()
+            .tools_for_agent(&allowed)
+            .await
+            .unwrap()
+            .is_empty(),
+        "globally disabled tools must be filtered even when agent-allowed"
+    );
+    let wildcard = service
+        .mcp()
+        .tools_for_agent(&["*".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(wildcard.len(), 1);
+    assert_eq!(wildcard[0].tool_names, vec!["safe_tool".to_string()]);
+
+    service
+        .mcp()
+        .set_tool_enabled(&server_id, "danger_tool", true)
+        .await
+        .unwrap();
+    let restored = service
+        .mcp()
+        .tools_for_agent(&["*".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(
+        restored[0].tool_names,
+        vec!["danger_tool".to_string(), "safe_tool".to_string()]
+    );
+    service.mcp().delete_server(&server_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_auth_token_is_masked_in_http_and_admin_receipts() {
+    let _guard = test_lock().lock().await;
+    let (service, _store) = test_service().await;
+    let server_id = unique("mcp-secret");
+    let secret = "sk-mcp-registry-secret-value";
+    let app = quire_runtime::http::router(service.clone());
+    let (status, created) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/mcp/servers",
+        "runtime-test-token",
+        Some(json!({
+            "server_id": server_id,
+            "name": "Secret registry test",
+            "url": "https://example.invalid/mcp",
+            "auth_token_ref": secret,
+            "enabled": true
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(created["auth_token_masked"], "enc:***");
+    assert!(!created.to_string().contains(secret));
+
+    let client = AdminMcpClient::connect(app, "runtime-test-token").await;
+    let listed = client.call_tool("mcp_list_servers", json!({})).await;
+    assert!(!listed.to_string().contains(secret));
+    assert!(
+        listed["servers"]
+            .as_array()
+            .is_some_and(|servers| servers.iter().any(|server| {
+                server["server_id"] == server_id && server["auth_token_masked"] == "enc:***"
+            }))
+    );
+    service.mcp().delete_server(&server_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn mcp_sync_discovers_tools_and_preserves_admin_switches() {
+    let _guard = test_lock().lock().await;
+    let (service, _store) = test_service().await;
+    let app = axum::Router::new().route("/mcp", axum::routing::post(mock_mcp_tools_list));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let server_id = unique("mcp-sync");
+    service
+        .mcp()
+        .upsert_server(McpServerInput {
+            server_id: server_id.clone(),
+            name: "Sync test".into(),
+            url: format!("http://{address}"),
+            auth_token_ref: None,
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let first = service.mcp().sync_server_tools(&server_id).await.unwrap();
+    assert_eq!(first.discovered, 2);
+    assert_eq!(first.created, 2);
+    assert_eq!(first.updated, 0);
+    service
+        .mcp()
+        .set_tool_enabled(&server_id, "alpha_tool", false)
+        .await
+        .unwrap();
+
+    let second = service.mcp().sync_server_tools(&server_id).await.unwrap();
+    assert_eq!(second.discovered, 2);
+    assert_eq!(second.created, 0);
+    assert_eq!(second.updated, 2);
+    let alpha = second
+        .tools
+        .iter()
+        .find(|tool| tool.tool_name == "alpha_tool")
+        .expect("alpha tool");
+    assert!(
+        !alpha.enabled,
+        "sync must preserve a previously disabled tool"
+    );
+    let beta = second
+        .tools
+        .iter()
+        .find(|tool| tool.tool_name == "beta_tool")
+        .expect("beta tool");
+    assert!(beta.enabled);
+    service.mcp().delete_server(&server_id).await.unwrap();
+    server.abort();
 }

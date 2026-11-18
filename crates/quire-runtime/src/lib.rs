@@ -10,6 +10,7 @@ pub mod delta;
 pub mod error;
 pub mod http;
 pub mod kb;
+pub mod mcp_registry;
 pub mod model_stream;
 pub mod models;
 pub mod prompt;
@@ -27,6 +28,10 @@ pub use config::Config;
 pub use delta::{CoalescedDelta, DeltaCoalescer, DeltaKind};
 pub use error::{RuntimeError, RuntimeResult};
 pub use kb::{KbService, SeedReport};
+pub use mcp_registry::{
+    McpRegistry, McpServerBinding, McpServerInput, McpServerPatch, McpServerRecord, McpSyncReport,
+    McpToolRecord,
+};
 pub use model_stream::{
     MockStreamProvider, ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest,
     StubStreamProvider,

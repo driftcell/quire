@@ -52,7 +52,9 @@ concurrently with `tokio::task::JoinSet`. Parent lifecycle is emitted as `Subage
 the service preserves the child `agent_id` and parent run envelope.
 
 Quire `/mcp` tools are discovered with `McpHttpClient` using the real `X-Session-Id` and `X-Actor`,
-then filtered by the agent allow-list. Tool execution captures full JSON input/output and emits
+then filtered by the global MCP registry and the agent allow-list. The triple intersection is
+enabled server ∩ enabled tool ∩ allow-list match (`*`, `<server_id>:*`, plain name or
+`<server_id>:<tool>`). Tool execution captures full JSON input/output and emits
 `ToolCallStarted` / `ToolCallFinished`; the service writes `agent_tool_calls` rows at start and
 updates them at finish. Provider call IDs are prefixed with the owning run ID because the database
 key is global.

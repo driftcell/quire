@@ -36,6 +36,7 @@ use crate::{
         AgentDefinitionRecord, KbBranchDiff, KbBranchRecord, KbDocumentRecord, KbPromoteReport,
         KbRollbackReport, SkillDefinitionRecord,
     },
+    mcp_registry::{McpServerInput, McpServerPatch, McpServerRecord, McpSyncReport, McpToolRecord},
     models::{
         ModelInput, ModelRecord, ModelsDevImportReport, ModelsDevImportRequest, ProviderInput,
         ProviderRecord,
@@ -124,6 +125,20 @@ pub fn router(service: RuntimeService) -> Router {
             patch(update_model).delete(delete_model),
         )
         .route("/api/models/import-models-dev", post(import_models_dev))
+        .route(
+            "/api/mcp/servers",
+            get(list_mcp_servers).post(upsert_mcp_server),
+        )
+        .route(
+            "/api/mcp/servers/{server_id}",
+            patch(patch_mcp_server).delete(delete_mcp_server),
+        )
+        .route("/api/mcp/servers/{server_id}/sync", post(sync_mcp_server))
+        .route("/api/mcp/tools", get(list_mcp_tools))
+        .route(
+            "/api/mcp/servers/{server_id}/tools/{tool_name}",
+            patch(set_mcp_tool_enabled),
+        )
         .route_layer(middleware::from_fn_with_state(
             service.clone(),
             runtime_auth,
@@ -580,6 +595,86 @@ async fn import_models_dev(
     Json(request): Json<ModelsDevImportRequest>,
 ) -> RuntimeResult<Json<ModelsDevImportReport>> {
     service.models().import_models_dev(request).await.map(Json)
+}
+
+// ---------------------------------------------------------------------------
+// Global MCP registry
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpToolsQuery {
+    #[serde(default)]
+    server_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct McpToolToggleRequest {
+    enabled: bool,
+}
+
+async fn list_mcp_servers(
+    State(service): State<RuntimeService>,
+) -> RuntimeResult<Json<Vec<McpServerRecord>>> {
+    service.mcp().list_servers().await.map(Json)
+}
+
+async fn upsert_mcp_server(
+    State(service): State<RuntimeService>,
+    Json(input): Json<McpServerInput>,
+) -> RuntimeResult<Json<McpServerRecord>> {
+    service.mcp().upsert_server(input).await.map(Json)
+}
+
+async fn patch_mcp_server(
+    State(service): State<RuntimeService>,
+    Path(server_id): Path<String>,
+    Json(patch): Json<McpServerPatch>,
+) -> RuntimeResult<Json<McpServerRecord>> {
+    service
+        .mcp()
+        .patch_server(&server_id, patch)
+        .await
+        .map(Json)
+}
+
+async fn delete_mcp_server(
+    State(service): State<RuntimeService>,
+    Path(server_id): Path<String>,
+) -> RuntimeResult<StatusCode> {
+    service.mcp().delete_server(&server_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn sync_mcp_server(
+    State(service): State<RuntimeService>,
+    Path(server_id): Path<String>,
+) -> RuntimeResult<Json<McpSyncReport>> {
+    service.mcp().sync_server_tools(&server_id).await.map(Json)
+}
+
+async fn list_mcp_tools(
+    State(service): State<RuntimeService>,
+    Query(query): Query<McpToolsQuery>,
+) -> RuntimeResult<Json<Vec<McpToolRecord>>> {
+    service
+        .mcp()
+        .list_tools(query.server_id.as_deref())
+        .await
+        .map(Json)
+}
+
+async fn set_mcp_tool_enabled(
+    State(service): State<RuntimeService>,
+    Path((server_id, tool_name)): Path<(String, String)>,
+    Json(request): Json<McpToolToggleRequest>,
+) -> RuntimeResult<Json<McpToolRecord>> {
+    service
+        .mcp()
+        .set_tool_enabled(&server_id, &tool_name, request.enabled)
+        .await
+        .map(Json)
 }
 
 // ---------------------------------------------------------------------------

@@ -52,10 +52,12 @@ async fn main() -> anyhow::Result<()> {
         runtime_config.clone(),
         Arc::new(quire),
     );
+    let mcp = service.mcp_registry();
     let service = service.with_model_stream_provider(Arc::new(RigModelStreamProvider::new(
         kb,
         models,
         runtime_config,
+        mcp,
     )));
     let recovered = service.boot().await.context("runtime boot recovery")?;
     let seed = service.seed().await.context("runtime knowledge seed")?;
