@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import { BarChart3Icon, DownloadIcon, TableIcon } from "lucide-react";
 import type {
@@ -118,7 +118,6 @@ function buildEffectiveOption(chart: EchartsBlock): JsonObject {
     option = deepMerge(option, chart.option_patch);
   }
 
-  // Ensure responsive grid containment on Cartesian charts when not explicitly set.
   if (
     (option.xAxis !== undefined || option.yAxis !== undefined) &&
     option.grid === undefined
@@ -154,7 +153,7 @@ function downloadCsv(table: ChartDataTable, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function EchartsCanvas({
+export const EchartsCanvas = memo(function EchartsCanvas({
   blockId,
   chart,
   chartTables = [],
@@ -364,4 +363,4 @@ export function EchartsCanvas({
       )}
     </div>
   );
-}
+});

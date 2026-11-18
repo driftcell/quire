@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
@@ -16,7 +16,12 @@ import {
   updateCommentStatus,
 } from "@/api/quire";
 import { CommentsDrawer } from "@/components/report/CommentsDrawer";
+import {
+  FloatingCommentPopover,
+  type FloatingCommentAnchor,
+} from "@/components/report/FloatingCommentPopover";
 import { ReportViewer } from "@/components/report/ReportViewer";
+import { TocOutline } from "@/components/report/TocOutline";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import type { CommentStatus } from "@/contracts/report-protocol";
@@ -30,6 +35,8 @@ export const Route = createFileRoute("/docs/$docId")({
   component: DocumentPage,
 });
 
+const EMPTY_ACTORS = new Map<string, string[]>();
+
 function DocumentPage() {
   const { docId } = Route.useParams();
   const queryClient = useQueryClient();
@@ -37,6 +44,8 @@ function DocumentPage() {
   const [prefs, setPrefs] = useState(() => loadPreferences());
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
+  const [floatingComment, setFloatingComment] =
+    useState<FloatingCommentAnchor | null>(null);
 
   const docQuery = useQuery({
     queryKey: ["doc", docId],
@@ -55,6 +64,14 @@ function DocumentPage() {
       return next;
     });
   };
+
+  const jumpToSection = useCallback((sectionId: string) => {
+    const el = window.document.getElementById(`block-${sectionId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  const openCommentsCount =
+    commentsQuery.data?.filter((c) => c.status !== "archived").length ?? 0;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -97,17 +114,31 @@ function DocumentPage() {
               分页
             </Button>
           </div>
+          {docQuery.data && (
+            <TocOutline
+              nodes={docQuery.data.computed.toc_tree}
+              activeActorsBySection={EMPTY_ACTORS}
+              comments={commentsQuery.data ?? []}
+              onJumpToSection={jumpToSection}
+            />
+          )}
           <Button
             type="button"
             size="icon-sm"
             variant="ghost"
-            aria-label="批注"
+            aria-label="批注列表"
+            className="relative"
             onClick={() => {
               setSelectedBlock(null);
               setCommentsOpen(true);
             }}
           >
             <MessageSquareQuoteIcon className="size-4" />
+            {openCommentsCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
+                {openCommentsCount}
+              </span>
+            )}
           </Button>
           <Button
             size="icon-sm"
@@ -127,7 +158,7 @@ function DocumentPage() {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto bg-muted/20">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20">
         {docQuery.isLoading && (
           <div className="p-8 text-center text-sm text-muted-foreground">
             正在加载报告...
@@ -144,24 +175,23 @@ function DocumentPage() {
             computed={docQuery.data.computed}
             viewMode={prefs.reportViewMode}
             comments={commentsQuery.data}
-            onOpenCommentForBlock={(blockId) => {
-              setSelectedBlock(blockId);
-              setCommentsOpen(true);
+            onOpenCommentForBlock={(anchor) => {
+              setFloatingComment(anchor);
             }}
           />
         )}
       </div>
 
-      <CommentsDrawer
-        open={commentsOpen}
-        onOpenChange={setCommentsOpen}
+      <FloatingCommentPopover
+        anchor={floatingComment}
         threads={commentsQuery.data ?? []}
-        selectedBlockId={selectedBlock}
-        onAddComment={async (blockId, body) => {
+        onClose={() => setFloatingComment(null)}
+        onAddComment={async (blockId, body, quote) => {
           await createComment(docId, {
             block_id: blockId,
             author: "reviewer",
             body,
+            quote,
           });
           void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
         }}
@@ -172,6 +202,38 @@ function DocumentPage() {
         onUpdateStatus={async (threadId, status: CommentStatus) => {
           await updateCommentStatus(docId, threadId, status);
           void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
+        }}
+        onOpenDrawer={() => {
+          setSelectedBlock(floatingComment?.blockId ?? null);
+          setCommentsOpen(true);
+        }}
+      />
+
+      <CommentsDrawer
+        docId={docId}
+        open={commentsOpen}
+        onOpenChange={setCommentsOpen}
+        threads={commentsQuery.data ?? []}
+        selectedBlockId={selectedBlock}
+        onAddComment={async (blockId, body, quote) => {
+          await createComment(docId, {
+            block_id: blockId,
+            author: "reviewer",
+            body,
+            quote,
+          });
+          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
+        }}
+        onReply={async (threadId, body) => {
+          await replyComment(docId, threadId, { author: "reviewer", body });
+          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
+        }}
+        onUpdateStatus={async (threadId, status: CommentStatus) => {
+          await updateCommentStatus(docId, threadId, status);
+          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
+        }}
+        onSelectBlock={(blockId) => {
+          jumpToSection(blockId);
         }}
       />
     </div>

@@ -1,7 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { MessageSquareIcon } from "lucide-react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { MessageSquareIcon, MessageSquarePlusIcon } from "lucide-react";
 import { CustomHtmlView } from "@/components/report/CustomHtmlView";
 import { EchartsCanvas } from "@/components/report/EchartsCanvas";
+import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import { InlineMarkdown } from "@/components/report/InlineMarkdown";
 import { TableBlockView } from "@/components/report/TableBlockView";
 import {
@@ -11,12 +20,15 @@ import {
   A4_PADDING_X_PX,
   A4_PADDING_Y_PX,
   paginateBlocks,
+  type PageMeasurements,
   type PageSlice,
+  type TableMeasurement,
 } from "@/components/report/pagination";
 import type {
   CommentThread,
   ComputedDocumentMeta,
   EphemeralPreviewEvent,
+  TextQuoteSelector,
 } from "@/contracts/report-protocol";
 import type { ReportBlock, ReportDocumentView } from "@/lib/document";
 import type { ReportViewMode } from "@/lib/preferences";
@@ -28,7 +40,26 @@ export interface ReportViewerProps {
   ephemeralPreviews?: Map<string, EphemeralPreviewEvent>;
   comments?: CommentThread[];
   printMode?: boolean;
-  onOpenCommentForBlock?: (blockId: string) => void;
+  onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
+}
+
+interface FloatingQuoteAction {
+  blockId: string;
+  quote: TextQuoteSelector;
+  top: number;
+  left: number;
+  viewportRect: FloatingCommentAnchor["rect"];
+}
+
+function toViewportRect(domRect: DOMRect): FloatingCommentAnchor["rect"] {
+  return {
+    top: domRect.top,
+    left: domRect.left,
+    bottom: domRect.bottom,
+    right: domRect.right,
+    width: domRect.width,
+    height: domRect.height,
+  };
 }
 
 function renderHeadingTag(
@@ -37,12 +68,14 @@ function renderHeadingTag(
   text: string,
   citationMap: ComputedDocumentMeta["citation_map"],
   onCitationClick: (sourceId: string) => void,
+  highlightQuotes?: TextQuoteSelector[],
 ) {
   const content = (
     <InlineMarkdown
       text={text}
       citationMap={citationMap}
       onCitationClick={onCitationClick}
+      highlightQuotes={highlightQuotes}
     />
   );
   switch (level) {
@@ -203,6 +236,181 @@ function blockTitle(block: ReportBlock): string | undefined {
   return typeof title === "string" ? title : undefined;
 }
 
+function findBlockElement(node: Node | null): HTMLElement | null {
+  let curr: Node | null = node;
+  while (curr) {
+    if (curr instanceof HTMLElement && curr.dataset.blockId) {
+      return curr;
+    }
+    curr = curr.parentNode;
+  }
+  return null;
+}
+
+interface ReportBlockItemProps {
+  slice: PageSlice;
+  isPaged: boolean;
+  printMode: boolean;
+  computed: ComputedDocumentMeta;
+  commentCount: number;
+  blockQuotes?: TextQuoteSelector[];
+  onCitationClick: (sourceId: string) => void;
+  onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
+}
+
+const ReportBlockItem = memo(function ReportBlockItem({
+  slice,
+  isPaged,
+  printMode,
+  computed,
+  commentCount,
+  blockQuotes,
+  onCitationClick,
+  onOpenCommentForBlock,
+}: ReportBlockItemProps) {
+  const { block } = slice;
+  const framing = computed.block_framing[block.id];
+
+  let bodyNode: React.ReactNode = null;
+  if (block.type === "heading") {
+    bodyNode = renderHeadingTag(
+      block.level ?? 2,
+      block.id,
+      block.text,
+      computed.citation_map,
+      onCitationClick,
+      blockQuotes,
+    );
+  } else if (block.type === "paragraph") {
+    bodyNode = (
+      <p
+        id={`block-${block.id}`}
+        className="my-3 text-[15px] leading-7 text-current/90"
+      >
+        <InlineMarkdown
+          text={block.text}
+          citationMap={computed.citation_map}
+          onCitationClick={onCitationClick}
+          highlightQuotes={blockQuotes}
+        />
+      </p>
+    );
+  } else if (block.type === "quote") {
+    bodyNode = (
+      <blockquote
+        id={`block-${block.id}`}
+        className="my-4 border-l-4 border-current/25 pl-4 text-[15px] leading-7 italic opacity-90"
+      >
+        <InlineMarkdown
+          text={block.text}
+          citationMap={computed.citation_map}
+          onCitationClick={onCitationClick}
+          highlightQuotes={blockQuotes}
+        />
+      </blockquote>
+    );
+  } else if (block.type === "table") {
+    const titleText = block.title?.trim();
+    bodyNode = (
+      <figure id={`block-${block.id}`} className="my-5 space-y-2">
+        {(framing || titleText) && (
+          <figcaption className="text-sm font-semibold">
+            {framing ? framing.label : "表"}
+            {titleText ? ` — ${titleText}` : ""}
+            {slice.continuation ? "（续）" : ""}
+          </figcaption>
+        )}
+        <TableBlockView
+          table={block}
+          layout={computed.table_layouts[block.id]}
+          rowStart={slice.rowStart}
+          rowEnd={slice.rowEnd}
+          includeSummary={slice.includeSummary}
+        />
+        {framing?.attribution && slice.includeSummary !== false && (
+          <div className="text-xs text-muted-foreground">
+            {framing.attribution}
+          </div>
+        )}
+      </figure>
+    );
+  } else if (block.type === "echarts") {
+    const titleText = blockTitle(block);
+    bodyNode = (
+      <figure id={`block-${block.id}`} className="my-5 space-y-2">
+        {(framing || titleText) && (
+          <figcaption className="text-sm font-semibold">
+            {framing ? framing.label : "图"}
+            {titleText ? ` — ${titleText}` : ""}
+          </figcaption>
+        )}
+        <EchartsCanvas
+          blockId={block.id}
+          chart={block}
+          chartTables={computed.chart_tables?.[block.id]}
+          requirements={computed.chart_requirements?.[block.id]}
+          renderer={isPaged || printMode ? "svg" : "canvas"}
+          printSafe={isPaged || printMode}
+        />
+        {framing?.attribution && (
+          <div className="text-xs text-muted-foreground">
+            {framing.attribution}
+          </div>
+        )}
+      </figure>
+    );
+  } else if (block.type === "custom_html") {
+    const titleText = blockTitle(block);
+    bodyNode = (
+      <figure id={`block-${block.id}`} className="my-5 space-y-2">
+        {(framing || titleText) && (
+          <figcaption className="text-sm font-semibold">
+            {framing ? framing.label : ""}
+            {framing && titleText ? " — " : ""}
+            {titleText ?? ""}
+          </figcaption>
+        )}
+        <CustomHtmlView block={block} />
+        {framing?.attribution && (
+          <div className="text-xs text-muted-foreground">
+            {framing.attribution}
+          </div>
+        )}
+      </figure>
+    );
+  }
+
+  return (
+    <div
+      data-block-id={block.id}
+      className="group/block relative rounded-lg transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.02]"
+    >
+      {!printMode && onOpenCommentForBlock && (
+        <button
+          type="button"
+          title="查看或添加批注"
+          aria-label={`为块 ${block.id} 添加或查看批注`}
+          onClick={(event) => {
+            onOpenCommentForBlock({
+              blockId: block.id,
+              rect: toViewportRect(event.currentTarget.getBoundingClientRect()),
+            });
+          }}
+          className={`focus-visible:ring-ring absolute top-1 -right-1 z-10 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px] tabular-nums shadow-xs transition-opacity focus-visible:ring-2 focus-visible:outline-none print:hidden ${
+            commentCount > 0
+              ? "border-amber-500/50 text-amber-700 opacity-100 dark:text-amber-300"
+              : "text-muted-foreground opacity-0 group-hover/block:opacity-100 focus-visible:opacity-100"
+          }`}
+        >
+          <MessageSquareIcon className="size-3" />
+          {commentCount > 0 && <span>{commentCount}</span>}
+        </button>
+      )}
+      {bodyNode}
+    </div>
+  );
+});
+
 export function ReportViewer({
   document,
   computed,
@@ -212,17 +420,32 @@ export function ReportViewer({
   printMode = false,
   onOpenCommentForBlock,
 }: ReportViewerProps) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
-  const [heights, setHeights] = useState<Record<string, number>>({});
+  const [measurements, setMeasurements] = useState<PageMeasurements>({
+    blockHeights: {},
+    tableMeasurements: {},
+    coverHeight: 0,
+    bibliographyHeight: 0,
+  });
+  const [quoteAction, setQuoteAction] = useState<FloatingQuoteAction | null>(
+    null,
+  );
 
-  const openCountByBlock = useMemo(() => {
-    const map = new Map<string, number>();
+  const { openCountByBlock, quotesByBlock } = useMemo(() => {
+    const counts = new Map<string, number>();
+    const quotes = new Map<string, TextQuoteSelector[]>();
     for (const thread of comments) {
       if (thread.status !== "archived" && !thread.anchor_detached) {
-        map.set(thread.block_id, (map.get(thread.block_id) ?? 0) + 1);
+        counts.set(thread.block_id, (counts.get(thread.block_id) ?? 0) + 1);
+        if (thread.quote) {
+          const list = quotes.get(thread.block_id) ?? [];
+          list.push(thread.quote);
+          quotes.set(thread.block_id, list);
+        }
       }
     }
-    return map;
+    return { openCountByBlock: counts, quotesByBlock: quotes };
   }, [comments]);
 
   const previewList = useMemo(
@@ -239,8 +462,15 @@ export function ReportViewer({
     () =>
       `${document.revision}:${document.blocks
         .map((block) => block.id)
-        .join(",")}`,
-    [document.blocks, document.revision],
+        .join(
+          ",",
+        )}:${computed.bibliography.length}:${document.cover.title ?? ""}`,
+    [
+      document.blocks,
+      document.revision,
+      computed.bibliography.length,
+      document.cover.title,
+    ],
   );
 
   useLayoutEffect(() => {
@@ -251,15 +481,51 @@ export function ReportViewer({
     if (!container || layoutSignature.length === 0) {
       return undefined;
     }
-    const nextHeights: Record<string, number> = {};
+
+    const blockHeights: Record<string, number> = {};
+    const tableMeasurements: Record<string, TableMeasurement> = {};
+
     const items = container.querySelectorAll<HTMLElement>("[data-measure-id]");
     for (const el of items) {
       const id = el.dataset.measureId;
-      if (id) {
-        nextHeights[id] = el.getBoundingClientRect().height;
+      if (!id) continue;
+      blockHeights[id] = el.getBoundingClientRect().height;
+
+      const theadEl = el.querySelector<HTMLElement>(
+        '[data-measure-thead="true"]',
+      );
+      const tfootEl = el.querySelector<HTMLElement>(
+        '[data-measure-tfoot="true"]',
+      );
+      const rowEls = el.querySelectorAll<HTMLElement>(
+        "[data-measure-row-index]",
+      );
+      if (theadEl || rowEls.length > 0) {
+        const rowHeights: number[] = [];
+        for (const rowEl of rowEls) {
+          rowHeights.push(rowEl.getBoundingClientRect().height);
+        }
+        tableMeasurements[id] = {
+          theadHeight: theadEl ? theadEl.getBoundingClientRect().height : 0,
+          tfootHeight: tfootEl ? tfootEl.getBoundingClientRect().height : 0,
+          rowHeights,
+        };
       }
     }
-    setHeights(nextHeights);
+
+    const coverEl = container.querySelector<HTMLElement>(
+      '[data-measure-cover="true"]',
+    );
+    const bibEl = container.querySelector<HTMLElement>(
+      '[data-measure-bib="true"]',
+    );
+
+    setMeasurements({
+      blockHeights,
+      tableMeasurements,
+      coverHeight: coverEl ? coverEl.getBoundingClientRect().height : 0,
+      bibliographyHeight: bibEl ? bibEl.getBoundingClientRect().height : 0,
+    });
     return undefined;
   }, [layoutSignature, viewMode, printMode]);
 
@@ -283,146 +549,71 @@ export function ReportViewer({
     themeVars[k] = v;
   }
 
-  const scrollToSource = (sourceId: string) => {
+  const scrollToSource = useCallback((sourceId: string) => {
     const el = window.document.getElementById(`bib-${sourceId}`);
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
-  };
+  }, []);
 
-  const renderBlock = (slice: PageSlice, isPaged: boolean) => {
-    const { block } = slice;
-    const framing = computed.block_framing[block.id];
-    const commentCount = openCountByBlock.get(block.id) ?? 0;
-
-    let bodyNode: React.ReactNode = null;
-    if (block.type === "heading") {
-      bodyNode = renderHeadingTag(
-        block.level ?? 2,
-        block.id,
-        block.text,
-        computed.citation_map,
-        scrollToSource,
-      );
-    } else if (block.type === "paragraph") {
-      bodyNode = (
-        <p
-          id={`block-${block.id}`}
-          className="my-3 text-[15px] leading-7 text-current/90"
-        >
-          <InlineMarkdown
-            text={block.text}
-            citationMap={computed.citation_map}
-            onCitationClick={scrollToSource}
-          />
-        </p>
-      );
-    } else if (block.type === "quote") {
-      bodyNode = (
-        <blockquote
-          id={`block-${block.id}`}
-          className="my-4 border-l-4 border-current/25 pl-4 text-[15px] leading-7 italic opacity-90"
-        >
-          <InlineMarkdown
-            text={block.text}
-            citationMap={computed.citation_map}
-            onCitationClick={scrollToSource}
-          />
-        </blockquote>
-      );
-    } else if (block.type === "table") {
-      const titleText = block.title?.trim();
-      bodyNode = (
-        <figure id={`block-${block.id}`} className="my-5 space-y-2">
-          {(framing || titleText) && (
-            <figcaption className="text-sm font-semibold">
-              {framing ? framing.label : "表"}
-              {titleText ? ` — ${titleText}` : ""}
-              {slice.continuation ? "（续）" : ""}
-            </figcaption>
-          )}
-          <TableBlockView
-            table={block}
-            layout={computed.table_layouts[block.id]}
-            rowStart={slice.rowStart}
-            rowEnd={slice.rowEnd}
-            includeSummary={slice.includeSummary}
-          />
-          {framing?.attribution && slice.includeSummary !== false && (
-            <div className="text-xs text-muted-foreground">
-              {framing.attribution}
-            </div>
-          )}
-        </figure>
-      );
-    } else if (block.type === "echarts") {
-      const titleText = blockTitle(block);
-      bodyNode = (
-        <figure id={`block-${block.id}`} className="my-5 space-y-2">
-          {(framing || titleText) && (
-            <figcaption className="text-sm font-semibold">
-              {framing ? framing.label : "图"}
-              {titleText ? ` — ${titleText}` : ""}
-            </figcaption>
-          )}
-          <EchartsCanvas
-            blockId={block.id}
-            chart={block}
-            chartTables={computed.chart_tables?.[block.id]}
-            requirements={computed.chart_requirements?.[block.id]}
-            renderer={isPaged || printMode ? "svg" : "canvas"}
-            printSafe={isPaged || printMode}
-          />
-          {framing?.attribution && (
-            <div className="text-xs text-muted-foreground">
-              {framing.attribution}
-            </div>
-          )}
-        </figure>
-      );
-    } else if (block.type === "custom_html") {
-      const titleText = blockTitle(block);
-      bodyNode = (
-        <figure id={`block-${block.id}`} className="my-5 space-y-2">
-          {(framing || titleText) && (
-            <figcaption className="text-sm font-semibold">
-              {framing ? framing.label : ""}
-              {framing && titleText ? " — " : ""}
-              {titleText ?? ""}
-            </figcaption>
-          )}
-          <CustomHtmlView block={block} />
-          {framing?.attribution && (
-            <div className="text-xs text-muted-foreground">
-              {framing.attribution}
-            </div>
-          )}
-        </figure>
-      );
+  const handleMouseUp = useCallback(() => {
+    if (printMode || !onOpenCommentForBlock) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      setQuoteAction(null);
+      return;
+    }
+    const exact = selection.toString().trim();
+    if (exact.length === 0) {
+      setQuoteAction(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const startBlock = findBlockElement(range.startContainer);
+    const endBlock = findBlockElement(range.endContainer);
+    if (!startBlock || !endBlock || startBlock !== endBlock) {
+      setQuoteAction(null);
+      return;
+    }
+    const blockId = startBlock.dataset.blockId;
+    if (!blockId) {
+      setQuoteAction(null);
+      return;
     }
 
-    return (
-      <div
-        data-block-id={block.id}
-        className="group/block relative rounded-lg transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.02]"
-      >
-        {!printMode && onOpenCommentForBlock && (
-          <button
-            type="button"
-            title="查看或添加批注"
-            onClick={() => onOpenCommentForBlock(block.id)}
-            className={`absolute top-1 -right-1 z-10 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px] shadow-xs transition-opacity print:hidden ${
-              commentCount > 0
-                ? "border-amber-500/50 text-amber-700 opacity-100 dark:text-amber-300"
-                : "text-muted-foreground opacity-0 group-hover/block:opacity-100"
-            }`}
-          >
-            <MessageSquareIcon className="size-3" />
-            {commentCount > 0 && <span>{commentCount}</span>}
-          </button>
-        )}
-        {bodyNode}
-      </div>
-    );
-  };
+    const fullText = startBlock.textContent ?? "";
+    const matchPos = fullText.indexOf(exact);
+    const prefix =
+      matchPos > 0
+        ? fullText.slice(Math.max(0, matchPos - 24), matchPos)
+        : null;
+    const suffix =
+      matchPos >= 0
+        ? fullText.slice(matchPos + exact.length, matchPos + exact.length + 24)
+        : null;
+
+    const rect = range.getBoundingClientRect();
+    const rootRect = rootRef.current?.getBoundingClientRect();
+    const top = rootRect ? rect.top - rootRect.top - 36 : rect.top - 36;
+    const left = rootRect
+      ? Math.max(8, rect.left - rootRect.left + rect.width / 2 - 56)
+      : Math.max(8, rect.left);
+
+    setQuoteAction({
+      blockId,
+      quote: {
+        exact,
+        prefix: prefix && prefix.length > 0 ? prefix : undefined,
+        suffix: suffix && suffix.length > 0 ? suffix : undefined,
+      },
+      top,
+      left,
+      viewportRect: toViewportRect(rect),
+    });
+  }, [printMode, onOpenCommentForBlock]);
+
+  useEffect(() => {
+    window.document.addEventListener("mouseup", handleMouseUp);
+    return () => window.document.removeEventListener("mouseup", handleMouseUp);
+  }, [handleMouseUp]);
 
   const renderCover = () => {
     const cover = document.cover;
@@ -514,8 +705,8 @@ export function ReportViewer({
 
   const pages = useMemo(() => {
     if (!isPaged) return [];
-    return paginateBlocks(document.blocks, heights);
-  }, [isPaged, document.blocks, heights]);
+    return paginateBlocks(document.blocks, measurements);
+  }, [isPaged, document.blocks, measurements]);
 
   const continuousItems = useMemo(() => {
     if (isPaged) return [];
@@ -524,7 +715,35 @@ export function ReportViewer({
   }, [isPaged, document.blocks, previewList]);
 
   return (
-    <div style={themeVars} className="report-root w-full">
+    <div
+      ref={rootRef}
+      style={themeVars}
+      className="report-root relative w-full"
+    >
+      {quoteAction && onOpenCommentForBlock && !printMode && (
+        <button
+          type="button"
+          style={{
+            top: `${Math.max(8, quoteAction.top)}px`,
+            left: `${quoteAction.left}px`,
+          }}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            onOpenCommentForBlock({
+              blockId: quoteAction.blockId,
+              quote: quoteAction.quote,
+              rect: quoteAction.viewportRect,
+            });
+            setQuoteAction(null);
+            window.getSelection()?.removeAllRanges();
+          }}
+          className="absolute z-40 inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-background px-2.5 py-1 text-xs font-medium text-amber-700 shadow-md hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/50 print:hidden"
+        >
+          <MessageSquarePlusIcon className="size-3.5" />
+          批注选中文本
+        </button>
+      )}
+
       {isPaged && (
         <div
           ref={measureRef}
@@ -532,11 +751,20 @@ export function ReportViewer({
           style={{ width: `${A4_CONTENT_WIDTH_PX}px` }}
           className="pointer-events-none fixed top-0 -left-[99999px] opacity-0"
         >
+          <div data-measure-cover="true">{renderCover()}</div>
           {document.blocks.map((block) => (
             <div key={block.id} data-measure-id={block.id}>
-              {renderBlock({ block }, true)}
+              <ReportBlockItem
+                slice={{ block }}
+                isPaged
+                printMode
+                computed={computed}
+                commentCount={0}
+                onCitationClick={scrollToSource}
+              />
             </div>
           ))}
+          <div data-measure-bib="true">{renderBibliography()}</div>
         </div>
       )}
 
@@ -548,7 +776,16 @@ export function ReportViewer({
               {item.preview ? (
                 <EhemeralBlock preview={item.preview} />
               ) : item.slice ? (
-                renderBlock(item.slice, false)
+                <ReportBlockItem
+                  slice={item.slice}
+                  isPaged={false}
+                  printMode={printMode}
+                  computed={computed}
+                  commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
+                  blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                  onCitationClick={scrollToSource}
+                  onOpenCommentForBlock={onOpenCommentForBlock}
+                />
               ) : null}
             </div>
           ))}
@@ -556,7 +793,7 @@ export function ReportViewer({
         </article>
       ) : (
         <div className="flex flex-col items-center gap-6 py-6 print:gap-0 print:py-0">
-          {pages.map((page, pageIdx) => (
+          {pages.map((page) => (
             <section
               key={page.pageNumber}
               style={{
@@ -567,13 +804,22 @@ export function ReportViewer({
               className="a4-page relative flex flex-col justify-between bg-white text-neutral-900 shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
             >
               <div className="flex-1">
-                {pageIdx === 0 && renderCover()}
+                {page.includeCover && renderCover()}
                 {page.items.map((slice, idx) => (
                   <div key={`${slice.block.id}-${slice.rowStart ?? 0}-${idx}`}>
-                    {renderBlock(slice, true)}
+                    <ReportBlockItem
+                      slice={slice}
+                      isPaged
+                      printMode={printMode}
+                      computed={computed}
+                      commentCount={openCountByBlock.get(slice.block.id) ?? 0}
+                      blockQuotes={quotesByBlock.get(slice.block.id)}
+                      onCitationClick={scrollToSource}
+                      onOpenCommentForBlock={onOpenCommentForBlock}
+                    />
                   </div>
                 ))}
-                {pageIdx === pages.length - 1 && renderBibliography()}
+                {page.includeBibliography && renderBibliography()}
               </div>
               <footer className="mt-4 flex items-center justify-between border-t border-black/10 pt-2 text-[11px] text-neutral-500">
                 <span>{document.cover.title || document.doc_id}</span>

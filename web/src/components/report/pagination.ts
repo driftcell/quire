@@ -12,6 +12,21 @@ export interface PageSlice {
 export interface A4Page {
   pageNumber: number;
   items: PageSlice[];
+  includeCover?: boolean;
+  includeBibliography?: boolean;
+}
+
+export interface TableMeasurement {
+  theadHeight: number;
+  tfootHeight: number;
+  rowHeights: number[];
+}
+
+export interface PageMeasurements {
+  blockHeights: Record<string, number>;
+  tableMeasurements: Record<string, TableMeasurement>;
+  coverHeight: number;
+  bibliographyHeight: number;
 }
 
 export const A4_PAGE_WIDTH_PX = 794;
@@ -23,26 +38,36 @@ export const A4_CONTENT_HEIGHT_PX =
   A4_PAGE_HEIGHT_PX - A4_PADDING_Y_PX * 2 - 32;
 
 const DEFAULT_ROW_HEIGHT_PX = 34;
-const DEFAULT_TABLE_CHROME_PX = 96;
+const DEFAULT_TABLE_CAPTION_PX = 42;
 
 /**
- * Bin-pack blocks into fixed A4 pages.
+ * Bin-pack blocks into fixed A4 pages using real per-block and per-row DOM measurements.
+ * - Page 1 deducts Cover height from available content height.
  * - ECharts and CustomHtml blocks are always atomic and never split across pages.
  * - Headings enforce keep-with-next when the following block doesn't fit.
- * - Oversized tables slice rows cleanly across pages while repeating headers.
+ * - Oversized tables slice rows by measured row height while repeating <thead>.
+ * - Bibliography moves to a clean trailing page if it doesn't fit on the last content page.
  */
 export function paginateBlocks(
   blocks: ReportBlock[],
-  heights: Record<string, number>,
+  measurements: PageMeasurements,
   pageHeight: number = A4_CONTENT_HEIGHT_PX,
 ): A4Page[] {
+  const { blockHeights, tableMeasurements, coverHeight, bibliographyHeight } =
+    measurements;
+
   const pages: A4Page[] = [];
   let currentItems: PageSlice[] = [];
-  let usedHeight = 0;
+  let usedHeight =
+    coverHeight > 0 ? Math.min(coverHeight, pageHeight * 0.75) : 0;
 
   const pushPage = () => {
-    if (currentItems.length > 0) {
-      pages.push({ pageNumber: pages.length + 1, items: currentItems });
+    if (currentItems.length > 0 || pages.length === 0) {
+      pages.push({
+        pageNumber: pages.length + 1,
+        items: currentItems,
+        includeCover: pages.length === 0 && coverHeight > 0,
+      });
       currentItems = [];
       usedHeight = 0;
     }
@@ -56,13 +81,12 @@ export function paginateBlocks(
       pushPage();
     }
 
-    const measured = Math.max(24, heights[block.id] ?? 120);
+    const measured = Math.max(24, blockHeights[block.id] ?? 120);
 
-    // Keep heading attached to at least a small slice of the following block.
     if (block.type === "heading") {
       const nextBlock = blocks[i + 1];
       const nextHeight = nextBlock
-        ? Math.min(140, heights[nextBlock.id] ?? 80)
+        ? Math.min(140, blockHeights[nextBlock.id] ?? 80)
         : 0;
       if (
         currentItems.length > 0 &&
@@ -75,7 +99,6 @@ export function paginateBlocks(
       continue;
     }
 
-    // Atomic blocks (ECharts, CustomHtml, short tables, paragraphs, quotes)
     if (block.type !== "table" || usedHeight + measured <= pageHeight) {
       if (currentItems.length > 0 && usedHeight + measured > pageHeight) {
         pushPage();
@@ -85,7 +108,7 @@ export function paginateBlocks(
       continue;
     }
 
-    // Oversized table: slice rows across pages and repeat headers on each page.
+    // Oversized table: slice rows using real measured row heights.
     const rows = Array.isArray(block.rows) ? block.rows : [];
     if (rows.length === 0) {
       if (currentItems.length > 0) {
@@ -96,20 +119,38 @@ export function paginateBlocks(
       continue;
     }
 
-    const estRowHeight = Math.max(
-      26,
-      Math.round((measured - DEFAULT_TABLE_CHROME_PX) / rows.length) ||
-        DEFAULT_ROW_HEIGHT_PX,
-    );
+    const tableMetrics = tableMeasurements[block.id];
+    const theadHeight =
+      tableMetrics && tableMetrics.theadHeight > 0
+        ? tableMetrics.theadHeight
+        : 40;
+    const tfootHeight = tableMetrics ? tableMetrics.tfootHeight : 0;
+    const chromeHeight = DEFAULT_TABLE_CAPTION_PX + theadHeight;
+
     let cursor = 0;
     while (cursor < rows.length) {
-      const available = pageHeight - usedHeight - DEFAULT_TABLE_CHROME_PX;
-      const fitRows = Math.floor(available / estRowHeight);
-      if (fitRows < 2 && currentItems.length > 0) {
+      const available = pageHeight - usedHeight - chromeHeight;
+      let accHeight = 0;
+      let count = 0;
+
+      while (cursor + count < rows.length) {
+        const rowH =
+          tableMetrics?.rowHeights[cursor + count] ?? DEFAULT_ROW_HEIGHT_PX;
+        const isFinalRow = cursor + count === rows.length - 1;
+        const needed = rowH + (isFinalRow ? tfootHeight : 0);
+        if (accHeight + needed > available) {
+          break;
+        }
+        accHeight += rowH;
+        count += 1;
+      }
+
+      if (count === 0 && currentItems.length > 0) {
         pushPage();
         continue;
       }
-      const take = Math.max(1, fitRows);
+
+      const take = Math.max(1, count);
       const nextCursor = Math.min(rows.length, cursor + take);
       const isLast = nextCursor === rows.length;
       currentItems.push({
@@ -119,8 +160,7 @@ export function paginateBlocks(
         includeSummary: isLast,
         continuation: cursor > 0,
       });
-      usedHeight +=
-        DEFAULT_TABLE_CHROME_PX + (nextCursor - cursor) * estRowHeight;
+      usedHeight += chromeHeight + accHeight + (isLast ? tfootHeight : 0);
       cursor = nextCursor;
       if (!isLast) {
         pushPage();
@@ -129,5 +169,43 @@ export function paginateBlocks(
   }
 
   pushPage();
+
+  if (bibliographyHeight > 0 && pages.length > 0) {
+    const lastPage = pages[pages.length - 1];
+    if (lastPage) {
+      const lastPageUsed = lastPage.items.reduce(
+        (sum, slice) => {
+          if (slice.rowStart !== undefined && slice.rowEnd !== undefined) {
+            const metrics = tableMeasurements[slice.block.id];
+            const rowsCost = metrics
+              ? metrics.rowHeights
+                  .slice(slice.rowStart, slice.rowEnd)
+                  .reduce((a, b) => a + b, 0)
+              : (slice.rowEnd - slice.rowStart) * DEFAULT_ROW_HEIGHT_PX;
+            return (
+              sum +
+              DEFAULT_TABLE_CAPTION_PX +
+              (metrics?.theadHeight ?? 40) +
+              rowsCost +
+              (slice.includeSummary ? (metrics?.tfootHeight ?? 0) : 0)
+            );
+          }
+          return sum + (blockHeights[slice.block.id] ?? 80);
+        },
+        lastPage.includeCover ? Math.min(coverHeight, pageHeight * 0.75) : 0,
+      );
+
+      if (lastPageUsed + bibliographyHeight <= pageHeight) {
+        lastPage.includeBibliography = true;
+      } else {
+        pages.push({
+          pageNumber: pages.length + 1,
+          items: [],
+          includeBibliography: true,
+        });
+      }
+    }
+  }
+
   return pages;
 }

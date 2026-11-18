@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type {
   Align,
   CellValue,
@@ -49,7 +50,7 @@ function formatCell(value: CellValue | undefined): {
   return { text: "" };
 }
 
-export function TableBlockView({
+export const TableBlockView = memo(function TableBlockView({
   table,
   layout,
   rowStart = 0,
@@ -81,7 +82,7 @@ export function TableBlockView({
             <col key={col.key} style={{ width: col.width_css }} />
           ))}
         </colgroup>
-        <thead>
+        <thead data-measure-thead="true">
           {headerRows.map((row, rowIdx) => (
             <tr
               key={rowIdx}
@@ -103,7 +104,7 @@ export function TableBlockView({
         </thead>
         <tbody>
           {visibleRows.map((row, rIdx) => {
-            const rowObj = Array.isArray(row)
+            const rowObj: Record<string, CellValue> = Array.isArray(row)
               ? Object.fromEntries(
                   leafCols.map((col, idx) => [col.key, row[idx] ?? null]),
                 )
@@ -113,6 +114,7 @@ export function TableBlockView({
             return (
               <tr
                 key={rowStart + rIdx}
+                data-measure-row-index={rowStart + rIdx}
                 className="border-b border-black/10 even:bg-black/[0.015] dark:border-white/10 dark:even:bg-white/[0.02]"
               >
                 {leafCols.map((col) => {
@@ -139,9 +141,9 @@ export function TableBlockView({
           })}
         </tbody>
         {summaryRows.length > 0 && (
-          <tfoot>
+          <tfoot data-measure-tfoot="true">
             {summaryRows.map((row, sIdx) => {
-              const rowObj = Array.isArray(row)
+              const rowObj: Record<string, CellValue> = Array.isArray(row)
                 ? Object.fromEntries(
                     leafCols.map((col, idx) => [col.key, row[idx] ?? null]),
                   )
@@ -173,4 +175,4 @@ export function TableBlockView({
       </table>
     </div>
   );
-}
+});

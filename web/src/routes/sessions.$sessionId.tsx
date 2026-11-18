@@ -33,7 +33,12 @@ import {
   type LiveSubagentRun,
 } from "@/components/chat/SessionStreamView";
 import { CommentsDrawer } from "@/components/report/CommentsDrawer";
+import {
+  FloatingCommentPopover,
+  type FloatingCommentAnchor,
+} from "@/components/report/FloatingCommentPopover";
 import { ReportViewer } from "@/components/report/ReportViewer";
+import { TocOutline } from "@/components/report/TocOutline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -69,6 +74,19 @@ function emptyLiveTrace(agentId: string): LiveAgentTrace {
     tools: [],
     isStreaming: true,
   };
+}
+
+function matchesSubagent(
+  sub: LiveSubagentRun,
+  agentId: string,
+  parentRunId?: string | null,
+): boolean {
+  return (
+    (parentRunId !== undefined &&
+      parentRunId !== null &&
+      sub.subagentRunId === parentRunId) ||
+    sub.agentName === agentId
+  );
 }
 
 function SessionWorkspaceRoute() {
@@ -116,10 +134,17 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   >(() => new Map());
   const previewTimersRef = useRef<Map<string, number>>(new Map());
 
+  const [activeActorsBySection, setActiveActorsBySection] = useState<
+    Map<string, string[]>
+  >(() => new Map());
+  const presenceTimersRef = useRef<Map<string, number>>(new Map());
+
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [selectedCommentBlock, setSelectedCommentBlock] = useState<
     string | null
   >(null);
+  const [floatingComment, setFloatingComment] =
+    useState<FloatingCommentAnchor | null>(null);
   const [mobileTab, setMobileTab] = useState<"report" | "chat">("report");
 
   const effectiveDocId =
@@ -159,12 +184,21 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     enabled: Boolean(effectiveDocId),
   });
 
-  // Subscribe to Session SSE
-  const afterSeq = sessionQuery.data?.last_event_seq ?? 0;
+  const afterSeqRef = useRef<number>(0);
+  const lastEventSeq = sessionQuery.data?.last_event_seq ?? 0;
+  useEffect(() => {
+    afterSeqRef.current = lastEventSeq;
+  }, [lastEventSeq]);
+
+  // Subscribe to Session SSE (stable connection across query invalidations)
   useEffect(() => {
     if (!sessionQuery.isSuccess) return undefined;
 
     const handleEvent = (ev: SessionEvent) => {
+      const isSubagentEvent =
+        Boolean(ev.parent_run_id) ||
+        (ev.agent_id !== "main" && ev.agent_id.length > 0);
+
       if (ev.event === "doc_linked") {
         setLiveDocId(ev.doc_id);
         void queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -173,11 +207,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         setLiveMain(emptyLiveTrace("main"));
         setLiveSubagents([]);
       } else if (ev.event === "thinking_delta") {
-        if (ev.parent_run_id) {
+        if (isSubagentEvent) {
           setLiveSubagents((prev) =>
             prev.map((sub) =>
-              sub.agentName === ev.agent_id ||
-              sub.subagentRunId === ev.parent_run_id
+              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
                 ? {
                     ...sub,
                     trace: {
@@ -195,10 +228,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           }));
         }
       } else if (ev.event === "text_delta") {
-        if (ev.parent_run_id) {
+        if (isSubagentEvent) {
           setLiveSubagents((prev) =>
             prev.map((sub) =>
-              sub.agentName === ev.agent_id
+              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
                 ? {
                     ...sub,
                     trace: { ...sub.trace, text: sub.trace.text + ev.delta },
@@ -218,10 +251,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           detail: ev.detail ?? undefined,
           sectionId: ev.section_id ?? undefined,
         };
-        if (ev.parent_run_id) {
+        if (isSubagentEvent) {
           setLiveSubagents((prev) =>
             prev.map((sub) =>
-              sub.agentName === ev.agent_id
+              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
                 ? { ...sub, trace: { ...sub.trace, taskFocus: focus } }
                 : sub,
             ),
@@ -240,31 +273,61 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           inputPreview: ev.input_preview,
           truncated: ev.truncated,
         };
-        setLiveMain((prev) => ({
-          ...(prev ?? emptyLiveTrace("main")),
-          tools: [...(prev?.tools ?? []), toolItem],
-        }));
+        if (isSubagentEvent) {
+          setLiveSubagents((prev) =>
+            prev.map((sub) =>
+              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
+                ? {
+                    ...sub,
+                    trace: {
+                      ...sub.trace,
+                      tools: [...sub.trace.tools, toolItem],
+                    },
+                  }
+                : sub,
+            ),
+          );
+        } else {
+          setLiveMain((prev) => ({
+            ...(prev ?? emptyLiveTrace("main")),
+            tools: [...(prev?.tools ?? []), toolItem],
+          }));
+        }
       } else if (ev.event === "tool_call_finished") {
-        setLiveMain((prev) =>
-          prev
-            ? {
-                ...prev,
-                tools: prev.tools.map((t) =>
-                  t.toolCallId === ev.tool_call_id
-                    ? {
-                        ...t,
-                        status:
-                          ev.status === "failed" || ev.status === "error"
-                            ? "failed"
-                            : "completed",
-                        outputPreview: ev.output_preview,
-                        durationMs: ev.duration_ms,
-                      }
-                    : t,
-                ),
-              }
-            : prev,
-        );
+        const nextStatus: "completed" | "failed" =
+          ev.status === "failed" || ev.status === "error"
+            ? "failed"
+            : "completed";
+        const updateTools = (tools: LiveAgentTrace["tools"]) =>
+          tools.map((t) =>
+            t.toolCallId === ev.tool_call_id
+              ? {
+                  ...t,
+                  status: nextStatus,
+                  outputPreview: ev.output_preview,
+                  durationMs: ev.duration_ms,
+                }
+              : t,
+          );
+        if (isSubagentEvent) {
+          setLiveSubagents((prev) =>
+            prev.map((sub) =>
+              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
+                ? {
+                    ...sub,
+                    trace: {
+                      ...sub.trace,
+                      tools: updateTools(sub.trace.tools),
+                    },
+                  }
+                : sub,
+            ),
+          );
+        } else {
+          setLiveMain((prev) =>
+            prev ? { ...prev, tools: updateTools(prev.tools) } : prev,
+          );
+        }
       } else if (ev.event === "subagent_started") {
         setLiveSubagents((prev) => [
           ...prev,
@@ -346,16 +409,22 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       }
     };
 
-    return subscribeSessionEvents(sessionId, afterSeq, {
+    return subscribeSessionEvents(sessionId, afterSeqRef.current, {
       onEvent: handleEvent,
     });
-  }, [sessionId, sessionQuery.isSuccess, afterSeq, queryClient]);
+  }, [sessionId, sessionQuery.isSuccess, queryClient]);
+
+  const currentRevRef = useRef<number>(0);
+  const currentRev = docQuery.data?.current_rev ?? 0;
+  useEffect(() => {
+    currentRevRef.current = currentRev;
+  }, [currentRev]);
 
   // Subscribe to Report SSE once doc_id is bound
-  const currentRev = docQuery.data?.current_rev ?? 0;
   useEffect(() => {
     if (!effectiveDocId || !docQuery.isSuccess) return undefined;
     const timers = previewTimersRef.current;
+    const presenceTimers = presenceTimersRef.current;
 
     const clearPreviewIds = (ids: string[]) => {
       if (ids.length === 0) return;
@@ -373,61 +442,113 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       });
     };
 
-    const unsub = subscribeDocumentEvents(effectiveDocId, currentRev, {
-      onRevision(delta) {
-        if (delta.cleared_preview_ids && delta.cleared_preview_ids.length > 0) {
-          clearPreviewIds(delta.cleared_preview_ids);
+    const removeActor = (actor: string) => {
+      setActiveActorsBySection((prev) => {
+        let changed = false;
+        const next = new Map<string, string[]>();
+        for (const [sec, actors] of prev.entries()) {
+          const filtered = actors.filter((a) => a !== actor);
+          if (filtered.length !== actors.length) {
+            changed = true;
+          }
+          if (filtered.length > 0) {
+            next.set(sec, filtered);
+          }
         }
-        void queryClient.invalidateQueries({
-          queryKey: ["doc", effectiveDocId],
-        });
-      },
-      onEphemeralPreview(preview) {
-        setEphemeralPreviews((prev) => {
-          const existing = prev.get(preview.preview_id);
-          if (
-            existing?.seq !== undefined &&
-            existing.seq !== null &&
-            preview.seq !== undefined &&
-            preview.seq !== null &&
-            preview.seq < existing.seq
-          ) {
-            return prev;
-          }
-          const next = new Map(prev);
-          if (preview.status === "streaming") {
-            next.set(preview.preview_id, preview);
-          } else {
-            next.delete(preview.preview_id);
-          }
-          return next;
-        });
+        return changed ? next : prev;
+      });
+    };
 
-        const oldTimer = timers.get(preview.preview_id);
-        if (oldTimer !== undefined) {
-          window.clearTimeout(oldTimer);
-        }
-        const ttl = preview.ttl_ms ?? 15_000;
-        const timerId = window.setTimeout(() => {
-          clearPreviewIds([preview.preview_id]);
-        }, ttl);
-        timers.set(preview.preview_id, timerId);
+    const unsub = subscribeDocumentEvents(
+      effectiveDocId,
+      currentRevRef.current,
+      {
+        onRevision(delta) {
+          if (
+            delta.cleared_preview_ids &&
+            delta.cleared_preview_ids.length > 0
+          ) {
+            clearPreviewIds(delta.cleared_preview_ids);
+          }
+          void queryClient.invalidateQueries({
+            queryKey: ["doc", effectiveDocId],
+          });
+        },
+        onEphemeralPreview(preview) {
+          setEphemeralPreviews((prev) => {
+            const existing = prev.get(preview.preview_id);
+            if (
+              existing?.seq !== undefined &&
+              existing.seq !== null &&
+              preview.seq !== undefined &&
+              preview.seq !== null &&
+              preview.seq < existing.seq
+            ) {
+              return prev;
+            }
+            const next = new Map(prev);
+            if (preview.status === "streaming") {
+              next.set(preview.preview_id, preview);
+            } else {
+              next.delete(preview.preview_id);
+            }
+            return next;
+          });
+
+          const oldTimer = timers.get(preview.preview_id);
+          if (oldTimer !== undefined) {
+            window.clearTimeout(oldTimer);
+          }
+          const ttl = preview.ttl_ms ?? 15_000;
+          const timerId = window.setTimeout(() => {
+            clearPreviewIds([preview.preview_id]);
+          }, ttl);
+          timers.set(preview.preview_id, timerId);
+        },
+        onEphemeralClear(clear) {
+          clearPreviewIds(clear.preview_ids);
+        },
+        onAgentPresence(presence) {
+          const prevTimer = presenceTimers.get(presence.actor);
+          if (prevTimer !== undefined) {
+            window.clearTimeout(prevTimer);
+            presenceTimers.delete(presence.actor);
+          }
+          if (presence.status === "idle" || !presence.section_id) {
+            removeActor(presence.actor);
+            return;
+          }
+          const sectionId = presence.section_id;
+          setActiveActorsBySection((prev) => {
+            const next = new Map<string, string[]>();
+            for (const [sec, actors] of prev.entries()) {
+              const filtered = actors.filter((a) => a !== presence.actor);
+              if (filtered.length > 0) {
+                next.set(sec, filtered);
+              }
+            }
+            const curr = next.get(sectionId) ?? [];
+            next.set(sectionId, [...curr, presence.actor]);
+            return next;
+          });
+          const timerId = window.setTimeout(() => {
+            removeActor(presence.actor);
+            presenceTimers.delete(presence.actor);
+          }, 10_000);
+          presenceTimers.set(presence.actor, timerId);
+        },
+        onCommentUpdated() {
+          void queryClient.invalidateQueries({
+            queryKey: ["comments", effectiveDocId],
+          });
+        },
+        onSyncRequired() {
+          void queryClient.invalidateQueries({
+            queryKey: ["doc", effectiveDocId],
+          });
+        },
       },
-      onEphemeralClear(clear) {
-        clearPreviewIds(clear.preview_ids);
-      },
-      onAgentPresence() {},
-      onCommentUpdated() {
-        void queryClient.invalidateQueries({
-          queryKey: ["comments", effectiveDocId],
-        });
-      },
-      onSyncRequired() {
-        void queryClient.invalidateQueries({
-          queryKey: ["doc", effectiveDocId],
-        });
-      },
-    });
+    );
 
     return () => {
       unsub();
@@ -435,8 +556,12 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         window.clearTimeout(timer);
       }
       timers.clear();
+      for (const timer of presenceTimers.values()) {
+        window.clearTimeout(timer);
+      }
+      presenceTimers.clear();
     };
-  }, [effectiveDocId, docQuery.isSuccess, currentRev, queryClient]);
+  }, [effectiveDocId, docQuery.isSuccess, queryClient]);
 
   const blockCount = docQuery.data?.document.blocks.length ?? 0;
   const hasReportData = useMemo(() => {
@@ -474,23 +599,24 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const jumpToSection = (sectionId: string) => {
+  const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);
     el?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
+  }, []);
 
   const openCommentsCount =
     commentsQuery.data?.filter((c) => c.status !== "archived").length ?? 0;
 
   const chatPane = (
     <div className="flex h-full flex-col bg-background">
-      <div className="flex-1 overflow-y-auto px-4">
+      <div className="flex-1 overflow-y-auto overscroll-contain px-4">
         <div
           className={hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"}
         >
           <SessionStreamView
             sessionId={sessionId}
             messages={sessionQuery.data?.messages ?? []}
+            attachments={sessionQuery.data?.attachments ?? []}
             liveMain={liveMain}
             liveSubagents={liveSubagents}
             pendingQuestion={effectivePendingQuestion}
@@ -537,16 +663,15 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const reportPane =
     docQuery.data && effectiveDocId ? (
-      <div className="h-full overflow-y-auto bg-muted/20">
+      <div className="h-full overflow-y-auto overscroll-contain bg-muted/20">
         <ReportViewer
           document={docQuery.data.document}
           computed={docQuery.data.computed}
           viewMode={prefs.reportViewMode}
           ephemeralPreviews={ephemeralPreviews}
           comments={commentsQuery.data}
-          onOpenCommentForBlock={(blockId) => {
-            setSelectedCommentBlock(blockId);
-            setCommentsOpen(true);
+          onOpenCommentForBlock={(anchor) => {
+            setFloatingComment(anchor);
           }}
         />
       </div>
@@ -603,6 +728,15 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 </Button>
               </div>
 
+              {docQuery.data && (
+                <TocOutline
+                  nodes={docQuery.data.computed.toc_tree}
+                  activeActorsBySection={activeActorsBySection}
+                  comments={commentsQuery.data ?? []}
+                  onJumpToSection={jumpToSection}
+                />
+              )}
+
               <Button
                 type="button"
                 size="icon-sm"
@@ -616,7 +750,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               >
                 <MessageSquareQuoteIcon className="size-4" />
                 {openCommentsCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white">
+                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
                     {openCommentsCount}
                   </span>
                 )}
@@ -717,40 +851,80 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       </div>
 
       {effectiveDocId && (
-        <CommentsDrawer
-          open={commentsOpen}
-          onOpenChange={setCommentsOpen}
-          threads={commentsQuery.data ?? []}
-          selectedBlockId={selectedCommentBlock}
-          onAddComment={async (blockId, body) => {
-            await createComment(effectiveDocId, {
-              block_id: blockId,
-              author: "reviewer",
-              body,
-            });
-            void queryClient.invalidateQueries({
-              queryKey: ["comments", effectiveDocId],
-            });
-          }}
-          onReply={async (threadId, body) => {
-            await replyComment(effectiveDocId, threadId, {
-              author: "reviewer",
-              body,
-            });
-            void queryClient.invalidateQueries({
-              queryKey: ["comments", effectiveDocId],
-            });
-          }}
-          onUpdateStatus={async (threadId, status: CommentStatus) => {
-            await updateCommentStatus(effectiveDocId, threadId, status);
-            void queryClient.invalidateQueries({
-              queryKey: ["comments", effectiveDocId],
-            });
-          }}
-          onSelectBlock={(blockId) => {
-            jumpToSection(blockId);
-          }}
-        />
+        <>
+          <FloatingCommentPopover
+            anchor={floatingComment}
+            threads={commentsQuery.data ?? []}
+            onClose={() => setFloatingComment(null)}
+            onAddComment={async (blockId, body, quote) => {
+              await createComment(effectiveDocId, {
+                block_id: blockId,
+                author: "reviewer",
+                body,
+                quote,
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["comments", effectiveDocId],
+              });
+            }}
+            onReply={async (threadId, body) => {
+              await replyComment(effectiveDocId, threadId, {
+                author: "reviewer",
+                body,
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["comments", effectiveDocId],
+              });
+            }}
+            onUpdateStatus={async (threadId, status: CommentStatus) => {
+              await updateCommentStatus(effectiveDocId, threadId, status);
+              void queryClient.invalidateQueries({
+                queryKey: ["comments", effectiveDocId],
+              });
+            }}
+            onOpenDrawer={() => {
+              setSelectedCommentBlock(floatingComment?.blockId ?? null);
+              setCommentsOpen(true);
+            }}
+          />
+
+          <CommentsDrawer
+            docId={effectiveDocId}
+            open={commentsOpen}
+            onOpenChange={setCommentsOpen}
+            threads={commentsQuery.data ?? []}
+            selectedBlockId={selectedCommentBlock}
+            onAddComment={async (blockId, body, quote) => {
+              await createComment(effectiveDocId, {
+                block_id: blockId,
+                author: "reviewer",
+                body,
+                quote,
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["comments", effectiveDocId],
+              });
+            }}
+            onReply={async (threadId, body) => {
+              await replyComment(effectiveDocId, threadId, {
+                author: "reviewer",
+                body,
+              });
+              void queryClient.invalidateQueries({
+                queryKey: ["comments", effectiveDocId],
+              });
+            }}
+            onUpdateStatus={async (threadId, status: CommentStatus) => {
+              await updateCommentStatus(effectiveDocId, threadId, status);
+              void queryClient.invalidateQueries({
+                queryKey: ["comments", effectiveDocId],
+              });
+            }}
+            onSelectBlock={(blockId) => {
+              jumpToSection(blockId);
+            }}
+          />
+        </>
       )}
     </div>
   );

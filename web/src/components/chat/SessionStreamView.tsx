@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { CompassIcon, UsersIcon } from "lucide-react";
+import { memo, useEffect, useMemo, useRef } from "react";
+import { CompassIcon, FileTextIcon, UsersIcon } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { QuestionCard } from "@/components/chat/QuestionCard";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
@@ -7,6 +7,14 @@ import {
   ToolCallTrace,
   type ToolCallTraceItem,
 } from "@/components/chat/ToolCallTrace";
+import {
+  Attachment,
+  AttachmentContent,
+  AttachmentDescription,
+  AttachmentGroup,
+  AttachmentMedia,
+  AttachmentTitle,
+} from "@/components/ui/attachment";
 import { Badge } from "@/components/ui/badge";
 import {
   Message,
@@ -24,6 +32,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace";
 import type {
+  AttachmentMeta,
   PendingQuestion,
   QuestionAnswer,
   SessionMessage,
@@ -51,6 +60,7 @@ export interface LiveSubagentRun {
 export interface SessionStreamViewProps {
   sessionId: string;
   messages: SessionMessage[];
+  attachments?: AttachmentMeta[];
   liveMain: LiveAgentTrace | null;
   liveSubagents: LiveSubagentRun[];
   pendingQuestion: PendingQuestion | null;
@@ -68,9 +78,64 @@ export interface SessionStreamViewProps {
   onJumpToSection?: (sectionId: string) => void;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+const HistoricalMessageItem = memo(function HistoricalMessageItem({
+  msg,
+  attachmentMap,
+}: {
+  msg: SessionMessage;
+  attachmentMap: Map<string, AttachmentMeta>;
+}) {
+  const msgAttachmentIds = msg.attachment_ids ?? [];
+  return (
+    <MessageGroup>
+      <Message align={msg.role === "user" ? "end" : "start"}>
+        <MessageHeader>
+          {msg.role === "user" ? "你" : "Quire Agent"}
+        </MessageHeader>
+        {msg.role === "user" && msgAttachmentIds.length > 0 && (
+          <AttachmentGroup className="mb-1.5 justify-end">
+            {msgAttachmentIds.map((attId) => {
+              const meta = attachmentMap.get(attId);
+              return (
+                <Attachment key={attId} size="xs">
+                  <AttachmentMedia variant="icon">
+                    <FileTextIcon className="size-3.5" />
+                  </AttachmentMedia>
+                  <AttachmentContent>
+                    <AttachmentTitle>{meta?.filename ?? attId}</AttachmentTitle>
+                    {meta && (
+                      <AttachmentDescription>
+                        {formatBytes(meta.size_bytes)}
+                      </AttachmentDescription>
+                    )}
+                  </AttachmentContent>
+                </Attachment>
+              );
+            })}
+          </AttachmentGroup>
+        )}
+        <MessageContent className="prose prose-sm dark:prose-invert max-w-none">
+          {msg.role === "user" ? (
+            <p className="m-0 whitespace-pre-wrap">{msg.content}</p>
+          ) : (
+            <Streamdown>{msg.content}</Streamdown>
+          )}
+        </MessageContent>
+      </Message>
+    </MessageGroup>
+  );
+});
+
 export function SessionStreamView({
   sessionId,
   messages,
+  attachments = [],
   liveMain,
   liveSubagents,
   pendingQuestion,
@@ -81,8 +146,18 @@ export function SessionStreamView({
 }: SessionStreamViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const visibleMessages = messages.filter(
-    (msg) => msg.role === "user" || msg.role === "assistant",
+  const attachmentMap = useMemo(() => {
+    const map = new Map<string, AttachmentMeta>();
+    for (const item of attachments) {
+      map.set(item.attachment_id, item);
+    }
+    return map;
+  }, [attachments]);
+
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter((msg) => msg.role === "user" || msg.role === "assistant"),
+    [messages],
   );
 
   const scrollSignal = [
@@ -104,20 +179,11 @@ export function SessionStreamView({
   return (
     <div className="flex flex-col gap-4 py-4">
       {visibleMessages.map((msg) => (
-        <MessageGroup key={msg.message_id}>
-          <Message align={msg.role === "user" ? "end" : "start"}>
-            <MessageHeader>
-              {msg.role === "user" ? "你" : "Quire Agent"}
-            </MessageHeader>
-            <MessageContent className="prose prose-sm dark:prose-invert max-w-none">
-              {msg.role === "user" ? (
-                <p className="m-0 whitespace-pre-wrap">{msg.content}</p>
-              ) : (
-                <Streamdown>{msg.content}</Streamdown>
-              )}
-            </MessageContent>
-          </Message>
-        </MessageGroup>
+        <HistoricalMessageItem
+          key={msg.message_id}
+          msg={msg}
+          attachmentMap={attachmentMap}
+        />
       ))}
 
       {liveMain && (
