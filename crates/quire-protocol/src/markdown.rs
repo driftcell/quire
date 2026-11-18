@@ -5,7 +5,10 @@
 //! flattened to GFM, citations are expanded to footnote markers with source titles, and chart
 //! series are projected into compact data tables for numeric verification.
 
-use std::{collections::BTreeMap, fmt::Write as _};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Write as _,
+};
 
 use thiserror::Error;
 
@@ -13,6 +16,7 @@ use crate::{
     block::{Block, BlockKind, EchartsBlock, TableBlock, format_number},
     citation::resolve_citations,
     computed::{BlockFraming, compute_block_framing},
+    echarts::{entries as chart_entries, series as chart_series},
     ids::{BlockId, SourceId},
     inline::{InlineNode, parse_inline},
     json::merge_optional_json,
@@ -400,58 +404,12 @@ impl<'a> MarkdownProjector<'a> {
             return;
         }
         let option = effective_chart_option(chart);
-        let series = option
-            .get("series")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let categories = chart_categories(&option);
-        let mut wrote_table = false;
-        for (index, series) in series.iter().enumerate() {
-            let Some(data) = series.get("data").and_then(serde_json::Value::as_array) else {
-                continue;
-            };
-            if data.is_empty() {
-                continue;
-            }
-            let name = series
-                .get("name")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-                .unwrap_or_else(|| format!("Series {}", index + 1));
-            let kind = series
-                .get("type")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("chart");
-            let _ = writeln!(output, "_Chart data: {name} ({kind})_");
-            output.push_str("| Category | Value |\n| :--- | ---: |\n");
-            let mut row_count = 0usize;
-            for (data_index, item) in data.iter().enumerate().take(MAX_CHART_ROWS) {
-                if let Some((category, value)) =
-                    chart_point(item, categories.get(data_index), data_index)
-                {
-                    let _ = writeln!(
-                        output,
-                        "| {} | {} |",
-                        escape_table_cell(&category),
-                        escape_table_cell(&value)
-                    );
-                    row_count += 1;
-                }
-            }
-            if data.len() > MAX_CHART_ROWS {
-                let _ = writeln!(
-                    output,
-                    "| _truncated_ | {} of {} points shown |",
-                    MAX_CHART_ROWS,
-                    data.len()
-                );
-            }
-            if row_count > 0 {
-                wrote_table = true;
-                output.push('\n');
-            }
-        }
+        let series = chart_series(&option);
+        let mut wrote_table = write_dataset_tables(output, &option);
+        wrote_table |= write_relation_tables(output, &series);
+        wrote_table |= write_radar_tables(output, &option, &series);
+        wrote_table |= write_hierarchy_tables(output, &series);
+        wrote_table |= write_cartesian_tables(output, &option, &series);
         if !wrote_table {
             output.push_str("_No chart series data supplied; use the fallback summary above._\n\n");
         }
@@ -507,6 +465,582 @@ pub fn effective_chart_option(chart: &EchartsBlock) -> serde_json::Value {
         .is_some_and(|title| !title.trim().is_empty());
     let _ = strip_duplicate_inner_title(&mut value, has_outer_title);
     value
+}
+
+fn write_dataset_tables(output: &mut String, option: &serde_json::Value) -> bool {
+    let mut wrote = false;
+    for (index, dataset) in chart_entries(option.get("dataset")).iter().enumerate() {
+        let Some(source) = dataset.get("source") else {
+            continue;
+        };
+        let rows: Vec<&serde_json::Value> = match source {
+            serde_json::Value::Array(items) => items.iter().collect(),
+            serde_json::Value::Object(_) => vec![source],
+            _ => continue,
+        };
+        let Some((header, body)) = dataset_shape(&rows) else {
+            continue;
+        };
+        if header.is_empty() || body.is_empty() {
+            continue;
+        }
+        let label = dataset
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("Dataset {}", index + 1));
+        let _ = writeln!(output, "_Chart data: {label} (dataset)_");
+        write_markdown_table(output, &header, &body);
+        wrote = true;
+    }
+    wrote
+}
+
+fn dataset_shape(rows: &[&serde_json::Value]) -> Option<(Vec<String>, Vec<Vec<String>>)> {
+    let object_rows: Vec<&serde_json::Map<String, serde_json::Value>> =
+        rows.iter().filter_map(|row| row.as_object()).collect();
+    if object_rows.len() == rows.len() && !object_rows.is_empty() {
+        let mut keys = BTreeSet::new();
+        for row in &object_rows {
+            keys.extend(row.keys().cloned());
+        }
+        let header: Vec<String> = keys.into_iter().collect();
+        let body: Vec<Vec<String>> = object_rows
+            .iter()
+            .map(|row| {
+                header
+                    .iter()
+                    .map(|key| row.get(key).map(json_scalar_label).unwrap_or_default())
+                    .collect()
+            })
+            .collect();
+        return Some((header, body));
+    }
+    let array_rows: Vec<&Vec<serde_json::Value>> =
+        rows.iter().filter_map(|row| row.as_array()).collect();
+    if array_rows.len() != rows.len() || array_rows.is_empty() {
+        return None;
+    }
+    let has_header = rows.len() > 1
+        && rows.first().is_some_and(|row| {
+            row.as_array().is_some_and(|cells| {
+                !cells.is_empty() && cells.iter().all(serde_json::Value::is_string)
+            })
+        });
+    let width = array_rows.iter().map(|row| row.len()).max().unwrap_or(0);
+    if width == 0 {
+        return None;
+    }
+    let header: Vec<String> = if has_header {
+        rows.first()
+            .and_then(|row| row.as_array())
+            .map(|cells| cells.iter().map(json_scalar_label).collect())
+            .unwrap_or_default()
+    } else {
+        (1..=width)
+            .map(|column| format!("Column {column}"))
+            .collect()
+    };
+    let body: Vec<Vec<String>> = rows
+        .iter()
+        .skip(if has_header { 1 } else { 0 })
+        .filter_map(|row| row.as_array())
+        .map(|cells| {
+            (0..header.len())
+                .map(|index| cells.get(index).map(json_scalar_label).unwrap_or_default())
+                .collect()
+        })
+        .collect();
+    Some((header, body))
+}
+
+fn write_relation_tables(output: &mut String, series: &[&serde_json::Value]) -> bool {
+    let mut wrote = false;
+    for (index, series) in series.iter().enumerate() {
+        let Some(kind) = series_type(series) else {
+            continue;
+        };
+        if !matches!(kind, "sankey" | "graph" | "chord") {
+            continue;
+        }
+        let links = series
+            .get("links")
+            .or_else(|| series.get("edges"))
+            .and_then(serde_json::Value::as_array);
+        let Some(links) = links else {
+            continue;
+        };
+        let body: Vec<Vec<String>> = links
+            .iter()
+            .filter_map(relation_row)
+            .take(MAX_CHART_ROWS + 1)
+            .collect();
+        if body.is_empty() {
+            continue;
+        }
+        let name = series_name(series, index);
+        let _ = writeln!(output, "_Chart data: {name} ({kind} links)_");
+        write_markdown_table(
+            output,
+            &["Source".into(), "Target".into(), "Value".into()],
+            &body,
+        );
+        wrote = true;
+    }
+    wrote
+}
+
+fn relation_row(link: &serde_json::Value) -> Option<Vec<String>> {
+    if let Some(object) = link.as_object() {
+        let source = object
+            .get("source")
+            .or_else(|| object.get("from"))
+            .map(json_scalar_label)?;
+        let target = object
+            .get("target")
+            .or_else(|| object.get("to"))
+            .map(json_scalar_label)?;
+        let value = object
+            .get("value")
+            .map(json_scalar_label)
+            .unwrap_or_default();
+        return Some(vec![source, target, value]);
+    }
+    let values = link.as_array()?;
+    let source = values.first().map(json_scalar_label)?;
+    let target = values.get(1).map(json_scalar_label)?;
+    let value = values.get(2).map(json_scalar_label).unwrap_or_default();
+    Some(vec![source, target, value])
+}
+
+fn write_radar_tables(
+    output: &mut String,
+    option: &serde_json::Value,
+    series: &[&serde_json::Value],
+) -> bool {
+    let radars = chart_entries(option.get("radar"));
+    let mut wrote = false;
+    for (index, series) in series.iter().enumerate() {
+        if series_type(series) != Some("radar") {
+            continue;
+        }
+        let Some(data) = series
+            .get("data")
+            .and_then(serde_json::Value::as_array)
+            .filter(|data| !data.is_empty())
+        else {
+            continue;
+        };
+        let radar_index = series
+            .get("radarIndex")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(0);
+        let radar = radars
+            .get(radar_index)
+            .copied()
+            .or_else(|| radars.first().copied());
+        let indicators: Vec<String> = radar
+            .and_then(|radar| radar.get("indicator"))
+            .and_then(serde_json::Value::as_array)
+            .map(|indicators| {
+                indicators
+                    .iter()
+                    .enumerate()
+                    .map(|(index, indicator)| {
+                        indicator
+                            .get("name")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| format!("Indicator {}", index + 1))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let name = series_name(series, index);
+        let _ = writeln!(output, "_Chart data: {name} (radar)_");
+        if indicators.is_empty() {
+            let mut body = Vec::new();
+            for item in data.iter().take(MAX_CHART_ROWS) {
+                let label = item
+                    .get("name")
+                    .map(json_scalar_label)
+                    .unwrap_or_else(|| name.clone());
+                let value = item.get("value").map(json_scalar_label).unwrap_or_default();
+                body.push(vec![label, value]);
+            }
+            write_markdown_table(output, &["Series".into(), "Value".into()], &body);
+        } else {
+            let mut header = vec!["Series".to_string()];
+            header.extend(indicators.iter().cloned());
+            let mut body = Vec::new();
+            for item in data.iter().take(MAX_CHART_ROWS) {
+                let label = item
+                    .get("name")
+                    .map(json_scalar_label)
+                    .unwrap_or_else(|| name.clone());
+                let values = item
+                    .get("value")
+                    .and_then(serde_json::Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                let mut row = vec![label];
+                for index in 0..indicators.len() {
+                    row.push(values.get(index).map(json_scalar_label).unwrap_or_default());
+                }
+                body.push(row);
+            }
+            write_markdown_table(output, &header, &body);
+        }
+        wrote = true;
+    }
+    wrote
+}
+
+fn write_hierarchy_tables(output: &mut String, series: &[&serde_json::Value]) -> bool {
+    let mut wrote = false;
+    for (index, series) in series.iter().enumerate() {
+        let Some(kind) = series_type(series) else {
+            continue;
+        };
+        if !matches!(kind, "treemap" | "sunburst" | "tree") {
+            continue;
+        }
+        let nodes: Vec<&serde_json::Value> = match series.get("data") {
+            Some(serde_json::Value::Array(items)) => items.iter().collect(),
+            Some(value @ serde_json::Value::Object(_)) => vec![value],
+            _ => continue,
+        };
+        let mut rows = Vec::new();
+        flatten_hierarchy(&nodes, "", 0, &mut rows);
+        if rows.is_empty() {
+            continue;
+        }
+        let name = series_name(series, index);
+        let _ = writeln!(output, "_Chart data: {name} ({kind})_");
+        let body: Vec<Vec<String>> = rows
+            .into_iter()
+            .take(MAX_CHART_ROWS)
+            .map(|(path, value)| vec![path, value])
+            .collect();
+        write_markdown_table(output, &["Path".into(), "Value".into()], &body);
+        wrote = true;
+    }
+    wrote
+}
+
+fn flatten_hierarchy(
+    nodes: &[&serde_json::Value],
+    parent: &str,
+    depth: usize,
+    rows: &mut Vec<(String, String)>,
+) {
+    if depth > 32 {
+        return;
+    }
+    for node in nodes {
+        let name = node
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("item");
+        let path = if parent.is_empty() {
+            name.to_string()
+        } else {
+            format!("{parent} / {name}")
+        };
+        if let Some(value) = node.get("value").filter(|value| !value.is_null()) {
+            rows.push((path.clone(), json_scalar_label(value)));
+        }
+        if let Some(children) = node.get("children").and_then(serde_json::Value::as_array) {
+            let child_refs: Vec<&serde_json::Value> = children.iter().collect();
+            flatten_hierarchy(&child_refs, &path, depth + 1, rows);
+        }
+    }
+}
+
+fn write_cartesian_tables(
+    output: &mut String,
+    option: &serde_json::Value,
+    series: &[&serde_json::Value],
+) -> bool {
+    let mut simple = Vec::new();
+    let mut multidimensional = Vec::new();
+    for (index, series) in series.iter().enumerate() {
+        let Some(kind) = series_type(series) else {
+            continue;
+        };
+        if matches!(
+            kind,
+            "sankey" | "graph" | "chord" | "radar" | "treemap" | "sunburst" | "tree"
+        ) {
+            continue;
+        }
+        let Some(data) = series
+            .get("data")
+            .and_then(serde_json::Value::as_array)
+            .filter(|data| !data.is_empty())
+        else {
+            continue;
+        };
+        if is_multidimensional(kind, data) {
+            multidimensional.push((index, *series));
+        } else {
+            simple.push((index, *series));
+        }
+    }
+    let mut wrote = false;
+    if simple.len() > 1 {
+        wrote |= write_combined_series_table(output, option, &simple);
+    } else if let Some((index, series)) = simple.first() {
+        wrote |= write_single_series_table(output, option, series, *index);
+    }
+    for (index, series) in multidimensional {
+        wrote |= write_multidimensional_table(output, option, series, index);
+    }
+    wrote
+}
+
+fn write_single_series_table(
+    output: &mut String,
+    option: &serde_json::Value,
+    series: &serde_json::Value,
+    index: usize,
+) -> bool {
+    let Some(data) = series.get("data").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    let name = series_name(series, index);
+    let kind = series_type(series).unwrap_or("chart");
+    let categories = chart_categories(option);
+    let _ = writeln!(output, "_Chart data: {name} ({kind})_");
+    output.push_str("| Category | Value |\n| :--- | ---: |\n");
+    let mut rows = Vec::new();
+    for (data_index, item) in data.iter().enumerate().take(MAX_CHART_ROWS) {
+        if let Some((category, value)) = chart_point(item, categories.get(data_index), data_index) {
+            rows.push(vec![category, value]);
+        }
+    }
+    if rows.is_empty() {
+        return false;
+    }
+    for row in &rows {
+        let _ = writeln!(
+            output,
+            "| {} | {} |",
+            escape_table_cell(row.first().map(String::as_str).unwrap_or_default()),
+            escape_table_cell(row.get(1).map(String::as_str).unwrap_or_default())
+        );
+    }
+    if data.len() > MAX_CHART_ROWS {
+        let _ = writeln!(
+            output,
+            "| _truncated_ | {} of {} points shown |",
+            MAX_CHART_ROWS,
+            data.len()
+        );
+    }
+    output.push('\n');
+    true
+}
+
+fn write_combined_series_table(
+    output: &mut String,
+    option: &serde_json::Value,
+    series: &[(usize, &serde_json::Value)],
+) -> bool {
+    let mut categories = chart_categories(option);
+    if categories.is_empty()
+        && let Some((_, first)) = series.first()
+        && let Some(data) = first.get("data").and_then(serde_json::Value::as_array)
+    {
+        categories = data
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| {
+                chart_point(item, None, index).map(|(category, _)| category)
+            })
+            .take(MAX_CHART_ROWS)
+            .collect();
+    }
+    if categories.is_empty() {
+        return false;
+    }
+    let names: Vec<String> = series
+        .iter()
+        .map(|(index, entry)| series_name(entry, *index))
+        .collect();
+    let kinds: Vec<&str> = series
+        .iter()
+        .map(|(_, entry)| series_type(entry).unwrap_or("chart"))
+        .collect();
+    let _ = writeln!(
+        output,
+        "_Chart data: {} ({})_",
+        names.join(", "),
+        kinds.join(", ")
+    );
+    let mut header = vec!["Category".to_string()];
+    header.extend(names);
+    let mut body = Vec::new();
+    for (row_index, category) in categories.iter().enumerate().take(MAX_CHART_ROWS) {
+        let mut row = vec![category.clone()];
+        for (_, entry) in series {
+            let value = entry
+                .get("data")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|data| data.get(row_index))
+                .and_then(|item| chart_point(item, None, row_index))
+                .map(|(_, value)| value)
+                .unwrap_or_default();
+            row.push(value);
+        }
+        body.push(row);
+    }
+    write_markdown_table(output, &header, &body);
+    true
+}
+
+fn write_multidimensional_table(
+    output: &mut String,
+    option: &serde_json::Value,
+    series: &serde_json::Value,
+    index: usize,
+) -> bool {
+    let Some(data) = series
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .filter(|data| !data.is_empty())
+    else {
+        return false;
+    };
+    let name = series_name(series, index);
+    let kind = series_type(series).unwrap_or("chart");
+    let dimensions: Vec<String> = match kind {
+        "candlestick" => ["Open", "Close", "Low", "High"]
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        "boxplot" => ["Min", "Q1", "Median", "Q3", "Max"]
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        "heatmap" => ["X", "Y", "Value"]
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect(),
+        _ => {
+            let width = data
+                .iter()
+                .filter_map(serde_json::Value::as_array)
+                .map(Vec::len)
+                .max()
+                .unwrap_or(2)
+                .max(2);
+            (0..width)
+                .map(|index| match index {
+                    0 => "X".to_string(),
+                    1 => "Y".to_string(),
+                    other => format!("Value {}", other + 1),
+                })
+                .collect()
+        }
+    };
+    let uses_category = matches!(kind, "candlestick" | "boxplot");
+    let categories = chart_categories(option);
+    let mut header = Vec::new();
+    if uses_category {
+        header.push("Category".to_string());
+    }
+    header.extend(dimensions.iter().cloned());
+    let mut body = Vec::new();
+    for (data_index, item) in data.iter().enumerate().take(MAX_CHART_ROWS) {
+        let values: Vec<String> = match item {
+            serde_json::Value::Array(values) => values.iter().map(json_scalar_label).collect(),
+            serde_json::Value::Object(object) => object
+                .get("value")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| values.iter().map(json_scalar_label).collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        if values.is_empty() {
+            continue;
+        }
+        let mut row = Vec::new();
+        if uses_category {
+            row.push(
+                categories
+                    .get(data_index)
+                    .cloned()
+                    .unwrap_or_else(|| format!("#{}", data_index + 1)),
+            );
+        }
+        for dimension_index in 0..dimensions.len() {
+            row.push(values.get(dimension_index).cloned().unwrap_or_default());
+        }
+        body.push(row);
+    }
+    if body.is_empty() {
+        return false;
+    }
+    let _ = writeln!(output, "_Chart data: {name} ({kind})_");
+    write_markdown_table(output, &header, &body);
+    true
+}
+
+fn is_multidimensional(kind: &str, data: &[serde_json::Value]) -> bool {
+    matches!(
+        kind,
+        "scatter" | "effectScatter" | "candlestick" | "boxplot" | "heatmap"
+    ) && data.iter().any(serde_json::Value::is_array)
+}
+
+fn series_type(series: &serde_json::Value) -> Option<&str> {
+    series.get("type").and_then(serde_json::Value::as_str)
+}
+
+fn series_name(series: &serde_json::Value, index: usize) -> String {
+    series
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Series {}", index + 1))
+}
+
+fn write_markdown_table(output: &mut String, header: &[String], body: &[Vec<String>]) {
+    output.push('|');
+    for cell in header {
+        let _ = write!(output, " {} |", escape_table_cell(cell));
+    }
+    output.push('\n');
+    output.push('|');
+    for index in 0..header.len() {
+        output.push_str(if index == 0 { " :--- |" } else { " ---: |" });
+    }
+    output.push('\n');
+    for row in body.iter().take(MAX_CHART_ROWS) {
+        output.push('|');
+        for (index, _) in header.iter().enumerate() {
+            let cell = row.get(index).map(String::as_str).unwrap_or_default();
+            let _ = write!(output, " {} |", escape_table_cell(cell));
+        }
+        output.push('\n');
+    }
+    if body.len() > MAX_CHART_ROWS {
+        let mut cells = vec![String::new(); header.len()];
+        if let Some(first) = cells.first_mut() {
+            *first = "_truncated_".to_string();
+        }
+        if let Some(second) = cells.get_mut(1) {
+            *second = format!("{} of {} rows shown", MAX_CHART_ROWS, body.len());
+        }
+        output.push('|');
+        for cell in &cells {
+            let _ = write!(output, " {} |", escape_table_cell(cell));
+        }
+        output.push('\n');
+    }
+    output.push('\n');
 }
 
 fn chart_categories(option: &serde_json::Value) -> Vec<String> {
@@ -801,6 +1335,181 @@ mod tests {
         let output = project_markdown(&sample(), &options).unwrap();
         assert!(output.contains("Revenue rose from 100 to 120."));
         assert!(!output.contains("_Chart data:"));
+    }
+
+    fn chart_doc(option: serde_json::Value) -> ReportDocument {
+        let mut doc = ReportDocument::new(doc_id("chart-report"));
+        doc.blocks.push(Block::new(
+            block_id("chart"),
+            BlockKind::Echarts(EchartsBlock {
+                title: Some("Chart".into()),
+                height: 320,
+                mode: crate::block::EchartsMode::Option,
+                preset: None,
+                option: Some(option),
+                option_patch: None,
+                fallback_summary: "Fallback summary.".into(),
+                numbering: None,
+                note: None,
+            }),
+        ));
+        doc
+    }
+
+    fn project_chart(option: serde_json::Value) -> String {
+        project_markdown(&chart_doc(option), &MarkdownOptions::default()).unwrap()
+    }
+
+    #[test]
+    fn projects_dataset_arrays_and_object_rows() {
+        let output = project_chart(serde_json::json!({
+            "dataset": {"source": [
+                ["Quarter", "Revenue", "Margin"],
+                ["Q1", 120, 62.5],
+                ["Q2", 150, 64.0]
+            ]},
+            "series": [{"type": "bar", "datasetIndex": 0}]
+        }));
+        assert!(output.contains("_Chart data: Dataset 1 (dataset)_"));
+        assert!(output.contains("| Quarter | Revenue | Margin |"));
+        assert!(output.contains("| Q1 | 120 | 62.5 |"));
+
+        let output = project_chart(serde_json::json!({
+            "dataset": [
+                {"id": "kpi", "source": [
+                    {"region": "EMEA", "value": 10},
+                    {"region": "APAC", "value": 20}
+                ]},
+                {"id": "extra", "source": [
+                    ["Metric", "Value"],
+                    ["NPS", 42]
+                ]}
+            ],
+            "series": [{"type": "bar", "datasetIndex": 0}]
+        }));
+        assert!(output.contains("_Chart data: kpi (dataset)_"));
+        assert!(output.contains("| region | value |"));
+        assert!(output.contains("| EMEA | 10 |"));
+        assert!(output.contains("_Chart data: extra (dataset)_"));
+        assert!(output.contains("| NPS | 42 |"));
+    }
+
+    #[test]
+    fn projects_multi_series_cartesian_table() {
+        let output = project_chart(serde_json::json!({
+            "xAxis": {"data": ["Q1", "Q2"]},
+            "series": [
+                {"name": "Revenue", "type": "bar", "data": [120, 150]},
+                {"name": "Margin", "type": "line", "data": [62.5, 64.0]}
+            ]
+        }));
+        assert!(output.contains("_Chart data: Revenue, Margin (bar, line)_"));
+        assert!(output.contains("| Category | Revenue | Margin |"));
+        assert!(output.contains("| Q1 | 120 | 62.5 |"));
+        assert!(output.contains("| Q2 | 150 | 64 |"));
+    }
+
+    #[test]
+    fn projects_relation_charts_as_source_target_value() {
+        let output = project_chart(serde_json::json!({
+            "series": [
+                {
+                    "name": "Flow",
+                    "type": "sankey",
+                    "data": [{"name": "A"}, {"name": "B"}],
+                    "links": [
+                        {"source": "A", "target": "B", "value": 5},
+                        {"source": "B", "target": "C", "value": 3}
+                    ]
+                },
+                {
+                    "name": "Network",
+                    "type": "graph",
+                    "data": [{"name": "X"}, {"name": "Y"}],
+                    "edges": [{"from": "X", "to": "Y", "value": 9}]
+                }
+            ]
+        }));
+        assert!(output.contains("_Chart data: Flow (sankey links)_"));
+        assert!(output.contains("| Source | Target | Value |"));
+        assert!(output.contains("| A | B | 5 |"));
+        assert!(output.contains("| B | C | 3 |"));
+        assert!(output.contains("_Chart data: Network (graph links)_"));
+        assert!(output.contains("| X | Y | 9 |"));
+    }
+
+    #[test]
+    fn projects_radar_indicators_as_columns() {
+        let output = project_chart(serde_json::json!({
+            "radar": {"indicator": [{"name": "Revenue"}, {"name": "Margin"}]},
+            "series": [{
+                "name": "Plan",
+                "type": "radar",
+                "data": [
+                    {"name": "Actual", "value": [10, 20]},
+                    {"name": "Target", "value": [12, 18]}
+                ]
+            }]
+        }));
+        assert!(output.contains("_Chart data: Plan (radar)_"));
+        assert!(output.contains("| Series | Revenue | Margin |"));
+        assert!(output.contains("| Actual | 10 | 20 |"));
+        assert!(output.contains("| Target | 12 | 18 |"));
+    }
+
+    #[test]
+    fn projects_hierarchy_charts_with_paths() {
+        let output = project_chart(serde_json::json!({
+            "series": [{
+                "name": "Segments",
+                "type": "treemap",
+                "data": [{
+                    "name": "Region",
+                    "children": [
+                        {"name": "EMEA", "children": [{"name": "UK", "value": 6}]},
+                        {"name": "APAC", "value": 20}
+                    ]
+                }]
+            }]
+        }));
+        assert!(output.contains("_Chart data: Segments (treemap)_"));
+        assert!(output.contains("| Path | Value |"));
+        assert!(output.contains("| Region / EMEA / UK | 6 |"));
+        assert!(output.contains("| Region / APAC | 20 |"));
+    }
+
+    #[test]
+    fn projects_multidimensional_series_dimensions() {
+        let output = project_chart(serde_json::json!({
+            "xAxis": {"data": ["2026-01", "2026-02"]},
+            "series": [{
+                "name": "OHLC",
+                "type": "candlestick",
+                "data": [[10, 12, 9, 13], [12, 13, 11, 14]]
+            }]
+        }));
+        assert!(output.contains("| Category | Open | Close | Low | High |"));
+        assert!(output.contains("| 2026-01 | 10 | 12 | 9 | 13 |"));
+
+        let output = project_chart(serde_json::json!({
+            "series": [{
+                "name": "Heat",
+                "type": "heatmap",
+                "data": [[0, 0, 5], [0, 1, 8]]
+            }]
+        }));
+        assert!(output.contains("| X | Y | Value |"));
+        assert!(output.contains("| 0 | 1 | 8 |"));
+
+        let output = project_chart(serde_json::json!({
+            "series": [{
+                "name": "Cloud",
+                "type": "scatter",
+                "data": [[1, 2, 3]]
+            }]
+        }));
+        assert!(output.contains("| X | Y | Value 3 |"));
+        assert!(output.contains("| 1 | 2 | 3 |"));
     }
 
     #[test]

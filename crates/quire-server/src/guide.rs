@@ -169,8 +169,16 @@ ECHARTS BLOCK EXAMPLE (dual axis)
 Rules:
 - Put the title in outer `title` ONLY; never duplicate it inside ECharts `option.title`. A center donut KPI (`top: "center"`) is the only allowed inner title.
 - `fallback_summary` is mandatory and must state the main numeric takeaway.
-- `preset` + `option_patch` is preferred. `mode: option` uses `option` as the base.
-- `read_as_markdown(include_chart_data=true)` expands series data into tables for reviewers.
+- Simple skeletons can use `mode: "preset"` + `preset` (bar, horizontal_bar, line, area, pie, donut, scatter) + `option_patch`.
+- Complex charts should use `mode: "option"` with a complete ECharts 6.0 `option`. When `mode` is omitted, providing `option` without `preset` is automatically inferred as option mode.
+- ECharts 6.0 option mode supports `dataset` (2D arrays or object rows, multiple datasets), multi-axis Cartesian series, `matrix`, `radar`, `sankey`, `graph`, `chord`, `beeswarm`, `treemap`, `sunburst`, `tree`, `candlestick`, `boxplot`, `heatmap` and extension series such as `wordCloud`, `liquidFill` and `bar3D`.
+- Formatter strings are allowed and encouraged, for example `"formatter": "{b}: {c} ({d}%)"`. JavaScript callbacks are forbidden: strings containing `function(` or `=>` fail lint with `ECHARTS_JS_FUNCTION_STRING`.
+- Static-report chrome is removed automatically: `toolbox` is stripped during normalization/normalization warnings. Do not design interactions that require it.
+- Indexed series must stay in range: `xAxisIndex`, `yAxisIndex`, `gridIndex`, `polarIndex` and `radarIndex` are validated against their configured arrays. A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object.
+- Every chart needs a real data source: `series[*].data`, `series[*].links`/`edges`, or a non-empty `dataset.source`. Otherwise lint reports `ECHARTS_DATA_MISSING`.
+- Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge. The same patch can update `mode`, `preset`, `height`, `title`, `numbering`, `note` and `fallback_summary`.
+- `read_as_markdown(include_chart_data=true)` expands dataset, Cartesian, relation, radar and hierarchy data into tables for reviewers.
+- `GET /api/docs/{doc_id}` exposes `computed.chart_requirements[block_id].required_maps` and `.required_extensions` so the frontend can register maps/extensions before rendering.
 - Every table/chart block needs `id`, and charts need non-empty `fallback_summary`.
 "##.into(),
         recommended_tools: vec![

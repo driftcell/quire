@@ -616,15 +616,16 @@ pub enum EchartsPreset {
 }
 
 /// An ECharts chart block. `fallback_summary` is mandatory so non-JS renderers stay useful.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 pub struct EchartsBlock {
-    /// Optional chart title.
+    /// Optional chart title. `caption` is accepted as a legacy alias on input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// Canvas height in pixels, recommended 120..=2000.
     #[serde(default = "default_chart_height")]
     pub height: u32,
     /// `preset` starts from a built-in chart skeleton; `option` supplies the full option object.
+    /// When omitted, `option` without `preset` is inferred as `option` mode.
     #[serde(default)]
     pub mode: EchartsMode,
     /// Built-in skeleton such as bar, line, pie or donut.
@@ -647,6 +648,56 @@ pub struct EchartsBlock {
     pub note: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct EchartsBlockWire {
+    #[serde(default, alias = "caption")]
+    title: Option<String>,
+    #[serde(default = "default_chart_height")]
+    height: u32,
+    #[serde(default)]
+    mode: Option<EchartsMode>,
+    #[serde(default)]
+    preset: Option<EchartsPreset>,
+    #[serde(default)]
+    option: Option<serde_json::Value>,
+    #[serde(default)]
+    option_patch: Option<serde_json::Value>,
+    #[serde(default)]
+    fallback_summary: String,
+    #[serde(default)]
+    numbering: Option<NumberingKind>,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for EchartsBlock {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let wire = EchartsBlockWire::deserialize(deserializer)?;
+        let mode = wire.mode.unwrap_or_else(|| {
+            if wire.option.as_ref().is_some_and(|option| !option.is_null()) && wire.preset.is_none()
+            {
+                EchartsMode::Option
+            } else {
+                EchartsMode::Preset
+            }
+        });
+        Ok(Self {
+            title: wire.title,
+            height: wire.height,
+            mode,
+            preset: wire.preset,
+            option: wire.option,
+            option_patch: wire.option_patch,
+            fallback_summary: wire.fallback_summary,
+            numbering: wire.numbering,
+            note: wire.note,
+        })
+    }
+}
+
 impl EchartsBlock {
     pub const fn numbering_kind(&self) -> NumberingKind {
         match self.numbering {
@@ -663,8 +714,9 @@ const fn default_chart_height() -> u32 {
 /// Raw HTML block. Custom HTML is trusted at render time, but must supply a fallback summary.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CustomHtmlBlock {
-    /// Outer title. Put titles here only; never duplicate them inside the HTML.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Outer title. Put titles here only; never duplicate them inside the HTML. `caption` is
+    /// accepted as a legacy alias for consistency with tables and charts.
+    #[serde(default, alias = "caption", skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// `none` by default for freeform HTML; `figure` opts into `图 N` numbering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1031,5 +1083,61 @@ mod tests {
         }))
         .unwrap();
         assert!(block.id.is_pending());
+    }
+
+    #[test]
+    fn echarts_mode_is_inferred_when_omitted() {
+        let inferred: Block = serde_json::from_value(serde_json::json!({
+            "id": "chart",
+            "type": "echarts",
+            "option": {"series": [{"type": "bar", "data": [1, 2]}]},
+            "fallback_summary": "Two points"
+        }))
+        .unwrap();
+        let BlockKind::Echarts(inferred) = inferred.body else {
+            panic!("chart");
+        };
+        assert_eq!(inferred.mode, EchartsMode::Option);
+
+        let explicit: Block = serde_json::from_value(serde_json::json!({
+            "id": "chart",
+            "type": "echarts",
+            "mode": "preset",
+            "option": {"series": [{"type": "bar", "data": [1, 2]}]},
+            "fallback_summary": "Two points"
+        }))
+        .unwrap();
+        let BlockKind::Echarts(explicit) = explicit.body else {
+            panic!("chart");
+        };
+        assert_eq!(explicit.mode, EchartsMode::Preset);
+
+        let preset: Block = serde_json::from_value(serde_json::json!({
+            "id": "chart",
+            "type": "echarts",
+            "preset": "bar",
+            "option_patch": {"series": [{"type": "bar", "data": [1, 2]}]},
+            "fallback_summary": "Two points"
+        }))
+        .unwrap();
+        let BlockKind::Echarts(preset) = preset.body else {
+            panic!("chart");
+        };
+        assert_eq!(preset.mode, EchartsMode::Preset);
+        assert_eq!(preset.preset, Some(EchartsPreset::Bar));
+
+        let legacy: Block = serde_json::from_value(serde_json::json!({
+            "id": "chart",
+            "type": "echarts",
+            "caption": "Legacy caption",
+            "option": {"series": [{"type": "bar", "data": [1]}]},
+            "fallback_summary": "One point"
+        }))
+        .unwrap();
+        let BlockKind::Echarts(legacy) = legacy.body else {
+            panic!("chart");
+        };
+        assert_eq!(legacy.title.as_deref(), Some("Legacy caption"));
+        assert_eq!(legacy.mode, EchartsMode::Option);
     }
 }

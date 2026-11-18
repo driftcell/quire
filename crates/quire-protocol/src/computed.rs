@@ -14,6 +14,7 @@ use crate::{
         Align, BlockKind, ColumnDataType, ColumnNode, ColumnSizing, NumberingKind, TableBlock,
     },
     citation::{BibliographyEntry, CitationResolution, resolve_citations},
+    echarts::{merged_option, required_extensions, required_maps},
     ids::{BlockId, SourceId},
     inline::inline_plain_text,
     model::ReportDocument,
@@ -100,6 +101,23 @@ pub struct CitationMapEntry {
     pub source_id: SourceId,
 }
 
+/// ECharts maps and extension series that the frontend must register before rendering.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ChartRequirements {
+    /// Map names referenced by `geo.map` or `series[type=map].map`.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub required_maps: BTreeSet<String>,
+    /// Extension series types such as `wordCloud`, `liquidFill` or `bar3D`.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub required_extensions: BTreeSet<String>,
+}
+
+impl ChartRequirements {
+    pub fn is_empty(&self) -> bool {
+        self.required_maps.is_empty() && self.required_extensions.is_empty()
+    }
+}
+
 /// Everything the external frontend needs beyond the canonical Block AST.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ComputedDocumentMeta {
@@ -109,6 +127,9 @@ pub struct ComputedDocumentMeta {
     pub toc_tree: Vec<TocNode>,
     /// Auto-numbering labels and source attribution for table/figure blocks.
     pub block_framing: BTreeMap<BlockId, BlockFraming>,
+    /// ECharts map/extension dependencies grouped by chart block.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub chart_requirements: BTreeMap<BlockId, ChartRequirements>,
 }
 
 /// Compute frontend view metadata. Invalid table schemas are skipped here and surfaced by
@@ -116,11 +137,28 @@ pub struct ComputedDocumentMeta {
 pub fn compute_document_meta(document: &ReportDocument) -> ComputedDocumentMeta {
     let citations = resolve_citations(document);
     let mut table_layouts: BTreeMap<BlockId, TableLayout> = BTreeMap::new();
+    let mut chart_requirements = BTreeMap::new();
     for block in &document.blocks {
-        if let BlockKind::Table(table) = &block.body
-            && let Ok(layout) = compute_table_layout(&block.id, table, &block.style)
-        {
-            table_layouts.insert(block.id.clone(), layout);
+        match &block.body {
+            BlockKind::Table(table) => {
+                if let Ok(layout) = compute_table_layout(&block.id, table, &block.style) {
+                    table_layouts.insert(block.id.clone(), layout);
+                }
+            }
+            BlockKind::Echarts(chart) => {
+                let option = merged_option(chart);
+                let requirements = ChartRequirements {
+                    required_maps: required_maps(&option),
+                    required_extensions: required_extensions(&option),
+                };
+                if !requirements.is_empty() {
+                    chart_requirements.insert(block.id.clone(), requirements);
+                }
+            }
+            BlockKind::Heading { .. }
+            | BlockKind::Paragraph { .. }
+            | BlockKind::Quote { .. }
+            | BlockKind::CustomHtml(_) => {}
         }
     }
     ComputedDocumentMeta {
@@ -129,6 +167,7 @@ pub fn compute_document_meta(document: &ReportDocument) -> ComputedDocumentMeta 
         bibliography: citations.bibliography.clone(),
         toc_tree: compute_toc_tree(document),
         block_framing: compute_block_framing(document, &citations),
+        chart_requirements,
     }
 }
 
@@ -955,6 +994,58 @@ mod tests {
             .unwrap();
         assert!(attribution.contains("Sources: [1] Annual filing"));
         assert!(attribution.contains("Note: Audited"));
+    }
+
+    #[test]
+    fn chart_requirements_collect_maps_and_extensions() {
+        let mut doc = ReportDocument::new(doc_id("charts"));
+        doc.blocks.push(Block::new(
+            block_id("maps"),
+            BlockKind::Echarts(crate::block::EchartsBlock {
+                title: None,
+                height: 300,
+                mode: crate::block::EchartsMode::Option,
+                preset: None,
+                option: Some(serde_json::json!({
+                    "geo": [{"map": "china"}],
+                    "series": [
+                        {"type": "map", "map": "world", "data": [1]},
+                        {"type": "wordCloud", "data": [1]},
+                        {"type": "bar3D", "data": [1]}
+                    ]
+                })),
+                option_patch: None,
+                fallback_summary: "Maps and extensions.".into(),
+                numbering: None,
+                note: None,
+            }),
+        ));
+        doc.blocks.push(Block::new(
+            block_id("plain"),
+            BlockKind::Echarts(crate::block::EchartsBlock {
+                title: None,
+                height: 300,
+                mode: crate::block::EchartsMode::Option,
+                preset: None,
+                option: Some(serde_json::json!({
+                    "series": [{"type": "bar", "data": [1]}]
+                })),
+                option_patch: None,
+                fallback_summary: "Plain chart.".into(),
+                numbering: None,
+                note: None,
+            }),
+        ));
+        let meta = compute_document_meta(&doc);
+        let requirements = meta
+            .chart_requirements
+            .get(&block_id("maps"))
+            .expect("map requirements");
+        assert!(requirements.required_maps.contains("china"));
+        assert!(requirements.required_maps.contains("world"));
+        assert!(requirements.required_extensions.contains("wordCloud"));
+        assert!(requirements.required_extensions.contains("bar3D"));
+        assert!(!meta.chart_requirements.contains_key(&block_id("plain")));
     }
 
     #[test]

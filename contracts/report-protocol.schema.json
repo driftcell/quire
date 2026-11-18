@@ -304,6 +304,15 @@
             "null"
           ]
         },
+        "height": {
+          "description": "Replace the chart canvas height in pixels.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
         "level": {
           "description": "Heading level (1..=6).",
           "type": [
@@ -313,6 +322,17 @@
           "format": "uint8",
           "maximum": 255,
           "minimum": 0
+        },
+        "mode": {
+          "description": "Switch an ECharts block between `preset` and full `option` mode.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EchartsMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "note": {
           "description": "Replace the explanatory footnote. Empty string clears it.",
@@ -332,8 +352,22 @@
             }
           ]
         },
+        "option": {
+          "description": "Replace the ECharts effective option wholesale, clearing any stored `option_patch`.\nSupply `option_patch` in the same patch to replace the base and then deep-merge a smaller\noverlay."
+        },
         "option_patch": {
           "description": "Deep-merged into an ECharts block's existing `option_patch`."
+        },
+        "preset": {
+          "description": "Select a built-in ECharts skeleton.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EchartsPreset"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "source_ids": {
           "type": [
@@ -506,6 +540,28 @@
           "$ref": "#/$defs/RichCell"
         }
       ]
+    },
+    "ChartRequirements": {
+      "description": "ECharts maps and extension series that the frontend must register before rendering.",
+      "type": "object",
+      "properties": {
+        "required_extensions": {
+          "description": "Extension series types such as `wordCloud`, `liquidFill` or `bar3D`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "required_maps": {
+          "description": "Map names referenced by `geo.map` or `series[type=map].map`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
     },
     "CitationMapEntry": {
       "type": "object",
@@ -684,6 +740,13 @@
             "$ref": "#/$defs/BlockFraming"
           }
         },
+        "chart_requirements": {
+          "description": "ECharts map/extension dependencies grouped by chart block.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/ChartRequirements"
+          }
+        },
         "citation_map": {
           "type": "object",
           "additionalProperties": {
@@ -803,7 +866,7 @@
           ]
         },
         "title": {
-          "description": "Outer title. Put titles here only; never duplicate them inside the HTML.",
+          "description": "Outer title. Put titles here only; never duplicate them inside the HTML. `caption` is\naccepted as a legacy alias for consistency with tables and charts.",
           "type": [
             "string",
             "null"
@@ -882,7 +945,7 @@
           "minimum": 0
         },
         "mode": {
-          "description": "`preset` starts from a built-in chart skeleton; `option` supplies the full option object.",
+          "description": "`preset` starts from a built-in chart skeleton; `option` supplies the full option object.\nWhen omitted, `option` without `preset` is inferred as `option` mode.",
           "$ref": "#/$defs/EchartsMode",
           "default": "preset"
         },
@@ -922,7 +985,7 @@
           ]
         },
         "title": {
-          "description": "Optional chart title.",
+          "description": "Optional chart title. `caption` is accepted as a legacy alias on input.",
           "type": [
             "string",
             "null"

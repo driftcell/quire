@@ -524,6 +524,40 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             "type": "heading",
             "level": 2,
             "text": "Chapter 2 — Market Context"
+        },
+        {
+            "id": "ch0_dataset",
+            "type": "echarts",
+            "title": "Quarterly comparison",
+            "height": 280,
+            "option": {
+                "dataset": {"source": [
+                    ["Quarter", "Revenue", "Margin"],
+                    ["Q1", 120, 62.5],
+                    ["Q2", 150, 64.0]
+                ]},
+                "xAxis": {"type": "category"},
+                "yAxis": {"type": "value"},
+                "series": [
+                    {"name": "Revenue", "type": "bar", "datasetIndex": 0, "encode": {"x": "Quarter", "y": "Revenue"}},
+                    {"name": "Margin", "type": "bar", "datasetIndex": 0, "encode": {"x": "Quarter", "y": "Margin"}}
+                ]
+            },
+            "fallback_summary": "Revenue grew from 120 to 150 while margin rose from 62.5% to 64.0%."
+        },
+        {
+            "id": "ch0_map",
+            "type": "echarts",
+            "title": "Regional coverage",
+            "height": 260,
+            "mode": "option",
+            "option": {
+                "geo": {"map": "china"},
+                "series": [
+                    {"type": "map", "map": "world", "data": [{"name": "China", "value": 1}]}
+                ]
+            },
+            "fallback_summary": "Coverage spans the China and world map registrations."
         }
     ]);
     let create_args = json!({
@@ -810,7 +844,9 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         ops_receipt.to_string().len() < 500,
         "operations receipt is not compact: {ops_receipt}"
     );
-    assert!(offline_markdown.contains("_Chart data: Revenue (bar)_"));
+    assert!(offline_markdown.contains("_Chart data: Revenue, Margin (bar, line)_"));
+    assert!(offline_markdown.contains("| Category | Revenue | Margin |"));
+    assert!(offline_markdown.contains("| FY25 | 1800000 | 61.2 |"));
     assert_eq!(
         upsert_receipt["canonical_id_map"]["sec_market_duplicate"].as_str(),
         Some("sec_market")
@@ -829,7 +865,10 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     assert!(review_markdown.contains("<!-- block:ch1_summary | type:paragraph -->"));
     assert!(review_markdown.contains("<!-- block:ch2_kpi | type:custom_html -->"));
     assert!(review_markdown.contains("Revenue / FY25"));
-    assert!(review_markdown.contains("_Chart data: Revenue (bar)_"));
+    assert!(review_markdown.contains("_Chart data: Revenue, Margin (bar, line)_"));
+    assert!(review_markdown.contains("_Chart data: Dataset 1 (dataset)_"));
+    assert!(review_markdown.contains("| Quarter | Revenue | Margin |"));
+    assert!(review_markdown.contains("| Q1 | 120 | 62.5 |"));
 
     let focused = reviewer
         .call_tool(
@@ -852,6 +891,76 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             .iter()
             .all(|block| block["id"].as_str().unwrap().contains("ch2"))
     );
+
+    // 5b. ECharts 6 structural errors are rejected by lint with actionable codes.
+    let digest = reviewer
+        .call_tool("get_document_digest", json!({"doc_id": doc_id}))
+        .await?;
+    let revision_before_bad_chart = digest["digest"]["current_rev"].as_i64().unwrap();
+    reviewer
+        .call_tool(
+            "apply_operations",
+            json!({
+                "doc_id": doc_id,
+                "expected_revision": revision_before_bad_chart,
+                "summary": "append invalid chart for lint QA",
+                "ops": [{
+                    "type": "append",
+                    "blocks": [{
+                        "id": "b_bad_chart",
+                        "type": "echarts",
+                        "title": "Invalid chart",
+                        "height": 300,
+                        "mode": "option",
+                        "option": {
+                            "xAxis": {},
+                            "series": [
+                                {"type": "notARealType", "xAxisIndex": 4, "formatter": "function(){ return 1; }"},
+                                {"type": "custom", "coordinateSystem": "matrix"}
+                            ]
+                        },
+                        "fallback_summary": "Invalid chart used for lint verification."
+                    }]
+                }]
+            }),
+        )
+        .await?;
+    let bad_chart_lint = reviewer
+        .call_tool("lint_document", json!({"doc_id": doc_id}))
+        .await?;
+    let bad_chart_codes: Vec<&str> = bad_chart_lint["report"]["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|diagnostic| diagnostic["code"].as_str())
+        .collect();
+    for code in [
+        "ECHARTS_JS_FUNCTION_STRING",
+        "ECHARTS_SERIES_TYPE_INVALID",
+        "ECHARTS_MATRIX_MISSING",
+        "ECHARTS_INDEX_OUT_OF_RANGE",
+        "ECHARTS_DATA_MISSING",
+    ] {
+        assert!(
+            bad_chart_codes.contains(&code),
+            "missing {code}: {bad_chart_codes:?}"
+        );
+    }
+    let digest = reviewer
+        .call_tool("get_document_digest", json!({"doc_id": doc_id}))
+        .await?;
+    let revision_before_bad_chart_delete = digest["digest"]["current_rev"].as_i64().unwrap();
+    reviewer
+        .call_tool(
+            "apply_operations",
+            json!({
+                "doc_id": doc_id,
+                "expected_revision": revision_before_bad_chart_delete,
+                "summary": "remove invalid chart after lint QA",
+                "ops": [{"type": "delete_blocks", "block_ids": ["b_bad_chart"]}]
+            }),
+        )
+        .await?;
 
     // 6. Inject a dangling citation, lint with self-healing hint, then fix it.
     let digest = reviewer
@@ -985,6 +1094,28 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         sources.len(),
         2,
         "duplicate source must be canonicalized: {sources:?}"
+    );
+
+    let dataset_chart = final_doc["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|block| block["id"] == "ch0_dataset")
+        .ok_or_else(|| anyhow!("dataset chart missing from final document"))?;
+    assert_eq!(
+        dataset_chart["mode"].as_str(),
+        Some("option"),
+        "omitted mode must be inferred as option when option is supplied without preset"
+    );
+    let map_requirements = &final_doc["computed"]["chart_requirements"]["ch0_map"];
+    let required_maps = map_requirements["required_maps"].as_array().unwrap();
+    assert!(required_maps.iter().any(|value| value == "china"));
+    assert!(required_maps.iter().any(|value| value == "world"));
+    assert!(
+        !final_doc["computed"]["chart_requirements"]["ch0_dataset"]
+            .as_object()
+            .is_some_and(|requirements| !requirements.is_empty()),
+        "charts without maps/extensions must not emit chart requirements"
     );
 
     let block_ids: Vec<String> = final_doc["blocks"]

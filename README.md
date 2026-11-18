@@ -177,8 +177,13 @@ P90 visual-width heuristic (`CJK = 2.0`, ASCII = 1.0), `fit`/`grow` weights and
   computes `表 N` / `图 N` labels and source attribution in `computed.block_framing`; titles must
   never contain manual numbering.
 - ECharts inner `title` is stripped with an `ECHARTS_INNER_TITLE_STRIPPED` warning unless it is a
-  center-positioned KPI. `lint_document` flags `MANUAL_PREFIX_IN_TITLE` and
-  `DUPLICATE_INNER_TITLE`.
+  center-positioned KPI; interactive `toolbox` chrome is stripped from static exports.
+  `lint_document` flags `MANUAL_PREFIX_IN_TITLE`, `DUPLICATE_INNER_TITLE`, JS callback strings,
+  invalid series types/indices, missing matrix coordinates and empty data sources.
+- ECharts 6.0 `option` mode supports `dataset`, multi-series Cartesian charts, `matrix`, `radar`,
+  `sankey`/`graph`/`chord`, `beeswarm`, `treemap`/`sunburst`/`tree`, and extension series such as
+  `wordCloud`, `liquidFill` and `bar3D`. `computed.chart_requirements` lists required map names and
+  extension registrations per chart block.
 - Fractional base-62 ranks use PostgreSQL `COLLATE "C"` ordering; inserting/moving touches one block row.
 - Revisions store both `forward_ops` and exact `inverse_ops`. Rollback replays inverse ops in reverse
   order into a new revision; history is never rewritten.

@@ -11,7 +11,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    block::{Block, BlockKind, BlockStyle, CellValue, NumberingKind, is_semantic_block_id},
+    block::{
+        Block, BlockKind, BlockStyle, CellValue, EchartsMode, EchartsPreset, NumberingKind,
+        is_semantic_block_id,
+    },
     ids::{BlockId, SourceId},
     json::merge_optional_json,
     model::{CoverConfig, ReferencesConfig, ReportDocument, SourceEntry, ThemeConfig, TocConfig},
@@ -79,9 +82,23 @@ pub struct BlockPatch {
     pub source_note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<BlockStylePatch>,
+    /// Replace the ECharts effective option wholesale, clearing any stored `option_patch`.
+    /// Supply `option_patch` in the same patch to replace the base and then deep-merge a smaller
+    /// overlay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub option: Option<serde_json::Value>,
     /// Deep-merged into an ECharts block's existing `option_patch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub option_patch: Option<serde_json::Value>,
+    /// Switch an ECharts block between `preset` and full `option` mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<EchartsMode>,
+    /// Select a built-in ECharts skeleton.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<EchartsPreset>,
+    /// Replace the chart canvas height in pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
     /// Replace the ECharts fallback summary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_summary: Option<String>,
@@ -113,7 +130,11 @@ impl BlockPatch {
             && self.source_ids.is_none()
             && self.source_note.is_none()
             && self.style.as_ref().is_none_or(BlockStylePatch::is_empty)
+            && self.option.is_none()
             && self.option_patch.is_none()
+            && self.mode.is_none()
+            && self.preset.is_none()
+            && self.height.is_none()
             && self.fallback_summary.is_none()
             && self.title.is_none()
             && self.numbering.is_none()
@@ -856,6 +877,23 @@ fn apply_block_patch(block: &mut Block, patch: &BlockPatch) -> Result<(), PatchE
             if let Some(note) = &patch.note {
                 chart.note = (!note.trim().is_empty()).then(|| note.clone());
             }
+            if let Some(option) = &patch.option {
+                chart.option = Some(option.clone());
+                chart.option_patch = None;
+            }
+            if let Some(mode) = patch.mode {
+                chart.mode = mode;
+            } else if patch.option.is_some() {
+                chart.mode = EchartsMode::Option;
+            } else if patch.preset.is_some() {
+                chart.mode = EchartsMode::Preset;
+            }
+            if let Some(preset) = patch.preset {
+                chart.preset = Some(preset);
+            }
+            if let Some(height) = patch.height {
+                chart.height = height;
+            }
             if let Some(option_patch) = &patch.option_patch {
                 chart.option_patch = Some(merge_optional_json(
                     chart.option_patch.as_ref(),
@@ -897,10 +935,14 @@ fn validate_patch_compatibility(block: &Block, patch: &BlockPatch) -> Result<(),
                 "title",
                 "numbering",
                 "note",
+                "option",
                 "option_patch",
+                "mode",
+                "preset",
+                "height",
                 "fallback_summary",
             ][..],
-            "title, numbering, note, option_patch, fallback_summary",
+            "title, numbering, note, option, option_patch, mode, preset, height, fallback_summary",
         ),
         BlockKind::CustomHtml(_) => (
             &["title", "numbering", "note", "fallback_text"][..],
@@ -915,10 +957,25 @@ fn validate_patch_compatibility(block: &Block, patch: &BlockPatch) -> Result<(),
         ("note", patch.note.is_some()),
         ("fallback_text", patch.fallback_text.is_some()),
         ("fallback_summary", patch.fallback_summary.is_some()),
+        ("option", patch.option.is_some()),
         ("option_patch", patch.option_patch.is_some()),
+        ("mode", patch.mode.is_some()),
+        ("preset", patch.preset.is_some()),
+        ("height", patch.height.is_some()),
         ("append_rows", !patch.append_rows.is_empty()),
         ("update_cell", patch.update_cell.is_some()),
     ];
+    for (field, value) in [
+        ("option", patch.option.as_ref()),
+        ("option_patch", patch.option_patch.as_ref()),
+    ] {
+        if value.is_some_and(|value| !value.is_object()) {
+            return Err(PatchError::InvalidPatch {
+                block_id: block.id.clone(),
+                message: format!("{field} must be a JSON object"),
+            });
+        }
+    }
     let unsupported: Vec<&str> = present
         .iter()
         .filter(|(field, is_present)| *is_present && !supported.contains(field))
@@ -926,16 +983,6 @@ fn validate_patch_compatibility(block: &Block, patch: &BlockPatch) -> Result<(),
         .collect();
     if unsupported.is_empty() {
         return Ok(());
-    }
-    if patch
-        .option_patch
-        .as_ref()
-        .is_some_and(|value| !value.is_object())
-    {
-        return Err(PatchError::InvalidPatch {
-            block_id: block.id.clone(),
-            message: "option_patch must be a JSON object".to_string(),
-        });
     }
     Err(PatchError::UnsupportedPatch {
         block_id: block.id.clone(),
@@ -1017,7 +1064,7 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use crate::{
-        block::{Block, ColumnNode, EchartsBlock, EchartsMode, TableBlock},
+        block::{Block, ColumnNode, EchartsBlock, EchartsMode, EchartsPreset, TableBlock},
         model::ReportDocument,
     };
 
@@ -1260,6 +1307,66 @@ mod tests {
             chart.option_patch.as_ref().unwrap()["series"][0]["data"],
             serde_json::json!([1, 2])
         );
+    }
+
+    #[test]
+    fn echarts_patch_supports_full_option_mode_and_dimensions() {
+        let mut doc = ReportDocument::new(doc_id("doc"));
+        doc.blocks.push(Block::new(
+            block_id("chart"),
+            BlockKind::Echarts(EchartsBlock {
+                title: None,
+                height: 300,
+                mode: EchartsMode::Preset,
+                preset: Some(EchartsPreset::Bar),
+                option: None,
+                option_patch: Some(serde_json::json!({"series": [{"type": "bar"}]})),
+                fallback_summary: "Summary".into(),
+                numbering: None,
+                note: None,
+            }),
+        ));
+        apply_operations_in_place(
+            &mut doc,
+            &[PatchOp::PatchBlock {
+                block_id: block_id("chart"),
+                patch: BlockPatch {
+                    option: Some(serde_json::json!({
+                        "dataset": {"source": [["Q", "V"], ["Q1", 10]]},
+                        "series": [{"type": "bar", "data": [10]}]
+                    })),
+                    mode: Some(EchartsMode::Option),
+                    height: Some(480),
+                    title: Some("Patched chart".into()),
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap();
+        let BlockKind::Echarts(chart) = &doc.block("chart").unwrap().body else {
+            panic!()
+        };
+        assert_eq!(chart.mode, EchartsMode::Option);
+        assert_eq!(chart.height, 480);
+        assert!(chart.option_patch.is_none());
+        assert_eq!(chart.title.as_deref(), Some("Patched chart"));
+        assert_eq!(
+            chart.option.as_ref().unwrap()["dataset"]["source"][1][1],
+            serde_json::json!(10)
+        );
+
+        let error = apply_operations_in_place(
+            &mut doc,
+            &[PatchOp::PatchBlock {
+                block_id: block_id("chart"),
+                patch: BlockPatch {
+                    option: Some(serde_json::json!("not an object")),
+                    ..Default::default()
+                },
+            }],
+        )
+        .unwrap_err();
+        assert!(matches!(error, PatchError::InvalidPatch { .. }));
     }
 
     #[test]

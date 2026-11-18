@@ -11,6 +11,10 @@ use crate::{
         looks_like_uuid_v4,
     },
     citation::{CitationLocation, scan_document_citations},
+    echarts::{
+        axis_count, find_js_function_string, has_data_source, is_valid_series_type, merged_option,
+        series as chart_series,
+    },
     ids::BlockId,
     model::{ReportDocument, is_safe_css_token_value, is_valid_css_token_name},
     table::{TableError, unknown_row_keys, unknown_width_overrides, validate_table},
@@ -442,28 +446,22 @@ impl Linter<'_> {
         {
             return;
         }
-        let mut has_top_inner = false;
-        for option in [chart.option.as_ref(), chart.option_patch.as_ref()]
-            .into_iter()
-            .flatten()
-        {
-            if let Some(title) = option.get("title") {
-                let titles = title
-                    .as_array()
-                    .map(Vec::as_slice)
-                    .unwrap_or_else(|| std::slice::from_ref(title));
-                for title in titles {
-                    let top = title
-                        .get("top")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_ascii_lowercase();
-                    if !matches!(top.as_str(), "center" | "middle") {
-                        has_top_inner = true;
-                    }
-                }
-            }
-        }
+        let option = merged_option(chart);
+        let Some(title) = option.get("title") else {
+            return;
+        };
+        let titles = title
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_else(|| std::slice::from_ref(title));
+        let has_top_inner = titles.iter().any(|title| {
+            let top = title
+                .get("top")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            !matches!(top.as_str(), "center" | "middle")
+        });
         if has_top_inner {
             self.warning(
                 "DUPLICATE_INNER_TITLE",
@@ -528,7 +526,18 @@ impl Linter<'_> {
                 Some(format!("blocks[{index}].height")),
             );
         }
-        if chart.mode == EchartsMode::Option && chart.option.is_none() {
+        let effective_mode = if chart.mode == EchartsMode::Preset
+            && chart.preset.is_none()
+            && chart
+                .option
+                .as_ref()
+                .is_some_and(|option| !option.is_null())
+        {
+            EchartsMode::Option
+        } else {
+            chart.mode
+        };
+        if effective_mode == EchartsMode::Option && chart.option.is_none() {
             self.error(
                 "ECHARTS_OPTION_MISSING",
                 format!(
@@ -540,7 +549,7 @@ impl Linter<'_> {
                 Some(format!("blocks[{index}].option")),
             );
         }
-        if chart.mode == EchartsMode::Preset && chart.preset.is_none() {
+        if effective_mode == EchartsMode::Preset && chart.preset.is_none() {
             self.warning(
                 "ECHARTS_PRESET_MISSING",
                 format!("chart `{}` uses mode `preset` without a preset", block.id),
@@ -564,6 +573,112 @@ impl Linter<'_> {
                     Some(format!("blocks[{index}].{field}")),
                 );
             }
+        }
+        for (field, value) in [
+            ("option", chart.option.as_ref()),
+            ("option_patch", chart.option_patch.as_ref()),
+        ] {
+            let Some(value) = value else {
+                continue;
+            };
+            if let Some(path) = find_js_function_string(value, field) {
+                self.error(
+                    "ECHARTS_JS_FUNCTION_STRING",
+                    format!(
+                        "chart `{}` contains a JavaScript callback string at `{path}`",
+                        block.id
+                    ),
+                    "Remove JS callbacks. Use ECharts string templates instead, for example \"{b}: {c} ({d}%)\"; callbacks must live in frontend renderer code, not canonical JSON.",
+                    Some(block.id.clone()),
+                    Some(format!("blocks[{index}].{path}")),
+                );
+            }
+        }
+        let option = merged_option(chart);
+        let has_matrix = option.get("matrix").is_some_and(|value| !value.is_null());
+        for (series_index, series) in chart_series(&option).into_iter().enumerate() {
+            let kind = series.get("type").and_then(serde_json::Value::as_str);
+            match kind {
+                Some(kind) if is_valid_series_type(kind) => {}
+                Some(kind) => {
+                    self.error(
+                        "ECHARTS_SERIES_TYPE_INVALID",
+                        format!(
+                            "chart `{}` series[{series_index}] has unsupported type `{kind}`",
+                            block.id
+                        ),
+                        "Use an ECharts 6.0 series type such as line, bar, pie, radar, sankey, chord, beeswarm or matrix, or a registered extension such as wordCloud/liquidFill/bar3D.",
+                        Some(block.id.clone()),
+                        Some(format!("blocks[{index}].series[{series_index}].type")),
+                    );
+                }
+                None => {
+                    self.error(
+                        "ECHARTS_SERIES_TYPE_INVALID",
+                        format!(
+                            "chart `{}` series[{series_index}] is missing a string `type`",
+                            block.id
+                        ),
+                        "Every series needs an explicit ECharts 6.0 type, for example `\"type\":\"bar\"`.",
+                        Some(block.id.clone()),
+                        Some(format!("blocks[{index}].series[{series_index}].type")),
+                    );
+                }
+            }
+            if series
+                .get("coordinateSystem")
+                .and_then(serde_json::Value::as_str)
+                == Some("matrix")
+                && !has_matrix
+            {
+                self.error(
+                    "ECHARTS_MATRIX_MISSING",
+                    format!(
+                        "chart `{}` series[{series_index}] uses the matrix coordinate system but has no top-level `matrix`",
+                        block.id
+                    ),
+                    "Add the ECharts 6.0 `matrix` configuration (rows/columns/cells) or remove coordinateSystem=\"matrix\".",
+                    Some(block.id.clone()),
+                    Some(format!("blocks[{index}].series[{series_index}].coordinateSystem")),
+                );
+            }
+            for (field, axis_key) in [
+                ("xAxisIndex", "xAxis"),
+                ("yAxisIndex", "yAxis"),
+                ("gridIndex", "grid"),
+                ("polarIndex", "polar"),
+                ("radarIndex", "radar"),
+            ] {
+                let Some(raw_index) = series.get(field).and_then(serde_json::Value::as_i64) else {
+                    continue;
+                };
+                let count = i64::try_from(axis_count(&option, axis_key)).unwrap_or(i64::MAX);
+                if raw_index < 0 || raw_index >= count {
+                    self.error(
+                        "ECHARTS_INDEX_OUT_OF_RANGE",
+                        format!(
+                            "chart `{}` series[{series_index}].{field} is {raw_index}, but only {count} `{axis_key}` entr{} exist",
+                            block.id,
+                            if count == 1 { "y" } else { "ies" }
+                        ),
+                        format!(
+                            "Use an index in 0..={}. Add another `{axis_key}` entry only when the chart truly needs it.",
+                            count.saturating_sub(1)
+                        ),
+                        Some(block.id.clone()),
+                        Some(format!("blocks[{index}].series[{series_index}].{field}")),
+                    );
+                }
+            }
+        }
+        if !has_data_source(&option) {
+            self.error(
+                "ECHARTS_DATA_MISSING",
+                format!("chart `{}` has no non-empty data source", block.id),
+                "Supply series[*].data, series[*].links/edges, or a non-empty dataset.source so reviewers can verify the chart.",
+                Some(block.id.clone()),
+                Some(format!("blocks[{index}].option")),
+            );
         }
     }
 
@@ -1073,6 +1188,144 @@ mod tests {
                 "missing {code}"
             );
         }
+    }
+
+    fn chart_block(option: serde_json::Value) -> Block {
+        Block::new(
+            block_id("chart"),
+            BlockKind::Echarts(EchartsBlock {
+                title: Some("Revenue".into()),
+                height: 300,
+                mode: EchartsMode::Option,
+                preset: None,
+                option: Some(option),
+                option_patch: None,
+                fallback_summary: "Revenue rose.".into(),
+                numbering: None,
+                note: None,
+            }),
+        )
+    }
+
+    fn chart_diagnostics(option: serde_json::Value) -> LintReport {
+        let mut doc = valid_doc();
+        doc.blocks.push(chart_block(option));
+        lint_document(&doc)
+    }
+
+    fn has_code(report: &LintReport, code: &str) -> bool {
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == code)
+    }
+
+    #[test]
+    fn echarts_6_valid_option_is_lint_clean() {
+        let report = chart_diagnostics(serde_json::json!({
+            "matrix": {"x": {"data": ["A", "B"]}, "y": {"data": ["C", "D"]}},
+            "xAxis": [{}, {}],
+            "yAxis": [{}],
+            "grid": [{}],
+            "polar": [{}],
+            "radar": [{"indicator": [{"name": "Revenue"}, {"name": "Margin"}]}],
+            "dataset": {"source": [["Quarter", "Value"], ["Q1", 10]]},
+            "series": [
+                {"type": "bar", "xAxisIndex": 1, "yAxisIndex": 0, "gridIndex": 0, "data": [10, 20]},
+                {"type": "radar", "data": [{"name": "Plan", "value": [10, 20]}]},
+                {"type": "sankey", "links": [{"source": "A", "target": "B", "value": 5}]},
+                {"type": "chord", "data": [{"name": "A"}], "links": [{"source": "A", "target": "B", "value": 5}]},
+                {"type": "beeswarm", "data": [1, 2, 3]},
+                {"type": "custom", "coordinateSystem": "matrix", "data": [1, 2]}
+            ]
+        }));
+        assert_eq!(report.summary.errors, 0, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn echarts_rejects_js_function_strings() {
+        let report = chart_diagnostics(serde_json::json!({
+            "series": [{
+                "type": "pie",
+                "data": [{"name": "A", "value": 10}],
+                "label": {"formatter": "function(params) { return params.name; }"}
+            }]
+        }));
+        assert!(has_code(&report, "ECHARTS_JS_FUNCTION_STRING"));
+
+        let report = chart_diagnostics(serde_json::json!({
+            "tooltip": {"formatter": "(value) => value"},
+            "series": [{"type": "bar", "data": [10]}]
+        }));
+        assert!(has_code(&report, "ECHARTS_JS_FUNCTION_STRING"));
+    }
+
+    #[test]
+    fn echarts_validates_series_types_matrix_and_indices() {
+        let report = chart_diagnostics(serde_json::json!({
+            "xAxis": [{}],
+            "yAxis": [{}],
+            "radar": [{"indicator": [{"name": "A"}]}],
+            "series": [
+                {"type": "notARealType", "data": [1]},
+                {"type": "custom", "coordinateSystem": "matrix", "data": [1]},
+                {"type": "bar", "xAxisIndex": 2, "yAxisIndex": 0, "radarIndex": 5, "data": [1]}
+            ]
+        }));
+        assert!(has_code(&report, "ECHARTS_SERIES_TYPE_INVALID"));
+        assert!(has_code(&report, "ECHARTS_MATRIX_MISSING"));
+        assert!(has_code(&report, "ECHARTS_INDEX_OUT_OF_RANGE"));
+    }
+
+    #[test]
+    fn echarts_requires_a_real_data_source() {
+        let report = chart_diagnostics(serde_json::json!({
+            "series": [{"type": "bar", "data": []}]
+        }));
+        assert!(has_code(&report, "ECHARTS_DATA_MISSING"));
+    }
+
+    #[test]
+    fn echarts_mode_is_inferred_without_preset_warning() {
+        let block: Block = serde_json::from_value(serde_json::json!({
+            "id": "chart",
+            "type": "echarts",
+            "title": "Revenue",
+            "option": {"series": [{"type": "bar", "data": [1, 2]}]},
+            "fallback_summary": "Revenue rose."
+        }))
+        .unwrap();
+        let mut doc = valid_doc();
+        doc.blocks.push(block);
+        let report = lint_document(&doc);
+        assert!(!has_code(&report, "ECHARTS_PRESET_MISSING"));
+        assert!(!has_code(&report, "ECHARTS_OPTION_MISSING"));
+        assert_eq!(report.summary.errors, 0, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn echarts_duplicate_title_uses_merged_option() {
+        let mut doc = valid_doc();
+        doc.blocks.push(Block::new(
+            block_id("chart"),
+            BlockKind::Echarts(EchartsBlock {
+                title: Some("Revenue".into()),
+                height: 300,
+                mode: EchartsMode::Option,
+                preset: None,
+                option: Some(serde_json::json!({
+                    "series": [{"type": "bar", "data": [1]}]
+                })),
+                option_patch: Some(serde_json::json!({
+                    "title": {"text": "Revenue", "top": "top"}
+                })),
+                fallback_summary: "Revenue rose.".into(),
+                numbering: None,
+                note: None,
+            }),
+        ));
+        let report = lint_document(&doc);
+        assert!(has_code(&report, "DUPLICATE_INNER_TITLE"));
     }
 
     #[test]

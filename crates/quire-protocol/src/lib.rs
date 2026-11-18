@@ -11,6 +11,7 @@ pub mod block;
 pub mod citation;
 pub mod computed;
 pub mod draft;
+pub(crate) mod echarts;
 pub mod error;
 pub mod events;
 pub mod ids;
@@ -35,9 +36,9 @@ pub use citation::{
     resolve_citations, scan_document_citations,
 };
 pub use computed::{
-    BlockFraming, CitationMapEntry, ComputedDocumentMeta, LayoutHeaderCell, LayoutLeafColumn,
-    TableLayout, TocNode, compute_block_framing, compute_document_meta, compute_table_layout,
-    compute_toc_tree,
+    BlockFraming, ChartRequirements, CitationMapEntry, ComputedDocumentMeta, LayoutHeaderCell,
+    LayoutLeafColumn, TableLayout, TocNode, compute_block_framing, compute_document_meta,
+    compute_table_layout, compute_toc_tree,
 };
 pub use draft::{DraftError, ReportDraft};
 pub use error::ProtocolError;
