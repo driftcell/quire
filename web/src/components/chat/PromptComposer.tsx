@@ -2,11 +2,12 @@ import { useRef, useState } from "react";
 import {
   ArrowUpIcon,
   FileIcon,
-  GaugeIcon,
   Minimize2Icon,
-  PaperclipIcon,
+  PlusIcon,
+  QuoteIcon,
   RotateCcwIcon,
   SquareIcon,
+  UploadCloudIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -41,10 +42,17 @@ export interface PendingAttachment {
   status: "idle" | "uploading" | "done" | "error";
 }
 
+export interface QuotedChatSnippet {
+  blockId: string;
+  exact: string;
+}
+
 export interface PromptComposerProps {
   placeholder?: string;
   runStatus?: ActiveRunStatus;
   contextUsage?: ContextUsage;
+  quotedSnippet?: QuotedChatSnippet | null;
+  onClearQuote?: () => void;
   disabled?: boolean;
   onSend: (text: string, files: File[]) => Promise<void>;
   onInterrupt?: () => Promise<void>;
@@ -58,10 +66,49 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+function ContextRing({ pct }: { pct: number }) {
+  const radius = 6;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (pct / 100) * circumference;
+  return (
+    <svg viewBox="0 0 16 16" className="size-3.5 -rotate-90" aria-hidden="true">
+      <circle
+        cx="8"
+        cy="8"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="opacity-20"
+      />
+      <circle
+        cx="8"
+        cy="8"
+        r={radius}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeDasharray={circumference}
+        strokeDashoffset={offset}
+        strokeLinecap="round"
+        className={
+          pct >= 85
+            ? "text-destructive"
+            : pct >= 65
+              ? "text-amber-500"
+              : "text-primary"
+        }
+      />
+    </svg>
+  );
+}
+
 export function PromptComposer({
-  placeholder = "描述你想生成的报告主题、结构或修改意见...",
+  placeholder = "Shift + Enter 换行 · 支持拖拽或粘贴截图",
   runStatus = "idle",
   contextUsage,
+  quotedSnippet,
+  onClearQuote,
   disabled = false,
   onSend,
   onInterrupt,
@@ -71,6 +118,8 @@ export function PromptComposer({
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isRunning = runStatus === "running";
@@ -82,22 +131,108 @@ export function PromptComposer({
 
   const submit = async () => {
     const trimmed = text.trim();
-    if ((!trimmed && files.length === 0) || sending || disabled) {
+    if (
+      (!trimmed && files.length === 0 && !quotedSnippet) ||
+      sending ||
+      disabled
+    ) {
       return;
     }
     setSending(true);
+    setSendError(null);
+    const currentText = trimmed;
+    const currentFiles = files;
+    const payloadText = quotedSnippet
+      ? `> 引用（#${quotedSnippet.blockId}）：${quotedSnippet.exact}\n\n${currentText}`
+      : currentText;
     try {
-      const currentFiles = files;
       setText("");
       setFiles([]);
-      await onSend(trimmed, currentFiles);
+      onClearQuote?.();
+      await onSend(payloadText, currentFiles);
+    } catch (err) {
+      setText(currentText);
+      setFiles(currentFiles);
+      setSendError(err instanceof Error ? err.message : "发送失败，请重试");
     } finally {
       setSending(false);
     }
   };
 
   return (
-    <div className="w-full space-y-2">
+    <div
+      className="relative w-full space-y-2"
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes("Files")) {
+          event.preventDefault();
+          setDragging(true);
+        }
+      }}
+      onDragLeave={(event) => {
+        const target = event.relatedTarget;
+        if (
+          !(target instanceof Node) ||
+          !event.currentTarget.contains(target)
+        ) {
+          setDragging(false);
+        }
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+        const dropped = Array.from(event.dataTransfer.files);
+        if (dropped.length > 0) {
+          setFiles((prev) => [...prev, ...dropped]);
+        }
+      }}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary bg-primary/5 text-xs font-medium text-primary backdrop-blur-[1px]">
+          <UploadCloudIcon className="size-4" />
+          <span>松开以上传附件</span>
+        </div>
+      )}
+
+      {sendError && (
+        <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+          <span className="truncate">{sendError}</span>
+          <button
+            type="button"
+            aria-label="关闭错误提示"
+            onClick={() => setSendError(null)}
+            className="shrink-0 rounded p-0.5 hover:bg-destructive/15"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        </div>
+      )}
+
+      {quotedSnippet && (
+        <div className="flex items-start justify-between gap-2 rounded-xl border border-primary/25 bg-primary/[0.04] px-3 py-2 text-xs">
+          <div className="flex min-w-0 items-start gap-1.5">
+            <QuoteIcon className="mt-0.5 size-3.5 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <div className="text-[10px] font-medium text-primary">
+                引用报告块 #{quotedSnippet.blockId}
+              </div>
+              <div className="line-clamp-2 text-muted-foreground">
+                “{quotedSnippet.exact}”
+              </div>
+            </div>
+          </div>
+          {onClearQuote && (
+            <button
+              type="button"
+              aria-label="取消引用"
+              onClick={onClearQuote}
+              className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            >
+              <XIcon className="size-3.5" />
+            </button>
+          )}
+        </div>
+      )}
+
       {files.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {files.map((file, idx) => (
@@ -129,6 +264,12 @@ export function PromptComposer({
           disabled={disabled || sending}
           className="max-h-40 min-h-12 resize-none px-3.5 pt-3 text-sm"
           onChange={(event) => setText(event.target.value)}
+          onPaste={(event) => {
+            const pastedFiles = Array.from(event.clipboardData.files);
+            if (pastedFiles.length > 0) {
+              setFiles((prev) => [...prev, ...pastedFiles]);
+            }
+          }}
           onKeyDown={(event) => {
             if (
               event.key === "Enter" &&
@@ -166,7 +307,7 @@ export function PromptComposer({
               disabled={disabled || sending}
               onClick={() => fileInputRef.current?.click()}
             >
-              <PaperclipIcon className="size-4" />
+              <PlusIcon className="size-4" />
             </InputGroupButton>
 
             {contextUsage && limit > 0 && (
@@ -181,7 +322,7 @@ export function PromptComposer({
                     />
                   }
                 >
-                  <GaugeIcon className="size-3.5" />
+                  <ContextRing pct={pct} />
                   <span>{pct}%</span>
                 </HoverCardTrigger>
                 <HoverCardContent className="w-64 space-y-2.5">
@@ -266,7 +407,9 @@ export function PromptComposer({
                 disabled={
                   disabled ||
                   sending ||
-                  (text.trim().length === 0 && files.length === 0)
+                  (text.trim().length === 0 &&
+                    files.length === 0 &&
+                    !quotedSnippet)
                 }
                 onClick={() => {
                   void submit();

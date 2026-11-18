@@ -166,6 +166,61 @@ pub struct PendingQuestion {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RunTaskFocus {
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RunTraceToolItem {
+    pub tool_call_id: String,
+    pub tool_name: String,
+    pub status: String,
+    pub input_preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_preview: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RunTraceSubagent {
+    pub subagent_run_id: String,
+    pub agent_name: String,
+    pub task: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub section_id: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    pub thinking: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_focus: Option<RunTaskFocus>,
+    #[serde(default)]
+    pub tools: Vec<RunTraceToolItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RunTraceSummary {
+    pub run_id: String,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    pub thinking: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_focus: Option<RunTaskFocus>,
+    #[serde(default)]
+    pub tools: Vec<RunTraceToolItem>,
+    #[serde(default)]
+    pub subagents: Vec<RunTraceSubagent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSummary {
     pub session_id: String,
     pub title: String,

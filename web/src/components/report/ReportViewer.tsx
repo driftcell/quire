@@ -7,7 +7,11 @@ import {
   useRef,
   useState,
 } from "react";
-import { MessageSquareIcon, MessageSquarePlusIcon } from "lucide-react";
+import {
+  MessageSquareIcon,
+  MessageSquarePlusIcon,
+  SparklesIcon,
+} from "lucide-react";
 import { CustomHtmlView } from "@/components/report/CustomHtmlView";
 import { EchartsCanvas } from "@/components/report/EchartsCanvas";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
@@ -44,6 +48,7 @@ export interface ReportViewerProps {
   pageFilter?: number;
   onPagesReady?: (totalPages: number) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
+  onAskAgentWithQuote?: (blockId: string, exact: string) => void;
 }
 
 interface FloatingQuoteAction {
@@ -72,6 +77,7 @@ function renderHeadingTag(
   citationMap: ComputedDocumentMeta["citation_map"],
   onCitationClick: (sourceId: string) => void,
   highlightQuotes?: TextQuoteSelector[],
+  onQuoteClick?: (quote: TextQuoteSelector, rect: DOMRect) => void,
 ) {
   const content = (
     <InlineMarkdown
@@ -79,6 +85,7 @@ function renderHeadingTag(
       citationMap={citationMap}
       onCitationClick={onCitationClick}
       highlightQuotes={highlightQuotes}
+      onQuoteClick={onQuoteClick}
     />
   );
   switch (level) {
@@ -491,6 +498,20 @@ const ReportBlockItem = memo(function ReportBlockItem({
   const { block } = slice;
   const framing = computed.block_framing[block.id];
 
+  const handleQuoteClick = useCallback(
+    (quote: TextQuoteSelector, rect: DOMRect) => {
+      if (!onOpenCommentForBlock) return;
+      onOpenCommentForBlock({
+        blockId: block.id,
+        quote,
+        rect: toViewportRect(rect),
+      });
+    },
+    [block.id, onOpenCommentForBlock],
+  );
+  const quoteHandler =
+    !printMode && onOpenCommentForBlock ? handleQuoteClick : undefined;
+
   let bodyNode: React.ReactNode = null;
   if (block.type === "heading") {
     bodyNode = renderHeadingTag(
@@ -500,6 +521,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
       computed.citation_map,
       onCitationClick,
       blockQuotes,
+      quoteHandler,
     );
   } else if (block.type === "paragraph") {
     bodyNode = (
@@ -512,6 +534,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
           citationMap={computed.citation_map}
           onCitationClick={onCitationClick}
           highlightQuotes={blockQuotes}
+          onQuoteClick={quoteHandler}
         />
       </p>
     );
@@ -526,6 +549,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
           citationMap={computed.citation_map}
           onCitationClick={onCitationClick}
           highlightQuotes={blockQuotes}
+          onQuoteClick={quoteHandler}
         />
       </blockquote>
     );
@@ -664,6 +688,7 @@ export function ReportViewer({
   pageFilter,
   onPagesReady,
   onOpenCommentForBlock,
+  onAskAgentWithQuote,
 }: ReportViewerProps) {
   const suppressChrome = printMode || previewMode;
   const rootRef = useRef<HTMLDivElement>(null);
@@ -1023,29 +1048,55 @@ export function ReportViewer({
       style={themeVars}
       className="report-root relative w-full"
     >
-      {quoteAction && onOpenCommentForBlock && !printMode && (
-        <button
-          type="button"
-          style={{
-            top: `${Math.max(8, quoteAction.top)}px`,
-            left: `${quoteAction.left}px`,
-          }}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => {
-            onOpenCommentForBlock({
-              blockId: quoteAction.blockId,
-              quote: quoteAction.quote,
-              rect: quoteAction.viewportRect,
-            });
-            setQuoteAction(null);
-            window.getSelection()?.removeAllRanges();
-          }}
-          className="absolute z-40 inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-background px-2.5 py-1 text-xs font-medium text-amber-700 shadow-md hover:bg-amber-50 dark:text-amber-300 dark:hover:bg-amber-950/50 print:hidden"
-        >
-          <MessageSquarePlusIcon className="size-3.5" />
-          批注选中文本
-        </button>
-      )}
+      {quoteAction &&
+        (onOpenCommentForBlock || onAskAgentWithQuote) &&
+        !suppressChrome && (
+          <div
+            style={{
+              top: `${Math.max(8, quoteAction.top)}px`,
+              left: `${quoteAction.left}px`,
+            }}
+            className="absolute z-40 inline-flex items-center gap-1 rounded-full border bg-background/95 p-1 shadow-md backdrop-blur print:hidden"
+          >
+            {onOpenCommentForBlock && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onOpenCommentForBlock({
+                    blockId: quoteAction.blockId,
+                    quote: quoteAction.quote,
+                    rect: quoteAction.viewportRect,
+                  });
+                  setQuoteAction(null);
+                  window.getSelection()?.removeAllRanges();
+                }}
+                className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+              >
+                <MessageSquarePlusIcon className="size-3.5" />
+                <span>批注</span>
+              </button>
+            )}
+            {onAskAgentWithQuote && (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  onAskAgentWithQuote(
+                    quoteAction.blockId,
+                    quoteAction.quote.exact,
+                  );
+                  setQuoteAction(null);
+                  window.getSelection()?.removeAllRanges();
+                }}
+                className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
+              >
+                <SparklesIcon className="size-3.5" />
+                <span>问问 Agent</span>
+              </button>
+            )}
+          </div>
+        )}
 
       {isPaged && (
         <div

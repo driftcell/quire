@@ -2,6 +2,9 @@ import type {
   AttachmentMeta,
   CreateSessionRequest,
   QuestionAnswer,
+  RunTraceSubagent,
+  RunTraceSummary,
+  RunTraceToolItem,
   SendMessageRequest,
   SessionDetail,
   SessionMessage,
@@ -120,6 +123,47 @@ function isToolCallDetail(value: unknown): value is ToolCallDetail {
   return isRecord(value) && typeof value.tool_call_id === "string";
 }
 
+function isRunTraceToolItem(value: unknown): value is RunTraceToolItem {
+  return (
+    isRecord(value) &&
+    typeof value.tool_call_id === "string" &&
+    typeof value.tool_name === "string" &&
+    typeof value.status === "string" &&
+    typeof value.input_preview === "string"
+  );
+}
+
+function isRunTraceSubagent(value: unknown): value is RunTraceSubagent {
+  return (
+    isRecord(value) &&
+    typeof value.subagent_run_id === "string" &&
+    typeof value.agent_name === "string" &&
+    typeof value.task === "string" &&
+    typeof value.status === "string" &&
+    typeof value.thinking === "string" &&
+    (value.tools === undefined ||
+      (Array.isArray(value.tools) && value.tools.every(isRunTraceToolItem)))
+  );
+}
+
+function isRunTraceSummary(value: unknown): value is RunTraceSummary {
+  return (
+    isRecord(value) &&
+    typeof value.run_id === "string" &&
+    typeof value.status === "string" &&
+    typeof value.thinking === "string" &&
+    (value.tools === undefined ||
+      (Array.isArray(value.tools) && value.tools.every(isRunTraceToolItem))) &&
+    (value.subagents === undefined ||
+      (Array.isArray(value.subagents) &&
+        value.subagents.every(isRunTraceSubagent)))
+  );
+}
+
+function isRunTraceSummaryList(value: unknown): value is RunTraceSummary[] {
+  return Array.isArray(value) && value.every(isRunTraceSummary);
+}
+
 export interface PostMessageResponse {
   message: SessionMessage;
   inserted: boolean;
@@ -155,6 +199,15 @@ export function createSession(
 export function getSession(sessionId: string): Promise<SessionDetail> {
   return runtimeFetch(`/api/sessions/${encodeURIComponent(sessionId)}`, (raw) =>
     decodeWith(raw, isSessionDetail, "session"),
+  );
+}
+
+export function listSessionTraces(
+  sessionId: string,
+): Promise<RunTraceSummary[]> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/traces`,
+    (raw) => decodeWith(raw, isRunTraceSummaryList, "session traces"),
   );
 }
 

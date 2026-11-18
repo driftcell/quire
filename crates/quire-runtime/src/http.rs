@@ -15,8 +15,8 @@ use axum::{
 };
 use futures::Stream;
 use quire_session_protocol::{
-    AttachmentMeta, CreateSessionRequest, QuestionAnswer, SendMessageRequest, SessionDetail,
-    SessionEvent, SessionEventKind, SessionSummary, ToolCallDetail,
+    AttachmentMeta, CreateSessionRequest, QuestionAnswer, RunTraceSummary, SendMessageRequest,
+    SessionDetail, SessionEvent, SessionEventKind, SessionSummary, ToolCallDetail,
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -72,6 +72,10 @@ pub fn router(service: RuntimeService) -> Router {
                 .delete(delete_session),
         )
         .route("/api/sessions/{session_id}/events", get(session_events))
+        .route(
+            "/api/sessions/{session_id}/traces",
+            get(list_session_traces),
+        )
         .route("/api/sessions/{session_id}/messages", post(post_message))
         .route(
             "/api/sessions/{session_id}/questions/{question_id}/answer",
@@ -259,6 +263,13 @@ async fn get_session(
     Path(session_id): Path<String>,
 ) -> RuntimeResult<Json<SessionDetail>> {
     service.session_detail(&session_id).await.map(Json)
+}
+
+async fn list_session_traces(
+    State(service): State<RuntimeService>,
+    Path(session_id): Path<String>,
+) -> RuntimeResult<Json<Vec<RunTraceSummary>>> {
+    service.list_run_traces(&session_id).await.map(Json)
 }
 
 #[derive(Debug, Deserialize)]

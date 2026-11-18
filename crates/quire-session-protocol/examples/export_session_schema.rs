@@ -8,8 +8,8 @@ use std::{fs, path::Path};
 
 use quire_session_protocol::{
     AttachmentMeta, CreateSessionRequest, PendingQuestion, QuestionAnswer, QuestionItem,
-    QuestionOption, SendMessageRequest, SessionDetail, SessionEvent, SessionMessage,
-    SessionSummary, ToolCallDetail,
+    QuestionOption, RunTraceSummary, SendMessageRequest, SessionDetail, SessionEvent,
+    SessionMessage, SessionSummary, ToolCallDetail,
 };
 use schemars::JsonSchema;
 
@@ -29,6 +29,7 @@ struct SessionProtocolContract {
     question_item: QuestionItem,
     question_answer: QuestionAnswer,
     pending_question: PendingQuestion,
+    run_trace_summary: RunTraceSummary,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

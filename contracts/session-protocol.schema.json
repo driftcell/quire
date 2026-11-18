@@ -21,6 +21,9 @@
     "question_option": {
       "$ref": "#/$defs/QuestionOption"
     },
+    "run_trace_summary": {
+      "$ref": "#/$defs/RunTraceSummary"
+    },
     "send_message_request": {
       "$ref": "#/$defs/SendMessageRequest"
     },
@@ -52,7 +55,8 @@
     "question_option",
     "question_item",
     "question_answer",
-    "pending_question"
+    "pending_question",
+    "run_trace_summary"
   ],
   "$defs": {
     "ActiveRunStatus": {
@@ -276,6 +280,177 @@
       "required": [
         "id",
         "label"
+      ]
+    },
+    "RunTaskFocus": {
+      "type": "object",
+      "properties": {
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "RunTraceSubagent": {
+      "type": "object",
+      "properties": {
+        "agent_name": {
+          "type": "string"
+        },
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "subagent_run_id": {
+          "type": "string"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task": {
+          "type": "string"
+        },
+        "task_focus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunTaskFocus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinking": {
+          "type": "string"
+        },
+        "tools": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RunTraceToolItem"
+          }
+        }
+      },
+      "required": [
+        "subagent_run_id",
+        "agent_name",
+        "task",
+        "status",
+        "thinking"
+      ]
+    },
+    "RunTraceSummary": {
+      "type": "object",
+      "properties": {
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "subagents": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RunTraceSubagent"
+          }
+        },
+        "task_focus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunTaskFocus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinking": {
+          "type": "string"
+        },
+        "tools": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RunTraceToolItem"
+          }
+        }
+      },
+      "required": [
+        "run_id",
+        "status",
+        "thinking"
+      ]
+    },
+    "RunTraceToolItem": {
+      "type": "object",
+      "properties": {
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input_preview": {
+          "type": "string"
+        },
+        "output_preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "tool_name",
+        "status",
+        "input_preview"
       ]
     },
     "SendMessageRequest": {

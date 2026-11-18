@@ -134,6 +134,7 @@ export interface QuireSessionProtocol {
   question_answer: QuestionAnswer;
   question_item: QuestionItem;
   question_option: QuestionOption;
+  run_trace_summary: RunTraceSummary;
   send_message_request: SendMessageRequest;
   session_detail: SessionDetail;
   session_event: SessionEvent;
@@ -186,6 +187,44 @@ export interface QuestionAnswer {
   question_id: string;
   selected_option_ids?: string[];
   skipped?: boolean;
+}
+export interface RunTraceSummary {
+  duration_ms?: number | null;
+  run_id: string;
+  status: string;
+  subagents?: RunTraceSubagent[];
+  task_focus?: RunTaskFocus | null;
+  thinking: string;
+  tools?: RunTraceToolItem[];
+  [k: string]: unknown;
+}
+export interface RunTraceSubagent {
+  agent_name: string;
+  section_id?: string | null;
+  status: string;
+  subagent_run_id: string;
+  summary?: string | null;
+  task: string;
+  task_focus?: RunTaskFocus | null;
+  thinking: string;
+  tools?: RunTraceToolItem[];
+  [k: string]: unknown;
+}
+export interface RunTaskFocus {
+  detail?: string | null;
+  section_id?: string | null;
+  title: string;
+  [k: string]: unknown;
+}
+export interface RunTraceToolItem {
+  duration_ms?: number | null;
+  input_preview: string;
+  output_preview?: string | null;
+  status: string;
+  tool_call_id: string;
+  tool_name: string;
+  truncated?: boolean;
+  [k: string]: unknown;
 }
 export interface SendMessageRequest {
   attachment_ids?: string[];

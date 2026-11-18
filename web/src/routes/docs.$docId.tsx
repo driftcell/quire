@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { startTransition, useCallback, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
@@ -23,6 +23,7 @@ import {
 import { ReportViewer } from "@/components/report/ReportViewer";
 import { TocOutline } from "@/components/report/TocOutline";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useSidebar } from "@/components/ui/sidebar";
 import type { CommentStatus } from "@/contracts/report-protocol";
 import {
@@ -58,16 +59,25 @@ function DocumentPage() {
   });
 
   const setViewMode = (mode: ReportViewMode) => {
-    setPrefs((prev) => {
-      const next = { ...prev, reportViewMode: mode };
-      savePreferences(next);
-      return next;
+    startTransition(() => {
+      setPrefs((prev) => {
+        const next = { ...prev, reportViewMode: mode };
+        savePreferences(next);
+        return next;
+      });
     });
   };
 
   const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.remove("quire-flash-highlight");
+    void el.offsetWidth;
+    el.classList.add("quire-flash-highlight");
+    window.setTimeout(() => {
+      el.classList.remove("quire-flash-highlight");
+    }, 1600);
   }, []);
 
   const openCommentsCount =
@@ -160,8 +170,11 @@ function DocumentPage() {
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20">
         {docQuery.isLoading && (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            正在加载报告...
+          <div className="mx-auto max-w-[760px] space-y-4 px-5 py-10">
+            <Skeleton className="h-9 w-2/3" />
+            <Skeleton className="h-4 w-1/3" />
+            <Skeleton className="mt-6 h-24 w-full" />
+            <Skeleton className="h-40 w-full" />
           </div>
         )}
         {docQuery.error && (

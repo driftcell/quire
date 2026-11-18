@@ -1,10 +1,13 @@
 //! PostgreSQL persistence for sessions, messages, runs, events and tool calls.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use quire_session_protocol::{
     ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem,
-    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
-    SessionStatus, SessionSummary, ToolCallDetail,
+    RunTaskFocus, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
+    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
+    ToolCallDetail,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
@@ -897,6 +900,25 @@ impl RuntimeStore {
             .collect()
     }
 
+    /// Aggregate persisted `session_events` into lightweight per-run traces.
+    pub async fn list_run_traces(&self, session_id: &str) -> RuntimeResult<Vec<RunTraceSummary>> {
+        self.get_session_summary(session_id).await?;
+        let rows = sqlx::query(
+            r#"SELECT event FROM session_events
+               WHERE session_id = $1
+               ORDER BY seq ASC"#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut events = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let value: Value = row.try_get("event")?;
+            events.push(serde_json::from_value::<SessionEvent>(value)?);
+        }
+        Ok(aggregate_run_traces(&events))
+    }
+
     pub async fn count_events_after(&self, session_id: &str, after_seq: u64) -> RuntimeResult<i64> {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*)::bigint FROM session_events WHERE session_id = $1 AND seq > $2",
@@ -1037,6 +1059,284 @@ fn row_to_message(row: &PgRow) -> RuntimeResult<SessionMessage> {
     })
 }
 
+struct RunTraceAccumulator {
+    summary: RunTraceSummary,
+    started_at: Option<DateTime<Utc>>,
+}
+
+fn ensure_run_trace(
+    traces: &mut Vec<RunTraceAccumulator>,
+    index: &mut HashMap<String, usize>,
+    run_id: &str,
+    timestamp: DateTime<Utc>,
+) -> usize {
+    if let Some(position) = index.get(run_id) {
+        return *position;
+    }
+    let position = traces.len();
+    traces.push(RunTraceAccumulator {
+        summary: RunTraceSummary {
+            run_id: run_id.to_string(),
+            status: "running".to_string(),
+            duration_ms: None,
+            thinking: String::new(),
+            task_focus: None,
+            tools: Vec::new(),
+            subagents: Vec::new(),
+        },
+        started_at: Some(timestamp),
+    });
+    index.insert(run_id.to_string(), position);
+    position
+}
+
+fn is_subagent_event(event: &SessionEvent) -> bool {
+    event.parent_run_id.is_some() || event.agent_id != "main"
+}
+
+fn ensure_subagent_trace(summary: &mut RunTraceSummary, event: &SessionEvent) -> usize {
+    if let Some(position) = summary
+        .subagents
+        .iter()
+        .position(|sub| sub.subagent_run_id == event.run_id || sub.agent_name == event.agent_id)
+    {
+        return position;
+    }
+    summary.subagents.push(RunTraceSubagent {
+        subagent_run_id: event.run_id.clone(),
+        agent_name: event.agent_id.clone(),
+        task: String::new(),
+        section_id: None,
+        status: "running".to_string(),
+        summary: None,
+        thinking: String::new(),
+        task_focus: None,
+        tools: Vec::new(),
+    });
+    summary.subagents.len() - 1
+}
+
+fn elapsed_ms(started_at: Option<DateTime<Utc>>, finished_at: DateTime<Utc>) -> Option<u64> {
+    started_at.and_then(|start| u64::try_from((finished_at - start).num_milliseconds().max(0)).ok())
+}
+
+fn upsert_tool_finished(
+    tools: &mut Vec<RunTraceToolItem>,
+    tool_call_id: &str,
+    status: &str,
+    output_preview: &str,
+    truncated: bool,
+    duration_ms: u64,
+) {
+    if let Some(tool) = tools
+        .iter_mut()
+        .find(|item| item.tool_call_id == tool_call_id)
+    {
+        tool.status = status.to_string();
+        tool.output_preview = Some(output_preview.to_string());
+        tool.duration_ms = Some(duration_ms);
+        tool.truncated = truncated;
+        return;
+    }
+    tools.push(RunTraceToolItem {
+        tool_call_id: tool_call_id.to_string(),
+        tool_name: String::new(),
+        status: status.to_string(),
+        input_preview: String::new(),
+        output_preview: Some(output_preview.to_string()),
+        duration_ms: Some(duration_ms),
+        truncated,
+    });
+}
+
+/// Pure aggregation over persisted session events, ordered by their SSE sequence.
+pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
+    let mut traces: Vec<RunTraceAccumulator> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+
+    for event in events {
+        let trace_run_id = event.parent_run_id.as_deref().unwrap_or(&event.run_id);
+        let position = ensure_run_trace(&mut traces, &mut index, trace_run_id, event.timestamp);
+        let Some(trace) = traces.get_mut(position) else {
+            continue;
+        };
+        let subagent_event = is_subagent_event(event);
+
+        match &event.kind {
+            SessionEventKind::TurnStarted => {
+                trace.summary.status = "running".to_string();
+                if trace.started_at.is_none() {
+                    trace.started_at = Some(event.timestamp);
+                }
+            }
+            SessionEventKind::TurnFinished => {
+                trace.summary.status = "completed".to_string();
+                trace.summary.duration_ms = elapsed_ms(trace.started_at, event.timestamp);
+            }
+            SessionEventKind::TurnFailed { recoverable, .. } => {
+                trace.summary.status = if *recoverable {
+                    "interrupted".to_string()
+                } else {
+                    "failed".to_string()
+                };
+                trace.summary.duration_ms = elapsed_ms(trace.started_at, event.timestamp);
+            }
+            SessionEventKind::ThinkingDelta { delta } => {
+                if subagent_event {
+                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
+                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                        record.thinking.push_str(delta);
+                    }
+                } else {
+                    trace.summary.thinking.push_str(delta);
+                }
+            }
+            SessionEventKind::TaskFocus {
+                title,
+                detail,
+                section_id,
+            } => {
+                let focus = RunTaskFocus {
+                    title: title.clone(),
+                    detail: detail.clone(),
+                    section_id: section_id.clone(),
+                };
+                if subagent_event {
+                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
+                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                        record.task_focus = Some(focus);
+                    }
+                } else {
+                    trace.summary.task_focus = Some(focus);
+                }
+            }
+            SessionEventKind::ToolCallStarted {
+                tool_call_id,
+                tool_name,
+                input_preview,
+                truncated,
+            } => {
+                let item = RunTraceToolItem {
+                    tool_call_id: tool_call_id.clone(),
+                    tool_name: tool_name.clone(),
+                    status: "running".to_string(),
+                    input_preview: input_preview.clone(),
+                    output_preview: None,
+                    duration_ms: None,
+                    truncated: *truncated,
+                };
+                if subagent_event {
+                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
+                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                        record.tools.push(item);
+                    }
+                } else {
+                    trace.summary.tools.push(item);
+                }
+            }
+            SessionEventKind::ToolCallFinished {
+                tool_call_id,
+                status,
+                output_preview,
+                truncated,
+                duration_ms,
+            } => {
+                if subagent_event {
+                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
+                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                        upsert_tool_finished(
+                            &mut record.tools,
+                            tool_call_id,
+                            status,
+                            output_preview,
+                            *truncated,
+                            *duration_ms,
+                        );
+                    }
+                } else {
+                    upsert_tool_finished(
+                        &mut trace.summary.tools,
+                        tool_call_id,
+                        status,
+                        output_preview,
+                        *truncated,
+                        *duration_ms,
+                    );
+                }
+            }
+            SessionEventKind::SubagentStarted {
+                subagent_run_id,
+                agent_name,
+                task,
+                section_id,
+            } => {
+                let existing = trace.summary.subagents.iter_mut().find(|sub| {
+                    sub.subagent_run_id == *subagent_run_id || sub.agent_name == *agent_name
+                });
+                if let Some(subagent) = existing {
+                    subagent.subagent_run_id = subagent_run_id.clone();
+                    subagent.agent_name = agent_name.clone();
+                    subagent.task = task.clone();
+                    subagent.section_id = section_id.clone();
+                    subagent.status = "running".to_string();
+                } else {
+                    trace.summary.subagents.push(RunTraceSubagent {
+                        subagent_run_id: subagent_run_id.clone(),
+                        agent_name: agent_name.clone(),
+                        task: task.clone(),
+                        section_id: section_id.clone(),
+                        status: "running".to_string(),
+                        summary: None,
+                        thinking: String::new(),
+                        task_focus: None,
+                        tools: Vec::new(),
+                    });
+                }
+            }
+            SessionEventKind::SubagentFinished {
+                subagent_run_id,
+                status,
+                summary,
+            } => {
+                let existing = trace.summary.subagents.iter_mut().find(|sub| {
+                    sub.subagent_run_id == *subagent_run_id || sub.subagent_run_id == event.run_id
+                });
+                if let Some(subagent) = existing {
+                    subagent.status = status.clone();
+                    if !summary.is_empty() {
+                        subagent.summary = Some(summary.clone());
+                    }
+                } else {
+                    trace.summary.subagents.push(RunTraceSubagent {
+                        subagent_run_id: subagent_run_id.clone(),
+                        agent_name: event.agent_id.clone(),
+                        task: String::new(),
+                        section_id: None,
+                        status: status.clone(),
+                        summary: if summary.is_empty() {
+                            None
+                        } else {
+                            Some(summary.clone())
+                        },
+                        thinking: String::new(),
+                        task_focus: None,
+                        tools: Vec::new(),
+                    });
+                }
+            }
+            SessionEventKind::TextDelta { .. }
+            | SessionEventKind::SyncRequired { .. }
+            | SessionEventKind::ContextUsage { .. }
+            | SessionEventKind::QuestionnaireRequested { .. }
+            | SessionEventKind::QuestionnaireAnswered { .. }
+            | SessionEventKind::QuestionnaireDismissed { .. }
+            | SessionEventKind::DocLinked { .. } => {}
+        }
+    }
+
+    traces.into_iter().map(|trace| trace.summary).collect()
+}
+
 fn row_to_run(row: &PgRow) -> RuntimeResult<RunRecord> {
     Ok(RunRecord {
         run_id: row.try_get("run_id")?,
@@ -1063,5 +1363,167 @@ mod tests {
             Some(ActiveRunStatus::Interrupted)
         );
         assert_eq!(MessageRole::parse("user"), Some(MessageRole::User));
+    }
+
+    #[test]
+    fn aggregates_main_and_subagent_tool_traces() {
+        let events = vec![
+            SessionEvent::new(1, "run_main", "main", None, SessionEventKind::TurnStarted),
+            SessionEvent::new(
+                2,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::ThinkingDelta {
+                    delta: "plan".into(),
+                },
+            ),
+            SessionEvent::new(
+                3,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::TaskFocus {
+                    title: "Intro".into(),
+                    detail: Some("write".into()),
+                    section_id: Some("intro".into()),
+                },
+            ),
+            SessionEvent::new(
+                4,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::ToolCallStarted {
+                    tool_call_id: "tc_main".into(),
+                    tool_name: "apply_operations".into(),
+                    input_preview: "{\"ops\":".into(),
+                    truncated: false,
+                },
+            ),
+            SessionEvent::new(
+                5,
+                "sub_1",
+                "alpha",
+                Some("run_main".into()),
+                SessionEventKind::SubagentStarted {
+                    subagent_run_id: "sub_1".into(),
+                    agent_name: "alpha".into(),
+                    task: "draft intro".into(),
+                    section_id: Some("intro".into()),
+                },
+            ),
+            SessionEvent::new(
+                6,
+                "sub_1",
+                "alpha",
+                Some("run_main".into()),
+                SessionEventKind::ThinkingDelta {
+                    delta: "sub-thought".into(),
+                },
+            ),
+            SessionEvent::new(
+                7,
+                "sub_1",
+                "alpha",
+                Some("run_main".into()),
+                SessionEventKind::ToolCallStarted {
+                    tool_call_id: "tc_sub".into(),
+                    tool_name: "read_blocks".into(),
+                    input_preview: "{}".into(),
+                    truncated: false,
+                },
+            ),
+            SessionEvent::new(
+                8,
+                "sub_1",
+                "alpha",
+                Some("run_main".into()),
+                SessionEventKind::ToolCallFinished {
+                    tool_call_id: "tc_sub".into(),
+                    status: "completed".into(),
+                    output_preview: "ok".into(),
+                    truncated: false,
+                    duration_ms: 42,
+                },
+            ),
+            SessionEvent::new(
+                9,
+                "sub_1",
+                "alpha",
+                Some("run_main".into()),
+                SessionEventKind::SubagentFinished {
+                    subagent_run_id: "sub_1".into(),
+                    status: "completed".into(),
+                    summary: "intro drafted".into(),
+                },
+            ),
+            SessionEvent::new(
+                10,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::ToolCallFinished {
+                    tool_call_id: "tc_main".into(),
+                    status: "completed".into(),
+                    output_preview: "revision 2".into(),
+                    truncated: false,
+                    duration_ms: 300,
+                },
+            ),
+            SessionEvent::new(11, "run_main", "main", None, SessionEventKind::TurnFinished),
+        ];
+
+        let traces = aggregate_run_traces(&events);
+        assert_eq!(traces.len(), 1);
+        let trace = traces.first().expect("trace");
+        assert_eq!(trace.run_id, "run_main");
+        assert_eq!(trace.status, "completed");
+        assert!(trace.duration_ms.is_some());
+        assert_eq!(trace.thinking, "plan");
+        let focus = trace.task_focus.as_ref().expect("focus");
+        assert_eq!(focus.title, "Intro");
+        assert_eq!(trace.tools.len(), 1);
+        let main_tool = trace.tools.first().expect("main tool");
+        assert_eq!(main_tool.status, "completed");
+        assert_eq!(main_tool.duration_ms, Some(300));
+        assert_eq!(trace.subagents.len(), 1);
+        let subagent = trace.subagents.first().expect("subagent");
+        assert_eq!(subagent.subagent_run_id, "sub_1");
+        assert_eq!(subagent.thinking, "sub-thought");
+        assert_eq!(subagent.status, "completed");
+        assert_eq!(subagent.summary.as_deref(), Some("intro drafted"));
+        assert_eq!(subagent.tools.len(), 1);
+        assert_eq!(
+            subagent.tools.first().expect("sub tool").duration_ms,
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn recoverable_turn_failure_marks_trace_interrupted() {
+        let events = vec![
+            SessionEvent::new(
+                1,
+                "run_interrupted",
+                "main",
+                None,
+                SessionEventKind::TurnStarted,
+            ),
+            SessionEvent::new(
+                2,
+                "run_interrupted",
+                "main",
+                None,
+                SessionEventKind::TurnFailed {
+                    error: "cancelled".into(),
+                    recoverable: true,
+                },
+            ),
+        ];
+        let traces = aggregate_run_traces(&events);
+        let trace = traces.first().expect("trace");
+        assert_eq!(trace.status, "interrupted");
+        assert!(trace.duration_ms.is_some());
     }
 }

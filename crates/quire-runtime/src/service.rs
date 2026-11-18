@@ -11,9 +11,9 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
 use quire_session_protocol::{
-    ContextUsage, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem, SendMessageRequest,
-    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
-    ToolCallDetail,
+    ContextUsage, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem, RunTraceSummary,
+    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
+    SessionStatus, SessionSummary, ToolCallDetail,
 };
 use secrecy::SecretString;
 use serde_json::Value;
@@ -244,6 +244,10 @@ impl RuntimeService {
 
     pub async fn session_detail(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
         self.store.get_session_detail(session_id).await
+    }
+
+    pub async fn list_run_traces(&self, session_id: &str) -> RuntimeResult<Vec<RunTraceSummary>> {
+        self.store.list_run_traces(session_id).await
     }
 
     pub async fn update_session(

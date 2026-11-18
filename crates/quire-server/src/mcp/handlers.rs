@@ -1483,7 +1483,7 @@ fn slugify_title(input: &str) -> String {
     let mut output = String::new();
     let mut pending_dash = false;
     for ch in input.chars() {
-        if ch.is_alphanumeric() {
+        if ch.is_ascii_alphanumeric() {
             if pending_dash && !output.is_empty() {
                 output.push('-');
             }
@@ -1994,5 +1994,27 @@ impl QuireMcpServer {
             &blocks,
             format!("Draft replaced range {start_id}..{end_id}. Run lint_document."),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{generate_doc_id, slugify_title};
+
+    #[test]
+    fn slugify_title_drops_non_ascii_characters() {
+        assert_eq!(slugify_title("Q3 Revenue 报告"), "q3-revenue");
+        assert_eq!(slugify_title("你好"), "report");
+        assert_eq!(slugify_title("Report_2026"), "report-2026");
+        assert_eq!(slugify_title("!!!"), "report");
+    }
+
+    #[test]
+    fn generated_doc_ids_start_with_ascii_letters() {
+        let generated = generate_doc_id("你好");
+        assert!(generated.is_ok());
+        if let Ok(doc_id) = generated {
+            assert!(doc_id.as_str().starts_with("report-"));
+        }
     }
 }

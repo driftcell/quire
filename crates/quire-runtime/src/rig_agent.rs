@@ -41,7 +41,7 @@ use crate::{
     kb::KbService,
     mcp_registry::McpRegistry,
     model_stream::{ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest},
-    models::ModelRegistry,
+    models::{ModelRegistry, ProviderProtocol},
     prompt::ContextMessage,
 };
 
@@ -862,6 +862,14 @@ impl RigModelCore {
                 ))
             })?;
         let context_limit = u64::try_from(resolved.context_limit).unwrap_or(0);
+        let max_tokens = match resolved
+            .max_output_tokens
+            .and_then(|value| u64::try_from(value).ok())
+        {
+            Some(value) => Some(value),
+            None if resolved.protocol == ProviderProtocol::Anthropic => Some(8192),
+            None => None,
+        };
         let model = self
             .models
             .build_rig_model(&execution.model_route)
@@ -914,7 +922,7 @@ impl RigModelCore {
             }
             let definitions: Vec<ToolDefinition> =
                 tool_map.values().map(|tool| tool.definition()).collect();
-            let request = build_completion_request(&execution, &messages, definitions);
+            let request = build_completion_request(&execution, &messages, definitions, max_tokens);
             let mut stream = model.stream(request).map_err(model_provider_error)?;
             let mut previews = PreviewState::new(&execution, &self.config);
             let mut streamed_text = false;
@@ -1416,6 +1424,7 @@ fn build_completion_request(
     execution: &AgentExecution,
     messages: &[Message],
     tools: Vec<ToolDefinition>,
+    max_tokens: Option<u64>,
 ) -> CompletionRequest {
     let mut conversation = messages.to_vec();
     let prompt = conversation
@@ -1423,7 +1432,8 @@ fn build_completion_request(
         .unwrap_or_else(|| Message::user(execution.system_prompt.clone()));
     let mut request = CompletionRequest::new(prompt)
         .preamble(runtime_preamble(execution))
-        .tools(tools);
+        .tools(tools)
+        .max_tokens(max_tokens);
     if !conversation.is_empty() {
         request = request.messages(conversation);
     }

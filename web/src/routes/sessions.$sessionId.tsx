@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
@@ -22,12 +29,16 @@ import {
   compactSession,
   getSession,
   interruptSession,
+  listSessionTraces,
   postMessage,
   retrySession,
   uploadAttachment,
 } from "@/api/runtime";
 import { subscribeDocumentEvents, subscribeSessionEvents } from "@/api/sse";
-import { PromptComposer } from "@/components/chat/PromptComposer";
+import {
+  PromptComposer,
+  type QuotedChatSnippet,
+} from "@/components/chat/PromptComposer";
 import {
   SessionStreamView,
   type LiveAgentTrace,
@@ -48,6 +59,7 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { useSidebar } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
   CommentStatus,
@@ -59,6 +71,7 @@ import type {
   PendingQuestion,
   QuestionAnswer,
   SessionEvent,
+  SessionMessage,
 } from "@/contracts/session-protocol";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { loadPreferences, savePreferences } from "@/lib/preferences";
@@ -102,16 +115,23 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const [prefs, setPrefs] = useState(() => loadPreferences());
   const updatePrefs = useCallback((patch: Partial<typeof prefs>) => {
-    setPrefs((prev) => {
-      const next = { ...prev, ...patch };
-      savePreferences(next);
-      return next;
+    startTransition(() => {
+      setPrefs((prev) => {
+        const next = { ...prev, ...patch };
+        savePreferences(next);
+        return next;
+      });
     });
   }, []);
 
   const sessionQuery = useQuery({
     queryKey: ["session", sessionId],
     queryFn: () => getSession(sessionId),
+  });
+
+  const tracesQuery = useQuery({
+    queryKey: ["session-traces", sessionId],
+    queryFn: () => listSessionTraces(sessionId),
   });
 
   const [liveDocId, setLiveDocId] = useState<string | null>(null);
@@ -148,6 +168,12 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [floatingComment, setFloatingComment] =
     useState<FloatingCommentAnchor | null>(null);
   const [mobileTab, setMobileTab] = useState<"report" | "chat">("report");
+  const [optimisticMessages, setOptimisticMessages] = useState<
+    SessionMessage[]
+  >([]);
+  const [quotedForChat, setQuotedForChat] = useState<QuotedChatSnippet | null>(
+    null,
+  );
 
   const effectiveDocId =
     liveDocId ??
@@ -391,11 +417,18 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         });
       } else if (ev.event === "turn_finished") {
         setLiveRunStatus("idle");
-        setLiveMain(null);
-        setLiveSubagents([]);
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
+        void (async () => {
+          await Promise.all([
+            queryClient.refetchQueries({
+              queryKey: ["session", sessionId],
+            }),
+            queryClient.refetchQueries({
+              queryKey: ["session-traces", sessionId],
+            }),
+          ]);
+          setLiveMain(null);
+          setLiveSubagents([]);
+        })();
         void queryClient.invalidateQueries({ queryKey: ["sessions"] });
       } else if (ev.event === "turn_failed") {
         setLiveRunStatus(ev.recoverable ? "interrupted" : "failed");
@@ -601,18 +634,35 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   }, [effectiveDocId, blockCount, ephemeralPreviews.size]);
 
   const handleSend = async (text: string, files: File[]) => {
-    const attachmentIds: string[] = [];
-    for (const file of files) {
-      const uploaded = await uploadAttachment(sessionId, file);
-      attachmentIds.push(uploaded.attachment_id);
+    const content = text || `请处理已上传的 ${files.length} 个附件。`;
+    const tempId = `opt_${crypto.randomUUID()}`;
+    const optimistic: SessionMessage = {
+      message_id: tempId,
+      session_id: sessionId,
+      role: "user",
+      content,
+      created_at: new Date().toISOString(),
+    };
+    setOptimisticMessages((prev) => [...prev, optimistic]);
+    try {
+      const attachmentIds: string[] = [];
+      for (const file of files) {
+        const uploaded = await uploadAttachment(sessionId, file);
+        attachmentIds.push(uploaded.attachment_id);
+      }
+      await postMessage(sessionId, {
+        client_msg_id: `msg_${crypto.randomUUID()}`,
+        content,
+        attachment_ids: attachmentIds,
+      });
+      setLivePendingQuestion(null);
+      void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+    } catch (err) {
+      setOptimisticMessages((prev) =>
+        prev.filter((m) => m.message_id !== tempId),
+      );
+      throw err;
     }
-    await postMessage(sessionId, {
-      client_msg_id: `msg_${crypto.randomUUID()}`,
-      content: text || `请处理已上传的 ${files.length} 个附件。`,
-      attachment_ids: attachmentIds,
-    });
-    setLivePendingQuestion(null);
-    void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
   };
 
   const handleAnswerQuestion = async (
@@ -632,7 +682,14 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);
-    el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.classList.remove("quire-flash-highlight");
+    void el.offsetWidth;
+    el.classList.add("quire-flash-highlight");
+    window.setTimeout(() => {
+      el.classList.remove("quire-flash-highlight");
+    }, 1600);
   }, []);
 
   const openCommentsCount =
@@ -670,14 +727,31 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto overscroll-contain px-4">
-        <div
-          className={hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"}
-        >
+      <div className="min-h-0 flex-1">
+        {sessionQuery.isLoading ? (
+          <div className="h-full overflow-y-auto px-4">
+            <div className="mx-auto max-w-3xl space-y-4 py-6">
+              <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
+              <Skeleton className="h-24 w-5/6 rounded-2xl" />
+              <Skeleton className="h-16 w-3/4 rounded-2xl" />
+            </div>
+          </div>
+        ) : (
           <SessionStreamView
             sessionId={sessionId}
             messages={sessionQuery.data?.messages ?? []}
+            optimisticMessages={optimisticMessages}
+            contentClassName={
+              hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"
+            }
+            onInterrupt={async () => {
+              await interruptSession(sessionId);
+              void queryClient.invalidateQueries({
+                queryKey: ["session", sessionId],
+              });
+            }}
             attachments={sessionQuery.data?.attachments ?? []}
+            traces={tracesQuery.data ?? []}
             liveMain={liveMain}
             liveSubagents={liveSubagents}
             pendingQuestion={effectivePendingQuestion}
@@ -688,7 +762,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             }}
             onJumpToSection={jumpToSection}
           />
-        </div>
+        )}
       </div>
 
       <div className="shrink-0 border-t bg-background/95 p-3">
@@ -698,6 +772,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <PromptComposer
             runStatus={effectiveRunStatus}
             contextUsage={effectiveUsage}
+            quotedSnippet={quotedForChat}
+            onClearQuote={() => setQuotedForChat(null)}
             onSend={handleSend}
             onInterrupt={async () => {
               await interruptSession(sessionId);

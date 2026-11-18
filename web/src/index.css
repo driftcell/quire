@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@plugin "@tailwindcss/typography";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/geist";
@@ -9,7 +10,16 @@
 /* Report body isolation boundary                                            */
 /* ------------------------------------------------------------------------- */
 .report-root {
-  font-family: var(--rpt-font-body, "Geist Variable", system-ui, sans-serif);
+  font-family: var(
+    --rpt-font-body,
+    "Geist Variable",
+    "PingFang SC",
+    "Noto Sans SC",
+    "Hiragino Sans GB",
+    "Microsoft YaHei",
+    system-ui,
+    sans-serif
+  );
   color: var(--rpt-ink, inherit);
 }
 
@@ -19,7 +29,13 @@
 .report-root h4 {
   font-family: var(
     --rpt-font-heading,
-    var(--rpt-font-body, "Geist Variable", sans-serif)
+    var(
+      --rpt-font-body,
+      "Geist Variable",
+      "PingFang SC",
+      "Noto Sans SC",
+      sans-serif
+    )
   );
 }
 
@@ -172,4 +188,62 @@
   html {
     @apply font-sans;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+.scroll-fade {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 12px,
+    black calc(100% - 12px),
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 12px,
+    black calc(100% - 12px),
+    transparent
+  );
+}
+
+@keyframes quire-shimmer {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.shimmer {
+  animation: quire-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes quire-flash-ring {
+  0% {
+    box-shadow: 0 0 0 3px oklch(0.65 0.18 250 / 0.45);
+    background-color: oklch(0.65 0.18 250 / 0.08);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
+  }
+}
+
+.quire-flash-highlight {
+  border-radius: 0.5rem;
+  animation: quire-flash-ring 1.6s ease-out forwards;
 }

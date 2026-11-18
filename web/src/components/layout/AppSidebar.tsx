@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { FileTextIcon, KeyRoundIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import {
+  CheckIcon,
+  FileTextIcon,
+  KeyRoundIcon,
+  PlusIcon,
+  Trash2Icon,
+} from "lucide-react";
 import { deleteSession, listSessions } from "@/api/runtime";
 import { Button } from "@/components/ui/button";
 import {
@@ -91,9 +97,18 @@ export function AppSidebar() {
     refetchInterval: 10_000,
   });
 
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingDeleteId) return undefined;
+    const timer = window.setTimeout(() => setPendingDeleteId(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [pendingDeleteId]);
+
   const deleteMutation = useMutation({
     mutationFn: (sessionId: string) => deleteSession(sessionId),
     onSuccess: (_data, deletedId) => {
+      setPendingDeleteId(null);
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
       if (activeSessionId === deletedId) {
         void navigate({ to: "/" });
@@ -157,36 +172,57 @@ export function AppSidebar() {
             <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
-                {group.items.map((session) => (
-                  <SidebarMenuItem key={session.session_id}>
-                    <SidebarMenuButton
-                      isActive={activeSessionId === session.session_id}
-                      render={
-                        <Link
-                          to="/sessions/$sessionId"
-                          params={{ sessionId: session.session_id }}
+                {group.items.map((session) => {
+                  const isConfirming = pendingDeleteId === session.session_id;
+                  return (
+                    <SidebarMenuItem key={session.session_id}>
+                      <SidebarMenuButton
+                        isActive={activeSessionId === session.session_id}
+                        render={
+                          <Link
+                            to="/sessions/$sessionId"
+                            params={{ sessionId: session.session_id }}
+                          />
+                        }
+                      >
+                        <span
+                          className={`size-2 shrink-0 rounded-full ${statusDotClass(session.active_run_status)}`}
                         />
-                      }
-                    >
-                      <span
-                        className={`size-2 shrink-0 rounded-full ${statusDotClass(session.active_run_status)}`}
-                      />
-                      <span className="truncate">{session.title}</span>
-                      {session.doc_id && (
-                        <FileTextIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                    </SidebarMenuButton>
-                    <SidebarMenuAction
-                      showOnHover
-                      aria-label={`删除 ${session.title}`}
-                      onClick={() => {
-                        deleteMutation.mutate(session.session_id);
-                      }}
-                    >
-                      <Trash2Icon className="size-3.5" />
-                    </SidebarMenuAction>
-                  </SidebarMenuItem>
-                ))}
+                        <span className="truncate">{session.title}</span>
+                        {session.doc_id && (
+                          <FileTextIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+                        )}
+                      </SidebarMenuButton>
+                      <SidebarMenuAction
+                        showOnHover={!isConfirming}
+                        aria-label={
+                          isConfirming
+                            ? `确认删除 ${session.title}`
+                            : `删除 ${session.title}`
+                        }
+                        title={isConfirming ? "再次点击确认删除" : "删除会话"}
+                        className={
+                          isConfirming
+                            ? "text-destructive opacity-100 hover:bg-destructive/10"
+                            : undefined
+                        }
+                        onClick={() => {
+                          if (isConfirming) {
+                            deleteMutation.mutate(session.session_id);
+                          } else {
+                            setPendingDeleteId(session.session_id);
+                          }
+                        }}
+                      >
+                        {isConfirming ? (
+                          <CheckIcon className="size-3.5" />
+                        ) : (
+                          <Trash2Icon className="size-3.5" />
+                        )}
+                      </SidebarMenuAction>
+                    </SidebarMenuItem>
+                  );
+                })}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
