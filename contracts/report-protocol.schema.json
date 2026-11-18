@@ -418,7 +418,8 @@
             }
           ]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "BlockStyle": {
       "description": "Common style controls available on every block.",
@@ -485,7 +486,8 @@
             "null"
           ]
         }
-      }
+      },
+      "additionalProperties": false
     },
     "CellUpdate": {
       "description": "Update one table cell by row index and leaf key.",
@@ -510,6 +512,7 @@
           "$ref": "#/$defs/CellValue"
         }
       },
+      "additionalProperties": false,
       "required": [
         "row_index",
         "column_key",
@@ -1941,25 +1944,36 @@
       ]
     },
     "TableBlock": {
-      "description": "Table block payload. Header layout is computed by the table compiler, not by the agent.\n\nAccepts the full canonical schema (`columns` + row objects) or a compact shorthand\n(`headers` + row arrays). Shorthand column keys/types are inferred from cell values.",
+      "title": "TableBlock",
+      "description": "Canonical table with a recursive `columns` tree and row objects, OR compact shorthand with `headers` and two-dimensional `rows`/`summary_rows`. The two shapes are mutually exclusive.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TableBlockColumns"
+        },
+        {
+          "$ref": "#/$defs/TableBlockHeaders"
+        }
+      ]
+    },
+    "TableBlockColumns": {
+      "description": "Schema-only canonical table shape.",
       "type": "object",
       "properties": {
         "columns": {
-          "description": "Recursive header tree. Agents declare groups/leaves; spans are pre-computed.",
+          "description": "Recursive column tree. Use this shape OR `headers` shorthand, not both.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/ColumnNode"
           }
         },
         "note": {
-          "description": "Explanatory footnote rendered below the table.",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         },
         "numbering": {
-          "description": "`table` by default; use `none` to suppress the `表 N` label.",
           "anyOf": [
             {
               "$ref": "#/$defs/NumberingKind"
@@ -1967,10 +1981,11 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "default": null
         },
         "rows": {
-          "description": "Body rows keyed by leaf column key. Example: `[{\"region\":\"EMEA\",\"q1\":800000}]`.",
+          "description": "Body rows keyed by leaf column key.",
           "type": "array",
           "default": [],
           "items": {
@@ -1981,8 +1996,9 @@
           }
         },
         "summary_rows": {
-          "description": "Footer rows (totals, averages) with the same key shape as `rows`.",
+          "description": "Footer rows with the same key shape as `rows`.",
           "type": "array",
+          "default": [],
           "items": {
             "type": "object",
             "additionalProperties": {
@@ -1991,15 +2007,80 @@
           }
         },
         "title": {
-          "description": "Outer table title. Put titles here only, never inside custom HTML.",
+          "description": "Outer table title (legacy alias `caption` is also accepted on input).",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "default": null
         }
       },
       "required": [
         "columns"
+      ]
+    },
+    "TableBlockHeaders": {
+      "description": "Schema-only compact table shape.",
+      "type": "object",
+      "properties": {
+        "headers": {
+          "description": "Header labels; column keys and data types are inferred.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "numbering": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberingKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rows": {
+          "description": "Two-dimensional body rows aligned with `headers`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/CellValue"
+            }
+          }
+        },
+        "summary_rows": {
+          "description": "Two-dimensional footer rows aligned with `headers`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/CellValue"
+            }
+          }
+        },
+        "title": {
+          "description": "Outer table title (legacy alias `caption` is also accepted on input).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "headers"
       ]
     },
     "TableLayout": {

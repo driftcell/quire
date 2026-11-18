@@ -23,6 +23,7 @@ use crate::{
 
 /// Partial style update. Omitted fields are preserved; empty string variants clear the field.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BlockStylePatch {
     /// Renderer hint. Empty string clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -49,6 +50,7 @@ impl BlockStylePatch {
 
 /// Update one table cell by row index and leaf key.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CellUpdate {
     /// Zero-based row index within `rows` (or `summary_rows` when `summary = true`).
     pub row_index: usize,
@@ -67,6 +69,7 @@ const fn is_false(value: &bool) -> bool {
 
 /// Partial patch for a single block.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct BlockPatch {
     /// Heading, paragraph or quote text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1390,6 +1393,33 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, PatchError::UnsupportedPatch { .. }));
         assert!(error.to_string().contains("text"));
+    }
+
+    #[test]
+    fn patches_reject_unknown_fields_and_keep_caption_alias() {
+        let patch: BlockPatch =
+            serde_json::from_value(serde_json::json!({"caption": "Legacy title"}))
+                .expect("caption alias");
+        assert_eq!(patch.title.as_deref(), Some("Legacy title"));
+
+        let error = serde_json::from_value::<BlockPatch>(serde_json::json!({"titel": "typo"}))
+            .expect_err("unknown block patch field");
+        assert!(error.to_string().contains("titel"), "{error}");
+
+        let error = serde_json::from_value::<BlockStylePatch>(
+            serde_json::json!({"page_break_befor": true}),
+        )
+        .expect_err("unknown style field");
+        assert!(error.to_string().contains("page_break_befor"), "{error}");
+
+        let error = serde_json::from_value::<CellUpdate>(serde_json::json!({
+            "row_index": 0,
+            "column_key": "q1",
+            "value": 1,
+            "sumary": true
+        }))
+        .expect_err("unknown cell update field");
+        assert!(error.to_string().contains("sumary"), "{error}");
     }
 
     #[test]

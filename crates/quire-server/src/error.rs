@@ -135,6 +135,7 @@ pub fn mcp_error(error: StoreError) -> rmcp::ErrorData {
     };
     let data = json!({
         "code": code,
+        "message": &message,
         "hint": hint,
         "details": details,
     });
@@ -153,10 +154,12 @@ pub fn invalid_params(
     hint: impl Into<String>,
     details: Option<Value>,
 ) -> rmcp::ErrorData {
+    let message = message.into();
     rmcp::ErrorData::invalid_params(
-        message.into(),
+        message.clone(),
         Some(json!({
             "code": "INVALID_PARAMS",
+            "message": message,
             "hint": hint.into(),
             "details": details,
         })),
@@ -164,5 +167,36 @@ pub fn invalid_params(
 }
 
 pub fn internal_error(message: impl Into<String>) -> rmcp::ErrorData {
-    rmcp::ErrorData::internal_error(message.into(), None)
+    let message = message.into();
+    rmcp::ErrorData::internal_error(
+        message.clone(),
+        Some(json!({
+            "code": "INTERNAL_ERROR",
+            "message": message,
+            "hint": "Retry the request; if the problem persists inspect the server logs.",
+        })),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_params_uses_unified_envelope() {
+        let error = invalid_params("bad field", "fix it", None);
+        let data = error.data.expect("structured data");
+        assert_eq!(data["code"], "INVALID_PARAMS");
+        assert_eq!(data["message"], "bad field");
+        assert_eq!(data["hint"], "fix it");
+    }
+
+    #[test]
+    fn mcp_error_uses_unified_envelope() {
+        let error = mcp_error(StoreError::InvalidRequest("bad request".into()));
+        let data = error.data.expect("structured data");
+        assert_eq!(data["code"], "INVALID_REQUEST");
+        assert_eq!(data["message"], "invalid request: bad request");
+        assert!(data["hint"].as_str().is_some_and(|hint| !hint.is_empty()));
+    }
 }

@@ -19,6 +19,7 @@ use crate::guide::GuideTopic;
 
 /// Input for `get_protocol_guide`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GuideParams {
     /// Topic to disclose: quickstart, tables_and_charts, citations_and_css or parallel_workflow.
     pub topic: GuideTopic,
@@ -41,6 +42,7 @@ pub struct GuideReceipt {
 
 /// Input for `create_report`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CreateReportParams {
     /// Human-readable report title, for example "Q3 Revenue Review".
     pub title: String,
@@ -83,6 +85,7 @@ pub struct CreateReportReceipt {
 
 /// Input for `list_reports`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListReportsParams {
     /// Case-insensitive doc_id/title substring.
     #[serde(default)]
@@ -144,6 +147,7 @@ pub enum DraftMode {
 
 /// Input for `apply_draft`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ApplyDraftParams {
     /// Path to draft.json. Relative paths resolve under `QUIRE_WORKSPACE_DIR`; absolute paths
     /// are accepted only when they also resolve inside that workspace.
@@ -194,6 +198,7 @@ pub struct ApplyDraftReceipt {
 
 /// Input for `get_document_digest`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DigestParams {
     pub doc_id: String,
     /// Optional case-insensitive keyword filter over id/type/text.
@@ -241,6 +246,7 @@ pub struct DocumentDigest {
 
 /// Input for `read_as_markdown`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReadMarkdownParams {
     /// Existing report ID (mutually exclusive with draft_file_path).
     #[serde(default)]
@@ -275,6 +281,7 @@ pub struct ReadMarkdownReceipt {
 
 /// Input for `read_blocks`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReadBlocksParams {
     pub doc_id: String,
     /// Block IDs to fetch, for example `["financials","kpi-grid"]`.
@@ -294,6 +301,7 @@ pub struct ReadBlocksReceipt {
 
 /// Input for `apply_operations`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ApplyOperationsParams {
     pub doc_id: String,
     /// Revision you read. Smart CAS rebases disjoint edits; overlapping edits return a conflict.
@@ -333,6 +341,7 @@ pub struct ApplyOperationsReceipt {
 
 /// Input for `rollback_revision`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RollbackParams {
     pub doc_id: String,
     /// Target revision in 1..current_revision-1.
@@ -345,11 +354,12 @@ pub struct RollbackReceipt {
     pub doc_id: String,
     /// New monotonic revision created by the rollback.
     pub new_revision: i64,
-    pub target_revision: i64,
+    /// Revision state that was restored.
+    pub rolled_back_to: i64,
     /// Number of inverse-op revisions replayed.
     pub replayed_revisions: usize,
-    pub digest: DocumentDigest,
-    pub inline_warnings: Vec<quire_protocol::Diagnostic>,
+    /// Compact human-readable outcome; inspect content with digest/read_blocks if needed.
+    pub summary: String,
     #[serde(rename = "_next_hint")]
     pub _next_hint: String,
 }
@@ -367,6 +377,7 @@ pub struct SourceInput {
 
 /// Input for `upsert_sources`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpsertSourcesParams {
     /// Report that owns the sources.
     pub doc_id: String,
@@ -391,6 +402,7 @@ pub struct UpsertSourcesReceipt {
 
 /// Input for `set_cover`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SetCoverParams {
     pub doc_id: String,
     /// Partial cover fields. Omitted fields are preserved.
@@ -399,6 +411,7 @@ pub struct SetCoverParams {
 
 /// Partial cover update; omitted fields are preserved.
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CoverPatch {
     /// Enable or disable the cover.
     #[serde(default)]
@@ -438,6 +451,7 @@ pub struct SetCoverReceipt {
 
 /// Input for `configure_toc`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigureTocParams {
     pub doc_id: String,
     /// Enable or disable the generated TOC.
@@ -465,6 +479,7 @@ pub struct ConfigureTocReceipt {
 
 /// Input for `configure_references`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigureReferencesParams {
     pub doc_id: String,
     /// Enable or disable the bibliography section.
@@ -504,6 +519,7 @@ pub enum CssMode {
 
 /// Input for `update_style_and_css`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct UpdateStyleParams {
     pub doc_id: String,
     /// Theme preset, for example `editorial`, `technical` or `default`.
@@ -538,6 +554,7 @@ pub struct UpdateStyleReceipt {
 
 /// Input for `lint_document`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct LintParams {
     pub doc_id: String,
 }
@@ -551,4 +568,49 @@ pub struct LintReceipt {
     pub report: LintReport,
     #[serde(rename = "_next_hint")]
     pub _next_hint: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn tool_params_reject_unknown_fields_with_field_name() {
+        let error = serde_json::from_value::<ListReportsParams>(json!({
+            "query": "atlas",
+            "limitt": 5
+        }))
+        .expect_err("unknown field must be rejected");
+        assert!(error.to_string().contains("limitt"), "{error}");
+
+        let error = serde_json::from_value::<CreateReportParams>(json!({
+            "title": "Synthetic",
+            "enable_cvoer": true
+        }))
+        .expect_err("misspelled field must be rejected");
+        assert!(error.to_string().contains("enable_cvoer"), "{error}");
+    }
+
+    #[test]
+    fn nested_cover_patch_rejects_unknown_fields() {
+        let error = serde_json::from_value::<SetCoverParams>(json!({
+            "doc_id": "synthetic",
+            "cover_patch": {"enabeld": true}
+        }))
+        .expect_err("unknown nested field must be rejected");
+        assert!(error.to_string().contains("enabeld"), "{error}");
+    }
+
+    #[test]
+    fn valid_params_still_deserialize() {
+        let params: ApplyDraftParams = serde_json::from_value(json!({
+            "draft_file_path": "draft.json",
+            "target_doc_id": "synthetic",
+            "expected_revision": 7,
+            "mode": "append_section"
+        }))
+        .expect("valid params");
+        assert_eq!(params.expected_revision, Some(7));
+    }
 }

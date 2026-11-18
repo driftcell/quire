@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
@@ -351,7 +351,7 @@ pub enum NumberingKind {
 ///
 /// Accepts the full canonical schema (`columns` + row objects) or a compact shorthand
 /// (`headers` + row arrays). Shorthand column keys/types are inferred from cell values.
-#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TableBlock {
     /// Outer table title. Put titles here only, never inside custom HTML.
     #[serde(default, alias = "caption", skip_serializing_if = "Option::is_none")]
@@ -370,6 +370,77 @@ pub struct TableBlock {
     /// Footer rows (totals, averages) with the same key shape as `rows`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub summary_rows: Vec<BTreeMap<String, CellValue>>,
+}
+
+/// Schema-only canonical table shape.
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[schemars(rename = "TableBlockColumns")]
+struct TableBlockColumnsSchema {
+    /// Outer table title (legacy alias `caption` is also accepted on input).
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    numbering: Option<NumberingKind>,
+    #[serde(default)]
+    note: Option<String>,
+    /// Recursive column tree. Use this shape OR `headers` shorthand, not both.
+    columns: Vec<ColumnNode>,
+    /// Body rows keyed by leaf column key.
+    #[serde(default)]
+    rows: Vec<BTreeMap<String, CellValue>>,
+    /// Footer rows with the same key shape as `rows`.
+    #[serde(default)]
+    summary_rows: Vec<BTreeMap<String, CellValue>>,
+}
+
+/// Schema-only compact table shape.
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[schemars(rename = "TableBlockHeaders")]
+struct TableBlockHeadersSchema {
+    /// Outer table title (legacy alias `caption` is also accepted on input).
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    numbering: Option<NumberingKind>,
+    #[serde(default)]
+    note: Option<String>,
+    /// Header labels; column keys and data types are inferred.
+    headers: Vec<String>,
+    /// Two-dimensional body rows aligned with `headers`.
+    #[serde(default)]
+    rows: Vec<Vec<CellValue>>,
+    /// Two-dimensional footer rows aligned with `headers`.
+    #[serde(default)]
+    summary_rows: Vec<Vec<CellValue>>,
+}
+
+impl JsonSchema for TableBlock {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "TableBlock".into()
+    }
+
+    fn schema_id() -> std::borrow::Cow<'static, str> {
+        concat!(module_path!(), "::TableBlock").into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let columns = generator.subschema_for::<TableBlockColumnsSchema>();
+        let headers = generator.subschema_for::<TableBlockHeadersSchema>();
+        let mut schema = schemars::json_schema!({
+            "title": "TableBlock",
+            "description": "Canonical table with a recursive `columns` tree and row objects, OR compact shorthand with `headers` and two-dimensional `rows`/`summary_rows`. The two shapes are mutually exclusive.",
+            "oneOf": []
+        });
+        if let Some(object) = schema.as_object_mut() {
+            object.insert(
+                "oneOf".to_string(),
+                serde_json::Value::Array(vec![columns.into(), headers.into()]),
+            );
+        }
+        schema
+    }
 }
 
 impl TableBlock {
@@ -1083,6 +1154,17 @@ mod tests {
         }))
         .unwrap();
         assert!(block.id.is_pending());
+    }
+
+    #[test]
+    fn table_schema_exposes_columns_and_headers_shapes() {
+        let schema = serde_json::to_value(schemars::schema_for!(TableBlock))
+            .expect("table schema serializes");
+        let text = serde_json::to_string(&schema).expect("schema text");
+        assert!(text.contains("\"columns\""), "{text}");
+        assert!(text.contains("\"headers\""), "{text}");
+        assert!(text.contains("\"oneOf\""), "{text}");
+        assert!(text.contains("\"summary_rows\""), "{text}");
     }
 
     #[test]

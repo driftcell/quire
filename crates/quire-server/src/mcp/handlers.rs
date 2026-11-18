@@ -232,23 +232,22 @@ impl QuireMcpServer {
                 })?)?;
                 let mut attempt = 0;
                 loop {
-                    let base = if attempt == 0 {
-                        expected_revision
-                    } else {
-                        None
-                    };
                     match self
                         .replace_with_draft(
                             &target,
                             draft.clone(),
                             request.sources.clone(),
                             &actor,
-                            base,
+                            expected_revision,
                         )
                         .await
                     {
                         Ok(receipt) => break Ok(receipt),
-                        Err(error) if is_retryable_conflict(&error) && attempt < 3 => {
+                        Err(error)
+                            if expected_revision.is_none()
+                                && is_retryable_conflict(&error)
+                                && attempt < 3 =>
+                        {
                             attempt += 1;
                             continue;
                         }
@@ -266,23 +265,22 @@ impl QuireMcpServer {
                 })?)?;
                 let mut attempt = 0;
                 loop {
-                    let base = if attempt == 0 {
-                        expected_revision
-                    } else {
-                        None
-                    };
                     match self
                         .append_draft(
                             &target,
                             draft.clone(),
                             request.sources.clone(),
                             &actor,
-                            base,
+                            expected_revision,
                         )
                         .await
                     {
                         Ok(receipt) => break Ok(receipt),
-                        Err(error) if is_retryable_conflict(&error) && attempt < 3 => {
+                        Err(error)
+                            if expected_revision.is_none()
+                                && is_retryable_conflict(&error)
+                                && attempt < 3 =>
+                        {
                             attempt += 1;
                             continue;
                         }
@@ -314,11 +312,6 @@ impl QuireMcpServer {
                 })?)?;
                 let mut attempt = 0;
                 loop {
-                    let base = if attempt == 0 {
-                        expected_revision
-                    } else {
-                        None
-                    };
                     match self
                         .replace_range_with_draft(
                             &target,
@@ -327,12 +320,16 @@ impl QuireMcpServer {
                             &end,
                             request.sources.clone(),
                             &actor,
-                            base,
+                            expected_revision,
                         )
                         .await
                     {
                         Ok(receipt) => break Ok(receipt),
-                        Err(error) if is_retryable_conflict(&error) && attempt < 3 => {
+                        Err(error)
+                            if expected_revision.is_none()
+                                && is_retryable_conflict(&error)
+                                && attempt < 3 =>
+                        {
                             attempt += 1;
                             continue;
                         }
@@ -610,23 +607,20 @@ impl QuireMcpServer {
             .rollback_to_revision(&doc_id, target_revision, &actor)
             .await
             .map_err(mcp_error)?;
-        let document = self
-            .state
-            .store
-            .get_document(&doc_id)
-            .await
-            .map_err(mcp_error)?;
+        let summary = format!(
+            "Rolled back to revision {} by replaying {} inverse revision(s); history is preserved as revision {}.",
+            result.target_revision, result.replayed_revisions, result.new_revision
+        );
         let _next_hint = format!(
-            "Rollback committed as revision {}. Run lint_document before continuing edits at this revision.",
+            "Call get_document_digest or read_blocks to inspect revision {}, then lint_document before continuing edits.",
             result.new_revision
         );
         Ok(Json(RollbackReceipt {
             doc_id: doc_id.to_string(),
             new_revision: result.new_revision.get(),
-            target_revision: result.target_revision.get(),
+            rolled_back_to: result.target_revision.get(),
             replayed_revisions: result.replayed_revisions,
-            digest: build_digest(&document, None),
-            inline_warnings: result.inline_warnings,
+            summary,
             _next_hint,
         }))
     }
@@ -1278,10 +1272,12 @@ fn draft_receipt(
 fn protocol_error(error: ProtocolError) -> ErrorData {
     let code = error.code();
     let hint = error.hint();
+    let message = error.to_string();
     ErrorData::invalid_params(
-        error.to_string(),
+        message.clone(),
         Some(json!({
             "code": code,
+            "message": message,
             "hint": hint,
             "protocol_error": error,
         })),

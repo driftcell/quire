@@ -280,7 +280,11 @@ impl McpClient {
         })
     }
 
-    async fn request(&self, method: &str, params: Value) -> anyhow::Result<Value> {
+    async fn request_raw(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> anyhow::Result<(reqwest::StatusCode, Value)> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let response = self
             .http
@@ -302,10 +306,24 @@ impl McpClient {
             .with_context(|| format!("MCP request {method}"))?;
         let status = response.status();
         let body = parse_rpc_response(response).await?;
+        Ok((status, body))
+    }
+
+    async fn request(&self, method: &str, params: Value) -> anyhow::Result<Value> {
+        let (status, body) = self.request_raw(method, params).await?;
         if let Some(error) = body.get("error") {
             bail!("MCP {method} failed ({status}): {error}");
         }
         Ok(body)
+    }
+
+    async fn call_tool_error(&self, name: &str, arguments: Value) -> anyhow::Result<Value> {
+        let (_status, body) = self
+            .request_raw("tools/call", json!({"name": name, "arguments": arguments}))
+            .await?;
+        body.get("error")
+            .cloned()
+            .ok_or_else(|| anyhow!("tool {name} unexpectedly succeeded"))
     }
 
     async fn call_tool(&self, name: &str, arguments: Value) -> anyhow::Result<Value> {
@@ -1101,7 +1119,20 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         rollback["new_revision"].as_i64(),
         Some(revision_before_rollback + 2)
     );
+    assert_eq!(
+        rollback["rolled_back_to"].as_i64(),
+        Some(revision_before_rollback)
+    );
     assert_eq!(rollback["replayed_revisions"].as_u64(), Some(1));
+    assert!(
+        rollback["summary"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(
+        rollback.get("digest").is_none(),
+        "rollback must stay compact"
+    );
 
     // 9. Final frontend contract.
     let mut final_doc = http
@@ -1257,6 +1288,78 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;
     assert_eq!(lint_final["report"]["summary"]["errors"].as_u64(), Some(0));
+
+    // 10. apply_draft honors explicit expected_revision (no silent retry) but can auto-read
+    // the current revision when expected_revision is omitted.
+    let digest = reviewer
+        .call_tool("get_document_digest", json!({"doc_id": doc_id}))
+        .await?;
+    let draft_base_revision = digest["digest"]["current_rev"].as_i64().unwrap();
+    reviewer
+        .call_tool(
+            "apply_operations",
+            json!({
+                "doc_id": doc_id,
+                "expected_revision": draft_base_revision,
+                "summary": "advance revision before draft CAS test",
+                "ops": [{
+                    "type": "patch_block",
+                    "block_id": "ch2_summary",
+                    "patch": {"text": "Enterprise demand accelerated in Q4 [^sec_market]. Draft CAS sentinel."}
+                }]
+            }),
+        )
+        .await?;
+    let draft_path = workspace.path().join("draft_cas_conflict.json");
+    let draft = json!({
+        "blocks": [{
+            "id": "draft_cas_replacement",
+            "type": "paragraph",
+            "text": "Draft CAS replacement paragraph."
+        }]
+    });
+    tokio::fs::write(&draft_path, serde_json::to_vec_pretty(&draft)?).await?;
+    let draft_path = draft_path.to_string_lossy().to_string();
+    let explicit_error = reviewer
+        .call_tool_error(
+            "apply_draft",
+            json!({
+                "draft_file_path": draft_path,
+                "target_doc_id": doc_id,
+                "mode": "replace_range",
+                "start_block_id": "ch2_summary",
+                "end_block_id": "ch2_summary",
+                "expected_revision": draft_base_revision
+            }),
+        )
+        .await?;
+    assert_eq!(
+        explicit_error["data"]["code"].as_str(),
+        Some("REVISION_CONFLICT"),
+        "explicit expected_revision must return the conflict: {explicit_error}"
+    );
+    let draft_receipt = reviewer
+        .call_tool(
+            "apply_draft",
+            json!({
+                "draft_file_path": draft_path,
+                "target_doc_id": doc_id,
+                "mode": "replace_range",
+                "start_block_id": "ch2_summary",
+                "end_block_id": "ch2_summary"
+            }),
+        )
+        .await?;
+    assert_eq!(draft_receipt["committed"].as_bool(), Some(true));
+    assert_eq!(draft_receipt["rebased"].as_bool(), Some(false));
+    let lint_after_draft = reviewer
+        .call_tool("lint_document", json!({"doc_id": doc_id}))
+        .await?;
+    assert_eq!(
+        lint_after_draft["report"]["summary"]["errors"].as_u64(),
+        Some(0)
+    );
+    tokio::fs::remove_file(&draft_path).await?;
 
     final_doc["_test"] = json!({"offline_markdown_chars": offline_markdown.chars().count()});
     println!(
