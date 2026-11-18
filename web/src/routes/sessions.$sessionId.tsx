@@ -1136,10 +1136,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 queryKey: ["comments", effectiveDocId],
               });
             }}
-            onOpenDrawer={() => {
-              setSelectedCommentBlock(floatingComment?.blockId ?? null);
-              setCommentsOpen(true);
-            }}
           />
 
           <CommentsDrawer

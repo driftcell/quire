@@ -223,10 +223,6 @@ function DocumentPage() {
           await updateCommentStatus(docId, threadId, status);
           void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
         }}
-        onOpenDrawer={() => {
-          setSelectedBlock(floatingComment?.blockId ?? null);
-          setCommentsOpen(true);
-        }}
       />
 
       <CommentsDrawer

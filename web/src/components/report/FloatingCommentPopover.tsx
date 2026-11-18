@@ -15,7 +15,6 @@ import {
   ArchiveIcon,
   GitCompareArrowsIcon,
   MessageSquarePlusIcon,
-  PanelRightOpenIcon,
   XIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -52,7 +51,6 @@ export interface FloatingCommentPopoverProps {
   ) => Promise<void>;
   onReply: (threadId: string, body: string) => Promise<void>;
   onUpdateStatus: (threadId: string, status: CommentStatus) => Promise<void>;
-  onOpenDrawer: () => void;
   onViewDiff?: (fromRev: number, toRev: number, blockId: string) => void;
 }
 
@@ -63,7 +61,6 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
   onAddComment,
   onReply,
   onUpdateStatus,
-  onOpenDrawer,
   onViewDiff,
 }: FloatingCommentPopoverProps) {
   const [newBody, setNewBody] = useState("");
@@ -110,7 +107,11 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
     },
     placement: "right-start",
     whileElementsMounted: autoUpdate,
-    middleware: [offset(10), flip({ padding: 12 }), shift({ padding: 12 })],
+    middleware: [
+      offset(10),
+      flip({ padding: 12 }),
+      shift({ padding: 12, crossAxis: true }),
+    ],
   });
   useEffect(() => {
     floatingRefs.setPositionReference(virtualReference);
@@ -161,19 +162,6 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
             </code>
           </div>
           <div className="flex items-center gap-0.5">
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              title="在侧栏查看全部批注"
-              aria-label="在侧栏查看全部批注"
-              onClick={() => {
-                onClose();
-                onOpenDrawer();
-              }}
-            >
-              <PanelRightOpenIcon className="size-3.5" />
-            </Button>
             <Button
               type="button"
               size="icon-xs"
