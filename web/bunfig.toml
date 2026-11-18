@@ -1,0 +1,3 @@
+[fmt]
+# Generated sources are owned by their generators, not the formatter.
+ignorePatterns = ["src/contracts/**", "src/routeTree.gen.ts"]
