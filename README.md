@@ -79,8 +79,13 @@ frontend metadata.
 | `AUTO_MIGRATE` | `true` | Run embedded SQLx migrations at boot |
 | `MCP_JSON_RESPONSE` | `true` | Prefer JSON responses for simple MCP request/response calls |
 | `RUNTIME_BIND_ADDR` | `127.0.0.1:8081` | Independent agent-runtime HTTP bind address |
+| `RUNTIME_API_TOKEN` | — | Bearer token protecting runtime `/api/*` routes |
+| `RUNTIME_MASTER_KEY` | — | Symmetric key for `enc:` provider credential refs |
 | `QUIRE_BASE_URL` | `http://127.0.0.1:8080` | Quire server used by the runtime for MCP/document calls |
-| `RUNTIME_MODEL` | `stub/echo` | Default model name recorded for runtime agents |
+| `RUNTIME_MODEL` | `stub/echo` | Default model route recorded for runtime agents |
+| `RUNTIME_MODEL_PROVIDER` | `mock` | `mock`, `openai_compatible` or `anthropic` |
+| `MODEL_BASE_URL` | — | Optional provider base URL override |
+| `MODELS_DEV_URL` | `https://models.dev/api.json` | Catalog source for model imports |
 | `RUNTIME_SSE_REPLAY_LIMIT` | `500` | Maximum Session-SSE replay frames before `sync_required` |
 | `RUNTIME_PREVIEW_THROTTLE_MS` | `65` | Tool-argument preview throttle (clamped to 50–80 ms) |
 
@@ -203,6 +208,13 @@ the server or `rig` into the report engine. It owns:
   `SandboxProvider` abstraction with a local stub implementation.
 
 Session contracts and SSE envelopes are exported to `contracts/session-protocol.schema.json`.
+
+Model routes are managed by `llm_providers` / `llm_models` and exposed under `/api/models`. Provider
+credentials are stored only as `env:VAR` references or AES-256-GCM `enc:` values derived from
+`RUNTIME_MASTER_KEY`; GET responses expose masks only. `/api/models/import-models-dev` accepts either
+an offline `models.dev` `api.json` payload or fetches `MODELS_DEV_URL`, and `ModelRouter` builds
+rig-core clients for `openai_compatible` or `anthropic` protocols with the registered base URL,
+context limit and tool/reasoning capabilities.
 
 ### Review comments
 Comments are side-channel data: they never enter `report_blocks`, never increment

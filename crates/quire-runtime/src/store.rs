@@ -229,6 +229,25 @@ impl RuntimeStore {
         Ok((prompt, u64::try_from(version).unwrap_or(0)))
     }
 
+    /// Advance the version reflected by the frozen prompt without rewriting it.
+    pub async fn advance_synced_kb_version(
+        &self,
+        session_id: &str,
+        kb_version: u64,
+    ) -> RuntimeResult<()> {
+        let updated = sqlx::query(
+            "UPDATE agent_sessions SET synced_kb_version = $2, updated_at = NOW() WHERE session_id = $1",
+        )
+        .bind(session_id)
+        .bind(i64::try_from(kb_version).unwrap_or(i64::MAX))
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() == 0 {
+            return Err(RuntimeError::SessionNotFound(session_id.to_string()));
+        }
+        Ok(())
+    }
+
     pub async fn insert_user_message(
         &self,
         session_id: &str,

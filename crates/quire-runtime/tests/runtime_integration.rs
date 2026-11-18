@@ -13,14 +13,17 @@ use std::{
     time::Duration,
 };
 
+use base64::Engine as _;
 use quire_runtime::{
-    Config, KbService, RuntimeService, RuntimeStore, StaticQuireControl, ToolCallRecord,
+    Config, KbService, ModelRegistry, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
+    RuntimeService, RuntimeStore, StaticQuireControl, ToolCallRecord,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
 };
 use quire_session_protocol::{ActiveRunStatus, SendMessageRequest, SessionEventKind};
 use secrecy::SecretString;
 use tokio::sync::Mutex;
+use tower::ServiceExt;
 
 fn test_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -55,6 +58,11 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
         .expect("PostgreSQL and Redis are required");
     store.migrate().await.expect("runtime migrations");
     let kb = KbService::new(store.clone());
+    let models = ModelRegistry::new(
+        store.clone(),
+        Some(SecretString::from("test-master-key")),
+        "https://models.dev/api.json",
+    );
     let config = Arc::new(Config {
         database_url: database_url(),
         redis_url: redis_url(),
@@ -62,13 +70,24 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
         quire_base_url: "http://127.0.0.1:1".into(),
         quire_rw_token: SecretString::from("test-token"),
         quire_ro_token: SecretString::from("test-token"),
+        api_token: SecretString::from("runtime-test-token"),
         model_api_key: None,
+        model_provider: "mock".into(),
+        model_base_url: None,
+        master_key: Some(SecretString::from("test-master-key")),
+        models_dev_url: "https://models.dev/api.json".into(),
         workspace_dir: std::env::temp_dir(),
         default_model: "stub/echo".into(),
         sse_replay_limit: 500,
         preview_throttle_ms: 65,
     });
-    let service = RuntimeService::new(store.clone(), kb, config, Arc::new(StaticQuireControl));
+    let service = RuntimeService::new(
+        store.clone(),
+        kb,
+        Arc::new(models),
+        config,
+        Arc::new(StaticQuireControl),
+    );
     (service, store)
 }
 
@@ -404,4 +423,313 @@ fn write_seed_workspace(root: &Path) {
         "- Check citations\n- Check tables",
     )
     .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachments_reject_traversal_and_decode_base64() {
+    let _guard = test_lock().lock().await;
+    let (service, _store) = test_service().await;
+    let session = service
+        .create_session(&unique("attachments"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let traversal = service
+        .create_attachment(&session.session_id, "../escape.txt", "text/plain", 5, None)
+        .await;
+    assert!(traversal.is_err());
+    let invalid = service
+        .create_attachment(
+            &session.session_id,
+            "note.txt",
+            "text/plain",
+            3,
+            Some("not-base64!!!"),
+        )
+        .await;
+    assert!(invalid.is_err());
+
+    let filename = format!("{}.txt", unique("attachment"));
+    let encoded = base64::engine::general_purpose::STANDARD.encode(b"hello attachment");
+    let meta = service
+        .create_attachment(
+            &session.session_id,
+            &filename,
+            "text/plain",
+            16,
+            Some(&encoded),
+        )
+        .await
+        .unwrap();
+    assert_eq!(meta.filename, filename);
+    let attachments_dir = std::env::temp_dir()
+        .join(".quire-runtime")
+        .join("attachments");
+    let stored = std::fs::read_dir(&attachments_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&filename))
+        })
+        .expect("attachment file");
+    assert_eq!(std::fs::read(&stored).unwrap(), b"hello attachment");
+    let _ = std::fs::remove_file(stored);
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_bearer_auth_protects_api_routes() {
+    let _guard = test_lock().lock().await;
+    let (service, _store) = test_service().await;
+    let provider_id = unique("auth-provider");
+    service
+        .models()
+        .upsert_provider(ProviderInput {
+            provider_id: provider_id.clone(),
+            name: "Auth Provider".into(),
+            protocol: ProviderProtocol::OpenaiCompatible,
+            base_url: "https://example.invalid".into(),
+            api_key_ref: "sk-plaintext-must-not-leak".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let cleanup_service = service.clone();
+    let app = quire_runtime::http::router(service);
+    let unauthorized = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/sessions")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), axum::http::StatusCode::UNAUTHORIZED);
+    let health = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/health")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health.status(), axum::http::StatusCode::OK);
+    let wrong_token = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/sessions")
+                .header("authorization", "Bearer wrong-token")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(wrong_token.status(), axum::http::StatusCode::UNAUTHORIZED);
+    let authorized = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/sessions")
+                .header("authorization", "Bearer runtime-test-token")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), axum::http::StatusCode::OK);
+    let providers = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/models/providers")
+                .header("authorization", "Bearer runtime-test-token")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(providers.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(providers.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let text = String::from_utf8(body.to_vec()).unwrap();
+    assert!(!text.contains("sk-plaintext-must-not-leak"));
+    assert!(text.contains("enc:***"));
+    cleanup_service
+        .models()
+        .delete_provider(&provider_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn models_registry_imports_catalog_and_routes_context_limit() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let provider_id = unique("provider");
+    let provider = service
+        .models()
+        .upsert_provider(ProviderInput {
+            provider_id: provider_id.clone(),
+            name: "DeepSeek".into(),
+            protocol: ProviderProtocol::OpenaiCompatible,
+            base_url: "https://api.deepseek.com".into(),
+            api_key_ref: "sk-raw-secret-value".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    assert!(provider.api_key_masked.starts_with("enc:"));
+    assert!(!provider.api_key_masked.contains("sk-raw-secret-value"));
+
+    let catalog = serde_json::json!({
+        "deepseek": {
+            "id": "deepseek",
+            "name": "DeepSeek",
+            "models": {
+                "deepseek-chat": {
+                    "id": "deepseek-chat",
+                    "name": "DeepSeek Chat",
+                    "reasoning": true,
+                    "tool_call": true,
+                    "attachment": false,
+                    "limit": {"context": 64000, "output": 4096},
+                    "cost": {"input": 0.14, "output": 0.28, "cache_read": 0.014}
+                },
+                "deepseek-coder": {
+                    "id": "deepseek-coder",
+                    "name": "DeepSeek Coder",
+                    "tool_call": true
+                }
+            }
+        }
+    });
+    let imported = service
+        .models()
+        .import_models_dev(ModelsDevImportRequest {
+            provider_id: provider_id.clone(),
+            provider_filter: Some("deepseek".into()),
+            model_ids: None,
+            payload: Some(catalog),
+            url: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(imported.imported, 2);
+    let route = imported
+        .models
+        .iter()
+        .find(|model| model.model_id == "deepseek-chat")
+        .unwrap();
+    assert_eq!(route.context_limit, 64000);
+    assert_eq!(route.max_output_tokens, Some(4096));
+    assert_eq!(route.cost_cache_read, Some(0.014));
+    let fallback = imported
+        .models
+        .iter()
+        .find(|model| model.model_id == "deepseek-coder")
+        .unwrap();
+    assert_eq!(fallback.context_limit, 128_000);
+    assert_eq!(fallback.max_output_tokens, None);
+    let resolved = service.models().resolve(&route.id).await.unwrap();
+    assert_eq!(resolved.protocol, ProviderProtocol::OpenaiCompatible);
+    assert_eq!(resolved.base_url, "https://api.deepseek.com");
+    assert_eq!(resolved.context_limit, 64000);
+    assert_eq!(resolved.model_id, "deepseek-chat");
+
+    service
+        .kb()
+        .upsert_agent("main", &route.id, "Runtime test agent", &[], true)
+        .await
+        .unwrap();
+    let session = service
+        .create_session(&unique("model-route"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let request = SendMessageRequest {
+        client_msg_id: unique("model-msg"),
+        content: "Use the registered model".into(),
+        attachment_ids: Vec::new(),
+    };
+    service
+        .post_message(&session.session_id, &request)
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert_eq!(detail.summary.context_usage.context_limit, 64000);
+    service.delete_session(&session.session_id).await.unwrap();
+    service.kb().delete_agent("main").await.unwrap();
+    service
+        .models()
+        .delete_provider(&provider_id)
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn knowledge_update_is_injected_once_and_synced_version_advances() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("prompt-once"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let initial_version = service.kb().current_version().await.unwrap();
+    store
+        .set_pinned_prompt(&session.session_id, "FROZEN PREFIX", initial_version)
+        .await
+        .unwrap();
+    let document_id = unique("kb-update");
+    service
+        .kb()
+        .upsert_document(&document_id, "Update", "New guidance")
+        .await
+        .unwrap();
+    let bumped_version = service.kb().current_version().await.unwrap();
+    let first = service
+        .resume_context(&session.session_id, "First resume")
+        .await
+        .unwrap();
+    assert_eq!(first.pinned_system_prompt, "FROZEN PREFIX");
+    assert!(
+        first
+            .messages
+            .iter()
+            .any(|message| message.content.starts_with("<knowledge_update>"))
+    );
+
+    let request = SendMessageRequest {
+        client_msg_id: unique("kb-msg"),
+        content: "Run one turn".into(),
+        attachment_ids: Vec::new(),
+    };
+    service
+        .post_message(&session.session_id, &request)
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+    let (pinned, synced) = store.pinned_prompt(&session.session_id).await.unwrap();
+    assert_eq!(pinned.as_deref(), Some("FROZEN PREFIX"));
+    assert_eq!(synced, bumped_version);
+
+    let second = service
+        .resume_context(&session.session_id, "Second resume")
+        .await
+        .unwrap();
+    assert_eq!(second.pinned_system_prompt, "FROZEN PREFIX");
+    assert!(
+        !second
+            .messages
+            .iter()
+            .any(|message| message.content.starts_with("<knowledge_update>"))
+    );
+    service.kb().delete_document(&document_id).await.unwrap();
+    service.delete_session(&session.session_id).await.unwrap();
 }

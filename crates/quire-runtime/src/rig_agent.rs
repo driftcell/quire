@@ -54,25 +54,32 @@ pub struct McpHttpClient {
     http: reqwest::Client,
     base_url: String,
     token: SecretString,
-    actor: String,
-    session_id: Arc<Mutex<Option<String>>>,
+    x_session_id: String,
+    agent_id: String,
+    mcp_session_id: Arc<Mutex<Option<String>>>,
     next_id: Arc<AtomicU64>,
 }
 
 impl McpHttpClient {
-    pub fn new(base_url: impl Into<String>, token: SecretString, actor: impl Into<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        token: SecretString,
+        x_session_id: impl Into<String>,
+        agent_id: impl Into<String>,
+    ) -> Self {
         Self {
             http: reqwest::Client::new(),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             token,
-            actor: actor.into(),
-            session_id: Arc::new(Mutex::new(None)),
+            x_session_id: x_session_id.into(),
+            agent_id: agent_id.into(),
+            mcp_session_id: Arc::new(Mutex::new(None)),
             next_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
     async fn ensure_initialized(&self) -> RuntimeResult<()> {
-        if self.session_id.lock().await.is_some() {
+        if self.mcp_session_id.lock().await.is_some() {
             return Ok(());
         }
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
@@ -85,8 +92,8 @@ impl McpHttpClient {
             )
             .header("accept", "application/json, text/event-stream")
             .header("mcp-protocol-version", "2025-11-25")
-            .header("x-session-id", "runtime_agent")
-            .header("x-actor", &self.actor)
+            .header("x-session-id", &self.x_session_id)
+            .header("x-actor", &self.agent_id)
             .json(&json!({
                 "jsonrpc": "2.0",
                 "id": id,
@@ -111,7 +118,7 @@ impl McpHttpClient {
             )));
         }
         if let Some(session_id) = session_id {
-            *self.session_id.lock().await = Some(session_id.clone());
+            *self.mcp_session_id.lock().await = Some(session_id.clone());
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
             let _ = self
                 .http
@@ -122,8 +129,8 @@ impl McpHttpClient {
                 )
                 .header("accept", "application/json, text/event-stream")
                 .header("mcp-protocol-version", "2025-11-25")
-                .header("x-session-id", "runtime_agent")
-                .header("x-actor", &self.actor)
+                .header("x-session-id", &self.x_session_id)
+                .header("x-actor", &self.agent_id)
                 .header("mcp-session-id", session_id)
                 .json(&json!({"jsonrpc":"2.0","id":id,"method":"notifications/initialized"}))
                 .send()
@@ -144,9 +151,9 @@ impl McpHttpClient {
             )
             .header("accept", "application/json, text/event-stream")
             .header("mcp-protocol-version", "2025-11-25")
-            .header("x-session-id", "runtime_agent")
-            .header("x-actor", &self.actor);
-        if let Some(session_id) = self.session_id.lock().await.clone() {
+            .header("x-session-id", &self.x_session_id)
+            .header("x-actor", &self.agent_id);
+        if let Some(session_id) = self.mcp_session_id.lock().await.clone() {
             request = request.header("mcp-session-id", session_id);
         }
         let response = request

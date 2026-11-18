@@ -1,8 +1,9 @@
 //! Session orchestration, run lifecycle, recovery and prompt-cache handling.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use quire_session_protocol::{
     MessageRole, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
     SessionStatus, SessionSummary, ToolCallDetail,
@@ -17,6 +18,7 @@ use crate::{
     control::{RunRegistry, spawn_interrupt_listener},
     error::{RuntimeError, RuntimeResult},
     kb::{KbService, SeedReport},
+    models::ModelRegistry,
     prompt::{ContextMessage, ResumeContext, build_resume_context},
     rig_agent::McpHttpClient,
     store::{RunRecord, RuntimeStore},
@@ -30,26 +32,38 @@ pub struct LinkedDoc {
 
 #[async_trait]
 pub trait QuireControl: Send + Sync {
-    async fn create_report(&self, title: &str) -> RuntimeResult<LinkedDoc>;
+    async fn create_report(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        title: &str,
+    ) -> RuntimeResult<LinkedDoc>;
 }
 
 pub struct HttpQuireControl {
-    mcp: McpHttpClient,
+    base_url: String,
+    token: SecretString,
 }
 
 impl HttpQuireControl {
     pub fn new(base_url: &str, token: SecretString) -> Self {
         Self {
-            mcp: McpHttpClient::new(base_url, token, "runtime_orchestrator"),
+            base_url: base_url.to_string(),
+            token,
         }
     }
 }
 
 #[async_trait]
 impl QuireControl for HttpQuireControl {
-    async fn create_report(&self, title: &str) -> RuntimeResult<LinkedDoc> {
-        let value = self
-            .mcp
+    async fn create_report(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        title: &str,
+    ) -> RuntimeResult<LinkedDoc> {
+        let client = McpHttpClient::new(&self.base_url, self.token.clone(), session_id, agent_id);
+        let value = client
             .call_tool(
                 "create_report",
                 serde_json::json!({
@@ -88,6 +102,7 @@ pub struct ToolCallRecord {
 pub struct RuntimeService {
     store: RuntimeStore,
     kb: KbService,
+    models: Arc<ModelRegistry>,
     runs: RunRegistry,
     config: Arc<Config>,
     quire: Arc<dyn QuireControl>,
@@ -97,12 +112,14 @@ impl RuntimeService {
     pub fn new(
         store: RuntimeStore,
         kb: KbService,
+        models: Arc<ModelRegistry>,
         config: Arc<Config>,
         quire: Arc<dyn QuireControl>,
     ) -> Self {
         Self {
             store,
             kb,
+            models,
             runs: RunRegistry::default(),
             config,
             quire,
@@ -117,6 +134,10 @@ impl RuntimeService {
         &self.kb
     }
 
+    pub fn models(&self) -> &ModelRegistry {
+        &self.models
+    }
+
     pub fn config(&self) -> &Config {
         &self.config
     }
@@ -127,6 +148,7 @@ impl RuntimeService {
 
     pub async fn boot(&self) -> RuntimeResult<usize> {
         let _handle = self.kb.spawn_invalidation_listener();
+        let _models = self.models.spawn_invalidation_listener();
         let _interrupt = spawn_interrupt_listener(self.store.bus().clone(), self.runs.clone());
         let recovered = self.store.recover_running_runs().await?;
         Ok(recovered)
@@ -198,6 +220,15 @@ impl RuntimeService {
         size_bytes: u64,
         content_base64: Option<&str>,
     ) -> RuntimeResult<quire_session_protocol::AttachmentMeta> {
+        let filename = safe_attachment_filename(filename)?;
+        let bytes = match content_base64 {
+            Some(encoded) => base64::engine::general_purpose::STANDARD
+                .decode(encoded.trim())
+                .map_err(|error| {
+                    RuntimeError::InvalidRequest(format!("invalid base64 attachment: {error}"))
+                })?,
+            None => Vec::new(),
+        };
         let storage_dir = self
             .config
             .workspace_dir
@@ -205,9 +236,6 @@ impl RuntimeService {
             .join("attachments");
         tokio::fs::create_dir_all(&storage_dir).await?;
         let path = storage_dir.join(format!("{}-{filename}", uuid::Uuid::new_v4().simple()));
-        let bytes = content_base64
-            .map(|value| value.as_bytes().to_vec())
-            .unwrap_or_default();
         tokio::fs::write(&path, &bytes).await?;
         self.store
             .insert_attachment(
@@ -520,7 +548,10 @@ impl RuntimeService {
     ) -> RuntimeResult<()> {
         let mut session = self.store.get_session_summary(session_id).await?;
         if session.doc_id.is_none() {
-            let linked = self.quire.create_report(&session.title).await?;
+            let linked = self
+                .quire
+                .create_report(session_id, "main", &session.title)
+                .await?;
             self.store.bind_doc(session_id, &linked.doc_id).await?;
             self.emit(
                 session_id,
@@ -577,14 +608,8 @@ impl RuntimeService {
             },
         )
         .await?;
-        let knowledge_reminder = context
-            .messages
-            .iter()
-            .find(|message| message.content.starts_with("<knowledge_update>"))
-            .map(|message| format!("{}\n", message.content))
-            .unwrap_or_default();
         let response = format!(
-            "{knowledge_reminder}Runtime accepted the request for `{}`. Connect a rig model provider to stream the full answer.",
+            "Runtime accepted the request for `{}`. Connect a rig model provider to stream the full answer.",
             session.title
         );
         self.emit(
@@ -603,6 +628,19 @@ impl RuntimeService {
         self.store
             .insert_assistant_message(session_id, &response, run_id)
             .await?;
+        let agent_model = self
+            .kb
+            .get_agent("main")
+            .await?
+            .map(|agent| agent.model)
+            .unwrap_or_else(|| self.config.default_model.clone());
+        let context_limit = match self.models.resolve(&agent_model).await {
+            Ok(model) => u64::try_from(model.context_limit).unwrap_or(200_000),
+            Err(error) => {
+                warn!(%error, model = agent_model, "model route unavailable; using fallback context limit");
+                200_000
+            }
+        };
         let usage = quire_session_protocol::ContextUsage {
             input_tokens: u64::try_from(content.chars().count() / 4).unwrap_or(0),
             output_tokens: u64::try_from(response.chars().count() / 4).unwrap_or(0),
@@ -615,7 +653,7 @@ impl RuntimeService {
                     / 4,
             )
             .unwrap_or(0),
-            context_limit: 200_000,
+            context_limit,
         };
         self.emit(
             session_id,
@@ -643,6 +681,11 @@ impl RuntimeService {
             SessionEventKind::TurnFinished,
         )
         .await?;
+        if kb_version > synced_version {
+            self.store
+                .advance_synced_kb_version(session_id, kb_version)
+                .await?;
+        }
         self.store.finish_run(run_id, "completed", None).await?;
         Ok(())
     }
@@ -666,7 +709,12 @@ pub struct StaticQuireControl;
 
 #[async_trait]
 impl QuireControl for StaticQuireControl {
-    async fn create_report(&self, _title: &str) -> RuntimeResult<LinkedDoc> {
+    async fn create_report(
+        &self,
+        _session_id: &str,
+        _agent_id: &str,
+        _title: &str,
+    ) -> RuntimeResult<LinkedDoc> {
         Err(RuntimeError::InvalidRequest(
             "doc linking requires a configured Quire server".into(),
         ))
@@ -686,4 +734,31 @@ fn preview_json(value: &serde_json::Value) -> (String, bool) {
         preview.push('…');
     }
     (preview, truncated)
+}
+
+fn safe_attachment_filename(filename: &str) -> RuntimeResult<&str> {
+    let trimmed = filename.trim();
+    if trimmed.is_empty()
+        || trimmed.contains("..")
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+    {
+        return Err(RuntimeError::InvalidRequest(
+            "attachment filename must be a plain file name".into(),
+        ));
+    }
+    let Some(name) = Path::new(trimmed)
+        .file_name()
+        .and_then(|name| name.to_str())
+    else {
+        return Err(RuntimeError::InvalidRequest(
+            "attachment filename must be valid UTF-8".into(),
+        ));
+    };
+    if name != trimmed {
+        return Err(RuntimeError::InvalidRequest(
+            "attachment filename must not contain a path".into(),
+        ));
+    }
+    Ok(name)
 }

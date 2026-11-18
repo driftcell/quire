@@ -5,9 +5,11 @@
 pub mod bus;
 pub mod config;
 pub mod control;
+pub mod delta;
 pub mod error;
 pub mod http;
 pub mod kb;
+pub mod models;
 pub mod prompt;
 pub mod rig_agent;
 pub mod sandbox;
@@ -20,8 +22,13 @@ pub mod rig {
 }
 
 pub use config::Config;
+pub use delta::{CoalescedDelta, DeltaCoalescer, DeltaKind};
 pub use error::{RuntimeError, RuntimeResult};
 pub use kb::KbService;
+pub use models::{
+    ModelInput, ModelRecord, ModelRegistry, ModelRouter, ModelsDevImportReport,
+    ModelsDevImportRequest, ProviderInput, ProviderProtocol, ProviderRecord, ResolvedModel,
+};
 pub use service::{
     HttpQuireControl, QuireControl, RuntimeService, StaticQuireControl, ToolCallRecord,
 };

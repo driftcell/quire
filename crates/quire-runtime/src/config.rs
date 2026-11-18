@@ -16,7 +16,12 @@ pub struct Config {
     pub quire_base_url: String,
     pub quire_rw_token: SecretString,
     pub quire_ro_token: SecretString,
+    pub api_token: SecretString,
     pub model_api_key: Option<SecretString>,
+    pub model_provider: String,
+    pub model_base_url: Option<String>,
+    pub master_key: Option<SecretString>,
+    pub models_dev_url: String,
     pub workspace_dir: PathBuf,
     pub default_model: String,
     pub sse_replay_limit: usize,
@@ -33,10 +38,18 @@ impl Debug for Config {
             .field("quire_base_url", &self.quire_base_url)
             .field("quire_rw_token", &"[REDACTED]")
             .field("quire_ro_token", &"[REDACTED]")
+            .field("api_token", &"[REDACTED]")
             .field(
                 "model_api_key",
                 &self.model_api_key.as_ref().map(|_| "[REDACTED]"),
             )
+            .field("model_provider", &self.model_provider)
+            .field("model_base_url", &self.model_base_url)
+            .field(
+                "master_key",
+                &self.master_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("models_dev_url", &self.models_dev_url)
             .field("workspace_dir", &self.workspace_dir)
             .field("default_model", &self.default_model)
             .field("sse_replay_limit", &self.sse_replay_limit)
@@ -55,10 +68,20 @@ impl Config {
             env::var("QUIRE_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
         let quire_rw_token = SecretString::from(env::var("QUIRE_RW_TOKEN").unwrap_or_default());
         let quire_ro_token = SecretString::from(env::var("QUIRE_RO_TOKEN").unwrap_or_default());
+        let api_token = SecretString::from(env::var("RUNTIME_API_TOKEN").unwrap_or_default());
         let model_api_key = env::var("MODEL_API_KEY")
             .ok()
             .filter(|value| !value.trim().is_empty())
             .map(SecretString::from);
+        let model_provider =
+            env::var("RUNTIME_MODEL_PROVIDER").unwrap_or_else(|_| "mock".to_string());
+        let model_base_url = env::var("MODEL_BASE_URL").ok();
+        let master_key = env::var("RUNTIME_MASTER_KEY")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(SecretString::from);
+        let models_dev_url = env::var("MODELS_DEV_URL")
+            .unwrap_or_else(|_| "https://models.dev/api.json".to_string());
         let workspace_dir = env::var("QUIRE_RUNTIME_WORKSPACE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("."));
@@ -80,7 +103,12 @@ impl Config {
             quire_base_url,
             quire_rw_token,
             quire_ro_token,
+            api_token,
             model_api_key,
+            model_provider,
+            model_base_url,
+            master_key,
+            models_dev_url,
             workspace_dir,
             default_model,
             sse_replay_limit,
@@ -102,7 +130,12 @@ mod tests {
             quire_base_url: "http://localhost:8080".into(),
             quire_rw_token: SecretString::from("rw-secret"),
             quire_ro_token: SecretString::from("ro-secret"),
+            api_token: SecretString::from("api-secret"),
             model_api_key: Some(SecretString::from("model-secret")),
+            model_provider: "mock".into(),
+            model_base_url: None,
+            master_key: Some(SecretString::from("master-secret")),
+            models_dev_url: "https://models.dev/api.json".into(),
             workspace_dir: PathBuf::from("."),
             default_model: "stub/echo".into(),
             sse_replay_limit: 500,
@@ -112,5 +145,6 @@ mod tests {
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("rw-secret"));
         assert!(!rendered.contains("model-secret"));
+        assert!(!rendered.contains("master-secret"));
     }
 }

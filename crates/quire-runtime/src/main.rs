@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use quire_runtime::{Config, HttpQuireControl, KbService, RuntimeService, RuntimeStore, http};
+use quire_runtime::{
+    Config, HttpQuireControl, KbService, ModelRegistry, RuntimeService, RuntimeStore, http,
+};
 use tracing::info;
 
 #[tokio::main]
@@ -28,8 +30,19 @@ async fn main() -> anyhow::Result<()> {
         store.migrate().await.context("run runtime migrations")?;
     }
     let kb = KbService::new(store.clone());
+    let models = ModelRegistry::new(
+        store.clone(),
+        config.master_key.clone(),
+        &config.models_dev_url,
+    );
     let quire = HttpQuireControl::new(&config.quire_base_url, config.quire_rw_token.clone());
-    let service = RuntimeService::new(store, kb, Arc::new(config.clone()), Arc::new(quire));
+    let service = RuntimeService::new(
+        store,
+        kb,
+        Arc::new(models),
+        Arc::new(config.clone()),
+        Arc::new(quire),
+    );
     let recovered = service.boot().await.context("runtime boot recovery")?;
     let seed = service.seed().await.context("runtime knowledge seed")?;
     info!(

@@ -4,10 +4,11 @@ use std::convert::Infallible;
 
 use axum::{
     Json, Router,
-    extract::{Path, Query, State},
-    http::StatusCode,
+    extract::{Path, Query, Request, State},
+    http::{StatusCode, header},
+    middleware::{self, Next},
     response::{
-        IntoResponse,
+        IntoResponse, Response,
         sse::{Event, KeepAlive, Sse},
     },
     routing::{get, patch, post},
@@ -17,20 +18,25 @@ use quire_session_protocol::{
     AttachmentMeta, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind,
     SessionSummary, ToolCallDetail,
 };
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use subtle::ConstantTimeEq;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::{
     error::{RuntimeError, RuntimeResult},
     kb::{AgentDefinitionRecord, KbDocumentRecord, SkillDefinitionRecord},
+    models::{
+        ModelInput, ModelRecord, ModelsDevImportReport, ModelsDevImportRequest, ProviderInput,
+        ProviderRecord,
+    },
     service::RuntimeService,
 };
 
 pub fn router(service: RuntimeService) -> Router {
-    Router::new()
-        .route("/health", get(health))
+    let protected = Router::new()
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{session_id}",
@@ -67,6 +73,27 @@ pub fn router(service: RuntimeService) -> Router {
             "/api/kb/skills/{name}",
             patch(update_skill).delete(delete_skill),
         )
+        .route(
+            "/api/models/providers",
+            get(list_model_providers).post(create_model_provider),
+        )
+        .route(
+            "/api/models/providers/{provider_id}",
+            patch(update_model_provider).delete(delete_model_provider),
+        )
+        .route("/api/models", get(list_models).post(create_model))
+        .route(
+            "/api/models/{*id}",
+            patch(update_model).delete(delete_model),
+        )
+        .route("/api/models/import-models-dev", post(import_models_dev))
+        .route_layer(middleware::from_fn_with_state(
+            service.clone(),
+            runtime_auth,
+        ));
+    Router::new()
+        .route("/health", get(health))
+        .merge(protected)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -74,6 +101,59 @@ pub fn router(service: RuntimeService) -> Router {
                 .allow_headers(Any),
         )
         .with_state(service)
+}
+
+async fn runtime_auth(
+    State(service): State<RuntimeService>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if request.method() == axum::http::Method::OPTIONS {
+        return next.run(request).await;
+    }
+    let expected = service.config().api_token.expose_secret();
+    if expected.is_empty() {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "error": {
+                    "code": "auth_not_configured",
+                    "message": "runtime API token is not configured",
+                    "hint": "Set RUNTIME_API_TOKEN before exposing quire-runtime."
+                }
+            })),
+        )
+            .into_response();
+    }
+    let presented = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let matches = presented.is_some_and(|value| {
+        value.len() == expected.len() && bool::from(value.as_bytes().ct_eq(expected.as_bytes()))
+    });
+    if !matches {
+        let mut response = (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({
+                "error": {
+                    "code": "unauthorized",
+                    "message": "missing or invalid runtime bearer token",
+                    "hint": "Send `Authorization: Bearer $RUNTIME_API_TOKEN`."
+                }
+            })),
+        )
+            .into_response();
+        response.headers_mut().insert(
+            header::WWW_AUTHENTICATE,
+            axum::http::HeaderValue::from_static("Bearer"),
+        );
+        return response;
+    }
+    next.run(request).await
 }
 
 async fn health(State(service): State<RuntimeService>) -> Response {
@@ -90,8 +170,6 @@ async fn health(State(service): State<RuntimeService>) -> Response {
             .into_response(),
     }
 }
-
-use axum::response::Response;
 
 #[derive(Debug, Deserialize)]
 struct PageQuery {
@@ -376,6 +454,77 @@ fn sse_event(event: &SessionEvent) -> Event {
                 .event("error")
                 .data(format!("serialization error: {error}"))
         })
+}
+
+// ---------------------------------------------------------------------------
+// Model/provider registry
+// ---------------------------------------------------------------------------
+
+async fn list_model_providers(
+    State(service): State<RuntimeService>,
+) -> RuntimeResult<Json<Vec<ProviderRecord>>> {
+    service.models().list_providers().await.map(Json)
+}
+
+async fn create_model_provider(
+    State(service): State<RuntimeService>,
+    Json(input): Json<ProviderInput>,
+) -> RuntimeResult<Json<ProviderRecord>> {
+    service.models().upsert_provider(input).await.map(Json)
+}
+
+async fn update_model_provider(
+    State(service): State<RuntimeService>,
+    Path(provider_id): Path<String>,
+    Json(mut input): Json<ProviderInput>,
+) -> RuntimeResult<Json<ProviderRecord>> {
+    input.provider_id = provider_id;
+    service.models().upsert_provider(input).await.map(Json)
+}
+
+async fn delete_model_provider(
+    State(service): State<RuntimeService>,
+    Path(provider_id): Path<String>,
+) -> RuntimeResult<StatusCode> {
+    service.models().delete_provider(&provider_id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_models(
+    State(service): State<RuntimeService>,
+) -> RuntimeResult<Json<Vec<ModelRecord>>> {
+    service.models().list_models().await.map(Json)
+}
+
+async fn create_model(
+    State(service): State<RuntimeService>,
+    Json(input): Json<ModelInput>,
+) -> RuntimeResult<Json<ModelRecord>> {
+    service.models().upsert_model(input).await.map(Json)
+}
+
+async fn update_model(
+    State(service): State<RuntimeService>,
+    Path(id): Path<String>,
+    Json(mut input): Json<ModelInput>,
+) -> RuntimeResult<Json<ModelRecord>> {
+    input.id = id;
+    service.models().upsert_model(input).await.map(Json)
+}
+
+async fn delete_model(
+    State(service): State<RuntimeService>,
+    Path(id): Path<String>,
+) -> RuntimeResult<StatusCode> {
+    service.models().delete_model(&id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn import_models_dev(
+    State(service): State<RuntimeService>,
+    Json(request): Json<ModelsDevImportRequest>,
+) -> RuntimeResult<Json<ModelsDevImportReport>> {
+    service.models().import_models_dev(request).await.map(Json)
 }
 
 // ---------------------------------------------------------------------------

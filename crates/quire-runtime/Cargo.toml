@@ -32,14 +32,19 @@ anyhow.workspace = true
 dotenvy = "0.15"
 thiserror.workspace = true
 secrecy.workspace = true
+subtle.workspace = true
 moka.workspace = true
 serde_yaml_ng.workspace = true
+base64.workspace = true
+ring.workspace = true
 rig-core.workspace = true
 rmcp.workspace = true
 reqwest.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 
 [lints]
 workspace = true

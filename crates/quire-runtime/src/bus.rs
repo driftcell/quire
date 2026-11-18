@@ -9,6 +9,7 @@ use crate::error::RuntimeResult;
 
 const INTERRUPT_CHANNEL: &str = "runtime:interrupt";
 const KB_INVALIDATE_CHANNEL: &str = "runtime:kb:invalidate";
+const MODEL_INVALIDATE_CHANNEL: &str = "runtime:models:invalidate";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InterruptCommand {
@@ -18,6 +19,11 @@ pub struct InterruptCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KbInvalidate {
+    pub version: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModelInvalidate {
     pub version: u64,
 }
 
@@ -78,6 +84,21 @@ impl RedisBus {
         Ok(KbInvalidateSubscriber { pubsub })
     }
 
+    pub async fn publish_model_invalidation(&self, version: u64) -> RuntimeResult<()> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let payload = serde_json::to_string(&ModelInvalidate { version })?;
+        let _: i64 = connection
+            .publish(MODEL_INVALIDATE_CHANNEL, payload)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn subscribe_model_invalidation(&self) -> RuntimeResult<ModelInvalidateSubscriber> {
+        let mut pubsub = self.client.get_async_pubsub().await?;
+        pubsub.subscribe(MODEL_INVALIDATE_CHANNEL).await?;
+        Ok(ModelInvalidateSubscriber { pubsub })
+    }
+
     pub async fn health(&self) -> RuntimeResult<()> {
         let mut connection = self.client.get_multiplexed_async_connection().await?;
         let _: String = redis::cmd("PING").query_async(&mut connection).await?;
@@ -113,6 +134,16 @@ pub struct KbInvalidateSubscriber {
 
 impl KbInvalidateSubscriber {
     pub async fn next_invalidation(&mut self) -> Option<KbInvalidate> {
+        next_json(&mut self.pubsub).await
+    }
+}
+
+pub struct ModelInvalidateSubscriber {
+    pubsub: PubSub,
+}
+
+impl ModelInvalidateSubscriber {
+    pub async fn next_invalidation(&mut self) -> Option<ModelInvalidate> {
         next_json(&mut self.pubsub).await
     }
 }
