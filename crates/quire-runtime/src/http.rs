@@ -1,6 +1,6 @@
 //! Axum control plane and Session-SSE endpoint.
 
-use std::convert::Infallible;
+use std::{convert::Infallible, time::Duration};
 
 use axum::{
     Json, Router,
@@ -15,19 +15,27 @@ use axum::{
 };
 use futures::Stream;
 use quire_session_protocol::{
-    AttachmentMeta, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind,
-    SessionSummary, ToolCallDetail,
+    AttachmentMeta, CreateSessionRequest, SendMessageRequest, SessionDetail, SessionEvent,
+    SessionEventKind, SessionSummary, ToolCallDetail,
+};
+use rmcp::transport::streamable_http_server::{
+    StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use subtle::ConstantTimeEq;
+use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use uuid::Uuid;
 
 use crate::{
+    admin_mcp::AdminMcpServer,
     error::{RuntimeError, RuntimeResult},
-    kb::{AgentDefinitionRecord, KbDocumentRecord, SkillDefinitionRecord},
+    kb::{
+        AgentDefinitionRecord, KbBranchDiff, KbBranchRecord, KbDocumentRecord, KbPromoteReport,
+        KbRollbackReport, SkillDefinitionRecord,
+    },
     models::{
         ModelInput, ModelRecord, ModelsDevImportReport, ModelsDevImportRequest, ProviderInput,
         ProviderRecord,
@@ -36,6 +44,24 @@ use crate::{
 };
 
 pub fn router(service: RuntimeService) -> Router {
+    let mcp_config = StreamableHttpServerConfig::default()
+        .with_allowed_hosts(service.config().mcp_allowed_hosts())
+        .with_json_response(true)
+        .with_sse_keep_alive(Some(Duration::from_secs(15)))
+        .with_cancellation_token(CancellationToken::new());
+    let mcp_state = service.clone();
+    let admin_mcp: StreamableHttpService<AdminMcpServer, LocalSessionManager> =
+        StreamableHttpService::new(
+            move || Ok(AdminMcpServer::new(mcp_state.clone())),
+            Default::default(),
+            mcp_config,
+        );
+    let admin_mcp = Router::new()
+        .nest_service("/admin/mcp", admin_mcp)
+        .route_layer(middleware::from_fn_with_state(
+            service.clone(),
+            runtime_auth,
+        ));
     let protected = Router::new()
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
@@ -63,6 +89,13 @@ pub fn router(service: RuntimeService) -> Router {
             "/api/kb/docs/{doc_id}",
             patch(update_kb_doc).delete(delete_kb_doc),
         )
+        .route(
+            "/api/kb/branches",
+            get(list_kb_branches).post(create_kb_branch),
+        )
+        .route("/api/kb/branches/{name}/diff", get(diff_kb_branch))
+        .route("/api/kb/branches/{name}/promote", post(promote_kb_branch))
+        .route("/api/kb/rollback", post(rollback_kb))
         .route("/api/kb/agents", get(list_agents).post(create_agent))
         .route(
             "/api/kb/agents/{name}",
@@ -94,6 +127,7 @@ pub fn router(service: RuntimeService) -> Router {
     Router::new()
         .route("/health", get(health))
         .merge(protected)
+        .merge(admin_mcp)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -187,19 +221,16 @@ async fn list_sessions(
         .map(Json)
 }
 
-#[derive(Debug, Deserialize)]
-struct CreateSessionRequest {
-    title: String,
-    #[serde(default)]
-    doc_id: Option<String>,
-}
-
 async fn create_session(
     State(service): State<RuntimeService>,
     Json(request): Json<CreateSessionRequest>,
 ) -> RuntimeResult<Json<SessionSummary>> {
     service
-        .create_session(&request.title, request.doc_id.as_deref())
+        .create_session_on_branch(
+            &request.title,
+            request.doc_id.as_deref(),
+            request.kb_branch.as_deref(),
+        )
         .await
         .map(Json)
 }
@@ -721,6 +752,66 @@ async fn delete_skill(
 ) -> RuntimeResult<StatusCode> {
     service.kb().delete_skill(&name).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge-base branches, promotion and rollback
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CreateBranchRequest {
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default, alias = "base", alias = "source", alias = "from_branch")]
+    from: Option<String>,
+}
+
+async fn list_kb_branches(
+    State(service): State<RuntimeService>,
+) -> RuntimeResult<Json<Vec<KbBranchRecord>>> {
+    service.kb().list_branches().await.map(Json)
+}
+
+async fn create_kb_branch(
+    State(service): State<RuntimeService>,
+    Json(request): Json<CreateBranchRequest>,
+) -> RuntimeResult<Json<KbBranchRecord>> {
+    service
+        .kb()
+        .create_branch(&request.name, &request.description, request.from.as_deref())
+        .await
+        .map(Json)
+}
+
+async fn diff_kb_branch(
+    State(service): State<RuntimeService>,
+    Path(name): Path<String>,
+) -> RuntimeResult<Json<KbBranchDiff>> {
+    service.kb().diff_branch(&name).await.map(Json)
+}
+
+async fn promote_kb_branch(
+    State(service): State<RuntimeService>,
+    Path(name): Path<String>,
+) -> RuntimeResult<Json<KbPromoteReport>> {
+    service.kb().promote_branch(&name).await.map(Json)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RollbackRequest {
+    #[serde(default)]
+    version: Option<u64>,
+}
+
+async fn rollback_kb(
+    State(service): State<RuntimeService>,
+    request: Option<Json<RollbackRequest>>,
+) -> RuntimeResult<Json<KbRollbackReport>> {
+    let version = request.as_ref().and_then(|request| request.0.version);
+    service.kb().rollback_active(version).await.map(Json)
 }
 
 /// Reserved for attachment IDs generated by clients before upload.

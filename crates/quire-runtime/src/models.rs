@@ -12,6 +12,7 @@ use ring::{
     digest::{SHA256, digest},
     rand::{SecureRandom, SystemRandom},
 };
+use schemars::JsonSchema;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,7 +23,7 @@ use crate::{
     store::RuntimeStore,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderProtocol {
     OpenaiCompatible,
@@ -46,7 +47,7 @@ impl ProviderProtocol {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ProviderRecord {
     pub provider_id: String,
     pub name: String,
@@ -70,7 +71,7 @@ pub struct ProviderInput {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ModelRecord {
     pub id: String,
     pub provider_id: String,
@@ -151,7 +152,7 @@ pub struct ModelsDevImportRequest {
     pub url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ModelsDevImportReport {
     pub provider_id: String,
     pub imported: usize,

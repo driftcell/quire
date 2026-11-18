@@ -6,6 +6,9 @@
     "attachment_meta": {
       "$ref": "#/$defs/AttachmentMeta"
     },
+    "create_session_request": {
+      "$ref": "#/$defs/CreateSessionRequest"
+    },
     "send_message_request": {
       "$ref": "#/$defs/SendMessageRequest"
     },
@@ -31,6 +34,7 @@
     "session_detail",
     "session_message",
     "attachment_meta",
+    "create_session_request",
     "send_message_request",
     "tool_call_detail"
   ],
@@ -106,6 +110,34 @@
         "context_limit"
       ]
     },
+    "CreateSessionRequest": {
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "description": "Optional existing report to bind immediately.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "kb_branch": {
+          "description": "Test a draft knowledge-base branch. Omit to use the current active branch.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
     "MessageRole": {
       "type": "string",
       "enum": [
@@ -165,6 +197,13 @@
         },
         "doc_id": {
           "description": "Quire report bound to this session. `None` until the first run auto-binds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kb_branch": {
+          "description": "Knowledge-base branch used by this session. `None` only for sessions created before\nbranch-scoped knowledge bases existed; those fall back to the current active branch.",
           "type": [
             "string",
             "null"
@@ -621,6 +660,13 @@
         },
         "doc_id": {
           "description": "Quire report bound to this session. `None` until the first run auto-binds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kb_branch": {
+          "description": "Knowledge-base branch used by this session. `None` only for sessions created before\nbranch-scoped knowledge bases existed; those fall back to the current active branch.",
           "type": [
             "string",
             "null"

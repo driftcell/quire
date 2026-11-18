@@ -7,8 +7,8 @@
 use std::{fs, path::Path};
 
 use quire_session_protocol::{
-    AttachmentMeta, SendMessageRequest, SessionDetail, SessionEvent, SessionMessage,
-    SessionSummary, ToolCallDetail,
+    AttachmentMeta, CreateSessionRequest, SendMessageRequest, SessionDetail, SessionEvent,
+    SessionMessage, SessionSummary, ToolCallDetail,
 };
 use schemars::JsonSchema;
 
@@ -21,6 +21,7 @@ struct SessionProtocolContract {
     session_detail: SessionDetail,
     session_message: SessionMessage,
     attachment_meta: AttachmentMeta,
+    create_session_request: CreateSessionRequest,
     send_message_request: SendMessageRequest,
     tool_call_detail: ToolCallDetail,
 }

@@ -9,6 +9,7 @@ pub mod session;
 
 pub use events::{SessionEvent, SessionEventKind};
 pub use session::{
-    ActiveRunStatus, AttachmentMeta, ContextUsage, MessageRole, SendMessageRequest, SessionDetail,
-    SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
+    ActiveRunStatus, AttachmentMeta, ContextUsage, CreateSessionRequest, MessageRole,
+    SendMessageRequest, SessionDetail, SessionMessage, SessionStatus, SessionSummary,
+    ToolCallDetail,
 };

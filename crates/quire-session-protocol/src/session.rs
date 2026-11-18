@@ -129,6 +129,10 @@ pub struct SessionSummary {
     /// Frontend-friendly alias of the bound report ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub linked_doc_id: Option<String>,
+    /// Knowledge-base branch used by this session. `None` only for sessions created before
+    /// branch-scoped knowledge bases existed; those fall back to the current active branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kb_branch: Option<String>,
     pub status: SessionStatus,
     pub active_run_status: ActiveRunStatus,
     pub last_event_seq: u64,
@@ -146,6 +150,18 @@ pub struct SessionDetail {
     pub messages: Vec<SessionMessage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachmentMeta>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CreateSessionRequest {
+    pub title: String,
+    /// Optional existing report to bind immediately.
+    #[serde(default)]
+    pub doc_id: Option<String>,
+    /// Test a draft knowledge-base branch. Omit to use the current active branch.
+    #[serde(default)]
+    pub kb_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -187,6 +203,7 @@ mod tests {
                 title: "Q3 review".into(),
                 doc_id: Some("q3-review".into()),
                 linked_doc_id: Some("q3-review".into()),
+                kb_branch: Some("main".into()),
                 status: SessionStatus::Active,
                 active_run_status: ActiveRunStatus::Idle,
                 last_event_seq: 4,

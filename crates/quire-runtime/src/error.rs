@@ -3,6 +3,8 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde_json::json;
 
+use crate::kb::KbConflictReport;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {
     #[error("database error: {0}")]
@@ -23,6 +25,8 @@ pub enum RuntimeError {
     ToolCallNotFound(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    #[error("knowledge-base branch promotion conflict")]
+    KbConflict(Box<KbConflictReport>),
     #[error("internal runtime error: {0}")]
     Internal(String),
 }
@@ -34,6 +38,7 @@ impl RuntimeError {
             Self::RunNotFound(_) => "RUN_NOT_FOUND",
             Self::ToolCallNotFound(_) => "TOOL_CALL_NOT_FOUND",
             Self::InvalidRequest(_) => "INVALID_REQUEST",
+            Self::KbConflict(_) => "KB_BRANCH_CONFLICT",
             Self::Database(_)
             | Self::Redis(_)
             | Self::Json(_)
@@ -53,6 +58,9 @@ impl RuntimeError {
             Self::InvalidRequest(_) => {
                 "Check the request body against the session protocol schema."
             }
+            Self::KbConflict(_) => {
+                "Resolve the overlapping items in the draft branch with kb_upsert_* or delete them, then call kb_promote_branch again."
+            }
             _ => "Retry the request; if the problem persists inspect the runtime logs.",
         }
     }
@@ -65,25 +73,41 @@ impl IntoResponse for RuntimeError {
                 StatusCode::NOT_FOUND
             }
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            Self::KbConflict(_) => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let message = match &self {
             Self::SessionNotFound(_)
             | Self::RunNotFound(_)
             | Self::ToolCallNotFound(_)
-            | Self::InvalidRequest(_) => self.to_string(),
+            | Self::InvalidRequest(_)
+            | Self::KbConflict(_) => self.to_string(),
             _ => {
                 tracing::error!(error = ?self, "runtime request failed internally");
                 "internal runtime error; retry the request or inspect runtime logs".to_string()
             }
         };
-        let body = json!({
-            "error": {
-                "code": self.code(),
-                "message": message,
-                "hint": self.hint(),
-            }
-        });
+        let details = match &self {
+            Self::KbConflict(report) => serde_json::to_value(report.as_ref()).ok(),
+            _ => None,
+        };
+        let body = match details {
+            Some(details) => json!({
+                "error": {
+                    "code": self.code(),
+                    "message": message,
+                    "hint": self.hint(),
+                    "details": details,
+                }
+            }),
+            None => json!({
+                "error": {
+                    "code": self.code(),
+                    "message": message,
+                    "hint": self.hint(),
+                }
+            }),
+        };
         (status, Json(body)).into_response()
     }
 }

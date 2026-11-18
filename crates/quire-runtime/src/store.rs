@@ -80,6 +80,21 @@ impl RuntimeStore {
         title: &str,
         doc_id: Option<&str>,
     ) -> RuntimeResult<SessionSummary> {
+        let branch: String = sqlx::query_scalar(
+            "SELECT name FROM kb_branches WHERE status = 'active' ORDER BY name ASC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| RuntimeError::Internal("no active knowledge-base branch".into()))?;
+        self.create_session_on_branch(title, doc_id, &branch).await
+    }
+
+    pub async fn create_session_on_branch(
+        &self,
+        title: &str,
+        doc_id: Option<&str>,
+        kb_branch: &str,
+    ) -> RuntimeResult<SessionSummary> {
         let title = title.trim();
         if title.is_empty() {
             return Err(RuntimeError::InvalidRequest(
@@ -89,12 +104,13 @@ impl RuntimeStore {
         let session_id = format!("sess_{}", Uuid::new_v4().simple());
         sqlx::query(
             r#"INSERT INTO agent_sessions
-               (session_id, title, doc_id, linked_doc_id, status, active_run_status)
-               VALUES ($1, $2, $3, $3, 'active', 'idle')"#,
+               (session_id, title, doc_id, linked_doc_id, kb_branch, status, active_run_status)
+               VALUES ($1, $2, $3, $3, $4, 'active', 'idle')"#,
         )
         .bind(&session_id)
         .bind(title)
         .bind(doc_id)
+        .bind(kb_branch)
         .execute(&self.pool)
         .await?;
         self.get_session_summary(&session_id).await
@@ -102,8 +118,8 @@ impl RuntimeStore {
 
     pub async fn get_session_summary(&self, session_id: &str) -> RuntimeResult<SessionSummary> {
         let row = sqlx::query(
-            r#"SELECT session_id, title, doc_id, linked_doc_id, status, active_run_status,
-                      last_event_seq, context_usage, created_at, updated_at
+            r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
+                      active_run_status, last_event_seq, context_usage, created_at, updated_at
                FROM agent_sessions WHERE session_id = $1"#,
         )
         .bind(session_id)
@@ -130,8 +146,8 @@ impl RuntimeStore {
         offset: i64,
     ) -> RuntimeResult<Vec<SessionSummary>> {
         let rows = sqlx::query(
-            r#"SELECT session_id, title, doc_id, linked_doc_id, status, active_run_status,
-                      last_event_seq, context_usage, created_at, updated_at
+            r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
+                      active_run_status, last_event_seq, context_usage, created_at, updated_at
                FROM agent_sessions
                ORDER BY updated_at DESC, session_id ASC
                LIMIT $1 OFFSET $2"#,
@@ -435,6 +451,20 @@ impl RuntimeStore {
                       started_at, finished_at
                FROM agent_runs
                WHERE session_id = $1 AND status = 'running'
+               ORDER BY started_at DESC LIMIT 1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| row_to_run(&row)).transpose()
+    }
+
+    pub async fn latest_run(&self, session_id: &str) -> RuntimeResult<Option<RunRecord>> {
+        let row = sqlx::query(
+            r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
+                      started_at, finished_at
+               FROM agent_runs
+               WHERE session_id = $1
                ORDER BY started_at DESC LIMIT 1"#,
         )
         .bind(session_id)
@@ -752,6 +782,7 @@ fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
         title: row.try_get("title")?,
         doc_id: row.try_get("doc_id")?,
         linked_doc_id: row.try_get("linked_doc_id")?,
+        kb_branch: row.try_get("kb_branch")?,
         status: SessionStatus::parse(&status_raw).ok_or_else(|| {
             RuntimeError::Internal(format!("invalid session status `{status_raw}`"))
         })?,

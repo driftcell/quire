@@ -115,6 +115,29 @@ impl Config {
             preview_throttle_ms,
         }
     }
+
+    /// Host allowlist for the `/admin/mcp` Streamable HTTP endpoint.
+    pub fn mcp_allowed_hosts(&self) -> Vec<String> {
+        env::var("RUNTIME_MCP_ALLOWED_HOSTS")
+            .ok()
+            .map(|value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|host| !host.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|hosts| !hosts.is_empty())
+            .unwrap_or_else(|| {
+                vec![
+                    "localhost".into(),
+                    "127.0.0.1".into(),
+                    "0.0.0.0".into(),
+                    "[::1]".into(),
+                ]
+            })
+    }
 }
 
 #[cfg(test)]

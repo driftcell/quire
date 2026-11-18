@@ -88,6 +88,7 @@ frontend metadata.
 | `MODELS_DEV_URL` | `https://models.dev/api.json` | Catalog source for model imports |
 | `RUNTIME_SSE_REPLAY_LIMIT` | `500` | Maximum Session-SSE replay frames before `sync_required` |
 | `RUNTIME_PREVIEW_THROTTLE_MS` | `65` | Tool-argument preview throttle (clamped to 50–80 ms) |
+| `RUNTIME_MCP_ALLOWED_HOSTS` | loopback defaults | Comma-separated Host allowlist for `/admin/mcp` |
 
 ## Agent workflow
 
@@ -200,6 +201,13 @@ the server or `rig` into the report engine. It owns:
   `GET /api/sessions/{id}/events?afterSeq=N` (PostgreSQL replay, then Redis live tail).
 - `/api/kb/docs`, `/api/kb/agents` and `/api/kb/skills` CRUD with monotonic KB versions, idempotent
   filesystem seeding and moka cache invalidation over Redis.
+- Git-style KB branches: `/api/kb/branches` create/list/diff/promote, `/api/kb/rollback`, immutable
+  `kb_snapshots`, item-level three-way merge with structured conflicts, and session-level
+  `kb_branch` selection for isolated test runs.
+- `/admin/mcp` Streamable HTTP administration tools for branches, branch-scoped items, providers,
+  models and session inspection. It uses the same `KbService` / `ModelRegistry` / `RuntimeService`
+  methods as REST and is protected by `RUNTIME_API_TOKEN`; report-authoring sub-agents only see the
+  Quire server's `/mcp` surface.
 - Crash recovery: startup marks orphaned `running` runs `interrupted` and appends a recoverable
   `turn_failed` event.
 - Frozen prompt-cache prefixes: resume injects `<knowledge_update>` before the new user message

@@ -9,20 +9,25 @@
 
 use std::{
     path::Path,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
 use base64::Engine as _;
 use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelRegistry, ModelStreamEvent, ModelsDevImportRequest,
-    ProviderInput, ProviderProtocol, RuntimeService, RuntimeStore, StaticQuireControl,
-    ToolCallRecord,
+    ProviderInput, ProviderProtocol, RuntimeError, RuntimeService, RuntimeStore,
+    StaticQuireControl, ToolCallRecord,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
+    kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
 };
 use quire_session_protocol::{ActiveRunStatus, SendMessageRequest, SessionEventKind};
 use secrecy::SecretString;
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tower::ServiceExt;
 
@@ -101,6 +106,206 @@ async fn wait_for_idle(store: &RuntimeStore, session_id: &str) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!("session {session_id} never became idle");
+}
+
+async fn remove_branch(store: &RuntimeStore, name: &str) {
+    let _ = sqlx::query("DELETE FROM kb_branches WHERE name = $1")
+        .bind(name)
+        .execute(store.pool())
+        .await;
+}
+
+async fn parse_body(response: axum::response::Response) -> Value {
+    let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+        .await
+        .unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    if text.trim().is_empty() {
+        return Value::Null;
+    }
+    if text.trim_start().starts_with("event:") || text.contains("\ndata:") {
+        for line in text.lines() {
+            let Some(data) = line.strip_prefix("data:") else {
+                continue;
+            };
+            let data = data.trim();
+            if data.is_empty() {
+                continue;
+            }
+            if let Ok(value) = serde_json::from_str::<Value>(data) {
+                return value;
+            }
+        }
+    }
+    serde_json::from_str(&text).unwrap_or_else(|_| Value::String(text))
+}
+
+async fn http_json(
+    app: &axum::Router,
+    method: axum::http::Method,
+    uri: &str,
+    token: &str,
+    body: Option<Value>,
+) -> (axum::http::StatusCode, Value) {
+    let mut builder = axum::http::Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("host", "localhost");
+    let body = match body {
+        Some(body) => {
+            builder = builder.header("content-type", "application/json");
+            axum::body::Body::from(serde_json::to_vec(&body).unwrap())
+        }
+        None => axum::body::Body::empty(),
+    };
+    let response = app
+        .clone()
+        .oneshot(builder.body(body).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    (status, parse_body(response).await)
+}
+
+async fn mcp_request(
+    app: &axum::Router,
+    token: &str,
+    session_id: Option<&str>,
+    protocol: &str,
+    body: &Value,
+) -> (axum::http::StatusCode, Option<String>, Value) {
+    let mut builder = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/admin/mcp")
+        .header("authorization", format!("Bearer {token}"))
+        .header("host", "localhost")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", protocol);
+    if let Some(session_id) = session_id {
+        builder = builder.header("mcp-session-id", session_id);
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            builder
+                .body(axum::body::Body::from(serde_json::to_vec(body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let session = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    (status, session, parse_body(response).await)
+}
+
+struct AdminMcpClient {
+    app: axum::Router,
+    token: String,
+    session_id: String,
+    protocol_version: String,
+    next_id: AtomicU64,
+}
+
+impl AdminMcpClient {
+    async fn connect(app: axum::Router, token: &str) -> Self {
+        let initialize = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "runtime-admin-test", "version": "1.0"}
+            }
+        });
+        let (status, session_id, body) =
+            mcp_request(&app, token, None, "2025-11-25", &initialize).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        let session_id = session_id.expect("initialize must return mcp-session-id");
+        let protocol_version = body
+            .get("result")
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(Value::as_str)
+            .unwrap_or("2025-11-25")
+            .to_string();
+        let (status, _, _) = mcp_request(
+            &app,
+            token,
+            Some(&session_id),
+            &protocol_version,
+            &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+        )
+        .await;
+        assert!(status.is_success());
+        Self {
+            app,
+            token: token.to_string(),
+            session_id,
+            protocol_version,
+            next_id: AtomicU64::new(2),
+        }
+    }
+
+    async fn rpc(&self, method: &str, params: Value) -> Value {
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let (status, _, body) = mcp_request(
+            &self.app,
+            &self.token,
+            Some(&self.session_id),
+            &self.protocol_version,
+            &json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}),
+        )
+        .await;
+        assert!(status.is_success(), "MCP {method} failed with {status}");
+        assert!(
+            body.get("error").is_none(),
+            "MCP {method} returned error: {body}"
+        );
+        body.get("result").cloned().unwrap_or(Value::Null)
+    }
+
+    async fn tool_names(&self) -> Vec<String> {
+        let result = self.rpc("tools/list", json!({})).await;
+        result
+            .get("tools")
+            .and_then(Value::as_array)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    async fn call_tool(&self, name: &str, arguments: Value) -> Value {
+        let result = self
+            .rpc("tools/call", json!({"name": name, "arguments": arguments}))
+            .await;
+        assert_ne!(
+            result.get("isError").and_then(Value::as_bool),
+            Some(true),
+            "tool {name} returned isError: {result}"
+        );
+        if let Some(structured) = result.get("structuredContent") {
+            return structured.clone();
+        }
+        let text = result
+            .get("content")
+            .and_then(Value::as_array)
+            .and_then(|content| content.iter().next())
+            .and_then(|item| item.get("text"))
+            .and_then(Value::as_str)
+            .expect("tool result content");
+        serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.to_string()))
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -826,4 +1031,540 @@ async fn streaming_tokens_are_coalesced_and_flushed_before_tool_and_turn_events(
         Some("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
     );
     service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn branch_edits_are_isolated_and_sessions_use_the_selected_branch() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let base_doc_id = unique("branch-base");
+    service
+        .kb()
+        .upsert_document(&base_doc_id, "Branch base", "BASE DOCUMENT")
+        .await
+        .unwrap();
+    let branch_name = unique("draft");
+    let branch = service
+        .kb()
+        .create_branch(&branch_name, "Branch isolation test", None)
+        .await
+        .unwrap();
+    assert_eq!(branch.status, KbBranchStatus::Draft);
+    assert_eq!(branch.base_version, branch.head_version);
+
+    let branch_doc_id = unique("branch-only");
+    service
+        .kb()
+        .upsert_document_on(
+            &branch_name,
+            &branch_doc_id,
+            "Branch-only document",
+            "BRANCH ONLY BODY",
+        )
+        .await
+        .unwrap();
+    let active_docs = service.kb().list_documents().await.unwrap();
+    assert!(
+        !active_docs
+            .iter()
+            .any(|document| document.doc_id == branch_doc_id),
+        "draft edits must not leak into the active branch"
+    );
+    let branch_docs = service
+        .kb()
+        .list_documents_on(Some(&branch_name))
+        .await
+        .unwrap();
+    assert!(
+        branch_docs
+            .iter()
+            .any(|document| document.doc_id == branch_doc_id
+                && document.content == "BRANCH ONLY BODY")
+    );
+
+    let app = quire_runtime::http::router(service.clone());
+    let (status, session) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        "runtime-test-token",
+        Some(json!({
+            "title": unique("branch-session"),
+            "doc_id": "runtime-doc",
+            "kb_branch": branch_name
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(session["kb_branch"], branch_name);
+    let session_id = session["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+    let context = service
+        .resume_context(&session_id, "Read the selected branch")
+        .await
+        .unwrap();
+    assert!(
+        context.pinned_system_prompt.contains("BRANCH ONLY BODY"),
+        "a session bound to the draft must read branch content"
+    );
+    let active_prompt = service.kb().system_prompt().await.unwrap();
+    assert!(!active_prompt.contains("BRANCH ONLY BODY"));
+
+    service.delete_session(&session_id).await.unwrap();
+    remove_branch(&store, &branch_name).await;
+    service.kb().delete_document(&base_doc_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disjoint_changes_auto_merge_on_promotion_and_invalidate_caches() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let doc_a = unique("merge-a");
+    let doc_b = unique("merge-b");
+    service
+        .kb()
+        .upsert_document(&doc_a, "Merge A", "A BASE")
+        .await
+        .unwrap();
+    service
+        .kb()
+        .upsert_document(&doc_b, "Merge B", "B BASE")
+        .await
+        .unwrap();
+    let branch_name = unique("merge-draft");
+    service
+        .kb()
+        .create_branch(&branch_name, "Disjoint merge test", None)
+        .await
+        .unwrap();
+    service
+        .kb()
+        .upsert_document_on(&branch_name, &doc_a, "Merge A", "A BRANCH")
+        .await
+        .unwrap();
+    service
+        .kb()
+        .upsert_document(&doc_b, "Merge B", "B ACTIVE")
+        .await
+        .unwrap();
+
+    let mut invalidation = store.bus().subscribe_kb_invalidation().await.unwrap();
+    let before = service.kb().system_prompt().await.unwrap();
+    assert!(before.contains("B ACTIVE"));
+    assert!(!before.contains("A BRANCH"));
+
+    let report = service.kb().promote_branch(&branch_name).await.unwrap();
+    assert_eq!(report.mode, KbPromoteMode::Merged);
+    assert!(report.version > report.previous_version);
+    assert!(report.applied_items >= 1);
+    let documents = service.kb().list_documents().await.unwrap();
+    let merged_a = documents
+        .iter()
+        .find(|document| document.doc_id == doc_a)
+        .unwrap();
+    let merged_b = documents
+        .iter()
+        .find(|document| document.doc_id == doc_b)
+        .unwrap();
+    assert_eq!(merged_a.content, "A BRANCH");
+    assert_eq!(merged_b.content, "B ACTIVE");
+
+    let prompt = service.kb().system_prompt().await.unwrap();
+    assert!(prompt.contains("A BRANCH"));
+    assert!(prompt.contains("B ACTIVE"));
+    let published = tokio::time::timeout(Duration::from_secs(5), invalidation.next_invalidation())
+        .await
+        .unwrap()
+        .expect("promotion must publish a KB invalidation");
+    assert_eq!(published.version, report.version);
+
+    let branch = service
+        .kb()
+        .get_branch(&branch_name)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(branch.status, KbBranchStatus::Archived);
+    let snapshots: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM kb_snapshots WHERE version = $1")
+            .bind(i64::try_from(report.snapshot_version).unwrap())
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    assert_eq!(snapshots, 1);
+
+    service.kb().delete_document(&doc_a).await.unwrap();
+    service.kb().delete_document(&doc_b).await.unwrap();
+    remove_branch(&store, &branch_name).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn conflicting_promotion_returns_three_way_content_then_rollback_restores_previous_release() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let doc_id = unique("conflict-doc");
+    service
+        .kb()
+        .upsert_document(&doc_id, "Conflict doc", "BASE")
+        .await
+        .unwrap();
+    let branch_name = unique("conflict-draft");
+    let branch = service
+        .kb()
+        .create_branch(&branch_name, "Conflict test", None)
+        .await
+        .unwrap();
+    let base_version = branch.base_version;
+    service
+        .kb()
+        .upsert_document_on(&branch_name, &doc_id, "Conflict doc", "BRANCH")
+        .await
+        .unwrap();
+    service
+        .kb()
+        .upsert_document(&doc_id, "Conflict doc", "ACTIVE")
+        .await
+        .unwrap();
+
+    let conflict = match service.kb().promote_branch(&branch_name).await {
+        Err(RuntimeError::KbConflict(report)) => report,
+        other => panic!("expected a structured conflict, got {other:?}"),
+    };
+    assert_eq!(conflict.branch, branch_name);
+    assert_eq!(conflict.base_version, base_version);
+    assert!(!conflict.conflicts.is_empty());
+    let entry = conflict
+        .conflicts
+        .iter()
+        .find(|entry| entry.item_kind == KbItemKind::Doc && entry.item_key == doc_id)
+        .expect("conflict for edited document");
+    let content = |value: &Option<Value>| {
+        value
+            .as_ref()
+            .and_then(|value| value.get("content"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    assert_eq!(content(&entry.base_content).as_deref(), Some("BASE"));
+    assert_eq!(content(&entry.active_content).as_deref(), Some("ACTIVE"));
+    assert_eq!(content(&entry.branch_content).as_deref(), Some("BRANCH"));
+
+    service
+        .kb()
+        .upsert_document_on(&branch_name, &doc_id, "Conflict doc", "RESOLVED")
+        .await
+        .unwrap();
+    let promoted = service.kb().promote_branch(&branch_name).await.unwrap();
+    assert_eq!(promoted.mode, KbPromoteMode::Merged);
+    let active_documents = service.kb().list_documents().await.unwrap();
+    assert_eq!(
+        active_documents
+            .iter()
+            .find(|document| document.doc_id == doc_id)
+            .map(|document| document.content.as_str()),
+        Some("RESOLVED")
+    );
+
+    let rollback = service.kb().rollback_active(None).await.unwrap();
+    assert_eq!(rollback.previous_version, promoted.version);
+    assert!(rollback.restored_from_version >= base_version);
+    assert!(rollback.restored_from_version < promoted.version);
+    assert!(rollback.version > promoted.version);
+    let rolled_back = service.kb().list_documents().await.unwrap();
+    assert_eq!(
+        rolled_back
+            .iter()
+            .find(|document| document.doc_id == doc_id)
+            .map(|document| document.content.as_str()),
+        Some("ACTIVE"),
+        "one-click rollback restores the active state immediately before promotion"
+    );
+
+    let rollback_to_base = service
+        .kb()
+        .rollback_active(Some(base_version))
+        .await
+        .unwrap();
+    assert_eq!(rollback_to_base.restored_from_version, base_version);
+    let restored_base = service.kb().list_documents().await.unwrap();
+    assert_eq!(
+        restored_base
+            .iter()
+            .find(|document| document.doc_id == doc_id)
+            .map(|document| document.content.as_str()),
+        Some("BASE")
+    );
+
+    service.kb().delete_document(&doc_id).await.unwrap();
+    remove_branch(&store, &branch_name).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    service
+        .kb()
+        .upsert_agent("main", "stub/echo", "Runtime admin MCP test", &[], true)
+        .await
+        .unwrap();
+    let branch_name = unique("mcp-draft");
+    let app = quire_runtime::http::router(service.clone());
+
+    let initialize = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "runtime-admin-test", "version": "1.0"}
+        }
+    });
+    let (status, _, _) = mcp_request(&app, "wrong-token", None, "2025-11-25", &initialize).await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    let (status, _) = http_json(
+        &app,
+        axum::http::Method::GET,
+        "/api/kb/branches",
+        "wrong-token",
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+    let (status, branches) = http_json(
+        &app,
+        axum::http::Method::GET,
+        "/api/kb/branches",
+        "runtime-test-token",
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert!(
+        branches
+            .as_array()
+            .is_some_and(|branches| branches.iter().any(|branch| branch["status"] == "active"))
+    );
+
+    let (status, created) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/kb/branches",
+        "runtime-test-token",
+        Some(json!({
+            "name": branch_name,
+            "description": "Admin MCP end-to-end branch"
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(created["status"], "draft");
+    let base_version = created["base_version"].as_u64().expect("base version");
+    let (status, diff) = http_json(
+        &app,
+        axum::http::Method::GET,
+        &format!("/api/kb/branches/{branch_name}/diff"),
+        "runtime-test-token",
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(diff["branch"], branch_name);
+
+    let client = AdminMcpClient::connect(app, "runtime-test-token").await;
+    let tool_names = client.tool_names().await;
+    for expected in [
+        "kb_list_branches",
+        "kb_create_branch",
+        "kb_diff_branch",
+        "kb_promote_branch",
+        "kb_rollback_active",
+        "kb_list_items",
+        "kb_read_item",
+        "kb_upsert_doc",
+        "kb_upsert_agent",
+        "kb_upsert_skill",
+        "models_list_providers",
+        "models_upsert_provider",
+        "models_list",
+        "models_import_models_dev",
+        "sessions_list",
+        "sessions_inspect",
+    ] {
+        assert!(
+            tool_names.iter().any(|name| name == expected),
+            "missing admin MCP tool {expected}"
+        );
+    }
+
+    let doc_id = unique("mcp-doc");
+    let document = client
+        .call_tool(
+            "kb_upsert_doc",
+            json!({
+                "branch": branch_name,
+                "doc_id": doc_id,
+                "name": "MCP branch document",
+                "content": "MCP BRANCH CONTENT"
+            }),
+        )
+        .await;
+    assert_eq!(document["document"]["content"], "MCP BRANCH CONTENT");
+    let items = client
+        .call_tool(
+            "kb_list_items",
+            json!({"branch": branch_name, "item_kind": "doc"}),
+        )
+        .await;
+    assert!(
+        items["items"]
+            .as_array()
+            .is_some_and(|items| items.iter().any(|item| item["item_key"] == doc_id))
+    );
+    let read = client
+        .call_tool(
+            "kb_read_item",
+            json!({"branch": branch_name, "item_kind": "doc", "item_key": doc_id}),
+        )
+        .await;
+    assert_eq!(read["found"], true);
+    assert_eq!(read["content"]["content"], "MCP BRANCH CONTENT");
+    let branch_diff = client
+        .call_tool("kb_diff_branch", json!({"name": branch_name}))
+        .await;
+    assert!(
+        branch_diff["diff"]["changes"]
+            .as_array()
+            .is_some_and(|changes| changes
+                .iter()
+                .any(|change| change["item_key"] == doc_id && change["status"] == "added"))
+    );
+
+    let session = service
+        .create_session_on_branch(
+            &unique("mcp-session"),
+            Some("runtime-doc"),
+            Some(&branch_name),
+        )
+        .await
+        .unwrap();
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("mcp-message"),
+                content: "Run the admin MCP observation check".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+    let sessions = client.call_tool("sessions_list", json!({})).await;
+    assert!(sessions["sessions"].as_array().is_some_and(|sessions| {
+        sessions
+            .iter()
+            .any(|entry| entry["session_id"] == session.session_id)
+    }));
+    let inspected = client
+        .call_tool(
+            "sessions_inspect",
+            json!({"session_id": session.session_id}),
+        )
+        .await;
+    assert_eq!(inspected["session"]["kb_branch"], branch_name);
+    assert_eq!(inspected["latest_run"]["status"], "completed");
+    assert_eq!(inspected["context_usage"]["context_limit"], 200_000);
+
+    let provider_id = unique("mcp-provider");
+    let provider = client
+        .call_tool(
+            "models_upsert_provider",
+            json!({
+                "provider_id": provider_id,
+                "name": "MCP Provider",
+                "protocol": "openai_compatible",
+                "base_url": "https://example.invalid",
+                "api_key_ref": "sk-admin-mcp-secret"
+            }),
+        )
+        .await;
+    assert!(!provider.to_string().contains("sk-admin-mcp-secret"));
+    assert!(
+        provider["provider"]["api_key_masked"]
+            .as_str()
+            .is_some_and(|masked| masked.starts_with("enc:"))
+    );
+    let providers = client.call_tool("models_list_providers", json!({})).await;
+    assert!(providers["providers"].as_array().is_some_and(|providers| {
+        providers
+            .iter()
+            .any(|provider| provider["provider_id"] == provider_id)
+    }));
+    let imported = client
+        .call_tool(
+            "models_import_models_dev",
+            json!({
+                "provider_id": provider_id,
+                "provider_filter": "e2e",
+                "payload": {
+                    "e2e": {
+                        "id": "e2e",
+                        "name": "E2E Catalog",
+                        "models": {
+                            "e2e-chat": {
+                                "id": "e2e-chat",
+                                "name": "E2E Chat",
+                                "limit": {"context": 32000, "output": 2048}
+                            }
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+    assert_eq!(imported["imported"], 1);
+    let route_id = format!("{provider_id}/e2e-chat");
+    let models = client.call_tool("models_list", json!({})).await;
+    assert!(
+        models["models"]
+            .as_array()
+            .is_some_and(|models| models.iter().any(|model| model["id"] == route_id))
+    );
+
+    let promoted = client
+        .call_tool("kb_promote_branch", json!({"name": branch_name}))
+        .await;
+    assert_eq!(promoted["report"]["mode"], "fast_forward");
+    let active_documents = service.kb().list_documents().await.unwrap();
+    assert!(
+        active_documents
+            .iter()
+            .any(|document| document.doc_id == doc_id && document.content == "MCP BRANCH CONTENT")
+    );
+    let listed = client.call_tool("kb_list_branches", json!({})).await;
+    assert!(listed["branches"].as_array().is_some_and(|branches| {
+        branches
+            .iter()
+            .any(|branch| branch["name"] == branch_name && branch["status"] == "archived")
+    }));
+    let rolled_back = client
+        .call_tool("kb_rollback_active", json!({"version": base_version}))
+        .await;
+    assert_eq!(rolled_back["report"]["restored_from_version"], base_version);
+    let rolled = service.kb().list_documents().await.unwrap();
+    assert!(!rolled.iter().any(|document| document.doc_id == doc_id));
+
+    service.delete_session(&session.session_id).await.unwrap();
+    service.kb().delete_agent("main").await.unwrap();
+    service
+        .models()
+        .delete_provider(&provider_id)
+        .await
+        .unwrap();
+    service.kb().delete_document(&doc_id).await.unwrap();
+    remove_branch(&store, &branch_name).await;
 }

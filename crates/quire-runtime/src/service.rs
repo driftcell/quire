@@ -105,6 +105,13 @@ pub struct ToolCallRecord {
     pub duration_ms: u64,
 }
 
+/// Admin-facing session observation: full detail plus the latest run regardless of outcome.
+#[derive(Debug, Clone)]
+pub struct SessionInspection {
+    pub detail: SessionDetail,
+    pub latest_run: Option<RunRecord>,
+}
+
 #[derive(Clone)]
 pub struct RuntimeService {
     store: RuntimeStore,
@@ -179,7 +186,26 @@ impl RuntimeService {
         title: &str,
         doc_id: Option<&str>,
     ) -> RuntimeResult<SessionSummary> {
-        self.store.create_session(title, doc_id).await
+        self.create_session_on_branch(title, doc_id, None).await
+    }
+
+    /// Create a session against an explicit KB branch. `None` resolves the current active branch.
+    pub async fn create_session_on_branch(
+        &self,
+        title: &str,
+        doc_id: Option<&str>,
+        kb_branch: Option<&str>,
+    ) -> RuntimeResult<SessionSummary> {
+        let branch = self.kb.session_branch(kb_branch).await?;
+        self.store
+            .create_session_on_branch(title, doc_id, &branch)
+            .await
+    }
+
+    pub async fn inspect_session(&self, session_id: &str) -> RuntimeResult<SessionInspection> {
+        let detail = self.store.get_session_detail(session_id).await?;
+        let latest_run = self.store.latest_run(session_id).await?;
+        Ok(SessionInspection { detail, latest_run })
     }
 
     pub async fn list_sessions(
@@ -327,7 +353,11 @@ impl RuntimeService {
     }
 
     pub async fn compact(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
-        let prompt = self.kb.system_prompt().await?;
+        let session = self.store.get_session_summary(session_id).await?;
+        let prompt = self
+            .kb
+            .system_prompt_for(session.kb_branch.as_deref())
+            .await?;
         let version = self.kb.current_version().await?;
         self.store
             .set_pinned_prompt(session_id, prompt.as_str(), version)
@@ -488,7 +518,11 @@ impl RuntimeService {
         if let Some(pinned) = pinned {
             return Ok((pinned, synced));
         }
-        let prompt = self.kb.system_prompt().await?;
+        let session = self.store.get_session_summary(session_id).await?;
+        let prompt = self
+            .kb
+            .system_prompt_for(session.kb_branch.as_deref())
+            .await?;
         let version = self.kb.current_version().await?;
         self.store
             .set_pinned_prompt(session_id, prompt.as_str(), version)
@@ -723,7 +757,7 @@ impl RuntimeService {
             .await?;
         let agent_model = self
             .kb
-            .get_agent("main")
+            .get_agent_on(session.kb_branch.as_deref(), "main")
             .await?
             .map(|agent| agent.model)
             .unwrap_or_else(|| self.config.default_model.clone());

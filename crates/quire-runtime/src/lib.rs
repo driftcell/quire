@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod admin_mcp;
 pub mod bus;
 pub mod config;
 pub mod control;
@@ -25,7 +26,7 @@ pub mod rig {
 pub use config::Config;
 pub use delta::{CoalescedDelta, DeltaCoalescer, DeltaKind};
 pub use error::{RuntimeError, RuntimeResult};
-pub use kb::KbService;
+pub use kb::{KbService, SeedReport};
 pub use model_stream::{
     MockStreamProvider, ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest,
     StubStreamProvider,
@@ -35,6 +36,7 @@ pub use models::{
     ModelsDevImportRequest, ProviderInput, ProviderProtocol, ProviderRecord, ResolvedModel,
 };
 pub use service::{
-    HttpQuireControl, QuireControl, RuntimeService, StaticQuireControl, ToolCallRecord,
+    HttpQuireControl, QuireControl, RuntimeService, SessionInspection, StaticQuireControl,
+    ToolCallRecord,
 };
 pub use store::RuntimeStore;

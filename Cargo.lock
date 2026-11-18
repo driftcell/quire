@@ -1673,6 +1673,7 @@ dependencies = [
  "rig-core",
  "ring",
  "rmcp",
+ "schemars",
  "secrecy",
  "serde",
  "serde_json",
