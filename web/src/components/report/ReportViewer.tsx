@@ -131,99 +131,106 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
 function headingPreviewClass(level: number | null | undefined): string {
   switch (level) {
     case 1:
-      return "text-2xl font-bold tracking-tight";
+      return "text-xl font-bold tracking-tight";
     case 2:
-      return "text-xl font-semibold";
+      return "text-[17px] font-semibold";
     case 3:
-      return "text-lg font-semibold";
+      return "text-[15px] font-semibold";
     case 4:
-      return "text-base font-semibold";
+      return "text-[14px] font-semibold";
     default:
-      return "text-sm font-semibold";
+      return "text-[13px] font-semibold";
   }
 }
 
 function EphemeralPreviewCard({ preview }: { preview: EphemeralPreviewEvent }) {
   const { block } = preview;
   const cursor = (
-    <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-primary align-middle" />
+    <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-[var(--rpt-accent,#1E3A5F)]/70 align-text-bottom" />
   );
+  const paragraphClass =
+    "m-0 whitespace-pre-wrap text-[14.5px] leading-[1.82] text-[var(--rpt-ink,#1F2937)]";
 
   let body: React.ReactNode;
   if (block.block_type === "heading") {
     body = (
-      <div className={headingPreviewClass(block.level)}>
-        {block.text || "正在生成标题..."}
+      <div
+        className={`font-[family-name:var(--rpt-font-heading)] text-[var(--rpt-ink,#1F2937)] ${headingPreviewClass(block.level)}`}
+      >
+        {block.text || ""}
         {cursor}
       </div>
     );
   } else if (block.block_type === "quote") {
     body = (
-      <blockquote className="border-l-4 border-primary/40 pl-3 text-[15px] leading-7 italic text-foreground/90">
+      <blockquote className="m-0 whitespace-pre-wrap bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700">
         {block.text || ""}
         {cursor}
       </blockquote>
     );
   } else if (block.block_type === "table") {
     body = block.text ? (
-      <p className="m-0 leading-relaxed whitespace-pre-wrap text-foreground/90">
+      <p className={paragraphClass}>
         {block.text}
         {cursor}
       </p>
     ) : (
-      <div className="space-y-1.5 rounded-lg border border-black/10 p-2 dark:border-white/10">
+      <div className="space-y-1.5 rounded-lg border border-slate-200/80 bg-slate-100/80 p-2">
         <div className="grid grid-cols-3 gap-2">
-          <div className="h-4 animate-pulse rounded bg-muted" />
-          <div className="h-4 animate-pulse rounded bg-muted" />
-          <div className="h-4 animate-pulse rounded bg-muted" />
+          <div className="h-4 animate-pulse rounded bg-slate-200/80" />
+          <div className="h-4 animate-pulse rounded bg-slate-200/80" />
+          <div className="h-4 animate-pulse rounded bg-slate-200/80" />
         </div>
         <div className="grid grid-cols-3 gap-2">
-          <div className="h-3.5 animate-pulse rounded bg-muted/70" />
-          <div className="h-3.5 animate-pulse rounded bg-muted/70" />
-          <div className="h-3.5 animate-pulse rounded bg-muted/70" />
+          <div className="h-3.5 animate-pulse rounded bg-slate-200/60" />
+          <div className="h-3.5 animate-pulse rounded bg-slate-200/60" />
+          <div className="h-3.5 animate-pulse rounded bg-slate-200/60" />
         </div>
         <div className="grid grid-cols-3 gap-2">
-          <div className="h-3.5 animate-pulse rounded bg-muted/50" />
-          <div className="h-3.5 animate-pulse rounded bg-muted/50" />
-          <div className="h-3.5 animate-pulse rounded bg-muted/50" />
+          <div className="h-3.5 animate-pulse rounded bg-slate-200/40" />
+          <div className="h-3.5 animate-pulse rounded bg-slate-200/40" />
+          <div className="h-3.5 animate-pulse rounded bg-slate-200/40" />
         </div>
       </div>
     );
   } else if (block.block_type === "echarts") {
     body = (
-      <div className="flex h-44 items-end justify-around gap-3 rounded-lg bg-muted/40 p-4">
-        <div className="h-1/2 w-8 animate-pulse rounded-t bg-primary/20" />
-        <div className="h-4/5 w-8 animate-pulse rounded-t bg-primary/25" />
-        <div className="h-2/3 w-8 animate-pulse rounded-t bg-primary/20" />
-        <div className="h-full w-8 animate-pulse rounded-t bg-primary/30" />
-        <div className="h-3/5 w-8 animate-pulse rounded-t bg-primary/20" />
+      <div className="flex h-44 items-end justify-around gap-3 rounded-lg border border-slate-200/80 bg-slate-100/80 p-4">
+        <div className="h-1/2 w-8 animate-pulse rounded-t bg-slate-200/80" />
+        <div className="h-4/5 w-8 animate-pulse rounded-t bg-slate-300/70" />
+        <div className="h-2/3 w-8 animate-pulse rounded-t bg-slate-200/70" />
+        <div className="h-full w-8 animate-pulse rounded-t bg-slate-300/60" />
+        <div className="h-3/5 w-8 animate-pulse rounded-t bg-slate-200/60" />
       </div>
     );
   } else if (block.text) {
     body = (
-      <p className="m-0 text-[15px] leading-7 whitespace-pre-wrap text-foreground/90">
+      <p className={paragraphClass}>
         {block.text}
         {cursor}
       </p>
     );
   } else {
-    body = <div className="h-20 animate-pulse rounded-lg bg-muted/60" />;
+    body = <div className="h-20 animate-pulse rounded-lg bg-slate-100/80" />;
   }
+
+  const status =
+    preview.actor === "main" ? "正在撰写" : `${preview.actor} · 撰写中`;
 
   return (
     <div
       data-preview-id={preview.preview_id}
       data-block-id={block.block_id ?? undefined}
-      className="my-3 rounded-xl border border-dashed border-primary/40 bg-primary/[0.03] px-4 py-3 text-sm"
+      className="my-3 border-l-2 border-[var(--rpt-accent,#1E3A5F)]/35 pl-3.5 transition-opacity"
     >
-      <div className="mb-1.5 flex items-center justify-between text-[11px] text-primary">
-        <span className="font-medium">
-          {preview.actor} 正在实时生成 ({block.block_type})...
-        </span>
-        <span className="inline-block size-2 animate-pulse rounded-full bg-primary" />
+      <div className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-slate-400">
+        <span>{status}</span>
+        <span className="size-1.5 animate-pulse rounded-full bg-[var(--rpt-accent,#1E3A5F)]/60" />
       </div>
       {block.title && (
-        <div className="mb-1.5 font-medium text-foreground">{block.title}</div>
+        <div className="mb-1.5 font-[family-name:var(--rpt-font-heading)] text-[15px] font-semibold text-[var(--rpt-ink,#1F2937)]">
+          {block.title}
+        </div>
       )}
       {body}
     </div>
