@@ -26,6 +26,8 @@ pub struct Config {
     pub default_model: String,
     pub sse_replay_limit: usize,
     pub preview_throttle_ms: u64,
+    pub preview_base_url: String,
+    pub playwright_mcp_url: Option<String>,
 }
 
 impl Debug for Config {
@@ -54,6 +56,8 @@ impl Debug for Config {
             .field("default_model", &self.default_model)
             .field("sse_replay_limit", &self.sse_replay_limit)
             .field("preview_throttle_ms", &self.preview_throttle_ms)
+            .field("preview_base_url", &self.preview_base_url)
+            .field("playwright_mcp_url", &self.playwright_mcp_url)
             .finish()
     }
 }
@@ -96,6 +100,11 @@ impl Config {
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(65)
             .clamp(50, 80);
+        let preview_base_url =
+            env::var("PREVIEW_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
+        let playwright_mcp_url = env::var("PLAYWRIGHT_MCP_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty());
         Self {
             database_url,
             redis_url,
@@ -113,6 +122,8 @@ impl Config {
             default_model,
             sse_replay_limit,
             preview_throttle_ms,
+            preview_base_url,
+            playwright_mcp_url,
         }
     }
 
@@ -163,6 +174,8 @@ mod tests {
             default_model: "stub/echo".into(),
             sse_replay_limit: 500,
             preview_throttle_ms: 65,
+            preview_base_url: "http://127.0.0.1:5173".into(),
+            playwright_mcp_url: None,
         };
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[REDACTED]"));

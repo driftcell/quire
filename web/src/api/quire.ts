@@ -32,9 +32,12 @@ async function quireFetch<T>(
   mode: "ro" | "rw",
   decode: (raw: unknown) => T,
   init: RequestInit = {},
+  tokenOverride?: string,
 ): Promise<T> {
   const { quireRoToken, quireRwToken } = getAuthTokens();
-  const token = mode === "rw" ? quireRwToken : quireRoToken || quireRwToken;
+  const token =
+    tokenOverride ??
+    (mode === "rw" ? quireRwToken : quireRoToken || quireRwToken);
   const response = await fetch(path, {
     ...init,
     headers: buildHeaders(token, init.headers),
@@ -79,11 +82,16 @@ function isDocumentDiffReport(value: unknown): value is DocumentDiffReport {
   );
 }
 
-export function getDocument(docId: string): Promise<DocumentView> {
+export function getDocument(
+  docId: string,
+  tokenOverride?: string,
+): Promise<DocumentView> {
   return quireFetch(
     `/api/docs/${encodeURIComponent(docId)}`,
     "ro",
     normalizeDocumentResponse,
+    {},
+    tokenOverride,
   );
 }
 

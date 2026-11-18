@@ -40,6 +40,9 @@ export interface ReportViewerProps {
   ephemeralPreviews?: Map<string, EphemeralPreviewEvent>;
   comments?: CommentThread[];
   printMode?: boolean;
+  previewMode?: boolean;
+  pageFilter?: number;
+  onPagesReady?: (totalPages: number) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
 }
 
@@ -121,10 +124,94 @@ function renderHeadingTag(
   }
 }
 
+function headingPreviewClass(level: number | null | undefined): string {
+  switch (level) {
+    case 1:
+      return "text-2xl font-bold tracking-tight";
+    case 2:
+      return "text-xl font-semibold";
+    case 3:
+      return "text-lg font-semibold";
+    case 4:
+      return "text-base font-semibold";
+    default:
+      return "text-sm font-semibold";
+  }
+}
+
 function EphemeralPreviewCard({ preview }: { preview: EphemeralPreviewEvent }) {
   const { block } = preview;
+  const cursor = (
+    <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-primary align-middle" />
+  );
+
+  let body: React.ReactNode;
+  if (block.block_type === "heading") {
+    body = (
+      <div className={headingPreviewClass(block.level)}>
+        {block.text || "正在生成标题..."}
+        {cursor}
+      </div>
+    );
+  } else if (block.block_type === "quote") {
+    body = (
+      <blockquote className="border-l-4 border-primary/40 pl-3 text-[15px] leading-7 italic text-foreground/90">
+        {block.text || ""}
+        {cursor}
+      </blockquote>
+    );
+  } else if (block.block_type === "table") {
+    body = block.text ? (
+      <p className="m-0 leading-relaxed whitespace-pre-wrap text-foreground/90">
+        {block.text}
+        {cursor}
+      </p>
+    ) : (
+      <div className="space-y-1.5 rounded-lg border border-black/10 p-2 dark:border-white/10">
+        <div className="grid grid-cols-3 gap-2">
+          <div className="h-4 animate-pulse rounded bg-muted" />
+          <div className="h-4 animate-pulse rounded bg-muted" />
+          <div className="h-4 animate-pulse rounded bg-muted" />
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="h-3.5 animate-pulse rounded bg-muted/70" />
+          <div className="h-3.5 animate-pulse rounded bg-muted/70" />
+          <div className="h-3.5 animate-pulse rounded bg-muted/70" />
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="h-3.5 animate-pulse rounded bg-muted/50" />
+          <div className="h-3.5 animate-pulse rounded bg-muted/50" />
+          <div className="h-3.5 animate-pulse rounded bg-muted/50" />
+        </div>
+      </div>
+    );
+  } else if (block.block_type === "echarts") {
+    body = (
+      <div className="flex h-44 items-end justify-around gap-3 rounded-lg bg-muted/40 p-4">
+        <div className="h-1/2 w-8 animate-pulse rounded-t bg-primary/20" />
+        <div className="h-4/5 w-8 animate-pulse rounded-t bg-primary/25" />
+        <div className="h-2/3 w-8 animate-pulse rounded-t bg-primary/20" />
+        <div className="h-full w-8 animate-pulse rounded-t bg-primary/30" />
+        <div className="h-3/5 w-8 animate-pulse rounded-t bg-primary/20" />
+      </div>
+    );
+  } else if (block.text) {
+    body = (
+      <p className="m-0 text-[15px] leading-7 whitespace-pre-wrap text-foreground/90">
+        {block.text}
+        {cursor}
+      </p>
+    );
+  } else {
+    body = <div className="h-20 animate-pulse rounded-lg bg-muted/60" />;
+  }
+
   return (
-    <div className="my-3 rounded-xl border border-dashed border-primary/40 bg-primary/[0.03] px-4 py-3 text-sm">
+    <div
+      data-preview-id={preview.preview_id}
+      data-block-id={block.block_id ?? undefined}
+      className="my-3 rounded-xl border border-dashed border-primary/40 bg-primary/[0.03] px-4 py-3 text-sm"
+    >
       <div className="mb-1.5 flex items-center justify-between text-[11px] text-primary">
         <span className="font-medium">
           {preview.actor} 正在实时生成 ({block.block_type})...
@@ -132,16 +219,9 @@ function EphemeralPreviewCard({ preview }: { preview: EphemeralPreviewEvent }) {
         <span className="inline-block size-2 animate-pulse rounded-full bg-primary" />
       </div>
       {block.title && (
-        <div className="mb-1 font-medium text-foreground">{block.title}</div>
+        <div className="mb-1.5 font-medium text-foreground">{block.title}</div>
       )}
-      {block.text ? (
-        <p className="m-0 leading-relaxed whitespace-pre-wrap text-foreground/90">
-          {block.text}
-          <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse bg-primary align-middle" />
-        </p>
-      ) : (
-        <div className="h-24 animate-pulse rounded-lg bg-muted/60" />
-      )}
+      {body}
     </div>
   );
 }
@@ -229,6 +309,146 @@ function buildMixedItems(
     out.push({ key: `tail-${p.preview_id}`, preview: p });
   }
   return out;
+}
+
+function mixPreviewsIntoPages(
+  pages: {
+    pageNumber: number;
+    items: PageSlice[];
+    includeCover?: boolean;
+    includeBibliography?: boolean;
+  }[],
+  previews: EphemeralPreviewEvent[],
+  allBlocks: ReportBlock[],
+): MixedRenderItem[][] {
+  if (previews.length === 0) {
+    return pages.map((page) =>
+      page.items.map((slice, idx) => ({
+        key: `${slice.block.id}-${slice.rowStart ?? 0}-${idx}`,
+        slice,
+      })),
+    );
+  }
+
+  const sectionLastBlock = new Map<string, string>();
+  let activeSection: string | null = null;
+  for (const b of allBlocks) {
+    if (b.type === "heading") {
+      activeSection = b.id;
+    }
+    if (activeSection) {
+      sectionLastBlock.set(activeSection, b.id);
+    }
+  }
+
+  const lastOccurByBlock = new Map<
+    string,
+    { pageIdx: number; sliceIdx: number }
+  >();
+  for (let pIdx = 0; pIdx < pages.length; pIdx += 1) {
+    const page = pages[pIdx];
+    if (!page) continue;
+    for (let sIdx = 0; sIdx < page.items.length; sIdx += 1) {
+      const slice = page.items[sIdx];
+      if (slice) {
+        lastOccurByBlock.set(slice.block.id, { pageIdx: pIdx, sliceIdx: sIdx });
+      }
+    }
+  }
+
+  const afterMap = new Map<string, EphemeralPreviewEvent[]>();
+  const beforeMap = new Map<string, EphemeralPreviewEvent[]>();
+  const replaceMap = new Map<string, EphemeralPreviewEvent>();
+  const tailPreviews: EphemeralPreviewEvent[] = [];
+
+  for (const p of previews) {
+    const anchor = p.anchor;
+    if (
+      anchor.type === "replace_block" &&
+      lastOccurByBlock.has(anchor.block_id)
+    ) {
+      replaceMap.set(anchor.block_id, p);
+    } else if (
+      anchor.type === "before_block" &&
+      lastOccurByBlock.has(anchor.block_id)
+    ) {
+      const list = beforeMap.get(anchor.block_id) ?? [];
+      list.push(p);
+      beforeMap.set(anchor.block_id, list);
+    } else if (
+      anchor.type === "after_block" &&
+      lastOccurByBlock.has(anchor.block_id)
+    ) {
+      const list = afterMap.get(anchor.block_id) ?? [];
+      list.push(p);
+      afterMap.set(anchor.block_id, list);
+    } else if (anchor.type === "append_to_section") {
+      const targetId =
+        sectionLastBlock.get(anchor.section_id) ?? anchor.section_id;
+      if (lastOccurByBlock.has(targetId)) {
+        const list = afterMap.get(targetId) ?? [];
+        list.push(p);
+        afterMap.set(targetId, list);
+      } else {
+        tailPreviews.push(p);
+      }
+    } else {
+      tailPreviews.push(p);
+    }
+  }
+
+  const seenBefore = new Set<string>();
+  const seenReplace = new Set<string>();
+
+  return pages.map((page, pIdx) => {
+    const out: MixedRenderItem[] = [];
+    for (let sIdx = 0; sIdx < page.items.length; sIdx += 1) {
+      const slice = page.items[sIdx];
+      if (!slice) continue;
+      const bid = slice.block.id;
+
+      if (!seenBefore.has(bid)) {
+        seenBefore.add(bid);
+        for (const p of beforeMap.get(bid) ?? []) {
+          out.push({ key: `pre-${p.preview_id}`, preview: p });
+        }
+      }
+
+      const replacement = replaceMap.get(bid);
+      if (replacement) {
+        if (!seenReplace.has(bid)) {
+          seenReplace.add(bid);
+          out.push({
+            key: `rep-${replacement.preview_id}`,
+            preview: replacement,
+          });
+        }
+      } else {
+        out.push({
+          key: `${bid}-${slice.rowStart ?? 0}-${sIdx}`,
+          slice,
+        });
+      }
+
+      const lastOccur = lastOccurByBlock.get(bid);
+      if (
+        lastOccur &&
+        lastOccur.pageIdx === pIdx &&
+        lastOccur.sliceIdx === sIdx
+      ) {
+        for (const p of afterMap.get(bid) ?? []) {
+          out.push({ key: `post-${p.preview_id}`, preview: p });
+        }
+      }
+    }
+
+    if (pIdx === pages.length - 1) {
+      for (const p of tailPreviews) {
+        out.push({ key: `tail-${p.preview_id}`, preview: p });
+      }
+    }
+    return out;
+  });
 }
 
 function blockTitle(block: ReportBlock): string | undefined {
@@ -440,8 +660,12 @@ export function ReportViewer({
   ephemeralPreviews,
   comments = [],
   printMode = false,
+  previewMode = false,
+  pageFilter,
+  onPagesReady,
   onOpenCommentForBlock,
 }: ReportViewerProps) {
+  const suppressChrome = printMode || previewMode;
   const rootRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [measurements, setMeasurements] = useState<PageMeasurements>({
@@ -458,7 +682,7 @@ export function ReportViewer({
   const isPaged = viewMode === "paged" || printMode;
 
   useEffect(() => {
-    if (!isPaged || printMode) {
+    if (!isPaged || suppressChrome) {
       const resetFrame = window.requestAnimationFrame(() => setPageScale(1));
       return () => window.cancelAnimationFrame(resetFrame);
     }
@@ -485,7 +709,7 @@ export function ReportViewer({
       window.cancelAnimationFrame(frame);
       observer.disconnect();
     };
-  }, [isPaged, printMode]);
+  }, [isPaged, suppressChrome]);
 
   const { openCountByBlock, quotesByBlock } = useMemo(() => {
     const counts = new Map<string, number>();
@@ -610,7 +834,7 @@ export function ReportViewer({
   }, []);
 
   const handleMouseUp = useCallback(() => {
-    if (printMode || !onOpenCommentForBlock) return;
+    if (suppressChrome || !onOpenCommentForBlock) return;
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
       setQuoteAction(null);
@@ -663,7 +887,7 @@ export function ReportViewer({
       left,
       viewportRect: toViewportRect(rect),
     });
-  }, [printMode, onOpenCommentForBlock]);
+  }, [suppressChrome, onOpenCommentForBlock]);
 
   useEffect(() => {
     window.document.addEventListener("mouseup", handleMouseUp);
@@ -761,6 +985,32 @@ export function ReportViewer({
     return paginateBlocks(document.blocks, measurements);
   }, [isPaged, document.blocks, measurements]);
 
+  const pagedMixedItems = useMemo(() => {
+    if (!isPaged) return [];
+    return mixPreviewsIntoPages(
+      pages,
+      suppressChrome ? [] : previewList,
+      document.blocks,
+    );
+  }, [isPaged, pages, suppressChrome, previewList, document.blocks]);
+
+  const visiblePages = useMemo(() => {
+    const entries = pages.map((page, pageIdx) => ({ page, pageIdx }));
+    if (pageFilter === undefined) {
+      return entries;
+    }
+    const targetIndex = pageFilter - 1;
+    return entries.filter(({ pageIdx }) => pageIdx === targetIndex);
+  }, [pages, pageFilter]);
+
+  useEffect(() => {
+    if (!isPaged) {
+      return undefined;
+    }
+    onPagesReady?.(pages.length);
+    return undefined;
+  }, [isPaged, onPagesReady, pages.length]);
+
   const continuousItems = useMemo(() => {
     if (isPaged) return [];
     const baseSlices: PageSlice[] = document.blocks.map((block) => ({ block }));
@@ -832,7 +1082,7 @@ export function ReportViewer({
                 <ReportBlockItem
                   slice={item.slice}
                   isPaged={false}
-                  printMode={printMode}
+                  printMode={suppressChrome}
                   computed={computed}
                   commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
                   blockQuotes={quotesByBlock.get(item.slice.block.id)}
@@ -846,11 +1096,11 @@ export function ReportViewer({
         </article>
       ) : (
         <div className="flex flex-col items-center gap-6 py-6 print:gap-0 print:py-0">
-          {pages.map((page) => (
+          {visiblePages.map(({ page, pageIdx }) => (
             <div
               key={page.pageNumber}
               style={
-                printMode
+                suppressChrome
                   ? undefined
                   : {
                       width: `${Math.round(A4_PAGE_WIDTH_PX * pageScale)}px`,
@@ -864,27 +1114,31 @@ export function ReportViewer({
                   width: `${A4_PAGE_WIDTH_PX}px`,
                   minHeight: `${A4_PAGE_HEIGHT_PX}px`,
                   padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
-                  transform: printMode ? undefined : `scale(${pageScale})`,
+                  transform: suppressChrome ? undefined : `scale(${pageScale})`,
                   transformOrigin: "top left",
                 }}
                 className="a4-page relative flex flex-col justify-between bg-white text-neutral-900 shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
               >
                 <div className="flex-1">
                   {page.includeCover && renderCover()}
-                  {page.items.map((slice, idx) => (
-                    <div
-                      key={`${slice.block.id}-${slice.rowStart ?? 0}-${idx}`}
-                    >
-                      <ReportBlockItem
-                        slice={slice}
-                        isPaged
-                        printMode={printMode}
-                        computed={computed}
-                        commentCount={openCountByBlock.get(slice.block.id) ?? 0}
-                        blockQuotes={quotesByBlock.get(slice.block.id)}
-                        onCitationClick={scrollToSource}
-                        onOpenCommentForBlock={onOpenCommentForBlock}
-                      />
+                  {(pagedMixedItems[pageIdx] ?? []).map((item) => (
+                    <div key={item.key}>
+                      {item.preview ? (
+                        <EhemeralBlock preview={item.preview} />
+                      ) : item.slice ? (
+                        <ReportBlockItem
+                          slice={item.slice}
+                          isPaged
+                          printMode={suppressChrome}
+                          computed={computed}
+                          commentCount={
+                            openCountByBlock.get(item.slice.block.id) ?? 0
+                          }
+                          blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                          onCitationClick={scrollToSource}
+                          onOpenCommentForBlock={onOpenCommentForBlock}
+                        />
+                      ) : null}
                     </div>
                   ))}
                   {page.includeBibliography && renderBibliography()}

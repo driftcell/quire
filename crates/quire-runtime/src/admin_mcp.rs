@@ -12,7 +12,7 @@ use rmcp::{
         router::tool::ToolRouter,
         wrapper::{Json, Parameters},
     },
-    model::{Implementation, ServerCapabilities, ServerConfig},
+    model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig},
     tool, tool_handler, tool_router,
 };
 use schemars::JsonSchema;
@@ -483,6 +483,20 @@ impl AdminMcpServer {
     // ---------------------------------------------------------------------
     // Branch and release tools
     // ---------------------------------------------------------------------
+
+    #[tool(
+        name = "preview_report",
+        description = "Render a Quire report preview via controlled Playwright MCP, returning an ImageContent screenshot plus active CSS and layout diagnostics."
+    )]
+    pub async fn preview_report(
+        &self,
+        Parameters(request): Parameters<crate::preview::PreviewReportInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = crate::preview::execute_preview_report(self.service.config(), request)
+            .await
+            .map_err(admin_error)?;
+        Ok(result.to_mcp_call_tool_result())
+    }
 
     #[tool(
         name = "kb_list_branches",

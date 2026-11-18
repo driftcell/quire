@@ -51,6 +51,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "describe_task",
     "spawn_subagents",
     "ask_user",
+    "preview_report",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -209,7 +210,7 @@ impl McpHttpClient {
             .collect())
     }
 
-    pub async fn call_tool(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
+    pub async fn call_tool_raw(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
         let result = self
             .rpc("tools/call", json!({"name": name, "arguments": arguments}))
             .await?;
@@ -218,6 +219,11 @@ impl McpHttpClient {
                 "MCP tool `{name}` returned isError: {result}"
             )));
         }
+        Ok(result)
+    }
+
+    pub async fn call_tool(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
+        let result = self.call_tool_raw(name, arguments).await?;
         if let Some(structured) = result.get("structuredContent") {
             return Ok(structured.clone());
         }
@@ -993,6 +999,45 @@ impl RigModelCore {
         engine: Arc<RigModelCore>,
     ) -> RuntimeResult<Vec<DynamicTool>> {
         let mut tools = Vec::new();
+        if execution
+            .allowed_tools
+            .iter()
+            .any(|name| name == "preview_report")
+        {
+            let cfg = self.config.clone();
+            tools.push(DynamicTool::new(
+                ToolName::new("preview_report")
+                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
+                "Render a visual preview of the Quire report (or a specific section/blocks/page) via controlled Playwright MCP and return a PNG screenshot plus active CSS and layout overflow diagnostics.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "doc_id": {"type": "string"},
+                        "mode": {"type": "string", "enum": ["paged", "continuous"]},
+                        "section_id": {"type": "string"},
+                        "block_ids": {"type": "array", "items": {"type": "string"}},
+                        "page": {"type": "integer", "minimum": 1},
+                        "rev": {"type": "integer", "minimum": 0},
+                        "include_styles": {"type": "boolean"}
+                    },
+                    "required": ["doc_id"],
+                    "additionalProperties": false
+                }),
+                move |arguments| {
+                    let cfg = cfg.clone();
+                    Box::pin(async move {
+                        let input: crate::preview::PreviewReportInput =
+                            serde_json::from_value(arguments).map_err(|error| {
+                                ToolExecutionError::invalid_args(error.to_string())
+                            })?;
+                        crate::preview::execute_preview_report(&cfg, input)
+                            .await
+                            .map(|res| ToolOutput::json(res.to_tool_json()))
+                            .map_err(|error| ToolExecutionError::other(error.to_string()))
+                    })
+                },
+            ));
+        }
         if execution
             .allowed_tools
             .iter()

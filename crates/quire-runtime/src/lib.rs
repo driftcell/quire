@@ -13,6 +13,7 @@ pub mod kb;
 pub mod mcp_registry;
 pub mod model_stream;
 pub mod models;
+pub mod preview;
 pub mod prompt;
 pub mod rig_agent;
 pub mod sandbox;

@@ -134,6 +134,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     Map<string, EphemeralPreviewEvent>
   >(() => new Map());
   const previewTimersRef = useRef<Map<string, number>>(new Map());
+  const pendingClearedByRevRef = useRef<Map<number, string[]>>(new Map());
 
   const [activeActorsBySection, setActiveActorsBySection] = useState<
     Map<string, string[]>
@@ -418,6 +419,28 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const currentRev = docQuery.data?.current_rev ?? 0;
   useEffect(() => {
     currentRevRef.current = currentRev;
+    if (pendingClearedByRevRef.current.size === 0) return;
+    const toClear: string[] = [];
+    for (const [rev, ids] of pendingClearedByRevRef.current.entries()) {
+      if (rev <= currentRev) {
+        toClear.push(...ids);
+        pendingClearedByRevRef.current.delete(rev);
+      }
+    }
+    if (toClear.length > 0) {
+      setEphemeralPreviews((prev) => {
+        const next = new Map(prev);
+        for (const id of toClear) {
+          next.delete(id);
+          const timer = previewTimersRef.current.get(id);
+          if (timer !== undefined) {
+            window.clearTimeout(timer);
+            previewTimersRef.current.delete(id);
+          }
+        }
+        return next;
+      });
+    }
   }, [currentRev]);
 
   useEffect(() => {
@@ -467,7 +490,16 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             delta.cleared_preview_ids &&
             delta.cleared_preview_ids.length > 0
           ) {
-            clearPreviewIds(delta.cleared_preview_ids);
+            if (currentRevRef.current >= delta.revision) {
+              clearPreviewIds(delta.cleared_preview_ids);
+            } else {
+              const prevList =
+                pendingClearedByRevRef.current.get(delta.revision) ?? [];
+              pendingClearedByRevRef.current.set(delta.revision, [
+                ...prevList,
+                ...delta.cleared_preview_ids,
+              ]);
+            }
           }
           void queryClient.invalidateQueries({
             queryKey: ["doc", effectiveDocId],
