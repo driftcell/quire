@@ -171,6 +171,10 @@ pub struct ApplyDraftParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<BTreeMap<SourceId, SourceInput>>")]
     pub sources: Option<IndexMap<SourceId, SourceInput>>,
+    /// Ephemeral preview IDs superseded by this draft commit. The emitted revision clears them
+    /// atomically so streamed placeholders are replaced without flicker.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preview_ids: Vec<String>,
 }
 
 /// Output for `apply_draft`.
@@ -314,6 +318,10 @@ pub struct ApplyOperationsParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<BTreeMap<SourceId, SourceInput>>")]
     pub sources: Option<IndexMap<SourceId, SourceInput>>,
+    /// Ephemeral preview IDs superseded by this commit. The emitted revision carries
+    /// `cleared_preview_ids` so the frontend replaces streamed placeholders with no flicker.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preview_ids: Vec<String>,
 }
 
 /// Output for `apply_operations`.

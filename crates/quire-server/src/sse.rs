@@ -240,12 +240,7 @@ pub fn revision_stream(
                     let Some(EphemeralMessage::Payload(payload)) = message else { continue };
                     let value = serde_json::from_str::<Value>(&payload)
                         .unwrap_or(Value::String(payload));
-                    let kind = value.get("kind").and_then(Value::as_str).unwrap_or("ephemeral");
-                    let event_name = if matches!(kind, "presence" | "agent_presence") {
-                        "agent_presence"
-                    } else {
-                        "ephemeral_preview"
-                    };
+                    let event_name = preview_event_name(&value);
                     debug!(doc_id = doc_id.as_str(), event_name, "forwarding ephemeral SSE frame");
                     yield Ok(sse_json(event_name, &value));
                 }
@@ -338,7 +333,7 @@ pub fn session_event_name(event: &SessionStreamEntry) -> &str {
     &event.event.event
 }
 
-/// Build a minimal SSE frame for the ephemeral endpoint response documentation.
+/// Resolve the SSE event name for a published ephemeral payload.
 pub fn preview_event_name(payload: &Value) -> &'static str {
     match payload.get("kind").and_then(Value::as_str) {
         Some("presence" | "agent_presence") => "agent_presence",
@@ -355,6 +350,14 @@ mod tests {
         assert_eq!(
             preview_event_name(&serde_json::json!({"kind":"presence"})),
             "agent_presence"
+        );
+        assert_eq!(
+            preview_event_name(&serde_json::json!({"kind":"agent_presence"})),
+            "agent_presence"
+        );
+        assert_eq!(
+            preview_event_name(&serde_json::json!({"kind":"preview"})),
+            "ephemeral_preview"
         );
         assert_eq!(
             preview_event_name(&serde_json::json!({"block_id":"b"})),

@@ -135,6 +135,9 @@ impl StoreError {
                 "Inspect GET /api/docs/{doc_id}/revisions and choose a valid rollback target."
                     .into()
             }
+            Self::InvalidRequest(_) => {
+                "Check the request JSON against contracts/report-protocol.schema.json; invalid IDs and oversized payloads are rejected.".into()
+            }
             _ => "Retry the request; if the problem persists inspect the server logs.".into(),
         }
     }

@@ -11,8 +11,9 @@
 use std::{fs, path::Path};
 
 use quire_protocol::{
-    ComputedDocumentMeta, LintReport, PatchOp, PatchOutcome, ReportDocument, ReportDraft,
-    RevisionDelta, SessionDelta, SyncRequiredDelta,
+    AgentPresenceEvent, ComputedDocumentMeta, EphemeralPayload, EphemeralPreviewEvent, LintReport,
+    PatchOp, PatchOutcome, ReportDocument, ReportDraft, RevisionDelta, SessionDelta,
+    SyncRequiredDelta,
 };
 use schemars::JsonSchema;
 
@@ -33,6 +34,12 @@ struct ProtocolContract {
     session_delta: SessionDelta,
     /// SSE `sync_required` payload emitted when replay detects a gap.
     sync_required: SyncRequiredDelta,
+    /// SSE `ephemeral_preview` payload for transient typewriter previews.
+    ephemeral_preview: EphemeralPreviewEvent,
+    /// SSE `agent_presence` payload for live agent activity.
+    agent_presence: AgentPresenceEvent,
+    /// Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.
+    ephemeral_payload: EphemeralPayload,
     /// Offline authoring draft accepted by `apply_draft`.
     draft: ReportDraft,
     /// Receipt returned by the in-memory patch engine.

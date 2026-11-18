@@ -2,6 +2,7 @@
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{Path, Query, State},
     http::{HeaderValue, StatusCode},
     middleware,
@@ -13,7 +14,9 @@ use axum::{
 };
 use chrono::Utc;
 use futures::Stream;
-use quire_protocol::{ComputedDocumentMeta, ReportDocument, compute_document_meta};
+use quire_protocol::{
+    ComputedDocumentMeta, EphemeralPayload, ReportDocument, compute_document_meta,
+};
 use quire_protocol::{DocId, Revision, SessionId};
 use quire_store::{ReportList, RevisionRecord, RollbackResult, StoreError};
 use rmcp::transport::streamable_http_server::{
@@ -273,29 +276,51 @@ async fn rollback(
     }))
 }
 
+const MAX_EPHEMERAL_BYTES: usize = 64 * 1024;
+
+fn parse_ephemeral_body(doc_id: &DocId, body: &[u8]) -> Result<EphemeralPayload, StoreError> {
+    let mut value: Value = serde_json::from_slice(body)
+        .map_err(|error| StoreError::InvalidRequest(format!("invalid ephemeral JSON: {error}")))?;
+    let Some(object) = value.as_object_mut() else {
+        return Err(StoreError::InvalidRequest(
+            "ephemeral payload must be a JSON object".into(),
+        ));
+    };
+    let received_at = Utc::now();
+    // Routing fields are server-owned: overwrite producer values before typed deserialization so
+    // clients may omit them without weakening the contract.
+    object.insert("doc_id".into(), Value::String(doc_id.to_string()));
+    object.insert(
+        "received_at".into(),
+        Value::String(received_at.to_rfc3339()),
+    );
+    let mut payload: EphemeralPayload = serde_json::from_value(value).map_err(|error| {
+        StoreError::InvalidRequest(format!("invalid ephemeral payload: {error}"))
+    })?;
+    payload.stamp_server_context(doc_id, received_at);
+    payload.validate().map_err(StoreError::InvalidRequest)?;
+    Ok(payload)
+}
+
 async fn ephemeral(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
-    Json(mut payload): Json<Value>,
+    body: Bytes,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    let Some(object) = payload.as_object_mut() else {
-        return Err(ApiError(StoreError::InvalidRequest(
-            "ephemeral payload must be a JSON object".into(),
-        )));
-    };
-    object
-        .entry("doc_id".to_string())
-        .or_insert_with(|| Value::String(doc_id.to_string()));
-    object
-        .entry("received_at".to_string())
-        .or_insert_with(|| Value::String(Utc::now().to_rfc3339()));
+    if body.len() > MAX_EPHEMERAL_BYTES {
+        return Err(ApiError(StoreError::InvalidRequest(format!(
+            "ephemeral payload is {} bytes; limit is {MAX_EPHEMERAL_BYTES}",
+            body.len()
+        ))));
+    }
+    let payload = parse_ephemeral_body(&doc_id, &body).map_err(ApiError)?;
     let serialized_len = serde_json::to_vec(&payload)
-        .map(|bytes| bytes.len())
-        .unwrap_or(0);
-    if serialized_len > 64 * 1024 {
-        return Err(ApiError(StoreError::InvalidRequest(
-            "ephemeral payload exceeds 64 KiB".into(),
-        )));
+        .map_err(StoreError::from)?
+        .len();
+    if serialized_len > MAX_EPHEMERAL_BYTES {
+        return Err(ApiError(StoreError::InvalidRequest(format!(
+            "ephemeral payload is {serialized_len} bytes after server stamping; limit is {MAX_EPHEMERAL_BYTES}"
+        ))));
     }
     state
         .store
@@ -306,7 +331,7 @@ async fn ephemeral(
         StatusCode::ACCEPTED,
         Json(json!({
             "published": true,
-            "event": sse::preview_event_name(&payload),
+            "event": payload.event_name(),
             "doc_id": doc_id,
         })),
     ))

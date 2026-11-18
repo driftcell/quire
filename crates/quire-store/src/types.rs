@@ -95,6 +95,15 @@ pub struct SourceUpsert {
     pub source: SourceEntry,
 }
 
+/// Optional side inputs committed atomically with an operation batch.
+#[derive(Debug, Clone, Default)]
+pub struct CommitExtras {
+    /// Sources upserted in the same transaction.
+    pub sources: Vec<SourceUpsert>,
+    /// Ephemeral previews atomically superseded by the emitted revision.
+    pub cleared_preview_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpsertSourcesResult {
     pub canonical_id_map: BTreeMap<SourceId, SourceId>,

@@ -14,7 +14,7 @@ pub use pg_store::{
 };
 pub use redis_stream::{EphemeralSubscriber, RedisStreamBus, StreamReader};
 pub use types::{
-    ApplyResult, CreateResult, DocumentSnapshot, ReportList, ReportSummary, RevisionEvent,
-    RevisionRecord, RollbackResult, SessionEvent, SessionStreamEntry, SourceUpsert, StreamRevision,
-    UpsertSourcesResult,
+    ApplyResult, CommitExtras, CreateResult, DocumentSnapshot, ReportList, ReportSummary,
+    RevisionEvent, RevisionRecord, RollbackResult, SessionEvent, SessionStreamEntry, SourceUpsert,
+    StreamRevision, UpsertSourcesResult,
 };

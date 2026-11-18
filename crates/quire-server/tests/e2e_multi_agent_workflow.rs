@@ -146,6 +146,19 @@ impl SseCollector {
         bail!("timed out waiting for revision {revision} over SSE")
     }
 
+    async fn wait_for_frame<F>(&self, mut predicate: F) -> anyhow::Result<()>
+    where
+        F: FnMut(&SseFrame) -> bool,
+    {
+        for _ in 0..200 {
+            if self.snapshot().await.iter().any(&mut predicate) {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        bail!("timed out waiting for a matching SSE frame")
+    }
+
     async fn wait_for_doc_created(&self, doc_id: &str) -> anyhow::Result<()> {
         for _ in 0..200 {
             if self.snapshot().await.iter().any(|frame| {
@@ -192,6 +205,35 @@ fn json_revision(data: &str) -> Option<i64> {
     serde_json::from_str::<Value>(data)
         .ok()
         .and_then(|value| value.get("revision").and_then(Value::as_i64))
+}
+
+fn json_string_field(data: &str, field: &str) -> Option<String> {
+    serde_json::from_str::<Value>(data)
+        .ok()
+        .and_then(|value| value.get(field).and_then(Value::as_str).map(str::to_string))
+}
+
+fn json_u64_field(data: &str, field: &str) -> Option<u64> {
+    serde_json::from_str::<Value>(data)
+        .ok()
+        .and_then(|value| value.get(field).and_then(Value::as_u64))
+}
+
+fn json_cleared_preview_ids(data: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(data)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("cleared_preview_ids")
+                .and_then(Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
 }
 
 struct McpClient {
@@ -655,39 +697,149 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     doc_sse.wait_for_revision(lead_revision).await?;
 
     // Ephemeral previews and presence are transient (no revision, no database write).
-    let preview_response = http
+    let streaming_preview_id = unique("preview");
+    for (seq, text) in [(1, "Revenue grew"), (2, "Revenue grew 18% year over year.")] {
+        let preview_response = http
+            .post(format!("{base}/api/docs/{doc_id}/ephemeral"))
+            .json(&json!({
+                "kind": "preview",
+                "doc_id": "forged-doc",
+                "preview_id": streaming_preview_id,
+                "actor": "sub-agent-a",
+                "anchor": {"type": "after_block", "block_id": "ch1_placeholder"},
+                "status": "streaming",
+                "seq": seq,
+                "block": {
+                    "block_id": "ch1_preview",
+                    "block_type": "paragraph",
+                    "text": text
+                },
+                "received_at": "2000-01-01T00:00:00Z"
+            }))
+            .send()
+            .await?;
+        assert_eq!(preview_response.status().as_u16(), 202);
+    }
+    let invalid_preview = http
         .post(format!("{base}/api/docs/{doc_id}/ephemeral"))
-        .json(&json!({
-            "kind": "ephemeral",
-            "block_id": "ch1_summary",
-            "preview": "Revenue grew 18%"
-        }))
+        .json(&json!({"kind": "preview", "preview_id": "incomplete"}))
         .send()
         .await?;
-    assert_eq!(preview_response.status().as_u16(), 202);
+    assert_eq!(invalid_preview.status().as_u16(), 400);
+    assert_eq!(
+        invalid_preview.json::<Value>().await?["error"]["code"],
+        "INVALID_REQUEST"
+    );
     let presence_response = http
         .post(format!("{base}/api/docs/{doc_id}/ephemeral"))
         .json(&json!({
             "kind": "presence",
-            "agent_id": "sub-agent-a",
-            "status": "writing ch1_summary"
+            "actor": "sub-agent-a",
+            "status": "writing",
+            "section_id": "ch1_placeholder"
         }))
         .send()
         .await?;
     assert_eq!(presence_response.status().as_u16(), 202);
-    wait_until(Duration::from_secs(5), || {
-        let doc_sse = &doc_sse;
-        async move {
-            let frames = doc_sse.snapshot().await;
-            frames
-                .iter()
-                .any(|frame| frame.event.as_deref() == Some("ephemeral_preview"))
-                && frames
+
+    // Both streamed increments must be visible before the commit, so the SSE frame order below
+    // proves the frontend can replace the placeholder in the same frame as the revision.
+    doc_sse
+        .wait_for_frame(|frame| {
+            frame.event.as_deref() == Some("ephemeral_preview")
+                && json_string_field(&frame.data, "preview_id").as_deref()
+                    == Some(streaming_preview_id.as_str())
+                && json_string_field(&frame.data, "status").as_deref() == Some("streaming")
+                && json_u64_field(&frame.data, "seq") == Some(2)
+        })
+        .await?;
+    let preview_frames = doc_sse.snapshot().await;
+    let first_preview = preview_frames
+        .iter()
+        .find(|frame| {
+            frame.event.as_deref() == Some("ephemeral_preview")
+                && json_string_field(&frame.data, "preview_id").as_deref()
+                    == Some(streaming_preview_id.as_str())
+                && json_u64_field(&frame.data, "seq") == Some(1)
+        })
+        .ok_or_else(|| anyhow!("first streaming preview missing from SSE frames"))?;
+    assert_eq!(
+        json_string_field(&first_preview.data, "doc_id"),
+        Some(doc_id.clone()),
+        "server must override the producer-supplied doc_id"
+    );
+    assert_eq!(
+        json_u64_field(&first_preview.data, "ttl_ms"),
+        Some(15_000),
+        "server must default ttl_ms"
+    );
+    assert_ne!(
+        json_string_field(&first_preview.data, "received_at").as_deref(),
+        Some("2000-01-01T00:00:00Z"),
+        "server must override the producer-supplied received_at"
+    );
+    doc_sse
+        .wait_for_frame(|frame| frame.event.as_deref() == Some("agent_presence"))
+        .await?;
+
+    // Committing the streamed block clears its preview in the same revision frame.
+    let preview_commit = lead
+        .call_tool(
+            "apply_operations",
+            json!({
+                "doc_id": doc_id,
+                "expected_revision": lead_revision,
+                "summary": "commit streamed preview",
+                "preview_ids": [streaming_preview_id],
+                "ops": [{
+                    "type": "insert_after",
+                    "target_id": "ch1_placeholder",
+                    "blocks": [{
+                        "id": "ch1_preview",
+                        "type": "paragraph",
+                        "text": "Revenue grew 18% year over year."
+                    }]
+                }]
+            }),
+        )
+        .await?;
+    assert_eq!(preview_commit["committed"].as_bool(), Some(true));
+    let preview_revision = preview_commit["new_revision"].as_i64().unwrap();
+    assert!(preview_revision > lead_revision);
+
+    let expected_preview_id = streaming_preview_id.clone();
+    doc_sse
+        .wait_for_frame(move |frame| {
+            frame.event.as_deref() == Some("revision")
+                && json_revision(&frame.data) == Some(preview_revision)
+                && json_cleared_preview_ids(&frame.data)
                     .iter()
-                    .any(|frame| frame.event.as_deref() == Some("agent_presence"))
-        }
-    })
-    .await?;
+                    .any(|preview_id| preview_id == &expected_preview_id)
+        })
+        .await?;
+    let frames = doc_sse.snapshot().await;
+    let preview_index = frames
+        .iter()
+        .rposition(|frame| {
+            frame.event.as_deref() == Some("ephemeral_preview")
+                && json_string_field(&frame.data, "preview_id").as_deref()
+                    == Some(streaming_preview_id.as_str())
+        })
+        .ok_or_else(|| anyhow!("streaming preview missing from SSE frames"))?;
+    let revision_index = frames
+        .iter()
+        .position(|frame| {
+            frame.event.as_deref() == Some("revision")
+                && json_revision(&frame.data) == Some(preview_revision)
+                && json_cleared_preview_ids(&frame.data)
+                    .iter()
+                    .any(|preview_id| preview_id == &streaming_preview_id)
+        })
+        .ok_or_else(|| anyhow!("revision with cleared_preview_ids missing from SSE frames"))?;
+    assert!(
+        preview_index < revision_index,
+        "preview frames must arrive before the clearing revision"
+    );
 
     // 4a. Sub-Agent A: offline draft flow.
     let draft = json!({

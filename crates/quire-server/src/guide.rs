@@ -288,7 +288,7 @@ REVIEW LOOP
 FRONTEND CONTRACT
 - Frontend is read-only. It consumes GET /api/docs/{doc_id} canonical JSON + computed metadata and SSE revision deltas.
 - SSE events: revision, ephemeral_preview, agent_presence, sync_required, plus heartbeat comments.
-- Do not send cursor/presence edits other than optional ephemeral previews.
+- Do not send cursor/presence edits other than optional ephemeral previews. When a previewed block is committed, pass its preview IDs as preview_ids to apply_operations or apply_draft so revision.cleared_preview_ids clears the placeholder atomically.
 "##.into(),
         recommended_tools: vec![
             "apply_draft".into(),

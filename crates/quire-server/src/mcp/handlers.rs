@@ -14,7 +14,8 @@ use quire_protocol::{
     is_valid_css_token_name, lint_document,
 };
 use quire_store::{
-    ApplyResult, SourceUpsert, StoreError, merge_source_entries, normalized_source_key,
+    ApplyResult, CommitExtras, SourceUpsert, StoreError, merge_source_entries,
+    normalized_source_key,
 };
 use rmcp::{
     ErrorData,
@@ -216,10 +217,11 @@ impl QuireMcpServer {
                 invalid_params(error.to_string(), "Check X-Session-Id and X-Actor.", None)
             })?
             .actor;
+        let preview_ids = normalize_preview_ids(request.preview_ids)?;
         let expected_revision = request.expected_revision.map(parse_revision).transpose()?;
         match request.mode {
             DraftMode::CreateOrReplace if request.target_doc_id.is_none() => {
-                self.create_from_draft(draft, request.sources, &parts, &actor)
+                self.create_from_draft(draft, request.sources, &parts, &actor, &preview_ids)
                     .await
             }
             DraftMode::CreateOrReplace => {
@@ -239,6 +241,7 @@ impl QuireMcpServer {
                             request.sources.clone(),
                             &actor,
                             expected_revision,
+                            &preview_ids,
                         )
                         .await
                     {
@@ -272,6 +275,7 @@ impl QuireMcpServer {
                             request.sources.clone(),
                             &actor,
                             expected_revision,
+                            &preview_ids,
                         )
                         .await
                     {
@@ -321,6 +325,7 @@ impl QuireMcpServer {
                             request.sources.clone(),
                             &actor,
                             expected_revision,
+                            &preview_ids,
                         )
                         .await
                     {
@@ -534,16 +539,20 @@ impl QuireMcpServer {
         let doc_id = parse_doc_id(&request.doc_id)?;
         let expected_revision = parse_revision(request.expected_revision)?;
         let source_upserts = inline_source_upserts(request.sources)?;
+        let preview_ids = normalize_preview_ids(request.preview_ids)?;
         let result = self
             .state
             .store
-            .apply_operations_with_sources(
+            .apply_operations_with_extras(
                 &doc_id,
                 expected_revision,
                 &actor,
                 request.summary.trim(),
                 &request.ops,
-                source_upserts,
+                CommitExtras {
+                    sources: source_upserts,
+                    cleared_preview_ids: preview_ids,
+                },
             )
             .await
             .map_err(mcp_error)?;
@@ -1507,6 +1516,26 @@ fn inline_source_upserts(
         .collect())
 }
 
+/// Trim, validate and de-duplicate preview IDs while preserving producer order.
+fn normalize_preview_ids(raw: Vec<String>) -> Result<Vec<String>, ErrorData> {
+    let mut seen = HashSet::new();
+    let mut preview_ids = Vec::with_capacity(raw.len());
+    for preview_id in raw {
+        let preview_id = preview_id.trim();
+        if preview_id.is_empty() {
+            return Err(invalid_params(
+                "preview_ids must not contain empty values",
+                "Pass the Runtime tool_call_id of each ephemeral preview to clear.",
+                None,
+            ));
+        }
+        if seen.insert(preview_id.to_string()) {
+            preview_ids.push(preview_id.to_string());
+        }
+    }
+    Ok(preview_ids)
+}
+
 fn draft_source_upserts(
     draft: &ReportDraft,
     inline: Option<IndexMap<SourceId, SourceInput>>,
@@ -1531,6 +1560,7 @@ impl QuireMcpServer {
         inline_sources: Option<IndexMap<SourceId, SourceInput>>,
         parts: &Parts,
         actor: &str,
+        preview_ids: &[String],
     ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
         let source_upserts = draft_source_upserts(&draft, inline_sources)?;
         let combined_sources: IndexMap<SourceId, SourceEntry> = source_upserts
@@ -1581,7 +1611,7 @@ impl QuireMcpServer {
         let result = self
             .state
             .store
-            .create_document(&document, actor, None)
+            .create_document_with_cleared_previews(&document, actor, None, preview_ids.to_vec())
             .await
             .map_err(mcp_error)?;
         let touched = touched_draft_blocks(&blocks, &assigned_ids);
@@ -1621,6 +1651,7 @@ impl QuireMcpServer {
         inline_sources: Option<IndexMap<SourceId, SourceInput>>,
         actor: &str,
         expected_revision: Option<Revision>,
+        preview_ids: &[String],
     ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
         let existing = self
             .state
@@ -1677,13 +1708,16 @@ impl QuireMcpServer {
         let result = self
             .state
             .store
-            .apply_operations_with_sources(
+            .apply_operations_with_extras(
                 target_doc_id,
                 expected_revision.unwrap_or(existing.revision),
                 actor,
                 "replace report from draft",
                 &ops,
-                source_upserts,
+                CommitExtras {
+                    sources: source_upserts,
+                    cleared_preview_ids: preview_ids.to_vec(),
+                },
             )
             .await
             .map_err(mcp_error)?;
@@ -1701,6 +1735,7 @@ impl QuireMcpServer {
         inline_sources: Option<IndexMap<SourceId, SourceInput>>,
         actor: &str,
         expected_revision: Option<Revision>,
+        preview_ids: &[String],
     ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
         let existing = self
             .state
@@ -1716,13 +1751,16 @@ impl QuireMcpServer {
         let result = self
             .state
             .store
-            .apply_operations_with_sources(
+            .apply_operations_with_extras(
                 target_doc_id,
                 expected_revision.unwrap_or(existing.revision),
                 actor,
                 "append draft section",
                 &ops,
-                source_upserts,
+                CommitExtras {
+                    sources: source_upserts,
+                    cleared_preview_ids: preview_ids.to_vec(),
+                },
             )
             .await
             .map_err(mcp_error)?;
@@ -1745,6 +1783,7 @@ impl QuireMcpServer {
         inline_sources: Option<IndexMap<SourceId, SourceInput>>,
         actor: &str,
         expected_revision: Option<Revision>,
+        preview_ids: &[String],
     ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
         let existing = self
             .state
@@ -1762,13 +1801,16 @@ impl QuireMcpServer {
         let result = self
             .state
             .store
-            .apply_operations_with_sources(
+            .apply_operations_with_extras(
                 target_doc_id,
                 expected_revision.unwrap_or(existing.revision),
                 actor,
                 "replace range from draft",
                 &ops,
-                source_upserts,
+                CommitExtras {
+                    sources: source_upserts,
+                    cleared_preview_ids: preview_ids.to_vec(),
+                },
             )
             .await
             .map_err(mcp_error)?;

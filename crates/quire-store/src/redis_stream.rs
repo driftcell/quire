@@ -52,6 +52,7 @@ impl RedisStreamBus {
     pub async fn publish_revision(&self, event: &RevisionEvent) -> Result<(), StoreError> {
         let key = Self::revision_stream_key(event.doc_id.as_str());
         let payload = serde_json::to_string(&event.ops)?;
+        let cleared_preview_ids = serde_json::to_string(&event.cleared_preview_ids)?;
         let created_at = event.created_at.to_rfc3339();
         let mut connection = self.manager.clone();
         redis::cmd("XADD")
@@ -70,6 +71,8 @@ impl RedisStreamBus {
             .arg(&event.summary)
             .arg("payload")
             .arg(payload)
+            .arg("cleared_preview_ids")
+            .arg(cleared_preview_ids)
             .arg("created_at")
             .arg(created_at)
             .query_async::<String>(&mut connection)
@@ -101,7 +104,11 @@ impl RedisStreamBus {
         Ok(())
     }
 
-    pub async fn publish_ephemeral(&self, doc_id: &str, payload: &Value) -> Result<(), StoreError> {
+    pub async fn publish_ephemeral(
+        &self,
+        doc_id: &str,
+        payload: &impl serde::Serialize,
+    ) -> Result<(), StoreError> {
         let mut connection = self.manager.clone();
         let channel = Self::ephemeral_channel(doc_id);
         let body = serde_json::to_string(payload)?;
@@ -254,6 +261,10 @@ fn parse_revision_entry(entry: redis::streams::StreamId) -> Option<StreamRevisio
     let summary: String = entry.get("summary").unwrap_or_default();
     let payload: String = entry.get("payload").unwrap_or_else(|| "[]".to_string());
     let ops = serde_json::from_str::<Value>(&payload).unwrap_or(Value::Array(Vec::new()));
+    let cleared_preview_ids = entry
+        .get::<String>("cleared_preview_ids")
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default();
     let created_at = entry
         .get::<String>("created_at")
         .and_then(|value| DateTime::parse_from_rfc3339(&value).ok())
@@ -266,6 +277,7 @@ fn parse_revision_entry(entry: redis::streams::StreamId) -> Option<StreamRevisio
         actor,
         summary,
         ops,
+        cleared_preview_ids,
         created_at,
     };
     Some(StreamRevision {

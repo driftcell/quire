@@ -22,8 +22,8 @@ use crate::{
     error::{InlineWarnings, RevisionConflict, StoreError, ops_to_json},
     redis_stream::RedisStreamBus,
     types::{
-        ApplyResult, CreateResult, DocumentDiff, DocumentSnapshot, ReportList, ReportSummary,
-        RevisionEvent, RevisionRecord, RollbackResult, SessionEvent, SourceUpsert,
+        ApplyResult, CommitExtras, CreateResult, DocumentDiff, DocumentSnapshot, ReportList,
+        ReportSummary, RevisionEvent, RevisionRecord, RollbackResult, SessionEvent, SourceUpsert,
         UpsertSourcesResult,
     },
 };
@@ -120,6 +120,18 @@ impl PgReportStore {
         document: &ReportDocument,
         actor: &str,
         idempotency_key: Option<&str>,
+    ) -> Result<CreateResult, StoreError> {
+        self.create_document_with_cleared_previews(document, actor, idempotency_key, Vec::new())
+            .await
+    }
+
+    /// Create a document and atomically clear the previews superseded by revision 1.
+    pub async fn create_document_with_cleared_previews(
+        &self,
+        document: &ReportDocument,
+        actor: &str,
+        idempotency_key: Option<&str>,
+        cleared_preview_ids: Vec<String>,
     ) -> Result<CreateResult, StoreError> {
         let _guard = self.document_guard(document.doc_id.as_str()).await;
         let mut normalized = document.clone();
@@ -277,7 +289,8 @@ impl PgReportStore {
             actor,
             "create_report",
             forward_ops,
-        );
+        )
+        .with_cleared_preview_ids(cleared_preview_ids);
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = %document.doc_id, "failed to publish create revision");
         }
@@ -453,6 +466,7 @@ impl PgReportStore {
                     actor: row.actor,
                     summary: row.summary,
                     ops: row.forward_ops,
+                    cleared_preview_ids: Vec::new(),
                     created_at: row.created_at,
                 })
             })
@@ -489,6 +503,34 @@ impl PgReportStore {
         ops: &[PatchOp],
         sources: Vec<SourceUpsert>,
     ) -> Result<ApplyResult, StoreError> {
+        self.apply_operations_with_extras(
+            doc_id,
+            expected_revision,
+            actor,
+            summary,
+            ops,
+            CommitExtras {
+                sources,
+                cleared_preview_ids: Vec::new(),
+            },
+        )
+        .await
+    }
+
+    /// Apply blocks, optional source upserts and ephemeral preview clears in one transaction.
+    pub async fn apply_operations_with_extras(
+        &self,
+        doc_id: &DocId,
+        expected_revision: Revision,
+        actor: &str,
+        summary: &str,
+        ops: &[PatchOp],
+        extras: CommitExtras,
+    ) -> Result<ApplyResult, StoreError> {
+        let CommitExtras {
+            sources,
+            cleared_preview_ids,
+        } = extras;
         let _guard = self.document_guard(doc_id.as_str()).await;
         let mut tx = self.pool.begin().await?;
         let current_rev = lock_current_revision(&mut tx, doc_id.as_str()).await?;
@@ -561,7 +603,8 @@ impl PgReportStore {
 
         let mut warnings = normalization_warnings;
         warnings.extend(inline_warnings(&after));
-        let event = RevisionEvent::new(doc_id.clone(), new_revision, actor, summary, forward_ops);
+        let event = RevisionEvent::new(doc_id.clone(), new_revision, actor, summary, forward_ops)
+            .with_cleared_preview_ids(cleared_preview_ids);
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish revision");
         }

@@ -3,6 +3,10 @@
   "title": "Quire Report Protocol",
   "type": "object",
   "properties": {
+    "agent_presence": {
+      "description": "SSE `agent_presence` payload for live agent activity.",
+      "$ref": "#/$defs/AgentPresenceEvent"
+    },
     "computed": {
       "description": "Computed labels, table layouts, TOC tree and citation map for frontends.",
       "$ref": "#/$defs/ComputedDocumentMeta"
@@ -14,6 +18,14 @@
     "draft": {
       "description": "Offline authoring draft accepted by `apply_draft`.",
       "$ref": "#/$defs/ReportDraft"
+    },
+    "ephemeral_payload": {
+      "description": "Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.",
+      "$ref": "#/$defs/EphemeralPayload"
+    },
+    "ephemeral_preview": {
+      "description": "SSE `ephemeral_preview` payload for transient typewriter previews.",
+      "$ref": "#/$defs/EphemeralPreviewEvent"
     },
     "lint": {
       "description": "Static validation report returned by `lint_document`.",
@@ -47,11 +59,51 @@
     "revision_delta",
     "session_delta",
     "sync_required",
+    "ephemeral_preview",
+    "agent_presence",
+    "ephemeral_payload",
     "draft",
     "patch_outcome",
     "lint"
   ],
   "$defs": {
+    "AgentPresenceEvent": {
+      "description": "Payload of an SSE `agent_presence` event.",
+      "type": "object",
+      "properties": {
+        "actor": {
+          "description": "Agent identity that changed state.",
+          "type": "string"
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "section_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "description": "Free-form presence state such as `writing` or `idle`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "doc_id",
+        "actor",
+        "status",
+        "received_at"
+      ]
+    },
     "Align": {
       "type": "string",
       "enum": [
@@ -1024,6 +1076,172 @@
         "scatter"
       ]
     },
+    "EphemeralPayload": {
+      "description": "Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.\n\n`kind: \"ephemeral\"` is accepted as a legacy alias for `preview`, and `kind: \"agent_presence\"`\nas an alias for `presence`, so existing clients keep working.",
+      "oneOf": [
+        {
+          "description": "Payload of an SSE `ephemeral_preview` event.\n\nPreview frames never enter the revision log. The server stamps `doc_id` and `received_at`\nfrom the request path and wall clock so producers cannot spoof either field.",
+          "type": "object",
+          "properties": {
+            "actor": {
+              "description": "Agent identity that produced the preview.",
+              "type": "string"
+            },
+            "anchor": {
+              "$ref": "#/$defs/PreviewAnchor"
+            },
+            "block": {
+              "$ref": "#/$defs/PartialBlockPreview"
+            },
+            "doc_id": {
+              "$ref": "#/$defs/DocId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "preview"
+            },
+            "preview_id": {
+              "description": "Stable stream identity, normally the Runtime `tool_call_id`.",
+              "type": "string"
+            },
+            "received_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "seq": {
+              "description": "Monotonic sequence number; clients discard frames older than the latest seen value.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "status": {
+              "$ref": "#/$defs/PreviewStatus"
+            },
+            "ttl_ms": {
+              "description": "Client-side cleanup deadline for abandoned streams.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "kind",
+            "doc_id",
+            "preview_id",
+            "actor",
+            "anchor",
+            "status",
+            "block",
+            "received_at"
+          ]
+        },
+        {
+          "description": "Payload of an SSE `agent_presence` event.",
+          "type": "object",
+          "properties": {
+            "actor": {
+              "description": "Agent identity that changed state.",
+              "type": "string"
+            },
+            "doc_id": {
+              "$ref": "#/$defs/DocId"
+            },
+            "kind": {
+              "type": "string",
+              "const": "presence"
+            },
+            "received_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "section_id": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/BlockId"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "description": "Free-form presence state such as `writing` or `idle`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "doc_id",
+            "actor",
+            "status",
+            "received_at"
+          ]
+        }
+      ]
+    },
+    "EphemeralPreviewEvent": {
+      "description": "Payload of an SSE `ephemeral_preview` event.\n\nPreview frames never enter the revision log. The server stamps `doc_id` and `received_at`\nfrom the request path and wall clock so producers cannot spoof either field.",
+      "type": "object",
+      "properties": {
+        "actor": {
+          "description": "Agent identity that produced the preview.",
+          "type": "string"
+        },
+        "anchor": {
+          "$ref": "#/$defs/PreviewAnchor"
+        },
+        "block": {
+          "$ref": "#/$defs/PartialBlockPreview"
+        },
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "preview_id": {
+          "description": "Stable stream identity, normally the Runtime `tool_call_id`.",
+          "type": "string"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "seq": {
+          "description": "Monotonic sequence number; clients discard frames older than the latest seen value.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "status": {
+          "$ref": "#/$defs/PreviewStatus"
+        },
+        "ttl_ms": {
+          "description": "Client-side cleanup deadline for abandoned streams.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "doc_id",
+        "preview_id",
+        "actor",
+        "anchor",
+        "status",
+        "block",
+        "received_at"
+      ]
+    },
     "IdAssignment": {
       "description": "Mapping produced when an empty or colliding block ID was auto-assigned.",
       "type": "object",
@@ -1209,6 +1427,50 @@
           "type": "string",
           "const": "none"
         }
+      ]
+    },
+    "PartialBlockPreview": {
+      "description": "Incrementally streamed block content rendered before the revision is committed.\n\nText blocks carry partial `text`; tables and charts may only carry `title` while streaming so\nthe frontend can render a skeleton. `block_id` is pre-allocated when known and must match the\neventual committed block for seamless replacement.",
+      "type": "object",
+      "properties": {
+        "block_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "block_type": {
+          "description": "Canonical block type, for example `paragraph`, `heading`, `table` or `echarts`.",
+          "type": "string"
+        },
+        "level": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "block_type"
       ]
     },
     "PatchOp": {
@@ -1576,6 +1838,101 @@
         "assigned_ids"
       ]
     },
+    "PreviewAnchor": {
+      "description": "Where an ephemeral preview block sits relative to the committed document.",
+      "oneOf": [
+        {
+          "description": "Append below the section heading identified by `section_id`.",
+          "type": "object",
+          "properties": {
+            "section_id": {
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "append_to_section"
+            }
+          },
+          "required": [
+            "type",
+            "section_id"
+          ]
+        },
+        {
+          "description": "Insert directly after the committed block.",
+          "type": "object",
+          "properties": {
+            "block_id": {
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "after_block"
+            }
+          },
+          "required": [
+            "type",
+            "block_id"
+          ]
+        },
+        {
+          "description": "Insert directly before the committed block.",
+          "type": "object",
+          "properties": {
+            "block_id": {
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "before_block"
+            }
+          },
+          "required": [
+            "type",
+            "block_id"
+          ]
+        },
+        {
+          "description": "Temporarily replace a committed block, for example a placeholder heading.",
+          "type": "object",
+          "properties": {
+            "block_id": {
+              "$ref": "#/$defs/BlockId"
+            },
+            "type": {
+              "type": "string",
+              "const": "replace_block"
+            }
+          },
+          "required": [
+            "type",
+            "block_id"
+          ]
+        },
+        {
+          "description": "Append after the last committed block in the document.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "append_to_doc"
+            }
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "PreviewStatus": {
+      "description": "Lifecycle state of one ephemeral preview stream.",
+      "type": "string",
+      "enum": [
+        "streaming",
+        "completed",
+        "aborted"
+      ]
+    },
     "ReferencesConfig": {
       "description": "End-of-report bibliography configuration.",
       "type": "object",
@@ -1751,6 +2108,13 @@
         "actor": {
           "description": "Agent or admin identity recorded for the audit trail.",
           "type": "string"
+        },
+        "cleared_preview_ids": {
+          "description": "Ephemeral previews atomically superseded by this revision.\n\nThe frontend removes these previews in the same frame that applies the revision, so the\ncommitted block replaces the streamed placeholder with no visual flicker.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
         },
         "created_at": {
           "type": "string",

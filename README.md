@@ -137,6 +137,34 @@ for transient drafts.
 SSE event names: `revision`, `ephemeral_preview`, `agent_presence`, `doc_created`, `sync_required`,
 plus `: heartbeat` comments.
 
+### Ephemeral typewriter previews
+
+`POST /api/docs/{doc_id}/ephemeral` accepts the tagged union in
+`contracts/report-protocol.schema.json` (`EphemeralPayload`). The server overwrites `doc_id` and
+`received_at`, defaults `ttl_ms` to 15000, and rejects payloads above 64 KiB with HTTP 400.
+
+```json
+{
+  "kind": "preview",
+  "preview_id": "tool_call_7",
+  "actor": "sub-agent-a",
+  "anchor": {"type": "after_block", "block_id": "ch1_placeholder"},
+  "status": "streaming",
+  "seq": 12,
+  "block": {
+    "block_id": "ch1_preview",
+    "block_type": "paragraph",
+    "text": "Revenue grew 18% year over year"
+  }
+}
+```
+
+Presence uses `kind: "presence"` (`agent_presence` is accepted as an alias) with `actor`, `status`
+and an optional `section_id`. When the streamed block is committed, pass the preview IDs to
+`apply_operations` (or `apply_draft`) as `preview_ids`; the emitted `revision` delta then carries
+`cleared_preview_ids` so clients remove the ephemeral block and apply the committed revision in one
+frame without flicker.
+
 ### Canonical document response
 
 `GET /api/docs/{doc_id}` returns the stored `ReportDocument` flattened with:
