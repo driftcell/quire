@@ -628,6 +628,10 @@ impl ToolPreviewStreamer {
         self
     }
 
+    pub fn set_anchor(&mut self, anchor: PreviewAnchor) {
+        self.anchor = anchor;
+    }
+
     pub fn preview_id(&self) -> &str {
         &self.preview_id
     }
@@ -1824,6 +1828,7 @@ struct PreviewBlock {
     title: Option<String>,
     level: Option<u8>,
     text: Option<String>,
+    anchor: PreviewAnchor,
 }
 
 impl PreviewBlock {
@@ -1912,13 +1917,6 @@ impl PreviewState {
                     .clone()
                     .unwrap_or_else(|| format!("preview{part}{index}"));
                 let preview_id = format!("{}:{}:{}:{}", self.run_id, stream.tool_name, part, key);
-                let anchor = if candidate.block_id.is_some() {
-                    PreviewAnchor::ReplaceBlock {
-                        block_id: BlockId::pending(),
-                    }
-                } else {
-                    PreviewAnchor::AppendToDoc
-                };
                 stream.streamers.insert(
                     key.clone(),
                     ToolPreviewStreamer::new(
@@ -1930,10 +1928,13 @@ impl PreviewState {
                         &block_id,
                         self.throttle_ms,
                     )
-                    .with_anchor(anchor),
+                    .with_anchor(candidate.anchor.clone()),
                 );
             }
             if let Some(streamer) = stream.streamers.get_mut(&key) {
+                if candidate.anchor != PreviewAnchor::AppendToDoc {
+                    streamer.set_anchor(candidate.anchor.clone());
+                }
                 let block_id = BlockId::parse(
                     candidate
                         .block_id
@@ -1974,13 +1975,59 @@ fn preview_id_for(streamer: &ToolPreviewStreamer) -> String {
 fn extract_preview_blocks(arguments: &Value) -> Vec<PreviewBlock> {
     let mut blocks = Vec::new();
     let mut seen = BTreeSet::new();
-    collect_preview_blocks(arguments, 0, &mut blocks, &mut seen);
+    collect_preview_blocks(
+        arguments,
+        0,
+        &PreviewAnchor::AppendToDoc,
+        &mut blocks,
+        &mut seen,
+    );
     blocks
+}
+
+fn infer_operation_anchor(
+    object: &serde_json::Map<String, Value>,
+    inherited: &PreviewAnchor,
+) -> PreviewAnchor {
+    let op_name = object.get("op").and_then(Value::as_str);
+    if let Some(section_id) = object
+        .get("section_id")
+        .and_then(Value::as_str)
+        .and_then(|raw| BlockId::parse(raw.to_string()).ok())
+    {
+        return PreviewAnchor::AppendToSection { section_id };
+    }
+    if op_name == Some("replace_block")
+        && let Some(block_id) = object
+            .get("block_id")
+            .and_then(Value::as_str)
+            .and_then(|raw| BlockId::parse(raw.to_string()).ok())
+    {
+        return PreviewAnchor::ReplaceBlock { block_id };
+    }
+    if let Some(block_id) = object
+        .get("after_id")
+        .or_else(|| object.get("after_block_id"))
+        .and_then(Value::as_str)
+        .and_then(|raw| BlockId::parse(raw.to_string()).ok())
+    {
+        return PreviewAnchor::AfterBlock { block_id };
+    }
+    if let Some(block_id) = object
+        .get("before_id")
+        .or_else(|| object.get("before_block_id"))
+        .and_then(Value::as_str)
+        .and_then(|raw| BlockId::parse(raw.to_string()).ok())
+    {
+        return PreviewAnchor::BeforeBlock { block_id };
+    }
+    inherited.clone()
 }
 
 fn collect_preview_blocks(
     value: &Value,
     depth: usize,
+    anchor: &PreviewAnchor,
     blocks: &mut Vec<PreviewBlock>,
     seen: &mut BTreeSet<String>,
 ) {
@@ -1989,7 +2036,8 @@ fn collect_preview_blocks(
     }
     match value {
         Value::Object(object) => {
-            if let Some(block) = preview_block(object) {
+            let next_anchor = infer_operation_anchor(object, anchor);
+            if let Some(block) = preview_block(object, &next_anchor) {
                 let key = block
                     .block_id
                     .clone()
@@ -1999,19 +2047,22 @@ fn collect_preview_blocks(
                 }
             }
             for child in object.values() {
-                collect_preview_blocks(child, depth + 1, blocks, seen);
+                collect_preview_blocks(child, depth + 1, &next_anchor, blocks, seen);
             }
         }
         Value::Array(values) => {
             for child in values {
-                collect_preview_blocks(child, depth + 1, blocks, seen);
+                collect_preview_blocks(child, depth + 1, anchor, blocks, seen);
             }
         }
         _ => {}
     }
 }
 
-fn preview_block(object: &serde_json::Map<String, Value>) -> Option<PreviewBlock> {
+fn preview_block(
+    object: &serde_json::Map<String, Value>,
+    anchor: &PreviewAnchor,
+) -> Option<PreviewBlock> {
     let text = object.get("text").and_then(Value::as_str);
     let title = object.get("title").and_then(Value::as_str);
     if text.is_none() && title.is_none() {
@@ -2051,6 +2102,7 @@ fn preview_block(object: &serde_json::Map<String, Value>) -> Option<PreviewBlock
         title: title.map(str::to_string),
         level,
         text: text.map(str::to_string),
+        anchor: anchor.clone(),
     })
 }
 

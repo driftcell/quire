@@ -266,6 +266,7 @@ function buildMixedItems(
     }
   }
 
+  const sliceIds = new Set(slices.map((s) => s.block.id));
   const afterMap = new Map<string, EphemeralPreviewEvent[]>();
   const beforeMap = new Map<string, EphemeralPreviewEvent[]>();
   const replaceMap = new Map<string, EphemeralPreviewEvent>();
@@ -273,22 +274,29 @@ function buildMixedItems(
 
   for (const p of previews) {
     const anchor = p.anchor;
-    if (anchor.type === "replace_block") {
+    if (anchor.type === "replace_block" && sliceIds.has(anchor.block_id)) {
       replaceMap.set(anchor.block_id, p);
-    } else if (anchor.type === "before_block") {
+    } else if (
+      anchor.type === "before_block" &&
+      sliceIds.has(anchor.block_id)
+    ) {
       const list = beforeMap.get(anchor.block_id) ?? [];
       list.push(p);
       beforeMap.set(anchor.block_id, list);
-    } else if (anchor.type === "after_block") {
+    } else if (anchor.type === "after_block" && sliceIds.has(anchor.block_id)) {
       const list = afterMap.get(anchor.block_id) ?? [];
       list.push(p);
       afterMap.set(anchor.block_id, list);
     } else if (anchor.type === "append_to_section") {
       const targetId =
         sectionLastBlock.get(anchor.section_id) ?? anchor.section_id;
-      const list = afterMap.get(targetId) ?? [];
-      list.push(p);
-      afterMap.set(targetId, list);
+      if (sliceIds.has(targetId)) {
+        const list = afterMap.get(targetId) ?? [];
+        list.push(p);
+        afterMap.set(targetId, list);
+      } else {
+        tailPreviews.push(p);
+      }
     } else {
       tailPreviews.push(p);
     }
