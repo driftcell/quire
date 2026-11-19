@@ -352,7 +352,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "get_document_digest",
-        description = "Low-token outline: current_rev, theme summary and blocks with id/type/level/snippet_30/char_count/source_ids. Optional keyword query filters blocks."
+        description = "Low-token outline: current_rev, theme summary and compact blocks (id/type/level/preview/char_count/source_ids; empty fields omitted). Optional keyword query filters blocks."
     )]
     pub async fn get_document_digest(
         &self,
@@ -367,11 +367,10 @@ impl QuireMcpServer {
             .map_err(mcp_error)?;
         let digest = build_digest(&document, request.query.as_deref());
         let _next_hint = if digest.blocks.is_empty() {
-            "No blocks matched. Read GET /api/docs/{doc_id} or append blocks with apply_operations."
-                .to_string()
+            "No blocks matched. Append blocks with apply_operations.".to_string()
         } else {
             format!(
-                "Use read_as_markdown or read_blocks for details, then apply_operations with expected_revision={}.",
+                "rev={}; read_blocks/read_as_markdown for details.",
                 digest.current_rev
             )
         };
@@ -1013,24 +1012,34 @@ impl QuireMcpServer {
             .await
             .map_err(mcp_error)?;
         let report = lint_document(&document);
+        let rev = document.revision.get();
+        if report.is_clean() {
+            return Ok(Json(LintReceipt {
+                ok: true,
+                rev,
+                summary: None,
+                diagnostics: Vec::new(),
+                _next_hint: None,
+            }));
+        }
+        let ok = !report.has_errors();
         let _next_hint = if report.has_errors() {
             format!(
-                "Fix {} error(s) before continuing. Every diagnostic includes a code, path and self-healing hint.",
+                "Fix {} error(s) using each diagnostic's path and hint.",
                 report.summary.errors
             )
-        } else if report.summary.warnings > 0 {
+        } else {
             format!(
-                "No lint errors. Review {} warning(s) for quality, then read_as_markdown.",
+                "0 errors, {} warning(s); review warnings or call read_as_markdown.",
                 report.summary.warnings
             )
-        } else {
-            "Lint is clean. Read_as_markdown for final review, then declare completion.".to_string()
         };
         Ok(Json(LintReceipt {
-            doc_id: doc_id.to_string(),
-            revision: document.revision.get(),
-            report,
-            _next_hint,
+            ok,
+            rev,
+            summary: Some(report.summary),
+            diagnostics: report.diagnostics,
+            _next_hint: Some(_next_hint),
         }))
     }
 
@@ -1223,6 +1232,8 @@ impl CoverPatch {
 }
 
 fn block_digest(block: &Block) -> BlockDigest {
+    let is_heading = matches!(&block.body, BlockKind::Heading { .. });
+    let char_count = block.char_count();
     BlockDigest {
         id: block.id.to_string(),
         block_type: block.block_type().to_string(),
@@ -1230,8 +1241,8 @@ fn block_digest(block: &Block) -> BlockDigest {
             BlockKind::Heading { level, .. } => Some(*level),
             _ => None,
         },
-        snippet_30: block.preview_30(),
-        char_count: block.char_count(),
+        preview: (char_count > 0).then(|| block.preview_30()),
+        char_count: (!is_heading && char_count > 0).then_some(char_count),
         source_ids: block.source_ids.iter().map(ToString::to_string).collect(),
     }
 }
@@ -1256,12 +1267,7 @@ pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> Do
         .map(block_digest)
         .collect::<Vec<_>>();
     DocumentDigest {
-        doc_id: document.doc_id.to_string(),
         title: document.title(),
-        session_id: document
-            .session_id
-            .as_ref()
-            .map(|session| session.as_str().to_string()),
         current_rev: document.revision.get(),
         theme: document.theme.summary(),
         toc: document.toc.clone(),

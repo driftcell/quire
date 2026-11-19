@@ -1230,7 +1230,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let bad_chart_lint = reviewer
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;
-    let bad_chart_codes: Vec<&str> = bad_chart_lint["report"]["diagnostics"]
+    assert_eq!(bad_chart_lint["ok"].as_bool(), Some(false));
+    let bad_chart_codes: Vec<&str> = bad_chart_lint["diagnostics"]
         .as_array()
         .unwrap()
         .iter()
@@ -1287,8 +1288,9 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let lint_bad = reviewer
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;
-    assert!(lint_bad["report"]["summary"]["errors"].as_u64().unwrap() >= 1);
-    let dangling = lint_bad["report"]["diagnostics"]
+    assert_eq!(lint_bad["ok"].as_bool(), Some(false));
+    assert!(lint_bad["summary"]["errors"].as_u64().unwrap() >= 1);
+    let dangling = lint_bad["diagnostics"]
         .as_array()
         .unwrap()
         .iter()
@@ -1320,7 +1322,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let lint_clean = reviewer
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;
-    assert_eq!(lint_clean["report"]["summary"]["errors"].as_u64(), Some(0));
+    assert_eq!(lint_clean["ok"].as_bool(), Some(true));
 
     // 7. Theme/CSS update is validated and revisioned.
     let style = reviewer
@@ -1558,7 +1560,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let lint_final = reviewer
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;
-    assert_eq!(lint_final["report"]["summary"]["errors"].as_u64(), Some(0));
+    assert_eq!(lint_final["ok"].as_bool(), Some(true));
 
     // 10. apply_draft honors explicit expected_revision (no silent retry) but can auto-read
     // the current revision when expected_revision is omitted.
@@ -1626,10 +1628,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let lint_after_draft = reviewer
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;
-    assert_eq!(
-        lint_after_draft["report"]["summary"]["errors"].as_u64(),
-        Some(0)
-    );
+    assert_eq!(lint_after_draft["ok"].as_bool(), Some(true));
     tokio::fs::remove_file(&draft_path).await?;
 
     // 11. Side-channel comments: human review, writer edit/delete, agent addressed, human archive.

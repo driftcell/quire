@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, CitationStyle, CommentStatus, CommentThread, CoverConfig, IdAssignment, LintReport,
-    PageChromeConfig, PageChromeSlots, PatchOp, ReferencesConfig, SourceEntry, SourceId,
-    TextQuoteSelector, ThemeSummary, TocConfig,
+    Block, CitationStyle, CommentStatus, CommentThread, CoverConfig, Diagnostic, IdAssignment,
+    LintSummary, PageChromeConfig, PageChromeSlots, PatchOp, ReferencesConfig, SourceEntry,
+    SourceId, TextQuoteSelector, ThemeSummary, TocConfig,
 };
 use quire_store::ReportSummary;
 use schemars::JsonSchema;
@@ -219,6 +219,10 @@ pub struct DigestReceipt {
     pub _next_hint: String,
 }
 
+fn is_zero_usize(value: &usize) -> bool {
+    *value == 0
+}
+
 /// Low-token summary of one block.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct BlockDigest {
@@ -228,23 +232,26 @@ pub struct BlockDigest {
     /// Heading level, when the block is a heading.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub level: Option<u8>,
-    /// First 30 characters of visible text.
-    pub snippet_30: String,
-    pub char_count: usize,
-    /// Source IDs referenced by this block.
+    /// First 30 characters of visible text (omitted for empty blocks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
+    /// Visible character count (omitted for headings and empty blocks).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub char_count: Option<usize>,
+    /// Source IDs referenced by this block (omitted when empty).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub source_ids: Vec<String>,
 }
 
 /// Low-token outline of a report: revision, theme, TOC and block summaries.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DocumentDigest {
-    pub doc_id: String,
     pub title: String,
-    pub session_id: Option<String>,
     pub current_rev: i64,
     pub theme: ThemeSummary,
     pub toc: TocConfig,
     pub block_count: usize,
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub source_count: usize,
     pub blocks: Vec<BlockDigest>,
 }
@@ -600,15 +607,23 @@ pub struct LintParams {
     pub doc_id: String,
 }
 
-/// Output for `lint_document`.
+/// Output for `lint_document`. Clean documents return only `{"ok":true,"rev":N}`.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct LintReceipt {
-    pub doc_id: String,
-    pub revision: i64,
-    /// Diagnostics plus error/warning summary.
-    pub report: LintReport,
-    #[serde(rename = "_next_hint")]
-    pub _next_hint: String,
+    pub ok: bool,
+    pub rev: i64,
+    /// Error, warning and info counts (omitted when clean).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<LintSummary>,
+    /// Diagnostics (omitted when clean).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<Diagnostic>,
+    #[serde(
+        rename = "_next_hint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub _next_hint: Option<String>,
 }
 
 /// Input for `list_comments`.

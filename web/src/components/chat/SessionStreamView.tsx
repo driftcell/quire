@@ -958,7 +958,7 @@ export function SessionStreamView({
               <MessageScrollerItem messageId="live-main">
                 <MessageGroup>
                   <Message align="start">
-                    <MessageContent className="w-full space-y-1">
+                    <MessageContent className="w-full gap-1">
                       {liveMain.isStreaming && (
                         <div className="flex h-6 w-full items-center justify-between gap-2 text-xs leading-5 text-muted-foreground">
                           <button
