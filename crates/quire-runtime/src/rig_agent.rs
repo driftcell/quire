@@ -147,7 +147,7 @@ impl McpHttpClient {
             .get("mcp-session-id")
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        let body = parse_rpc_body(response).await?;
+        let body = parse_rpc_body(response, "initialize").await?;
         if body.get("error").is_some() {
             return Err(RuntimeError::Internal(format!(
                 "MCP initialize failed: {body}"
@@ -155,17 +155,23 @@ impl McpHttpClient {
         }
         if let Some(session_id) = session_id {
             *self.mcp_session_id.lock().await = Some(session_id.clone());
-            let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            let _ = self
+            // MCP notifications must not carry an id. Sending one as a request
+            // leaves an unread SSE body in the connection pool, which can make
+            // the next tools/call observe an empty response.
+            if let Ok(response) = self
                 .authorized(self.http.post(format!("{}/mcp", self.base_url)))
                 .header("accept", "application/json, text/event-stream")
                 .header("mcp-protocol-version", "2025-11-25")
                 .header("x-session-id", &self.x_session_id)
                 .header("x-actor", &self.agent_id)
                 .header("mcp-session-id", session_id)
-                .json(&json!({"jsonrpc":"2.0","id":id,"method":"notifications/initialized"}))
+                .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
                 .send()
-                .await;
+                .await
+            {
+                // Drain the response so the pooled connection is reusable.
+                let _ = response.bytes().await;
+            }
         }
         Ok(())
     }
@@ -191,7 +197,15 @@ impl McpHttpClient {
             }))
             .send()
             .await?;
-        let body = parse_rpc_body(response).await?;
+        let context = if method == "tools/call" {
+            params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("tools/call")
+        } else {
+            method
+        };
+        let body = parse_rpc_body(response, context).await?;
         if let Some(error) = body.get("error") {
             return Err(RuntimeError::Internal(format!(
                 "MCP {method} failed: {error}"
@@ -240,7 +254,8 @@ impl McpHttpClient {
     }
 }
 
-async fn parse_rpc_body(response: reqwest::Response) -> RuntimeResult<Value> {
+async fn parse_rpc_body(response: reqwest::Response, context: &str) -> RuntimeResult<Value> {
+    let status = response.status();
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -264,7 +279,17 @@ async fn parse_rpc_body(response: reqwest::Response) -> RuntimeResult<Value> {
                 found = Some(value);
             }
         }
-        found.ok_or_else(|| RuntimeError::Internal("MCP SSE response had no result".into()))
+        found.ok_or_else(|| {
+            let preview: String = text.chars().take(400).collect();
+            warn!(
+                %status,
+                %content_type,
+                %context,
+                body = %preview,
+                "MCP SSE response had no result"
+            );
+            RuntimeError::Internal("MCP SSE response had no result".into())
+        })
     } else if text.trim().is_empty() {
         Ok(Value::Null)
     } else {

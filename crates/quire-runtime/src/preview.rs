@@ -184,6 +184,16 @@ fn extract_eval_json(raw: &Value) -> Option<Value> {
     if let Ok(parsed) = serde_json::from_str::<Value>(text) {
         return Some(parsed);
     }
+    // mcp/playwright pretty-prints evaluation results under `### Result`, so
+    // parse the first JSON value after that heading instead of matching lines.
+    if let Some(index) = text.find("### Result")
+        && let Some(rest) = text.get(index + "### Result".len()..)
+    {
+        let mut values = serde_json::Deserializer::from_str(rest.trim_start()).into_iter::<Value>();
+        if let Some(Ok(parsed)) = values.next() {
+            return Some(parsed);
+        }
+    }
     for line in text.lines() {
         let trimmed = line.trim();
         if ((trimmed.starts_with('{') && trimmed.ends_with('}'))
@@ -383,4 +393,31 @@ pub async fn execute_preview_report(
         image_mime_type,
         image_base64,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_pretty_printed_playwright_eval_results() {
+        let raw = json!({
+            "content": [{
+                "type": "text",
+                "text": "### Result\n{\n  \"ready\": true,\n  \"error\": null\n}\n### Ran Playwright code\n```js\nawait page.evaluate('() => ({})');\n```"
+            }]
+        });
+        let parsed = extract_eval_json(&raw);
+        assert_eq!(
+            parsed
+                .as_ref()
+                .and_then(|value| value.get("ready"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            parsed.as_ref().and_then(|value| value.get("error")),
+            Some(&Value::Null)
+        );
+    }
 }
