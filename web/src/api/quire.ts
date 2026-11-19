@@ -2,7 +2,6 @@ import type {
   CommentStatus,
   CommentThread,
   DocumentDiffReport,
-  TextQuoteSelector,
 } from "@/contracts/report-protocol";
 import { bearerHeaders, getAuthTokens } from "@/lib/auth";
 import {
@@ -74,6 +73,20 @@ function isCommentThreadList(value: unknown): value is CommentThread[] {
   return Array.isArray(value) && value.every(isCommentThread);
 }
 
+interface CommentListView {
+  doc_id: string;
+  comments: CommentThread[];
+}
+
+function isCommentListView(value: unknown): value is CommentListView {
+  return (
+    isRecord(value) &&
+    typeof value.doc_id === "string" &&
+    Array.isArray(value.comments) &&
+    value.comments.every(isCommentThread)
+  );
+}
+
 function isDocumentDiffReport(value: unknown): value is DocumentDiffReport {
   return (
     isRecord(value) &&
@@ -98,74 +111,19 @@ export function getDocument(
 export function listComments(
   docId: string,
   status: CommentStatus | "all" = "all",
+  tokenOverride?: string,
 ): Promise<CommentThread[]> {
   return quireFetch(
     `/api/docs/${encodeURIComponent(docId)}/comments?status=${status}`,
     "ro",
-    (raw) => decodeWith(raw, isCommentThreadList, "comment list"),
-  );
-}
-
-export function createComment(
-  docId: string,
-  payload: {
-    block_id: string;
-    author: string;
-    body: string;
-    quote?: TextQuoteSelector;
-  },
-): Promise<CommentThread> {
-  return quireFetch(
-    `/api/docs/${encodeURIComponent(docId)}/comments`,
-    "rw",
-    (raw) => decodeWith(raw, isCommentThread, "comment"),
-    {
-      method: "POST",
-      body: JSON.stringify({
-        block_id: payload.block_id,
-        author_type: "human",
-        author: payload.author,
-        body: payload.body,
-        quote: payload.quote,
-      }),
+    (raw) => {
+      if (Array.isArray(raw)) {
+        return decodeWith(raw, isCommentThreadList, "comment list");
+      }
+      return decodeWith(raw, isCommentListView, "comment list").comments;
     },
-  );
-}
-
-export function replyComment(
-  docId: string,
-  threadId: string,
-  payload: { author: string; body: string },
-): Promise<CommentThread> {
-  return quireFetch(
-    `/api/docs/${encodeURIComponent(docId)}/comments/${encodeURIComponent(threadId)}/replies`,
-    "rw",
-    (raw) => decodeWith(raw, isCommentThread, "comment"),
-    {
-      method: "POST",
-      body: JSON.stringify({
-        author_type: "human",
-        author: payload.author,
-        body: payload.body,
-        mark_addressed: false,
-      }),
-    },
-  );
-}
-
-export function updateCommentStatus(
-  docId: string,
-  threadId: string,
-  status: CommentStatus,
-): Promise<CommentThread> {
-  return quireFetch(
-    `/api/docs/${encodeURIComponent(docId)}/comments/${encodeURIComponent(threadId)}`,
-    "rw",
-    (raw) => decodeWith(raw, isCommentThread, "comment"),
-    {
-      method: "PATCH",
-      body: JSON.stringify({ status }),
-    },
+    {},
+    tokenOverride,
   );
 }
 

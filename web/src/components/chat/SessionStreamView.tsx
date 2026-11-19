@@ -17,6 +17,7 @@ import {
   FileTextIcon,
   ListTreeIcon,
   LoaderCircleIcon,
+  MessageSquareQuoteIcon,
   SparklesIcon,
   SquareIcon,
   UsersIcon,
@@ -36,6 +37,7 @@ import {
   AttachmentMedia,
   AttachmentTitle,
 } from "@/components/ui/attachment";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
@@ -75,6 +77,7 @@ import type {
   LiveSubagentRun,
   LiveTraceSegment,
 } from "@/lib/liveTrace";
+import { parseCommentRefs, type CommentRefPayload } from "@/lib/commentRefXml";
 
 const CHAT_PROSE =
   "prose prose-sm dark:prose-invert max-w-none prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1.5 prose-h1:text-base prose-h2:text-[15px] prose-h3:text-sm prose-p:my-1.5 prose-p:leading-6 prose-ul:my-1.5 prose-ol:my-1.5 prose-pre:my-2 prose-pre:text-xs prose-code:text-[12.5px]";
@@ -779,21 +782,70 @@ function HistoricalRunTrace({
   );
 }
 
+function commentStatusLabel(status: string): string {
+  if (status === "addressed") return "已处理";
+  if (status === "archived") return "已归档";
+  return "待处理";
+}
+
+function UserCommentRefCards({
+  refs,
+  onJumpToSection,
+}: {
+  refs: CommentRefPayload[];
+  onJumpToSection?: (sectionId: string) => void;
+}) {
+  return (
+    <div className="mb-1.5 flex w-full flex-col gap-1.5">
+      {refs.map((ref) => (
+        <button
+          key={ref.thread_id}
+          type="button"
+          onClick={() => onJumpToSection?.(ref.block_id)}
+          className="w-full cursor-pointer rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-left text-xs transition-colors hover:bg-amber-500/10 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
+        >
+          <div className="flex flex-wrap items-center gap-1.5">
+            <MessageSquareQuoteIcon className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
+            <code className="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-800 dark:text-amber-200">
+              #{ref.block_id}
+            </code>
+            <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+              {commentStatusLabel(ref.status)}
+            </Badge>
+          </div>
+          {ref.quote && (
+            <div className="mt-1.5 line-clamp-2 border-l-2 border-amber-500/60 pl-2 text-[11px] text-amber-900/80 dark:text-amber-200/80">
+              “{ref.quote}”
+            </div>
+          )}
+          <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted-foreground">
+            {ref.comment}
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const HistoricalMessageItem = memo(function HistoricalMessageItem({
   sessionId,
   msg,
   attachmentMap,
   trace,
   questionSlots,
+  onJumpToSection,
 }: {
   sessionId: string;
   msg: SessionMessage;
   attachmentMap: Map<string, AttachmentMeta>;
   trace?: RunTraceSummary;
   questionSlots?: Map<string, ReactNode>;
+  onJumpToSection?: (sectionId: string) => void;
 }) {
   const msgAttachmentIds = msg.attachment_ids ?? [];
   const sentAt = formatMsgTime(msg.created_at);
+  const parsedUserContent =
+    msg.role === "user" ? parseCommentRefs(msg.content) : null;
   const hasTextSegment =
     trace?.segments?.some(
       (segment) => segment.kind === "text" && segment.text.trim().length > 0,
@@ -807,6 +859,8 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
     msg.content.trim().length > 0 ? msg.content : textSegmentContent;
 
   if (msg.role === "user") {
+    const userRefs = parsedUserContent?.refs ?? [];
+    const userBody = parsedUserContent?.body ?? msg.content;
     return (
       <MessageGroup className="gap-1">
         {sentAt && (
@@ -820,6 +874,14 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
         )}
         <Message align="end" className="items-end">
           <div className="flex max-w-[85%] flex-col items-end">
+            {userRefs.length > 0 && (
+              <div className="w-full">
+                <UserCommentRefCards
+                  refs={userRefs}
+                  onJumpToSection={onJumpToSection}
+                />
+              </div>
+            )}
             {msgAttachmentIds.length > 0 && (
               <AttachmentGroup className="mb-1.5 justify-end">
                 {msgAttachmentIds.map((attId) => {
@@ -844,9 +906,11 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
                 })}
               </AttachmentGroup>
             )}
-            <div className="w-fit max-w-full rounded-2xl bg-muted px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap text-foreground">
-              {msg.content}
-            </div>
+            {userBody.length > 0 && (
+              <div className="w-fit max-w-full rounded-2xl bg-muted px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap text-foreground">
+                {userBody}
+              </div>
+            )}
           </div>
         </Message>
       </MessageGroup>
@@ -1231,6 +1295,7 @@ export function SessionStreamView({
                     attachmentMap={attachmentMap}
                     trace={trace}
                     questionSlots={questionSlots}
+                    onJumpToSection={onJumpToSection}
                   />
                 </MessageScrollerItem>
               );

@@ -18,7 +18,10 @@ use std::{
 };
 
 use base64::Engine as _;
-use quire_protocol::{ChartRequirements, EchartsBlock};
+use quire_protocol::{
+    BlockId, ChartRequirements, CommentAuthorType, CommentMessage, CommentStatus, CommentThread,
+    DocId, EchartsBlock, Revision,
+};
 use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
     ModelStreamProvider, ModelTurnRequest, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
@@ -110,6 +113,10 @@ fn redis_url() -> String {
 }
 
 async fn test_service() -> (RuntimeService, RuntimeStore) {
+    test_service_with_quire_base("http://127.0.0.1:1").await
+}
+
+async fn test_service_with_quire_base(base_url: &str) -> (RuntimeService, RuntimeStore) {
     let store = RuntimeStore::connect(&database_url(), &redis_url())
         .await
         .expect("PostgreSQL and Redis are required");
@@ -124,7 +131,7 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
         database_url: database_url(),
         redis_url: redis_url(),
         bind_addr: "127.0.0.1:0".into(),
-        quire_base_url: "http://127.0.0.1:1".into(),
+        quire_base_url: base_url.into(),
         quire_rw_token: SecretString::from("test-token"),
         quire_ro_token: SecretString::from("test-token"),
         api_token: SecretString::from("runtime-test-token"),
@@ -2402,6 +2409,170 @@ async fn mcp_sync_discovers_tools_and_preserves_admin_switches() {
         .expect("beta tool");
     assert!(beta.enabled);
     service.mcp().delete_server(&server_id).await.unwrap();
+    server.abort();
+}
+
+fn proxy_comment_thread(status: CommentStatus) -> CommentThread {
+    let now = chrono::Utc::now();
+    CommentThread {
+        thread_id: "ct_proxy".into(),
+        doc_id: DocId::parse("report-test").unwrap(),
+        block_id: BlockId::parse("b_proxy").unwrap(),
+        section_id: None,
+        anchor_snapshot: Some("Proxy anchor".into()),
+        quote: None,
+        status,
+        created_rev: Revision::new(1).unwrap(),
+        addressed_rev: (status == CommentStatus::Addressed).then(|| Revision::new(2).unwrap()),
+        anchor_detached: false,
+        messages: vec![CommentMessage {
+            message_id: "cm_proxy".into(),
+            thread_id: "ct_proxy".into(),
+            author_type: CommentAuthorType::Human,
+            author: "reviewer".into(),
+            body: "Please tighten this paragraph.".into(),
+            created_at: now,
+        }],
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+async fn mock_comment_create() -> axum::Json<CommentThread> {
+    axum::Json(proxy_comment_thread(CommentStatus::Open))
+}
+
+async fn mock_comment_reply() -> axum::Json<CommentThread> {
+    axum::Json(proxy_comment_thread(CommentStatus::Addressed))
+}
+
+async fn mock_comment_patch() -> axum::Json<CommentThread> {
+    axum::Json(proxy_comment_thread(CommentStatus::Archived))
+}
+
+#[tokio::test]
+async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
+    let _guard = test_lock().lock().await;
+    let upstream = axum::Router::new()
+        .route(
+            "/api/docs/{doc_id}/comments",
+            axum::routing::post(mock_comment_create),
+        )
+        .route(
+            "/api/docs/{doc_id}/comments/{thread_id}/replies",
+            axum::routing::post(mock_comment_reply),
+        )
+        .route(
+            "/api/docs/{doc_id}/comments/{thread_id}",
+            axum::routing::patch(mock_comment_patch),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let (service, _store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let session = service
+        .create_session(&unique("comment-proxy"), Some("report-test"))
+        .await
+        .unwrap();
+    let unbound = service
+        .create_session(&unique("comment-proxy-unbound"), None)
+        .await
+        .unwrap();
+    let app = quire_runtime::http::router(service);
+
+    let created = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/sessions/{}/comments", session.session_id))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"block_id": "b_proxy", "body": "Tighten"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(created.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let thread: CommentThread = serde_json::from_slice(&body).unwrap();
+    assert_eq!(thread.status, CommentStatus::Open);
+
+    let replied = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{}/comments/ct_proxy/replies",
+                    session.session_id
+                ))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(json!({"body": "Done"}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replied.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(replied.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let thread: CommentThread = serde_json::from_slice(&body).unwrap();
+    assert_eq!(thread.status, CommentStatus::Addressed);
+
+    let archived = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("PATCH")
+                .uri(format!(
+                    "/api/sessions/{}/comments/ct_proxy",
+                    session.session_id
+                ))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"status": "archived"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(archived.status(), axum::http::StatusCode::OK);
+
+    let unbound_response = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/sessions/{}/comments", unbound.session_id))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"block_id": "b_proxy", "body": "Tighten"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        unbound_response.status(),
+        axum::http::StatusCode::BAD_REQUEST
+    );
+    let body = axum::body::to_bytes(unbound_response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&body).contains("not bound to a report"),
+        "unbound session error must explain the missing report binding"
+    );
     server.abort();
 }
 

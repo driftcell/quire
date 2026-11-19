@@ -16,7 +16,10 @@ import {
 import { CustomHtmlView } from "@/components/report/CustomHtmlView";
 import { EchartsCanvas } from "@/components/report/EchartsCanvas";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
-import { InlineMarkdown } from "@/components/report/InlineMarkdown";
+import {
+  InlineMarkdown,
+  type QuoteHighlight,
+} from "@/components/report/InlineMarkdown";
 import {
   SelectionQuoteToolbar,
   type SelectionQuoteAction,
@@ -40,7 +43,6 @@ import type {
   ComputedDocumentMeta,
   EphemeralPreviewEvent,
   PageChromeConfig,
-  TextQuoteSelector,
 } from "@/contracts/report-protocol";
 import type { ReportBlock, ReportDocumentView } from "@/lib/document";
 import {
@@ -64,6 +66,7 @@ export interface ReportViewerProps {
   pageFilter?: number;
   onPagesReady?: (totalPages: number) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
+  onOpenCommentThread?: (threadId: string, blockId: string) => void;
   onAskAgentWithQuote?: (blockId: string, exact: string) => void;
 }
 
@@ -653,9 +656,10 @@ interface ReportBlockItemProps {
   computed: ComputedDocumentMeta;
   bibliographyById: Map<string, BibliographyEntry>;
   commentCount: number;
-  blockQuotes?: TextQuoteSelector[];
+  blockQuotes?: QuoteHighlight[];
   onCitationClick: (sourceId: string) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
+  onOpenCommentThread?: (threadId: string, blockId: string) => void;
 }
 
 const ReportBlockItem = memo(function ReportBlockItem({
@@ -669,23 +673,30 @@ const ReportBlockItem = memo(function ReportBlockItem({
   blockQuotes,
   onCitationClick,
   onOpenCommentForBlock,
+  onOpenCommentThread,
 }: ReportBlockItemProps) {
   const { block } = slice;
   const framing = computed.block_framing[block.id];
 
   const handleQuoteClick = useCallback(
-    (quote: TextQuoteSelector, rect: DOMRect) => {
+    (highlight: QuoteHighlight, rect: DOMRect) => {
+      if (onOpenCommentThread) {
+        onOpenCommentThread(highlight.threadId, block.id);
+        return;
+      }
       if (!onOpenCommentForBlock) return;
       onOpenCommentForBlock({
         blockId: block.id,
-        quote,
+        quote: highlight.quote,
         rect: toViewportRect(rect),
       });
     },
-    [block.id, onOpenCommentForBlock],
+    [block.id, onOpenCommentForBlock, onOpenCommentThread],
   );
   const quoteHandler =
-    !printMode && onOpenCommentForBlock ? handleQuoteClick : undefined;
+    !printMode && (onOpenCommentForBlock || onOpenCommentThread)
+      ? handleQuoteClick
+      : undefined;
 
   const renderInline = (text: string) => (
     <InlineMarkdown
@@ -874,6 +885,7 @@ export function ReportViewer({
   pageFilter,
   onPagesReady,
   onOpenCommentForBlock,
+  onOpenCommentThread,
   onAskAgentWithQuote,
 }: ReportViewerProps) {
   const suppressChrome = printMode || previewMode;
@@ -935,13 +947,13 @@ export function ReportViewer({
 
   const { openCountByBlock, quotesByBlock } = useMemo(() => {
     const counts = new Map<string, number>();
-    const quotes = new Map<string, TextQuoteSelector[]>();
+    const quotes = new Map<string, QuoteHighlight[]>();
     for (const thread of comments) {
       if (thread.status !== "archived" && !thread.anchor_detached) {
         counts.set(thread.block_id, (counts.get(thread.block_id) ?? 0) + 1);
         if (thread.quote) {
           const list = quotes.get(thread.block_id) ?? [];
-          list.push(thread.quote);
+          list.push({ threadId: thread.thread_id, quote: thread.quote });
           quotes.set(thread.block_id, list);
         }
       }
@@ -1483,6 +1495,7 @@ export function ReportViewer({
                   blockQuotes={quotesByBlock.get(item.slice.block.id)}
                   onCitationClick={scrollToSource}
                   onOpenCommentForBlock={onOpenCommentForBlock}
+                  onOpenCommentThread={onOpenCommentThread}
                 />
               ) : null}
             </div>
@@ -1558,6 +1571,7 @@ export function ReportViewer({
                             blockQuotes={quotesByBlock.get(item.slice.block.id)}
                             onCitationClick={scrollToSource}
                             onOpenCommentForBlock={onOpenCommentForBlock}
+                            onOpenCommentThread={onOpenCommentThread}
                           />
                         ) : null}
                       </div>

@@ -18,21 +18,18 @@ import {
   PrinterIcon,
   ScrollTextIcon,
 } from "lucide-react";
-import {
-  createComment,
-  getDocument,
-  listComments,
-  replyComment,
-  updateCommentStatus,
-} from "@/api/quire";
+import { getDocument, listComments } from "@/api/quire";
 import {
   answerQuestion,
   compactSession,
+  createSessionComment,
   getSession,
   interruptSession,
   listSessionTraces,
   postMessage,
+  replySessionComment,
   retrySession,
+  updateSessionCommentStatus,
   uploadAttachment,
 } from "@/api/runtime";
 import { subscribeDocumentEvents, subscribeSessionEvents } from "@/api/sse";
@@ -41,7 +38,7 @@ import {
   type QuotedChatSnippet,
 } from "@/components/chat/PromptComposer";
 import { SessionStreamView } from "@/components/chat/SessionStreamView";
-import { CommentsDrawer } from "@/components/report/CommentsDrawer";
+import { CommentsPanel } from "@/components/report/CommentsDrawer";
 import {
   FloatingCommentPopover,
   type FloatingCommentAnchor,
@@ -60,7 +57,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type {
-  CommentStatus,
+  CommentThread,
   EphemeralPreviewEvent,
 } from "@/contracts/report-protocol";
 import type {
@@ -83,6 +80,7 @@ import {
   type LiveSubagentRun,
 } from "@/lib/liveTrace";
 import { loadPreferences, savePreferences } from "@/lib/preferences";
+import type { CommentRefPayload } from "@/lib/commentRefXml";
 import { randomUuid } from "@/lib/uuid";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
@@ -185,13 +183,18 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   >(() => new Map());
   const presenceTimersRef = useRef<Map<string, number>>(new Map());
 
-  const [commentsOpen, setCommentsOpen] = useState(false);
-  const [selectedCommentBlock, setSelectedCommentBlock] = useState<
+  const [rightTab, setRightTab] = useState<"chat" | "comments">("chat");
+  const [activeCommentThreadId, setActiveCommentThreadId] = useState<
     string | null
   >(null);
+  const [pendingCommentRefs, setPendingCommentRefs] = useState<
+    CommentRefPayload[]
+  >([]);
   const [floatingComment, setFloatingComment] =
     useState<FloatingCommentAnchor | null>(null);
-  const [mobileTab, setMobileTab] = useState<"report" | "chat">("report");
+  const [mobileTab, setMobileTab] = useState<"report" | "chat" | "comments">(
+    "report",
+  );
   const [quotedForChat, setQuotedForChat] = useState<QuotedChatSnippet | null>(
     null,
   );
@@ -788,32 +791,77 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }, 1600);
   }, []);
 
+  const jumpToSectionFromChat = useCallback(
+    (sectionId: string) => {
+      if (isMobile) {
+        setMobileTab("report");
+      }
+      jumpToSection(sectionId);
+    },
+    [isMobile, jumpToSection],
+  );
+
+  const showComments = useCallback(() => {
+    setRightTab("comments");
+    if (isMobile) {
+      setMobileTab("comments");
+    } else if (!prefs.rightSidebarOpen) {
+      updatePrefs({ rightSidebarOpen: true });
+    }
+  }, [isMobile, prefs.rightSidebarOpen, updatePrefs]);
+
+  const showChat = useCallback(() => {
+    setRightTab("chat");
+    if (isMobile) {
+      setMobileTab("chat");
+    } else if (!prefs.rightSidebarOpen) {
+      updatePrefs({ rightSidebarOpen: true });
+    }
+  }, [isMobile, prefs.rightSidebarOpen, updatePrefs]);
+
+  const openCommentThread = useCallback(
+    (threadId: string, blockId: string) => {
+      setActiveCommentThreadId(threadId);
+      showComments();
+      jumpToSection(blockId);
+    },
+    [jumpToSection, showComments],
+  );
+
+  const queueCommentRefs = useCallback(
+    (threads: CommentThread[]) => {
+      const refs = threads.map((thread): CommentRefPayload => {
+        const primary =
+          thread.messages.find((message) => message.author_type === "human") ??
+          thread.messages[0];
+        return {
+          thread_id: thread.thread_id,
+          block_id: thread.block_id,
+          status: thread.status,
+          quote: thread.quote?.exact,
+          comment:
+            primary?.body ?? thread.anchor_snapshot ?? "请根据此批注修订正文。",
+        };
+      });
+      setPendingCommentRefs((prev) => {
+        const byThread = new Map(
+          prev.map((ref) => [ref.thread_id, ref] as const),
+        );
+        for (const ref of refs) {
+          byThread.set(ref.thread_id, ref);
+        }
+        return Array.from(byThread.values());
+      });
+      showChat();
+    },
+    [showChat],
+  );
+
   const openCommentsCount =
     commentsQuery.data?.filter((c) => c.status !== "archived").length ?? 0;
 
   const chatPane = (
-    <div
-      className={
-        hasReportData && !isMobile
-          ? "flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
-          : "flex h-full min-w-0 flex-col bg-background"
-      }
-    >
-      {hasReportData && !isMobile && (
-        <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium">
-              {sessionQuery.data?.title ?? "加载中..."}
-            </span>
-            {effectiveRunStatus === "running" && (
-              <Badge variant="secondary" className="text-[11px]">
-                生成中
-              </Badge>
-            )}
-          </div>
-        </div>
-      )}
-
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
       <div className="min-h-0 flex-1">
         {sessionQuery.isLoading ? (
           <div className="h-full overflow-y-auto px-4">
@@ -846,7 +894,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             onAnswerQuestion={(qId, answers, skipped) => {
               void handleAnswerQuestion(qId, answers, skipped);
             }}
-            onJumpToSection={jumpToSection}
+            onJumpToSection={jumpToSectionFromChat}
           />
         )}
       </div>
@@ -865,7 +913,14 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             runStatus={effectiveRunStatus}
             contextUsage={effectiveUsage}
             quotedSnippet={quotedForChat}
+            pendingCommentRefs={pendingCommentRefs}
             onClearQuote={() => setQuotedForChat(null)}
+            onRemoveCommentRef={(threadId) => {
+              setPendingCommentRefs((prev) =>
+                prev.filter((ref) => ref.thread_id !== threadId),
+              );
+            }}
+            onClearCommentRefs={() => setPendingCommentRefs([])}
             onSend={handleSend}
             onInterrupt={async () => {
               await interruptSession(sessionId);
@@ -890,6 +945,43 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       </div>
     </div>
   );
+
+  const commentsPanel = effectiveDocId ? (
+    <CommentsPanel
+      docId={effectiveDocId}
+      threads={commentsQuery.data ?? []}
+      activeThreadId={activeCommentThreadId}
+      onClose={
+        isMobile ? undefined : () => updatePrefs({ rightSidebarOpen: false })
+      }
+      onSelectThread={(thread) => {
+        setActiveCommentThreadId(thread.thread_id);
+        jumpToSection(thread.block_id);
+      }}
+      onSelectBlock={jumpToSection}
+      onReply={async (threadId, body) => {
+        await replySessionComment(sessionId, threadId, { body });
+        void queryClient.invalidateQueries({
+          queryKey: ["comments", effectiveDocId],
+        });
+      }}
+      onUpdateStatus={async (threadId, status) => {
+        await updateSessionCommentStatus(sessionId, threadId, status);
+        void queryClient.invalidateQueries({
+          queryKey: ["comments", effectiveDocId],
+        });
+        if (status === "archived") {
+          setPendingCommentRefs((prev) =>
+            prev.filter((ref) => ref.thread_id !== threadId),
+          );
+          setActiveCommentThreadId((current) =>
+            current === threadId ? null : current,
+          );
+        }
+      }}
+      onAskAgent={(threads) => queueCommentRefs(threads)}
+    />
+  ) : null;
 
   const reportPane =
     docQuery.data && effectiveDocId ? (
@@ -936,10 +1028,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 variant="ghost"
                 aria-label="批注列表"
                 className="relative"
-                onClick={() => {
-                  setSelectedCommentBlock(null);
-                  setCommentsOpen(true);
-                }}
+                onClick={showComments}
               >
                 <MessageSquareQuoteIcon className="size-4" />
                 {openCommentsCount > 0 && (
@@ -1021,10 +1110,49 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             onOpenCommentForBlock={(anchor) => {
               setFloatingComment(anchor);
             }}
+            onOpenCommentThread={openCommentThread}
           />
         </div>
       </div>
     ) : null;
+
+  const rightPane = (
+    <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs">
+      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm font-medium">
+            {sessionQuery.data?.title ?? "加载中..."}
+          </span>
+          {effectiveRunStatus === "running" && (
+            <Badge variant="secondary" className="shrink-0 text-[11px]">
+              生成中
+            </Badge>
+          )}
+        </div>
+        <Tabs
+          value={rightTab}
+          onValueChange={(value) => {
+            if (value === "chat" || value === "comments") {
+              setRightTab(value);
+            }
+          }}
+          className="shrink-0"
+        >
+          <TabsList className="grid grid-cols-2">
+            <TabsTrigger value="chat" className="text-xs">
+              对话
+            </TabsTrigger>
+            <TabsTrigger value="comments" className="text-xs">
+              批注 ({openCommentsCount})
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+      </div>
+      <div className="min-h-0 flex-1">
+        {rightTab === "chat" ? chatPane : commentsPanel}
+      </div>
+    </div>
+  );
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-hidden">
@@ -1080,16 +1208,19 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <Tabs
             value={mobileTab}
             onValueChange={(v) => {
-              if (v === "report" || v === "chat") {
+              if (v === "report" || v === "chat" || v === "comments") {
                 setMobileTab(v);
               }
             }}
             className="flex h-full flex-col"
           >
             <div className="border-b bg-background px-3 py-1.5">
-              <TabsList className="grid w-full grid-cols-2">
+              <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="report">报告预览</TabsTrigger>
                 <TabsTrigger value="chat">Agent 对话</TabsTrigger>
+                <TabsTrigger value="comments">
+                  批注 ({openCommentsCount})
+                </TabsTrigger>
               </TabsList>
             </div>
             <TabsContent
@@ -1103,6 +1234,12 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               className="min-h-0 flex-1 overflow-hidden"
             >
               {chatPane}
+            </TabsContent>
+            <TabsContent
+              value="comments"
+              className="min-h-0 flex-1 overflow-hidden"
+            >
+              {commentsPanel}
             </TabsContent>
           </Tabs>
         ) : (
@@ -1163,7 +1300,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 inert={!prefs.rightSidebarOpen}
                 aria-hidden={!prefs.rightSidebarOpen}
               >
-                {chatPane}
+                {rightPane}
               </div>
             </ResizablePanel>
           </ResizablePanelGroup>
@@ -1171,76 +1308,31 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       </div>
 
       {effectiveDocId && (
-        <>
-          <FloatingCommentPopover
-            anchor={floatingComment}
-            threads={commentsQuery.data ?? []}
-            onClose={() => setFloatingComment(null)}
-            onAddComment={async (blockId, body, quote) => {
-              await createComment(effectiveDocId, {
-                block_id: blockId,
-                author: "reviewer",
-                body,
-                quote,
-              });
-              void queryClient.invalidateQueries({
-                queryKey: ["comments", effectiveDocId],
-              });
-            }}
-            onReply={async (threadId, body) => {
-              await replyComment(effectiveDocId, threadId, {
-                author: "reviewer",
-                body,
-              });
-              void queryClient.invalidateQueries({
-                queryKey: ["comments", effectiveDocId],
-              });
-            }}
-            onUpdateStatus={async (threadId, status: CommentStatus) => {
-              await updateCommentStatus(effectiveDocId, threadId, status);
-              void queryClient.invalidateQueries({
-                queryKey: ["comments", effectiveDocId],
-              });
-            }}
-          />
-
-          <CommentsDrawer
-            docId={effectiveDocId}
-            open={commentsOpen}
-            onOpenChange={setCommentsOpen}
-            threads={commentsQuery.data ?? []}
-            selectedBlockId={selectedCommentBlock}
-            onAddComment={async (blockId, body, quote) => {
-              await createComment(effectiveDocId, {
-                block_id: blockId,
-                author: "reviewer",
-                body,
-                quote,
-              });
-              void queryClient.invalidateQueries({
-                queryKey: ["comments", effectiveDocId],
-              });
-            }}
-            onReply={async (threadId, body) => {
-              await replyComment(effectiveDocId, threadId, {
-                author: "reviewer",
-                body,
-              });
-              void queryClient.invalidateQueries({
-                queryKey: ["comments", effectiveDocId],
-              });
-            }}
-            onUpdateStatus={async (threadId, status: CommentStatus) => {
-              await updateCommentStatus(effectiveDocId, threadId, status);
-              void queryClient.invalidateQueries({
-                queryKey: ["comments", effectiveDocId],
-              });
-            }}
-            onSelectBlock={(blockId) => {
-              jumpToSection(blockId);
-            }}
-          />
-        </>
+        <FloatingCommentPopover
+          anchor={floatingComment}
+          existingCount={
+            floatingComment
+              ? (commentsQuery.data ?? []).filter(
+                  (thread) =>
+                    thread.block_id === floatingComment.blockId &&
+                    thread.status !== "archived",
+                ).length
+              : 0
+          }
+          onClose={() => setFloatingComment(null)}
+          onAddComment={async (blockId, body, quote) => {
+            const thread = await createSessionComment(sessionId, {
+              block_id: blockId,
+              body,
+              quote,
+            });
+            void queryClient.invalidateQueries({
+              queryKey: ["comments", effectiveDocId],
+            });
+            setActiveCommentThreadId(thread.thread_id);
+            showComments();
+          }}
+        />
       )}
     </div>
   );

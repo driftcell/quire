@@ -1,5 +1,5 @@
 import { startTransition, useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   BookOpenIcon,
@@ -8,25 +8,14 @@ import {
   PrinterIcon,
   ScrollTextIcon,
 } from "lucide-react";
-import {
-  createComment,
-  getDocument,
-  listComments,
-  replyComment,
-  updateCommentStatus,
-} from "@/api/quire";
-import { CommentsDrawer } from "@/components/report/CommentsDrawer";
-import {
-  FloatingCommentPopover,
-  type FloatingCommentAnchor,
-} from "@/components/report/FloatingCommentPopover";
+import { getDocument, listComments } from "@/api/quire";
+import { CommentsPanel } from "@/components/report/CommentsDrawer";
 import { ReportViewer } from "@/components/report/ReportViewer";
 import { PageChromeDialog } from "@/components/report/PageChromeDialog";
 import { TocOutline } from "@/components/report/TocOutline";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSidebar } from "@/components/ui/sidebar";
-import type { CommentStatus } from "@/contracts/report-protocol";
 import {
   loadPreferences,
   savePreferences,
@@ -41,13 +30,12 @@ const EMPTY_ACTORS = new Map<string, string[]>();
 
 function DocumentPage() {
   const { docId } = Route.useParams();
-  const queryClient = useQueryClient();
   const { toggleSidebar } = useSidebar();
   const [prefs, setPrefs] = useState(() => loadPreferences());
   const [commentsOpen, setCommentsOpen] = useState(false);
-  const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
-  const [floatingComment, setFloatingComment] =
-    useState<FloatingCommentAnchor | null>(null);
+  const [activeCommentThreadId, setActiveCommentThreadId] = useState<
+    string | null
+  >(null);
 
   const docQuery = useQuery({
     queryKey: ["doc", docId],
@@ -124,7 +112,7 @@ function DocumentPage() {
             aria-label="批注列表"
             className="relative"
             onClick={() => {
-              setSelectedBlock(null);
+              setActiveCommentThreadId(null);
               setCommentsOpen(true);
             }}
           >
@@ -195,63 +183,33 @@ function DocumentPage() {
             computed={docQuery.data.computed}
             viewMode={prefs.reportViewMode}
             comments={commentsQuery.data}
-            onOpenCommentForBlock={(anchor) => {
-              setFloatingComment(anchor);
+            onOpenCommentThread={(threadId, blockId) => {
+              setActiveCommentThreadId(threadId);
+              setCommentsOpen(true);
+              jumpToSection(blockId);
             }}
           />
         )}
       </div>
 
-      <FloatingCommentPopover
-        anchor={floatingComment}
-        threads={commentsQuery.data ?? []}
-        onClose={() => setFloatingComment(null)}
-        onAddComment={async (blockId, body, quote) => {
-          await createComment(docId, {
-            block_id: blockId,
-            author: "reviewer",
-            body,
-            quote,
-          });
-          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
-        }}
-        onReply={async (threadId, body) => {
-          await replyComment(docId, threadId, { author: "reviewer", body });
-          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
-        }}
-        onUpdateStatus={async (threadId, status: CommentStatus) => {
-          await updateCommentStatus(docId, threadId, status);
-          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
-        }}
-      />
-
-      <CommentsDrawer
-        docId={docId}
-        open={commentsOpen}
-        onOpenChange={setCommentsOpen}
-        threads={commentsQuery.data ?? []}
-        selectedBlockId={selectedBlock}
-        onAddComment={async (blockId, body, quote) => {
-          await createComment(docId, {
-            block_id: blockId,
-            author: "reviewer",
-            body,
-            quote,
-          });
-          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
-        }}
-        onReply={async (threadId, body) => {
-          await replyComment(docId, threadId, { author: "reviewer", body });
-          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
-        }}
-        onUpdateStatus={async (threadId, status: CommentStatus) => {
-          await updateCommentStatus(docId, threadId, status);
-          void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
-        }}
-        onSelectBlock={(blockId) => {
-          jumpToSection(blockId);
-        }}
-      />
+      {commentsOpen && (
+        <div className="fixed top-14 right-2 bottom-2 z-30 w-[380px] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border bg-background shadow-xl">
+          <CommentsPanel
+            docId={docId}
+            threads={commentsQuery.data ?? []}
+            activeThreadId={activeCommentThreadId}
+            readOnly
+            onClose={() => setCommentsOpen(false)}
+            onSelectThread={(thread) => {
+              setActiveCommentThreadId(thread.thread_id);
+              jumpToSection(thread.block_id);
+            }}
+            onSelectBlock={(blockId) => {
+              jumpToSection(blockId);
+            }}
+          />
+        </div>
+      )}
     </div>
   );
 }

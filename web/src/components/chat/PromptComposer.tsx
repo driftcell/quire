@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import {
   ArrowUpIcon,
   FileIcon,
+  MessageSquareQuoteIcon,
   Minimize2Icon,
   PlusIcon,
   QuoteIcon,
@@ -34,6 +35,10 @@ import type {
   ActiveRunStatus,
   ContextUsage,
 } from "@/contracts/session-protocol";
+import {
+  serializeCommentRefs,
+  type CommentRefPayload,
+} from "@/lib/commentRefXml";
 
 export interface PendingAttachment {
   localId: string;
@@ -52,7 +57,10 @@ export interface PromptComposerProps {
   runStatus?: ActiveRunStatus;
   contextUsage?: ContextUsage;
   quotedSnippet?: QuotedChatSnippet | null;
+  pendingCommentRefs?: CommentRefPayload[];
   onClearQuote?: () => void;
+  onRemoveCommentRef?: (threadId: string) => void;
+  onClearCommentRefs?: () => void;
   disabled?: boolean;
   onSend: (text: string, files: File[]) => Promise<void>;
   onInterrupt?: () => Promise<void>;
@@ -108,7 +116,10 @@ export function PromptComposer({
   runStatus = "idle",
   contextUsage,
   quotedSnippet,
+  pendingCommentRefs = [],
   onClearQuote,
+  onRemoveCommentRef,
+  onClearCommentRefs,
   disabled = false,
   onSend,
   onInterrupt,
@@ -131,8 +142,12 @@ export function PromptComposer({
 
   const submit = async () => {
     const trimmed = text.trim();
+    const currentRefs = pendingCommentRefs;
     if (
-      (!trimmed && files.length === 0 && !quotedSnippet) ||
+      (!trimmed &&
+        files.length === 0 &&
+        !quotedSnippet &&
+        currentRefs.length === 0) ||
       sending ||
       disabled
     ) {
@@ -142,14 +157,21 @@ export function PromptComposer({
     setSendError(null);
     const currentText = trimmed;
     const currentFiles = files;
-    const payloadText = quotedSnippet
+    const baseText = quotedSnippet
       ? `> 引用（#${quotedSnippet.blockId}）：${quotedSnippet.exact}\n\n${currentText}`
       : currentText;
+    const payloadText =
+      currentRefs.length > 0
+        ? serializeCommentRefs(currentRefs, baseText)
+        : baseText;
     try {
       setText("");
       setFiles([]);
       onClearQuote?.();
       await onSend(payloadText, currentFiles);
+      if (currentRefs.length > 0) {
+        onClearCommentRefs?.();
+      }
     } catch (err) {
       setText(currentText);
       setFiles(currentFiles);
@@ -204,6 +226,30 @@ export function PromptComposer({
           >
             <XIcon className="size-3.5" />
           </button>
+        </div>
+      )}
+
+      {pendingCommentRefs.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {pendingCommentRefs.map((ref) => (
+            <button
+              key={ref.thread_id}
+              type="button"
+              onClick={() => onRemoveCommentRef?.(ref.thread_id)}
+              title={`移除批注引用 #${ref.block_id}`}
+              aria-label={`移除批注引用 ${ref.block_id}`}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-900 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+            >
+              <MessageSquareQuoteIcon className="size-3 shrink-0" />
+              <code className="shrink-0 font-mono text-[10px]">
+                #{ref.block_id}
+              </code>
+              <span className="max-w-[14rem] truncate text-muted-foreground">
+                {ref.comment}
+              </span>
+              <XIcon className="size-3 shrink-0 opacity-70" />
+            </button>
+          ))}
         </div>
       )}
 
@@ -409,7 +455,8 @@ export function PromptComposer({
                   sending ||
                   (text.trim().length === 0 &&
                     files.length === 0 &&
-                    !quotedSnippet)
+                    !quotedSnippet &&
+                    pendingCommentRefs.length === 0)
                 }
                 onClick={() => {
                   void submit();

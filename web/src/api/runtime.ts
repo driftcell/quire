@@ -16,6 +16,9 @@ import type {
 import type {
   ChartDataTable,
   ChartRequirements,
+  CommentStatus,
+  CommentThread,
+  TextQuoteSelector,
 } from "@/contracts/report-protocol";
 import { bearerHeaders, getAuthTokens } from "@/lib/auth";
 import type { EchartsBlock } from "@/lib/document";
@@ -217,6 +220,15 @@ function isChartPreviewResponse(value: unknown): value is ChartPreviewResponse {
   );
 }
 
+function isCommentThread(value: unknown): value is CommentThread {
+  return (
+    isRecord(value) &&
+    typeof value.thread_id === "string" &&
+    typeof value.doc_id === "string" &&
+    Array.isArray(value.messages)
+  );
+}
+
 export function getChartPreview(
   previewId: string,
   tokenOverride?: string,
@@ -387,6 +399,54 @@ export async function uploadAttachment(
         size_bytes: file.size,
         content_base64,
       }),
+    },
+  );
+}
+
+export function createSessionComment(
+  sessionId: string,
+  payload: {
+    block_id: string;
+    body: string;
+    quote?: TextQuoteSelector;
+  },
+): Promise<CommentThread> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/comments`,
+    (raw) => decodeWith(raw, isCommentThread, "comment"),
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function replySessionComment(
+  sessionId: string,
+  threadId: string,
+  payload: { body: string },
+): Promise<CommentThread> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(threadId)}/replies`,
+    (raw) => decodeWith(raw, isCommentThread, "comment"),
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function updateSessionCommentStatus(
+  sessionId: string,
+  threadId: string,
+  status: CommentStatus,
+): Promise<CommentThread> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(threadId)}`,
+    (raw) => decodeWith(raw, isCommentThread, "comment"),
+    {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
     },
   );
 }

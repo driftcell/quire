@@ -9,14 +9,19 @@ import type {
   TextQuoteSelector,
 } from "@/contracts/report-protocol";
 
+export interface QuoteHighlight {
+  threadId: string;
+  quote: TextQuoteSelector;
+}
+
 export interface InlineMarkdownProps {
   text: string;
   citationMap?: Record<string, CitationMapEntry>;
   bibliographyById?: Map<string, BibliographyEntry>;
   printMode?: boolean;
   onCitationClick?: (sourceId: string) => void;
-  highlightQuotes?: TextQuoteSelector[];
-  onQuoteClick?: (quote: TextQuoteSelector, rect: DOMRect) => void;
+  highlightQuotes?: QuoteHighlight[];
+  onQuoteClick?: (highlight: QuoteHighlight, rect: DOMRect) => void;
 }
 
 const TOKEN_RE =
@@ -120,8 +125,9 @@ function CitationGroup({
 
 function renderHighlightedSegment(
   segment: string,
-  quotes: TextQuoteSelector[] | undefined,
-  onQuoteClick: ((quote: TextQuoteSelector, rect: DOMRect) => void) | undefined,
+  quotes: QuoteHighlight[] | undefined,
+  onQuoteClick:
+    ((highlight: QuoteHighlight, rect: DOMRect) => void) | undefined,
   keyPrefix: string,
 ): ReactNode {
   if (!quotes || quotes.length === 0 || segment.length === 0) {
@@ -130,27 +136,27 @@ function renderHighlightedSegment(
 
   let bestIdx = -1;
   let bestNeedle = "";
-  let bestQuote: TextQuoteSelector | null = null;
+  let bestHighlight: QuoteHighlight | null = null;
 
-  for (const q of quotes) {
-    const needle = q.exact.trim();
+  for (const highlight of quotes) {
+    const needle = highlight.quote.exact.trim();
     if (!needle) continue;
     const idx = segment.indexOf(needle);
     if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
       bestIdx = idx;
       bestNeedle = needle;
-      bestQuote = q;
+      bestHighlight = highlight;
     }
   }
 
-  if (bestIdx === -1 || !bestQuote) {
+  if (bestIdx === -1 || !bestHighlight) {
     return segment;
   }
 
   const before = segment.slice(0, bestIdx);
   const match = segment.slice(bestIdx, bestIdx + bestNeedle.length);
   const after = segment.slice(bestIdx + bestNeedle.length);
-  const matchedQuote = bestQuote;
+  const matchedHighlight = bestHighlight;
 
   return (
     <>
@@ -163,7 +169,7 @@ function renderHighlightedSegment(
           onClick={(event) => {
             event.stopPropagation();
             onQuoteClick(
-              matchedQuote,
+              matchedHighlight,
               event.currentTarget.getBoundingClientRect(),
             );
           }}

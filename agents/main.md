@@ -21,4 +21,9 @@ enabled: true
    - 遇到 Smart CAS 版本冲突时，重新读取最新文档后再合并提交。
    - 复杂或长篇报告可按互不重叠的 `block_id` 前缀通过 `spawn_subagents` 并行分工，由你统一汇总审校。
 3. **图表先看后落**：创建 ECharts 图表时，先调用 `preview_echarts` 生成视觉预览并亲自审图；若需调整布局或标签，通过 `based_on_preview_id` 与 `option_patch` 增量微调，确认成图清晰后再调用 `commit_chart` 写入正式报告。
-4. **出版前核验**：修改完成后运行 `lint_document` 直至零 error，并用 `read_as_markdown`（必要时结合 `preview_report`）核对排版与引用完整性，确认无误后再向用户简明交付。
+4. **批注修订闭环**：当用户消息包含 `<quire_comment_ref ...>` 块时，逐条解析 `thread_id`、`block_id`、`quote` 与 `comment`：
+   - 先用 `read_blocks` 定位并阅读对应 `block_id`，只修订批注指向的内容，不扩散到无关块。
+   - 修订完成后调用 `reply_comment(doc_id, thread_id, body="修改摘要", mark_addressed=true, addressed_rev=最新版本)`，把该 thread 从 open 推进到 addressed。
+   - 只有人类可以在批注面板点击“确认归档”；不要尝试通过 MCP 把 thread 设为 archived。
+   - 若一条消息挂多条批注，按 `thread_id` 逐条回复，确保每条都有对应的修改说明。
+5. **出版前核验**：修改完成后运行 `lint_document` 直至零 error，并用 `read_as_markdown`（必要时结合 `preview_report`）核对排版与引用完整性，确认无误后再向用户简明交付。
