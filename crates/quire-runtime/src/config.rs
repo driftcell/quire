@@ -168,6 +168,8 @@ mod tests {
 
     #[test]
     fn debug_redacts_secrets() {
+        let mut sandbox = SandboxConfig::default();
+        sandbox.fc.api_key = Some(SecretString::from("sandbox-secret"));
         let config = Config {
             database_url: "postgres://user:secret@db/app".into(),
             redis_url: "redis://:secret@cache".into(),
@@ -188,12 +190,13 @@ mod tests {
             preview_base_url: "http://127.0.0.1:5173".into(),
             preview_public_url: "http://localhost:5173".into(),
             playwright_mcp_url: None,
-            sandbox: SandboxConfig::default(),
+            sandbox,
         };
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[REDACTED]"));
         assert!(!rendered.contains("rw-secret"));
         assert!(!rendered.contains("model-secret"));
         assert!(!rendered.contains("master-secret"));
+        assert!(!rendered.contains("sandbox-secret"));
     }
 }

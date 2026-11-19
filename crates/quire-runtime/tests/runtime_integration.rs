@@ -2202,6 +2202,9 @@ async fn seed_registers_quire_report_mcp_without_overwriting_admin_state() {
 async fn mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
+    for server in service.mcp().list_servers().await.unwrap() {
+        service.mcp().delete_server(&server.server_id).await.unwrap();
+    }
     let server_id = unique("mcp-registry");
     service
         .mcp()
@@ -2262,7 +2265,11 @@ async fn mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache() {
         .tools_for_agent(&["*".to_string()])
         .await
         .unwrap();
-    assert_eq!(wildcard.len(), 1);
+    let wildcard_server_ids: Vec<&str> = wildcard
+        .iter()
+        .map(|binding| binding.server_id.as_str())
+        .collect();
+    assert_eq!(wildcard.len(), 1, "unexpected servers: {wildcard_server_ids:?}");
     assert_eq!(wildcard[0].tool_names, vec!["safe_tool".to_string()]);
 
     service

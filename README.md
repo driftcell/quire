@@ -92,7 +92,32 @@ frontend metadata.
 | `PREVIEW_PUBLIC_URL` | `http://localhost:5173` | Preview origin returned to the user |
 | `PLAYWRIGHT_MCP_URL` | — | Playwright MCP base URL; the runtime posts JSON-RPC to `<url>/mcp` |
 | `PLAYWRIGHT_MCP_PORT` | `8931` | Host port published by the compose `playwright` service |
+| `SANDBOX_PROVIDER` | `disabled` | Agent sandbox provider: `disabled`, `local` (test stub) or `fc` |
+| `SANDBOX_FC_API_KEY` | — | FC cloud-sandbox data-plane E2B API key, required for `SANDBOX_PROVIDER=fc` |
+| `SANDBOX_FC_REGION` | `cn-hangzhou` | FC region used to derive the API URL and sandbox domain |
+| `SANDBOX_FC_TEMPLATE` | `code-interpreter-v1` | Default FC sandbox template |
+| `SANDBOX_TIMEOUT_SECONDS` | `300` | Remote sandbox TTL; runtime cleanup still runs at the end of each agent run |
 | `RUNTIME_MCP_ALLOWED_HOSTS` | loopback defaults | Comma-separated Host allowlist for `/admin/mcp` |
+
+## Agent sandbox
+
+The runtime exposes `sandbox_execute`, `sandbox_read_file` and `sandbox_write_file` as allow-listed
+rig tools. Sandboxes are created lazily, reused within one agent run and destroyed at run completion;
+the TTL is a cleanup backstop. `local` is an explicit stub for tests, while `disabled` never executes
+on the host. See `docs/RUNTIME_SANDBOX.md` for the provider and lifecycle contract.
+
+For Alibaba Cloud FC Agent Sandbox:
+
+```bash
+SANDBOX_PROVIDER=fc
+SANDBOX_FC_API_KEY=<cloud-sandbox-e2b-api-key>
+SANDBOX_FC_REGION=cn-hangzhou
+SANDBOX_FC_TEMPLATE=code-interpreter-v1
+SANDBOX_TIMEOUT_SECONDS=300
+```
+
+`SANDBOX_FC_API_KEY` is the cloud-sandbox data-plane key, not an Alibaba Cloud AccessKey ID/secret
+pair. `SANDBOX_FC_API_URL` and `SANDBOX_FC_DOMAIN` can override the region-derived endpoints.
 
 ## Visual preview
 
@@ -241,7 +266,8 @@ the server or `rig` into the report engine. It owns:
 - Frozen prompt-cache prefixes: resume injects `<knowledge_update>` before the new user message
   instead of rewriting the pinned system prompt.
 - rig-core `DynamicTool` adapters over Quire MCP tools, built-in skill/task/subagent tools and a
-  `SandboxProvider` abstraction with a local stub implementation.
+  `SandboxProvider`/`Sandbox` abstraction with disabled/local providers and an optional Alibaba
+  Cloud FC implementation selected through `SANDBOX_*` environment variables.
 - `RigModelStreamProvider` is the default production model engine: it resolves branch-scoped agent
   definitions and model routes, drives rig-core streaming multi-turn tool loops, runs subagents
   concurrently with `JoinSet`, reports real token usage/context limits, persists full tool
