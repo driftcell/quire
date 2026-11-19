@@ -958,7 +958,7 @@ impl RigModelCore {
             .map(|tool| (tool.name().as_str().to_string(), tool))
             .collect();
         warn_missing_allowed_tools(&execution.agent_id, &execution.allowed_tools, &tool_map);
-        let mut total_usage = Usage::default();
+        let mut last_usage: Usage;
         let mut final_text = String::new();
         let mut suspended = false;
         loop {
@@ -1004,7 +1004,10 @@ impl RigModelCore {
                 }
             }
             let response = stream.finish().await.map_err(model_provider_error)?;
-            total_usage += response.usage;
+            // Context occupancy is the final request's prompt size, not the
+            // sum of every tool-round prompt. Keep the last call's usage so the
+            // session meter reflects the live context window.
+            last_usage = response.usage;
             let text = response_text(&response);
             if !streamed_text && !text.is_empty() {
                 scope.send(ModelStreamEvent::TextDelta(text.clone()));
@@ -1088,7 +1091,7 @@ impl RigModelCore {
             return Ok(final_text);
         }
         scope.send(ModelStreamEvent::Usage(context_usage(
-            &total_usage,
+            &last_usage,
             context_limit,
         )));
         Ok(final_text)
