@@ -1,4 +1,11 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   CheckIcon,
   ChevronDownIcon,
@@ -7,6 +14,7 @@ import {
   CopyIcon,
   FileTextIcon,
   ListTreeIcon,
+  LoaderCircleIcon,
   SparklesIcon,
   SquareIcon,
   UsersIcon,
@@ -26,7 +34,6 @@ import {
   AttachmentMedia,
   AttachmentTitle,
 } from "@/components/ui/attachment";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
@@ -36,6 +43,7 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 } from "@/components/ui/message-scroller";
 import {
   Tooltip,
@@ -84,11 +92,11 @@ export interface SessionStreamViewProps {
   liveMain: LiveAgentTrace | null;
   liveSubagents: LiveSubagentRun[];
   pendingQuestion: PendingQuestion | null;
-  resolvedQuestion?: {
+  resolvedQuestions?: Array<{
     question: PendingQuestion;
     status: "answered" | "skipped" | "dismissed";
     answers?: QuestionAnswer[];
-  } | null;
+  }>;
   isAnsweringQuestion: boolean;
   onAnswerQuestion: (
     questionId: string,
@@ -269,24 +277,29 @@ function toToolTraceItems(
   }));
 }
 
+type ThinkingRenderSegment = {
+  key: string;
+  kind: "thinking";
+  text: string;
+  isStreaming: boolean;
+  isActive: boolean;
+  defaultOpen?: boolean;
+  durationMs?: number;
+};
+
+type ExecutionRenderSegment = {
+  key: string;
+  kind: "execution";
+  tools: ToolCallTraceItem[];
+  subagentItems: ReactNode[];
+  subagentCount: number;
+  defaultOpen: boolean;
+};
+
+type TextRenderSegment = { key: string; kind: "text"; text: string };
+
 type RenderSegment =
-  | {
-      key: string;
-      kind: "thinking";
-      text: string;
-      isStreaming: boolean;
-      isActive: boolean;
-      durationMs?: number;
-    }
-  | {
-      key: string;
-      kind: "execution";
-      tools: ToolCallTraceItem[];
-      subagents: ReactNode;
-      subagentCount: number;
-      defaultOpen: boolean;
-    }
-  | { key: string; kind: "text"; text: string };
+  ThinkingRenderSegment | ExecutionRenderSegment | TextRenderSegment;
 
 const RenderSegments = memo(function RenderSegments({
   sessionId,
@@ -305,6 +318,7 @@ const RenderSegments = memo(function RenderSegments({
               content={segment.text}
               isStreaming={segment.isStreaming}
               isActive={segment.isActive}
+              defaultOpen={segment.defaultOpen}
               durationMs={segment.durationMs}
             />
           );
@@ -344,7 +358,7 @@ const RenderSegments = memo(function RenderSegments({
               </TraceCollapsibleTrigger>
               <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
                 <ToolCallList sessionId={sessionId} tools={segment.tools} />
-                {segment.subagents}
+                {segment.subagentItems}
               </TraceCollapsibleContent>
             </TraceCollapsible>
           </Trace>
@@ -361,9 +375,12 @@ function HistoricalSubagent({
   sessionId: string;
   subagent: RunTraceSubagent;
 }) {
+  const title = subagent.display_name?.trim() || subagent.agent_name;
+  const subTools = toToolTraceItems(subagent.tools);
+  const filteredTools = subTools.filter((t) => t.toolName !== "describe_task");
   return (
     <Trace>
-      <TraceCollapsible defaultOpen={false}>
+      <TraceCollapsible defaultOpen>
         <TraceCollapsibleTrigger>
           <TraceLine
             className="h-6 text-xs leading-5"
@@ -372,25 +389,40 @@ function HistoricalSubagent({
             <TraceIcon>
               <UsersIcon className="size-3.5" />
             </TraceIcon>
-            <TraceTitle>{subagent.agent_name}</TraceTitle>
-            {subagent.task && (
-              <Badge variant="outline" className="text-[10px]">
-                {subagent.task}
-              </Badge>
+            <TraceTitle>{title}</TraceTitle>
+            {subagent.task_focus?.title && (
+              <TraceDescription className="truncate text-[11px]">
+                {subagent.task_focus.title}
+              </TraceDescription>
             )}
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
-          {subagent.task_focus && (
-            <div className="text-xs text-muted-foreground">
-              {subagent.task_focus.title}
-            </div>
-          )}
-          <ThinkingTrace content={subagent.thinking} isStreaming={false} />
-          <ToolCallList
-            sessionId={sessionId}
-            tools={toToolTraceItems(subagent.tools)}
+          <ThinkingTrace
+            content={subagent.thinking}
+            isStreaming={false}
+            defaultOpen={false}
           />
+          {filteredTools.length > 0 && (
+            <Trace>
+              <TraceCollapsible defaultOpen={false}>
+                <TraceCollapsibleTrigger>
+                  <TraceLine className="h-6 text-xs leading-5">
+                    <TraceIcon>
+                      <ListTreeIcon className="size-3.5" />
+                    </TraceIcon>
+                    <TraceTitle>执行详情</TraceTitle>
+                    <TraceDescription className="text-[11px]">
+                      {filteredTools.length} 个工具
+                    </TraceDescription>
+                  </TraceLine>
+                </TraceCollapsibleTrigger>
+                <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
+                  <ToolCallList sessionId={sessionId} tools={subTools} />
+                </TraceCollapsibleContent>
+              </TraceCollapsible>
+            </Trace>
+          )}
           {subagent.summary && (
             <div className="text-xs text-muted-foreground">
               {subagent.summary}
@@ -450,17 +482,13 @@ function buildHistoricalSegments(
       key: `execution-${index}`,
       kind: "execution",
       tools,
-      subagents: (
-        <>
-          {subagents.map((subagent) => (
-            <HistoricalSubagent
-              key={subagent.subagent_run_id}
-              sessionId={sessionId}
-              subagent={subagent}
-            />
-          ))}
-        </>
-      ),
+      subagentItems: subagents.map((subagent) => (
+        <HistoricalSubagent
+          key={subagent.subagent_run_id}
+          sessionId={sessionId}
+          subagent={subagent}
+        />
+      )),
       subagentCount: subagents.length,
       defaultOpen: false,
     });
@@ -591,10 +619,13 @@ function LiveSubagent({
   sessionId: string;
   sub: LiveSubagentRun;
 }) {
-  const segments = buildLiveSegments(sessionId, sub.trace, []);
+  const segments = buildLiveSegments(sessionId, sub.trace, [], {
+    defaultCollapsed: true,
+  });
+  const title = sub.displayName?.trim() || sub.agentName;
   return (
     <Trace>
-      <TraceCollapsible defaultOpen={sub.status === "running"}>
+      <TraceCollapsible defaultOpen>
         <TraceCollapsibleTrigger>
           <TraceLine
             className="h-6 text-xs leading-5"
@@ -607,20 +638,21 @@ function LiveSubagent({
             }
           >
             <TraceIcon>
-              <UsersIcon className="size-3.5" />
+              {sub.status === "running" ? (
+                <LoaderCircleIcon className="size-3.5 animate-spin" />
+              ) : (
+                <UsersIcon className="size-3.5" />
+              )}
             </TraceIcon>
-            <TraceTitle>{sub.agentName}</TraceTitle>
-            <Badge variant="outline" className="text-[10px]">
-              {sub.task}
-            </Badge>
+            <TraceTitle>{title}</TraceTitle>
+            {sub.trace.taskFocus?.title && (
+              <TraceDescription className="truncate text-[11px]">
+                {sub.trace.taskFocus.title}
+              </TraceDescription>
+            )}
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
-          {sub.trace.taskFocus && (
-            <div className="text-xs text-muted-foreground">
-              {sub.trace.taskFocus.title}
-            </div>
-          )}
           <RenderSegments sessionId={sessionId} segments={segments} />
           {sub.summary && (
             <div className="text-xs text-muted-foreground">{sub.summary}</div>
@@ -635,6 +667,7 @@ function buildLiveSegments(
   sessionId: string,
   trace: LiveAgentTrace,
   subagents: LiveSubagentRun[],
+  options?: { defaultCollapsed?: boolean },
 ): RenderSegment[] {
   const lastIndex = trace.segments.length - 1;
   const segments: RenderSegment[] = [];
@@ -650,6 +683,7 @@ function buildLiveSegments(
         text: segment.text,
         isStreaming: trace.isStreaming && isLast,
         isActive: trace.isStreaming && isLast,
+        defaultOpen: options?.defaultCollapsed ? false : undefined,
       });
       return;
     }
@@ -674,19 +708,11 @@ function buildLiveSegments(
       key: `execution-${index}`,
       kind: "execution",
       tools: segment.tools,
-      subagents: (
-        <>
-          {runs.map((sub) => (
-            <LiveSubagent
-              key={sub.subagentRunId}
-              sessionId={sessionId}
-              sub={sub}
-            />
-          ))}
-        </>
-      ),
+      subagentItems: runs.map((sub) => (
+        <LiveSubagent key={sub.subagentRunId} sessionId={sessionId} sub={sub} />
+      )),
       subagentCount: runs.length,
-      defaultOpen: true,
+      defaultOpen: !options?.defaultCollapsed,
     });
   });
   return segments;
@@ -709,6 +735,37 @@ function LiveTraceSegments({
   );
 }
 
+function AutoFollowOnSend({
+  lastUserTurnKey,
+  hasLiveMain,
+}: {
+  lastUserTurnKey: string | null;
+  hasLiveMain: boolean;
+}) {
+  const { scrollToEnd } = useMessageScroller();
+  const prevTurnKeyRef = useRef<string | null>(lastUserTurnKey);
+  const prevLiveRef = useRef<boolean>(hasLiveMain);
+
+  useEffect(() => {
+    if (
+      lastUserTurnKey !== null &&
+      lastUserTurnKey !== prevTurnKeyRef.current
+    ) {
+      scrollToEnd({ behavior: "smooth" });
+    }
+    prevTurnKeyRef.current = lastUserTurnKey;
+  }, [lastUserTurnKey, scrollToEnd]);
+
+  useEffect(() => {
+    if (hasLiveMain && !prevLiveRef.current) {
+      scrollToEnd({ behavior: "smooth" });
+    }
+    prevLiveRef.current = hasLiveMain;
+  }, [hasLiveMain, scrollToEnd]);
+
+  return null;
+}
+
 export function SessionStreamView({
   sessionId,
   messages,
@@ -718,7 +775,7 @@ export function SessionStreamView({
   liveMain,
   liveSubagents,
   pendingQuestion,
-  resolvedQuestion,
+  resolvedQuestions = [],
   isAnsweringQuestion,
   onAnswerQuestion,
   onJumpToSection,
@@ -757,24 +814,120 @@ export function SessionStreamView({
     return [...persisted, ...pending];
   }, [messages, optimisticMessages]);
 
+  const lastUserTurnKey = useMemo(() => {
+    let userCount = 0;
+    let lastContent: string | null = null;
+    for (const msg of visibleMessages) {
+      if (msg.role === "user") {
+        userCount += 1;
+        lastContent = msg.content;
+      }
+    }
+    return lastContent !== null ? `${userCount}:${lastContent}` : null;
+  }, [visibleMessages]);
+
+  const allQuestionCards = useMemo(() => {
+    const byId = new Map<
+      string,
+      {
+        question: PendingQuestion;
+        resolvedState?: {
+          status: "answered" | "skipped" | "dismissed";
+          answers?: QuestionAnswer[];
+        };
+      }
+    >();
+    for (const item of resolvedQuestions) {
+      byId.set(item.question.question_id, {
+        question: item.question,
+        resolvedState: { status: item.status, answers: item.answers },
+      });
+    }
+    if (pendingQuestion) {
+      byId.set(pendingQuestion.question_id, { question: pendingQuestion });
+    }
+    return Array.from(byId.values());
+  }, [pendingQuestion, resolvedQuestions]);
+
+  const questionsByRunId = useMemo(() => {
+    const map = new Map<string, typeof allQuestionCards>();
+    for (const entry of allQuestionCards) {
+      const list = map.get(entry.question.run_id) ?? [];
+      list.push(entry);
+      map.set(entry.question.run_id, list);
+    }
+    return map;
+  }, [allQuestionCards]);
+
+  const anchoredQuestionIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const msg of visibleMessages) {
+      if (msg.role === "assistant" && msg.run_id) {
+        const matched = questionsByRunId.get(msg.run_id);
+        if (matched) {
+          for (const entry of matched) {
+            ids.add(entry.question.question_id);
+          }
+        }
+      }
+    }
+    return ids;
+  }, [visibleMessages, questionsByRunId]);
+
+  const unanchoredQuestions = useMemo(
+    () =>
+      allQuestionCards.filter(
+        (entry) => !anchoredQuestionIds.has(entry.question.question_id),
+      ),
+    [allQuestionCards, anchoredQuestionIds],
+  );
+
+  const renderQuestionCard = (entry: (typeof allQuestionCards)[number]) => (
+    <QuestionCard
+      key={entry.question.question_id}
+      pending={entry.question}
+      resolvedState={entry.resolvedState}
+      isSubmitting={entry.resolvedState ? false : isAnsweringQuestion}
+      onSubmit={(answers, skipped) => {
+        if (!entry.resolvedState) {
+          onAnswerQuestion(entry.question.question_id, answers, skipped);
+        }
+      }}
+    />
+  );
+
   return (
-    <MessageScrollerProvider autoScroll>
+    <MessageScrollerProvider autoScroll scrollEdgeThreshold={24}>
+      <AutoFollowOnSend
+        lastUserTurnKey={lastUserTurnKey}
+        hasLiveMain={liveMain !== null}
+      />
       <MessageScroller className="h-full">
-        <MessageScrollerViewport className="h-full px-4">
+        <MessageScrollerViewport className="px-4">
           <MessageScrollerContent className={`${contentClassName} py-4`}>
-            {visibleMessages.map((msg) => (
-              <MessageScrollerItem
-                key={msg.message_id}
-                messageId={msg.message_id}
-              >
-                <HistoricalMessageItem
-                  sessionId={sessionId}
-                  msg={msg}
-                  attachmentMap={attachmentMap}
-                  trace={msg.run_id ? traceByRunId.get(msg.run_id) : undefined}
-                />
-              </MessageScrollerItem>
-            ))}
+            {visibleMessages.map((msg) => {
+              const attachedQuestions =
+                msg.role === "assistant" && msg.run_id
+                  ? questionsByRunId.get(msg.run_id)
+                  : undefined;
+              return (
+                <MessageScrollerItem
+                  key={msg.message_id}
+                  messageId={msg.message_id}
+                  scrollAnchor={msg.role === "user"}
+                >
+                  <HistoricalMessageItem
+                    sessionId={sessionId}
+                    msg={msg}
+                    attachmentMap={attachmentMap}
+                    trace={
+                      msg.run_id ? traceByRunId.get(msg.run_id) : undefined
+                    }
+                  />
+                  {attachedQuestions?.map(renderQuestionCard)}
+                </MessageScrollerItem>
+              );
+            })}
 
             {liveMain && (
               <MessageScrollerItem messageId="live-main">
@@ -847,35 +1000,14 @@ export function SessionStreamView({
               </MessageScrollerItem>
             )}
 
-            {resolvedQuestion && !pendingQuestion && (
-              <MessageScrollerItem messageId="resolved-question">
-                <QuestionCard
-                  pending={resolvedQuestion.question}
-                  resolvedState={{
-                    status: resolvedQuestion.status,
-                    answers: resolvedQuestion.answers,
-                  }}
-                  isSubmitting={false}
-                  onSubmit={() => {}}
-                />
+            {unanchoredQuestions.map((entry) => (
+              <MessageScrollerItem
+                key={`question-${entry.question.question_id}`}
+                messageId={`question-${entry.question.question_id}`}
+              >
+                {renderQuestionCard(entry)}
               </MessageScrollerItem>
-            )}
-
-            {pendingQuestion && (
-              <MessageScrollerItem messageId="pending-question">
-                <QuestionCard
-                  pending={pendingQuestion}
-                  isSubmitting={isAnsweringQuestion}
-                  onSubmit={(answers, skipped) =>
-                    onAnswerQuestion(
-                      pendingQuestion.question_id,
-                      answers,
-                      skipped,
-                    )
-                  }
-                />
-              </MessageScrollerItem>
-            )}
+            ))}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton />

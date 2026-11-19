@@ -1,7 +1,10 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { MessageScroller as MessageScrollerPrimitive } from "@shadcn/react/message-scroller";
+import {
+  MessageScroller as MessageScrollerPrimitive,
+  useMessageScroller,
+} from "@shadcn/react/message-scroller";
 import { ArrowDownIcon } from "lucide-react";
 import { cn } from "cn";
 
@@ -97,4 +100,5 @@ export {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
+  useMessageScroller,
 };

@@ -72,7 +72,7 @@ function DocumentPage() {
   const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);
     if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
     el.classList.remove("quire-flash-highlight");
     void el.offsetWidth;
     el.classList.add("quire-flash-highlight");
@@ -103,28 +103,12 @@ function DocumentPage() {
         </div>
 
         <div className="flex items-center gap-1.5">
-          <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
-            <Button
-              type="button"
-              size="xs"
-              variant={
-                prefs.reportViewMode === "continuous" ? "default" : "ghost"
-              }
-              onClick={() => setViewMode("continuous")}
-            >
-              <ScrollTextIcon className="mr-1 size-3.5" />
-              连续
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant={prefs.reportViewMode === "paged" ? "default" : "ghost"}
-              onClick={() => setViewMode("paged")}
-            >
-              <BookOpenIcon className="mr-1 size-3.5" />
-              分页
-            </Button>
-          </div>
+          {prefs.reportViewMode === "paged" && docQuery.data && (
+            <PageChromeDialog
+              docId={docId}
+              themePageChrome={docQuery.data.document.theme.page_chrome}
+            />
+          )}
           {docQuery.data && (
             <TocOutline
               nodes={docQuery.data.computed.toc_tree}
@@ -166,12 +150,28 @@ function DocumentPage() {
           >
             <PrinterIcon className="size-4" />
           </Button>
-          {prefs.reportViewMode === "paged" && docQuery.data && (
-            <PageChromeDialog
-              docId={docId}
-              themePageChrome={docQuery.data.document.theme.page_chrome}
-            />
-          )}
+          <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
+            <Button
+              type="button"
+              size="xs"
+              variant={
+                prefs.reportViewMode === "continuous" ? "default" : "ghost"
+              }
+              onClick={() => setViewMode("continuous")}
+            >
+              <ScrollTextIcon className="mr-1 size-3.5" />
+              连续
+            </Button>
+            <Button
+              type="button"
+              size="xs"
+              variant={prefs.reportViewMode === "paged" ? "default" : "ghost"}
+              onClick={() => setViewMode("paged")}
+            >
+              <BookOpenIcon className="mr-1 size-3.5" />
+              分页
+            </Button>
+          </div>
         </div>
       </header>
 

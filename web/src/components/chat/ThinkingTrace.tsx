@@ -15,11 +15,12 @@ export interface ThinkingTraceProps {
   content: string;
   isStreaming: boolean;
   isActive?: boolean;
+  defaultOpen?: boolean;
   /** Persisted run duration, used when replaying a historical trace. */
   durationMs?: number;
 }
 
-const STICK_TO_BOTTOM_THRESHOLD_PX = 16;
+const STICK_TO_BOTTOM_THRESHOLD_PX = 24;
 
 function formatDurationSeconds(totalSeconds: number): string {
   if (totalSeconds < 60) {
@@ -34,15 +35,17 @@ export function ThinkingTrace({
   content,
   isStreaming,
   isActive = false,
+  defaultOpen,
   durationMs,
 }: ThinkingTraceProps) {
-  const [open, setOpen] = useState<boolean | undefined>(undefined);
+  const [open, setOpen] = useState<boolean | undefined>(defaultOpen);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const startedAtRef = useRef<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
 
+  const hasContent = content.trim().length > 0;
   const expanded = open ?? (isStreaming || isActive);
   const historicalSeconds =
     durationMs !== undefined && durationMs > 0
@@ -70,16 +73,18 @@ export function ThinkingTrace({
 
   useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el || !expanded || !isStreaming || !stickToBottomRef.current) {
+    if (!el || !hasContent || !expanded || !isStreaming) {
       return;
     }
-    el.scrollTop = el.scrollHeight;
-  }, [expanded, isStreaming]);
+    if (stickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [expanded, hasContent, isStreaming]);
 
   useEffect(() => {
     const inner = innerRef.current;
     const el = scrollRef.current;
-    if (!inner || !el || !expanded || !isStreaming) {
+    if (!inner || !el || !hasContent || !expanded || !isStreaming) {
       return undefined;
     }
     const observer = new ResizeObserver(() => {
@@ -89,9 +94,9 @@ export function ThinkingTrace({
     });
     observer.observe(inner);
     return () => observer.disconnect();
-  }, [expanded, isStreaming]);
+  }, [expanded, hasContent, isStreaming]);
 
-  if (!content.trim()) {
+  if (!hasContent) {
     return null;
   }
 

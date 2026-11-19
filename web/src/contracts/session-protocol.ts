@@ -105,6 +105,7 @@ export type SessionEvent1 =
       section_id?: string | null;
       subagent_run_id: string;
       task: string;
+      display_name?: string | null;
       [k: string]: unknown;
     }
   | {
@@ -228,6 +229,7 @@ export interface RunTraceSubagent {
   task_focus?: RunTaskFocus | null;
   thinking: string;
   tools?: RunTraceToolItem[];
+  display_name?: string | null;
   [k: string]: unknown;
 }
 export interface RunTaskFocus {

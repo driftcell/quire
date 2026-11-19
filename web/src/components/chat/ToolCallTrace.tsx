@@ -1,11 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  CheckCircle2Icon,
-  Loader2Icon,
-  WrenchIcon,
-  XCircleIcon,
-} from "lucide-react";
+import { Loader2Icon, WrenchIcon } from "lucide-react";
 import { getToolCall } from "@/api/runtime";
 import {
   Trace,
@@ -58,13 +53,10 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
             <TraceIcon>
               {item.status === "running" ? (
                 <Loader2Icon className="size-3.5 animate-spin" />
-              ) : item.status === "failed" ? (
-                <XCircleIcon className="size-3.5 text-destructive" />
               ) : (
-                <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                <WrenchIcon className="size-3.5" />
               )}
             </TraceIcon>
-            <WrenchIcon className="size-3 opacity-60" />
             <TraceTitle className="font-mono text-xs">
               {item.toolName}
             </TraceTitle>

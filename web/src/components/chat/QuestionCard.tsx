@@ -47,33 +47,16 @@ export function QuestionCard({
   const [selectedByQ, setSelectedByQ] = useState<Record<string, string[]>>({});
   const [freeformByQ, setFreeformByQ] = useState<Record<string, string>>({});
 
-  if (resolvedState) {
-    return (
-      <Card className="my-2 border-dashed bg-muted/30">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 py-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            {resolvedState.status === "answered" ? (
-              <CheckCircle2Icon className="size-4 text-emerald-600" />
-            ) : (
-              <SkipForwardIcon className="size-4" />
-            )}
-            <span>
-              {resolvedState.status === "answered"
-                ? "已提交问题回答"
-                : resolvedState.status === "skipped"
-                  ? "已跳过问题卡片"
-                  : "已发送新消息，原问题卡片已忽略"}
-            </span>
-          </div>
-          <Badge variant="outline" className="text-[11px]">
-            {pending.questions.length} 题
-          </Badge>
-        </CardHeader>
-      </Card>
-    );
+  const isFrozen = resolvedState !== undefined;
+  const answerByQ = new Map<string, QuestionAnswer>();
+  if (resolvedState?.answers) {
+    for (const answer of resolvedState.answers) {
+      answerByQ.set(answer.question_id, answer);
+    }
   }
 
   const toggleOption = (q: QuestionItem, optId: string) => {
+    if (isFrozen) return;
     setSelectedByQ((prev) => {
       const current = prev[q.id] ?? [];
       if (!q.multiple) {
@@ -90,6 +73,7 @@ export function QuestionCard({
   };
 
   const handleSubmit = () => {
+    if (isFrozen) return;
     const answers: QuestionAnswer[] = pending.questions.map((q) => {
       const selected = selectedByQ[q.id] ?? [];
       const freeform = (freeformByQ[q.id] ?? "").trim();
@@ -105,13 +89,36 @@ export function QuestionCard({
   };
 
   return (
-    <Card className="my-3 border-primary/25 shadow-sm">
+    <Card
+      className={
+        isFrozen
+          ? "my-3 border-border/70 bg-muted/25 shadow-none"
+          : "my-3 border-primary/25 shadow-sm"
+      }
+    >
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
-          <HelpCircleIcon className="size-4 text-primary" />
-          <span>Agent 需要你的确认</span>
-          <Badge variant="secondary" className="ml-auto text-[11px]">
-            可跳过或直接输入新消息
+          {resolvedState?.status === "answered" ? (
+            <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
+          ) : resolvedState ? (
+            <SkipForwardIcon className="size-4 text-muted-foreground" />
+          ) : (
+            <HelpCircleIcon className="size-4 text-primary" />
+          )}
+          <span>
+            {resolvedState?.status === "answered"
+              ? "已提交问题回答"
+              : resolvedState?.status === "skipped"
+                ? "已跳过问题"
+                : resolvedState?.status === "dismissed"
+                  ? "已忽略问题"
+                  : "Agent 需要你的确认"}
+          </span>
+          <Badge
+            variant={isFrozen ? "outline" : "secondary"}
+            className="ml-auto text-[11px]"
+          >
+            {isFrozen ? "已锁定" : "可跳过或直接输入新消息"}
           </Badge>
         </CardTitle>
       </CardHeader>
@@ -124,8 +131,13 @@ export function QuestionCard({
         >
           {pending.questions.length > 1 && <QuestionnaireProgress />}
           {pending.questions.map((q) => {
-            const selected = selectedByQ[q.id] ?? [];
-            const freeform = freeformByQ[q.id] ?? "";
+            const resolvedAnswer = answerByQ.get(q.id);
+            const selected = isFrozen
+              ? (resolvedAnswer?.selected_option_ids ?? selectedByQ[q.id] ?? [])
+              : (selectedByQ[q.id] ?? []);
+            const freeform = isFrozen
+              ? (resolvedAnswer?.freeform_text ?? freeformByQ[q.id] ?? "")
+              : (freeformByQ[q.id] ?? "");
             const options = q.options ?? [];
             return (
               <QuestionnaireItem key={q.id} name={q.id} multiple={q.multiple}>
@@ -141,6 +153,7 @@ export function QuestionCard({
                       <QuestionnaireChoice
                         key={opt.id}
                         value={opt.id}
+                        disabled={isFrozen}
                         checked={selected.includes(opt.id)}
                         onChange={() => toggleOption(q, opt.id)}
                       >
@@ -154,29 +167,36 @@ export function QuestionCard({
                     ))}
                   </QuestionnaireChoices>
                 )}
-                <QuestionnaireInput
-                  aria-label={`${q.title} 补充说明`}
-                  placeholder="自由补充说明（可选）..."
-                  value={freeform}
-                  onChange={(event) => {
-                    const value = event.target.value;
-                    setFreeformByQ((prev) => ({ ...prev, [q.id]: value }));
-                  }}
-                />
-                <QuestionnaireActions>
-                  <QuestionnairePrevious />
-                  <QuestionnaireSkip
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => onSubmit([], true)}
-                  >
-                    跳过全部
-                  </QuestionnaireSkip>
-                  <QuestionnaireNext />
-                  <QuestionnaireSubmit disabled={isSubmitting}>
-                    {isSubmitting ? "提交中..." : "提交回答"}
-                  </QuestionnaireSubmit>
-                </QuestionnaireActions>
+                {(!isFrozen || freeform.trim().length > 0) && (
+                  <QuestionnaireInput
+                    aria-label={`${q.title} 补充说明`}
+                    placeholder="自由补充说明（可选）..."
+                    disabled={isFrozen}
+                    readOnly={isFrozen}
+                    value={freeform}
+                    onChange={(event) => {
+                      if (isFrozen) return;
+                      const value = event.target.value;
+                      setFreeformByQ((prev) => ({ ...prev, [q.id]: value }));
+                    }}
+                  />
+                )}
+                {!isFrozen && (
+                  <QuestionnaireActions>
+                    <QuestionnairePrevious />
+                    <QuestionnaireSkip
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => onSubmit([], true)}
+                    >
+                      跳过全部
+                    </QuestionnaireSkip>
+                    <QuestionnaireNext />
+                    <QuestionnaireSubmit disabled={isSubmitting}>
+                      {isSubmitting ? "提交中..." : "提交回答"}
+                    </QuestionnaireSubmit>
+                  </QuestionnaireActions>
+                )}
               </QuestionnaireItem>
             );
           })}

@@ -943,12 +943,12 @@ export function ReportViewer({
 
   const previewList = useMemo(
     () =>
-      ephemeralPreviews
+      !isPaged && ephemeralPreviews
         ? Array.from(ephemeralPreviews.values()).filter(
             (p) => p.status === "streaming",
           )
         : [],
-    [ephemeralPreviews],
+    [ephemeralPreviews, isPaged],
   );
 
   const layoutSignature = useMemo(

@@ -164,11 +164,13 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [liveSubagents, setLiveSubagents] = useState<LiveSubagentRun[]>([]);
   const [livePendingQuestion, setLivePendingQuestion] =
     useState<PendingQuestion | null>(null);
-  const [resolvedQuestion, setResolvedQuestion] = useState<{
-    question: PendingQuestion;
-    status: "answered" | "skipped" | "dismissed";
-    answers?: QuestionAnswer[];
-  } | null>(null);
+  const [resolvedQuestions, setResolvedQuestions] = useState<
+    Array<{
+      question: PendingQuestion;
+      status: "answered" | "skipped" | "dismissed";
+      answers?: QuestionAnswer[];
+    }>
+  >([]);
   const [isAnsweringQuestion, setIsAnsweringQuestion] = useState(false);
 
   const [ephemeralPreviews, setEphemeralPreviews] = useState<
@@ -210,6 +212,29 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const effectivePendingQuestion: PendingQuestion | null =
     livePendingQuestion ?? sessionQuery.data?.pending_question ?? null;
+  const effectivePendingQuestionRef = useRef<PendingQuestion | null>(
+    effectivePendingQuestion,
+  );
+  useEffect(() => {
+    effectivePendingQuestionRef.current = effectivePendingQuestion;
+  }, [effectivePendingQuestion]);
+
+  const recordResolvedQuestion = useCallback(
+    (
+      question: PendingQuestion,
+      status: "answered" | "skipped" | "dismissed",
+      answers?: QuestionAnswer[],
+    ) => {
+      setResolvedQuestions((prev) => {
+        const next = prev.filter(
+          (item) => item.question.question_id !== question.question_id,
+        );
+        next.push({ question, status, answers });
+        return next;
+      });
+    },
+    [],
+  );
 
   const docQuery = useQuery({
     queryKey: ["doc", effectiveDocId],
@@ -367,6 +392,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           {
             subagentRunId: ev.subagent_run_id,
             agentName: ev.agent_name,
+            displayName: ev.display_name ?? undefined,
             task: ev.task,
             sectionId: ev.section_id ?? undefined,
             status: "running",
@@ -402,25 +428,26 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           questions: ev.questions,
           created_at: ev.timestamp,
         });
-        setResolvedQuestion(null);
       } else if (ev.event === "questionnaire_answered") {
-        setLivePendingQuestion((curr) => {
-          if (curr) {
-            setResolvedQuestion({
-              question: curr,
-              status: ev.skipped_all ? "skipped" : "answered",
-              answers: ev.answers,
-            });
-          }
-          return null;
-        });
+        const target = effectivePendingQuestionRef.current;
+        if (target && target.question_id === ev.question_id) {
+          recordResolvedQuestion(
+            target,
+            ev.skipped_all ? "skipped" : "answered",
+            ev.answers,
+          );
+        }
+        setLivePendingQuestion((curr) =>
+          curr?.question_id === ev.question_id ? null : curr,
+        );
       } else if (ev.event === "questionnaire_dismissed") {
-        setLivePendingQuestion((curr) => {
-          if (curr) {
-            setResolvedQuestion({ question: curr, status: "dismissed" });
-          }
-          return null;
-        });
+        const target = effectivePendingQuestionRef.current;
+        if (target && target.question_id === ev.question_id) {
+          recordResolvedQuestion(target, "dismissed");
+        }
+        setLivePendingQuestion((curr) =>
+          curr?.question_id === ev.question_id ? null : curr,
+        );
       } else if (ev.event === "turn_finished") {
         setLiveRunStatus("idle");
         void (async () => {
@@ -452,7 +479,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     return subscribeSessionEvents(sessionId, afterSeqRef.current, {
       onEvent: handleEvent,
     });
-  }, [sessionId, sessionQuery.isSuccess, queryClient]);
+  }, [sessionId, sessionQuery.isSuccess, queryClient, recordResolvedQuestion]);
 
   const currentRevRef = useRef<number>(0);
   const currentRev = docQuery.data?.current_rev ?? 0;
@@ -661,6 +688,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         content,
         attachment_ids: attachmentIds,
       });
+      if (effectivePendingQuestion) {
+        recordResolvedQuestion(effectivePendingQuestion, "dismissed");
+      }
       setLivePendingQuestion(null);
       await queryClient.invalidateQueries({
         queryKey: ["session", sessionId],
@@ -684,6 +714,16 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     setIsAnsweringQuestion(true);
     try {
       await answerQuestion(sessionId, questionId, { answers, skipped });
+      if (
+        effectivePendingQuestion &&
+        effectivePendingQuestion.question_id === questionId
+      ) {
+        recordResolvedQuestion(
+          effectivePendingQuestion,
+          skipped ? "skipped" : "answered",
+          answers,
+        );
+      }
       setLivePendingQuestion(null);
       void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
     } finally {
@@ -694,7 +734,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);
     if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
     el.classList.remove("quire-flash-highlight");
     void el.offsetWidth;
     el.classList.add("quire-flash-highlight");
@@ -757,7 +797,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             liveMain={liveMain}
             liveSubagents={liveSubagents}
             pendingQuestion={effectivePendingQuestion}
-            resolvedQuestion={resolvedQuestion}
+            resolvedQuestions={resolvedQuestions}
             isAnsweringQuestion={isAnsweringQuestion}
             onAnswerQuestion={(qId, answers, skipped) => {
               void handleAnswerQuestion(qId, answers, skipped);
@@ -831,30 +871,12 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant={
-                    prefs.reportViewMode === "continuous" ? "default" : "ghost"
-                  }
-                  onClick={() => updatePrefs({ reportViewMode: "continuous" })}
-                >
-                  <ScrollTextIcon className="size-3.5 @min-[560px]:mr-1" />
-                  <span className="hidden @min-[560px]:inline">连续</span>
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant={
-                    prefs.reportViewMode === "paged" ? "default" : "ghost"
-                  }
-                  onClick={() => updatePrefs({ reportViewMode: "paged" })}
-                >
-                  <BookOpenIcon className="size-3.5 @min-[560px]:mr-1" />
-                  <span className="hidden @min-[560px]:inline">分页</span>
-                </Button>
-              </div>
+              {prefs.reportViewMode === "paged" && effectiveDocId && (
+                <PageChromeDialog
+                  docId={effectiveDocId}
+                  themePageChrome={docQuery.data?.document.theme.page_chrome}
+                />
+              )}
 
               <TocOutline
                 placement="bottom"
@@ -899,12 +921,30 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 <PrinterIcon className="size-4" />
               </Button>
 
-              {prefs.reportViewMode === "paged" && effectiveDocId && (
-                <PageChromeDialog
-                  docId={effectiveDocId}
-                  themePageChrome={docQuery.data?.document.theme.page_chrome}
-                />
-              )}
+              <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={
+                    prefs.reportViewMode === "continuous" ? "default" : "ghost"
+                  }
+                  onClick={() => updatePrefs({ reportViewMode: "continuous" })}
+                >
+                  <ScrollTextIcon className="size-3.5 @min-[560px]:mr-1" />
+                  <span className="hidden @min-[560px]:inline">连续</span>
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={
+                    prefs.reportViewMode === "paged" ? "default" : "ghost"
+                  }
+                  onClick={() => updatePrefs({ reportViewMode: "paged" })}
+                >
+                  <BookOpenIcon className="size-3.5 @min-[560px]:mr-1" />
+                  <span className="hidden @min-[560px]:inline">分页</span>
+                </Button>
+              </div>
             </div>
           </div>
         )}

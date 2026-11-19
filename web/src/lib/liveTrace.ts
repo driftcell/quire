@@ -19,6 +19,7 @@ export interface LiveAgentTrace {
 export interface LiveSubagentRun {
   subagentRunId: string;
   agentName: string;
+  displayName?: string;
   task: string;
   sectionId?: string;
   status: "running" | "completed" | "failed";
