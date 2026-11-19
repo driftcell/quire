@@ -15,6 +15,7 @@ import { PromptComposer } from "@/components/chat/PromptComposer";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { randomUuid } from "@/lib/uuid";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
@@ -67,7 +68,7 @@ function HomePage() {
         attachmentIds.push(uploaded.attachment_id);
       }
       await postMessage(session.session_id, {
-        client_msg_id: `msg_${crypto.randomUUID()}`,
+        client_msg_id: `msg_${randomUuid()}`,
         content: text || `请分析已上传的 ${files.length} 个附件并生成报告。`,
         attachment_ids: attachmentIds,
       });

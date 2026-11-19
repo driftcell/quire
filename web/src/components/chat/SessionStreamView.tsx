@@ -136,14 +136,37 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+async function copyText(text: string): Promise<void> {
+  const clipboard = navigator.clipboard;
+  if (clipboard && typeof clipboard.writeText === "function") {
+    await clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    document.execCommand("copy");
+  } finally {
+    textarea.remove();
+  }
+}
+
 function CopyMessageButton({ content }: { content: string }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    void navigator.clipboard.writeText(content).then(() => {
+  const handleCopy = async () => {
+    try {
+      await copyText(content);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
-    });
+    } catch {
+      setCopied(false);
+    }
   };
 
   return (
@@ -155,7 +178,9 @@ function CopyMessageButton({ content }: { content: string }) {
             variant="ghost"
             size="icon-xs"
             aria-label={copied ? "已复制" : "拷贝回复"}
-            onClick={handleCopy}
+            onClick={() => {
+              void handleCopy();
+            }}
             className="text-muted-foreground hover:text-foreground"
           />
         }

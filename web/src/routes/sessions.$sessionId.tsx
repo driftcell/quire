@@ -83,6 +83,7 @@ import {
   type LiveSubagentRun,
 } from "@/lib/liveTrace";
 import { loadPreferences, savePreferences } from "@/lib/preferences";
+import { randomUuid } from "@/lib/uuid";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   component: SessionWorkspaceRoute,
@@ -668,7 +669,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const handleSend = async (text: string, files: File[]) => {
     const content = text || `请处理已上传的 ${files.length} 个附件。`;
-    const tempId = `opt_${crypto.randomUUID()}`;
+    const tempId = `opt_${randomUuid()}`;
     const optimistic: SessionMessage = {
       message_id: tempId,
       session_id: sessionId,
@@ -684,7 +685,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         attachmentIds.push(uploaded.attachment_id);
       }
       await postMessage(sessionId, {
-        client_msg_id: `msg_${crypto.randomUUID()}`,
+        client_msg_id: `msg_${randomUuid()}`,
         content,
         attachment_ids: attachmentIds,
       });
