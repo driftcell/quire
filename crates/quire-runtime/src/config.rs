@@ -8,6 +8,8 @@ use std::{
 
 use secrecy::SecretString;
 
+use crate::sandbox::SandboxConfig;
+
 #[derive(Clone)]
 pub struct Config {
     pub database_url: String,
@@ -29,6 +31,7 @@ pub struct Config {
     pub preview_base_url: String,
     pub preview_public_url: String,
     pub playwright_mcp_url: Option<String>,
+    pub sandbox: SandboxConfig,
 }
 
 impl Debug for Config {
@@ -60,6 +63,7 @@ impl Debug for Config {
             .field("preview_base_url", &self.preview_base_url)
             .field("preview_public_url", &self.preview_public_url)
             .field("playwright_mcp_url", &self.playwright_mcp_url)
+            .field("sandbox", &self.sandbox)
             .finish()
     }
 }
@@ -109,6 +113,7 @@ impl Config {
         let playwright_mcp_url = env::var("PLAYWRIGHT_MCP_URL")
             .ok()
             .filter(|value| !value.trim().is_empty());
+        let sandbox = SandboxConfig::from_env();
         Self {
             database_url,
             redis_url,
@@ -129,6 +134,7 @@ impl Config {
             preview_base_url,
             preview_public_url,
             playwright_mcp_url,
+            sandbox,
         }
     }
 
@@ -182,6 +188,7 @@ mod tests {
             preview_base_url: "http://127.0.0.1:5173".into(),
             preview_public_url: "http://localhost:5173".into(),
             playwright_mcp_url: None,
+            sandbox: SandboxConfig::default(),
         };
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[REDACTED]"));

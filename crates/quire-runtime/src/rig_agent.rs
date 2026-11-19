@@ -7,6 +7,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::StreamExt;
 use quire_protocol::{
     BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
@@ -46,6 +47,7 @@ use crate::{
     model_stream::{ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest},
     models::{ModelRegistry, ProviderProtocol},
     prompt::ContextMessage,
+    sandbox::{SandboxExecRequest, SandboxLease, SandboxProvider, sandbox_spec_from_config},
 };
 
 pub const BUILTIN_TOOLS: &[&str] = &[
@@ -57,6 +59,9 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "spawn_subagents",
     "ask_user",
     "preview_report",
+    "sandbox_execute",
+    "sandbox_read_file",
+    "sandbox_write_file",
 ];
 
 /// Match an agent allow-list entry against a tool name. `*` matches every tool.
@@ -273,6 +278,7 @@ struct RuntimeToolScope {
     event_scope: EventScope,
     pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
     supports_vision: bool,
+    sandbox: Arc<SandboxLease>,
 }
 
 fn runtime_tool_scope(context: &ToolContext) -> Result<Arc<RuntimeToolScope>, ToolExecutionError> {
@@ -313,6 +319,125 @@ pub struct SubagentOutcome {
 
 fn tool_other(error: impl std::fmt::Display) -> ToolExecutionError {
     ToolExecutionError::other(error.to_string())
+}
+
+const MAX_TOOL_CODE_BYTES: usize = 256 * 1024;
+const MAX_TOOL_FILE_BYTES: usize = 256 * 1024;
+const MAX_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
+
+fn bounded_tool_text(text: String) -> (String, bool) {
+    if text.len() <= MAX_TOOL_OUTPUT_BYTES {
+        return (text, false);
+    }
+    let mut end = MAX_TOOL_OUTPUT_BYTES;
+    while !text.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    (text.get(..end).unwrap_or_default().to_string(), true)
+}
+
+#[rig_tool(
+    name = "sandbox_execute",
+    description = "Execute Python, JavaScript or Bash in this run's isolated remote sandbox. Files and installed dependencies persist across sandbox calls in the same run. The sandbox is created on first use and destroyed when the run ends."
+)]
+async fn sandbox_execute_tool(
+    #[rig(context)] context: &mut ToolContext,
+    language: String,
+    code: String,
+    cwd: Option<String>,
+    timeout_seconds: Option<u64>,
+) -> Result<Value, ToolExecutionError> {
+    if code.len() > MAX_TOOL_CODE_BYTES {
+        return Err(ToolExecutionError::invalid_args(format!(
+            "code exceeds the {MAX_TOOL_CODE_BYTES}-byte tool limit"
+        )));
+    }
+    let runtime = runtime_tool_scope(context)?;
+    let sandbox = runtime.sandbox.get_or_create().await.map_err(tool_other)?;
+    let result = sandbox
+        .exec_code(SandboxExecRequest {
+            language,
+            code,
+            cwd,
+            timeout_seconds,
+        })
+        .await
+        .map_err(tool_other)?;
+    let (stdout, stdout_bounded) = bounded_tool_text(result.stdout);
+    let (stderr, stderr_bounded) = bounded_tool_text(result.stderr);
+    Ok(json!({
+        "sandbox_id": sandbox.id(),
+        "exit_code": result.exit_code,
+        "stdout": stdout,
+        "stderr": stderr,
+        "stdout_truncated": result.stdout_truncated || stdout_bounded,
+        "stderr_truncated": result.stderr_truncated || stderr_bounded,
+    }))
+}
+
+#[rig_tool(
+    name = "sandbox_read_file",
+    description = "Read a file from this run's sandbox. UTF-8 text is returned directly; binary content is base64 encoded. Files larger than 256 KiB must be chunked with sandbox_execute."
+)]
+async fn sandbox_read_file_tool(
+    #[rig(context)] context: &mut ToolContext,
+    path: String,
+) -> Result<Value, ToolExecutionError> {
+    if path.trim().is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "path cannot be empty".to_string(),
+        ));
+    }
+    let runtime = runtime_tool_scope(context)?;
+    let sandbox = runtime.sandbox.get_or_create().await.map_err(tool_other)?;
+    let bytes = sandbox.download_file(&path).await.map_err(tool_other)?;
+    if bytes.len() > MAX_TOOL_FILE_BYTES {
+        return Err(ToolExecutionError::other(format!(
+            "file exceeds the {MAX_TOOL_FILE_BYTES}-byte tool limit; read a chunk with sandbox_execute"
+        )));
+    }
+    let (encoding, content) = match String::from_utf8(bytes) {
+        Ok(text) => ("utf-8".to_string(), text),
+        Err(error) => ("base64".to_string(), BASE64.encode(error.into_bytes())),
+    };
+    Ok(json!({
+        "sandbox_id": sandbox.id(),
+        "path": path,
+        "encoding": encoding,
+        "content": content,
+    }))
+}
+
+#[rig_tool(
+    name = "sandbox_write_file",
+    description = "Write a UTF-8 text file in this run's sandbox, creating missing parent directories when the provider supports it. The content limit is 256 KiB."
+)]
+async fn sandbox_write_file_tool(
+    #[rig(context)] context: &mut ToolContext,
+    path: String,
+    content: String,
+) -> Result<Value, ToolExecutionError> {
+    if path.trim().is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "path cannot be empty".to_string(),
+        ));
+    }
+    if content.len() > MAX_TOOL_FILE_BYTES {
+        return Err(ToolExecutionError::invalid_args(format!(
+            "content exceeds the {MAX_TOOL_FILE_BYTES}-byte tool limit"
+        )));
+    }
+    let runtime = runtime_tool_scope(context)?;
+    let sandbox = runtime.sandbox.get_or_create().await.map_err(tool_other)?;
+    sandbox
+        .upload_file(&path, content.as_bytes())
+        .await
+        .map_err(tool_other)?;
+    Ok(json!({
+        "sandbox_id": sandbox.id(),
+        "path": path,
+        "bytes_written": content.len(),
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -571,6 +696,7 @@ impl RigModelStreamProvider {
         models: Arc<ModelRegistry>,
         config: Arc<Config>,
         mcp: Arc<McpRegistry>,
+        sandbox_provider: Arc<dyn SandboxProvider>,
     ) -> Self {
         Self {
             core: Arc::new(RigModelCore {
@@ -578,6 +704,7 @@ impl RigModelStreamProvider {
                 models,
                 config,
                 mcp,
+                sandbox_provider,
             }),
         }
     }
@@ -616,6 +743,7 @@ struct RigModelCore {
     models: Arc<ModelRegistry>,
     config: Arc<Config>,
     mcp: Arc<McpRegistry>,
+    sandbox_provider: Arc<dyn SandboxProvider>,
 }
 
 #[derive(Clone)]
@@ -767,12 +895,24 @@ impl RigModelCore {
         let supports_vision = resolved.supports_vision;
         let pending_preview_images: Arc<Mutex<Vec<PreviewImage>>> =
             Arc::new(Mutex::new(Vec::new()));
+        let mut sandbox_spec = sandbox_spec_from_config(&self.config.sandbox);
+        sandbox_spec
+            .metadata
+            .insert("quire_run_id".into(), execution.run_id.clone());
+        sandbox_spec
+            .metadata
+            .insert("quire_session_id".into(), execution.session_id.clone());
+        let sandbox_lease = Arc::new(SandboxLease::new(
+            Arc::clone(&self.sandbox_provider),
+            sandbox_spec,
+        ));
         let mut tools = self.build_tools(
             &execution,
             scope.clone(),
             Arc::clone(&self),
             Arc::clone(&pending_preview_images),
             supports_vision,
+            Arc::clone(&sandbox_lease),
         )?;
         for binding in self.mcp.tools_for_agent(&execution.allowed_tools).await? {
             let allowed: Vec<String> = binding
@@ -941,6 +1081,9 @@ impl RigModelCore {
                 }
             }
         }
+        if let Err(error) = sandbox_lease.close().await {
+            warn!(%error, run_id = %execution.run_id, "sandbox cleanup failed; provider TTL remains the backstop");
+        }
         if execution.cancellation.is_cancelled() {
             return Ok(final_text);
         }
@@ -958,6 +1101,7 @@ impl RigModelCore {
         engine: Arc<RigModelCore>,
         pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
         supports_vision: bool,
+        sandbox: Arc<SandboxLease>,
     ) -> RuntimeResult<Vec<DynamicTool>> {
         let runtime = Arc::new(RuntimeToolScope {
             engine,
@@ -965,11 +1109,27 @@ impl RigModelCore {
             event_scope: scope,
             pending_preview_images,
             supports_vision,
+            sandbox,
         });
         let mut tools = Vec::new();
         if allow_list_matches(&execution.allowed_tools, "preview_report") {
             tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
                 PreviewReportTool
+            })?);
+        }
+        if allow_list_matches(&execution.allowed_tools, "sandbox_execute") {
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                SandboxExecuteTool
+            })?);
+        }
+        if allow_list_matches(&execution.allowed_tools, "sandbox_read_file") {
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                SandboxReadFileTool
+            })?);
+        }
+        if allow_list_matches(&execution.allowed_tools, "sandbox_write_file") {
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                SandboxWriteFileTool
             })?);
         }
         if allow_list_matches(&execution.allowed_tools, "load_skill") {
@@ -1725,6 +1885,31 @@ mod tests {
         assert!(allow_list_matches(&allowed, "lint_document"));
         assert!(!allow_list_matches(&allowed, "ask_user"));
         assert!(!allow_list_matches(&[], "spawn_subagents"));
+    }
+
+    #[test]
+    fn sandbox_tool_schema_exposes_code_and_optional_limits() {
+        let parameters = SANDBOX_EXECUTE_TOOL.parameters();
+        let properties = parameters
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("sandbox_execute schema should have properties");
+        assert!(properties.contains_key("language"));
+        assert!(properties.contains_key("code"));
+        assert!(properties.contains_key("cwd"));
+        assert!(properties.contains_key("timeout_seconds"));
+        assert_eq!(
+            parameters.get("required"),
+            Some(&json!(["language", "code"]))
+        );
+    }
+
+    #[test]
+    fn bounded_tool_text_preserves_utf8_boundaries() {
+        let (text, truncated) = bounded_tool_text("好".repeat(MAX_TOOL_OUTPUT_BYTES));
+        assert!(truncated);
+        assert!(text.is_char_boundary(text.len()));
+        assert!(text.len() <= MAX_TOOL_OUTPUT_BYTES);
     }
 
     #[test]

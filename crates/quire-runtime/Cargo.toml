@@ -42,7 +42,7 @@ rig-core.workspace = true
 rig-rmcp.workspace = true
 rmcp.workspace = true
 http.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["multipart", "stream"] }
 
 [dev-dependencies]
 tempfile = "3"

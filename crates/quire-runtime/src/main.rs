@@ -7,6 +7,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use quire_runtime::{
     Config, KbService, ModelRegistry, RigModelStreamProvider, RuntimeService, RuntimeStore, http,
+    sandbox::build_sandbox_provider,
 };
 use tracing::info;
 
@@ -42,6 +43,8 @@ async fn main() -> anyhow::Result<()> {
             "default model route is not active; register a provider/model before starting sessions"
         );
     }
+    let sandbox_provider =
+        build_sandbox_provider(&config.sandbox).context("configure sandbox provider")?;
     let runtime_config = Arc::new(config.clone());
     let service = RuntimeService::new(store, kb.clone(), models.clone(), runtime_config.clone());
     let mcp = service.mcp_registry();
@@ -50,6 +53,7 @@ async fn main() -> anyhow::Result<()> {
         models,
         runtime_config,
         mcp,
+        sandbox_provider,
     )));
     let recovered = service.boot().await.context("runtime boot recovery")?;
     let seed = service.seed().await.context("runtime knowledge seed")?;
