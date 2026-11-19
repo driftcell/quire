@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import {
   FloatingPortal,
   autoUpdate,
@@ -11,7 +11,7 @@ import {
   useRole,
   type VirtualElement,
 } from "@floating-ui/react";
-import { MessageSquarePlusIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type { TextQuoteSelector } from "@/contracts/report-protocol";
@@ -49,6 +49,7 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
 }: FloatingCommentPopoverProps) {
   const [newBody, setNewBody] = useState("");
   const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const virtualReference = useMemo<VirtualElement | null>(() => {
     if (!anchor) {
@@ -90,6 +91,11 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
   useEffect(() => {
     floatingRefs.setPositionReference(virtualReference);
   }, [floatingRefs, virtualReference]);
+  useEffect(() => {
+    if (anchor) {
+      inputRef.current?.focus();
+    }
+  }, [anchor]);
   const dismiss = useDismiss(context, {
     escapeKey: true,
     outsidePress: true,
@@ -123,19 +129,14 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
           floatingRefs.setFloating(node);
         }}
         style={floatingStyles}
-        aria-label="新建块级批注"
+        aria-label="添加批注"
         {...getFloatingProps({
           className:
-            "bg-popover text-popover-foreground z-50 flex w-[340px] flex-col rounded-xl border p-0 shadow-xl ring-1 ring-black/5 dark:ring-white/10 print:hidden",
+            "bg-popover text-popover-foreground z-50 flex w-[300px] flex-col rounded-lg border p-0 shadow-lg print:hidden",
         })}
       >
-        <div className="flex items-center justify-between border-b px-3 py-2">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className="text-xs font-semibold">新建批注</span>
-            <code className="truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
-              #{anchor.blockId}
-            </code>
-          </div>
+        <div className="flex items-center justify-between border-b px-3.5 py-2.5">
+          <span className="text-xs font-medium">添加批注</span>
           <Button
             type="button"
             size="icon-xs"
@@ -147,25 +148,36 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
           </Button>
         </div>
 
-        <div className="space-y-2 p-3 text-xs">
+        <div className="space-y-3 p-3.5 text-xs">
           {anchor.quote && (
-            <div className="rounded border-l-2 border-amber-500 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-800 dark:text-amber-200">
-              选中：“{anchor.quote.exact}”
-            </div>
+            <p className="line-clamp-2 border-l-2 border-border pl-2 text-[11px] text-muted-foreground">
+              {anchor.quote.exact}
+            </p>
           )}
           {existingCount > 0 && (
-            <div className="text-[11px] text-muted-foreground">
-              此块已有 {existingCount} 条批注，可在右侧批注面板查看。
-            </div>
+            <p className="text-[11px] text-muted-foreground">
+              此块已有 {existingCount} 条批注
+            </p>
           )}
           <Textarea
+            ref={inputRef}
             rows={3}
             value={newBody}
-            placeholder="输入批注或修改建议... (⌘/Ctrl + Enter 发送)"
+            placeholder="添加批注..."
             className="text-xs"
             onChange={(event) => setNewBody(event.target.value)}
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.currentTarget.blur();
+                onClose();
+                return;
+              }
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
+                !event.nativeEvent.isComposing
+              ) {
                 event.preventDefault();
                 submit();
               }
@@ -178,8 +190,7 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
               disabled={busy || !newBody.trim()}
               onClick={submit}
             >
-              <MessageSquarePlusIcon className="mr-1.5 size-3.5" />
-              发送批注
+              添加
             </Button>
           </div>
         </div>

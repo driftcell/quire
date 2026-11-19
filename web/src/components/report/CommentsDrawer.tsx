@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArchiveIcon,
-  CheckCircle2Icon,
+  ArrowUpRightIcon,
   GitCompareArrowsIcon,
   MessageSquareIcon,
-  RotateCcwIcon,
-  SparklesIcon,
-  Trash2Icon,
   XIcon,
 } from "lucide-react";
 import { getDocumentDiff } from "@/api/quire";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -62,12 +57,25 @@ function summarizeBlock(block: Block): string {
   return `[HTML] ${title}`;
 }
 
-function statusLabel(thread: CommentThread): string {
-  if (thread.status === "open") return "待处理";
-  if (thread.status === "addressed") {
-    return `Agent 已处理 (rev ${thread.addressed_rev ?? "?"})`;
-  }
+function statusLabel(status: CommentFilter): string {
+  if (status === "open") return "待处理";
+  if (status === "addressed") return "已处理";
   return "已归档";
+}
+
+function StatusDot({ status }: { status: CommentFilter }) {
+  const color =
+    status === "open"
+      ? "bg-amber-500"
+      : status === "addressed"
+        ? "bg-emerald-500"
+        : "bg-muted-foreground/40";
+  return (
+    <span
+      className={`size-1.5 shrink-0 rounded-full ${color}`}
+      aria-hidden="true"
+    />
+  );
 }
 
 export function CommentsPanel({
@@ -82,11 +90,11 @@ export function CommentsPanel({
   onUpdateStatus,
   onAskAgent,
 }: CommentsPanelProps) {
-  const [replyByThread, setReplyByThread] = useState<Record<string, string>>(
-    {},
-  );
   const [filter, setFilter] = useState<CommentFilter>("open");
   const [busy, setBusy] = useState(false);
+  const [replyThreadId, setReplyThreadId] = useState<string | null>(null);
+  const [replyDraft, setReplyDraft] = useState("");
+  const replyInputRef = useRef<HTMLTextAreaElement>(null);
   const [diffRange, setDiffRange] = useState<{
     fromRev: number;
     toRev: number;
@@ -132,6 +140,12 @@ export function CommentsPanel({
     return () => window.clearTimeout(timer);
   }, [activeThreadId, threads.length]);
 
+  useEffect(() => {
+    if (replyThreadId) {
+      replyInputRef.current?.focus();
+    }
+  }, [replyThreadId]);
+
   const diffQuery = useQuery({
     queryKey: ["doc-diff", docId, diffRange?.fromRev, diffRange?.toRev],
     queryFn: () =>
@@ -143,12 +157,25 @@ export function CommentsPanel({
     enabled: Boolean(diffRange),
   });
 
+  const submitReply = async (threadId: string) => {
+    const body = replyDraft.trim();
+    if (!body || !onReply || busy) return;
+    setBusy(true);
+    try {
+      await onReply(threadId, body);
+      setReplyDraft("");
+      setReplyThreadId(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <div className="flex h-full min-h-0 flex-col bg-background">
         <div className="flex shrink-0 items-center gap-1 border-b px-3 py-2">
-          <div className="flex items-center gap-1.5 text-xs font-semibold">
-            <MessageSquareIcon className="size-3.5 text-amber-600 dark:text-amber-400" />
+          <div className="flex items-center gap-1.5 text-xs font-medium">
+            <MessageSquareIcon className="size-3.5 text-muted-foreground" />
             <span>批注</span>
             {readOnly && (
               <span className="text-[10px] font-normal text-muted-foreground">
@@ -159,21 +186,23 @@ export function CommentsPanel({
           <div className="ml-auto flex items-center gap-0.5">
             {(
               [
-                ["open", "待处理", counts.open],
-                ["addressed", "已处理", counts.addressed],
-                ["archived", "已归档", counts.archived],
+                ["open", counts.open],
+                ["addressed", counts.addressed],
+                ["archived", counts.archived],
               ] as const
-            ).map(([value, label, count]) => (
+            ).map(([value, count]) => (
               <Button
                 key={value}
                 type="button"
                 size="xs"
-                variant={filter === value ? "default" : "ghost"}
-                className="h-7 px-1.5 text-[10px]"
+                variant={filter === value ? "secondary" : "ghost"}
+                className="h-7 gap-1 px-1.5 text-[10px] text-muted-foreground"
+                aria-pressed={filter === value}
                 onClick={() => setFilter(value)}
               >
-                {label}
-                <span className="ml-0.5 tabular-nums opacity-70">{count}</span>
+                <StatusDot status={value} />
+                {statusLabel(value)}
+                <span className="tabular-nums opacity-70">{count}</span>
               </Button>
             ))}
             {onClose && (
@@ -191,16 +220,15 @@ export function CommentsPanel({
         </div>
 
         {!readOnly && openThreads.length > 0 && (
-          <div className="shrink-0 border-b bg-amber-500/[0.04] px-3 py-2">
+          <div className="shrink-0 border-b px-3 py-2">
             <Button
               type="button"
               size="xs"
               variant="outline"
-              className="w-full justify-center gap-1.5 border-amber-500/40 text-amber-900 hover:bg-amber-500/10 dark:text-amber-200"
+              className="w-full justify-center gap-1.5"
               onClick={() => onAskAgent?.(openThreads)}
             >
-              <SparklesIcon className="size-3.5" />
-              全部交给 AI 处理 ({openThreads.length})
+              AI 修订全部 ({openThreads.length})
             </Button>
           </div>
         )}
@@ -223,8 +251,24 @@ export function CommentsPanel({
                 [...thread.messages]
                   .reverse()
                   .find((message) => message.author_type === "agent") ?? null;
-              const addressedSummary =
-                latestAgentMessage ?? latestMessage ?? null;
+              const addressedMessages: CommentThread["messages"] = [];
+              const firstMessage = thread.messages[0];
+              if (firstMessage) {
+                addressedMessages.push(firstMessage);
+              }
+              const latest = latestAgentMessage ?? latestMessage;
+              if (
+                latest &&
+                !addressedMessages.some(
+                  (message) => message.message_id === latest.message_id,
+                )
+              ) {
+                addressedMessages.push(latest);
+              }
+              const messagesToShow =
+                thread.status === "addressed"
+                  ? addressedMessages
+                  : thread.messages;
               return (
                 <div
                   key={thread.thread_id}
@@ -239,200 +283,189 @@ export function CommentsPanel({
                       onSelectThread?.(thread);
                     }
                   }}
-                  className={`cursor-pointer space-y-2 rounded-xl border p-3 text-xs transition-colors ${
+                  className={`cursor-pointer space-y-2 rounded-lg border p-3 text-xs transition-colors ${
                     active
-                      ? "border-amber-500/60 bg-amber-500/[0.06] ring-1 ring-amber-500/30"
-                      : "bg-card hover:bg-muted/30"
+                      ? "border-foreground/25 bg-muted/40"
+                      : "border-border bg-card hover:bg-muted/30"
                   }`}
                 >
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge
-                      variant={
-                        thread.status === "addressed"
-                          ? "default"
-                          : thread.status === "archived"
-                            ? "secondary"
-                            : "outline"
-                      }
-                    >
-                      {statusLabel(thread)}
-                    </Badge>
-                    {thread.anchor_detached ? (
-                      <Badge variant="destructive" className="gap-1">
-                        <Trash2Icon className="size-3" />
-                        原块已删除
-                      </Badge>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onSelectBlock?.(thread.block_id);
-                        }}
-                        className="rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] hover:underline"
-                      >
-                        #{thread.block_id}
-                      </button>
+                  <div className="flex items-center gap-2">
+                    <StatusDot status={thread.status} />
+                    <span className="text-[11px] text-muted-foreground">
+                      {statusLabel(thread.status)}
+                    </span>
+                    {thread.anchor_detached && (
+                      <span className="text-[10px] text-muted-foreground/70">
+                        位置已失效
+                      </span>
                     )}
-                    {thread.addressed_rev !== undefined &&
-                      thread.addressed_rev !== null && (
-                        <Button
+                    <div className="ml-auto flex items-center gap-1">
+                      {thread.addressed_rev !== undefined &&
+                        thread.addressed_rev !== null && (
+                          <button
+                            type="button"
+                            title="查看修订"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDiffRange({
+                                fromRev: thread.created_rev,
+                                toRev:
+                                  thread.addressed_rev ?? thread.created_rev,
+                                blockId: thread.block_id,
+                              });
+                            }}
+                            className="inline-flex items-center gap-1 rounded px-1 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            <GitCompareArrowsIcon className="size-3" />r
+                            {thread.created_rev}→{thread.addressed_rev}
+                          </button>
+                        )}
+                      {!thread.anchor_detached && (
+                        <button
                           type="button"
-                          size="xs"
-                          variant="ghost"
-                          className="ml-auto h-6 gap-1 px-1.5 text-[11px]"
+                          title={`跳转到 #${thread.block_id}`}
+                          aria-label="跳转到批注位置"
                           onClick={(event) => {
                             event.stopPropagation();
-                            setDiffRange({
-                              fromRev: thread.created_rev,
-                              toRev: thread.addressed_rev ?? thread.created_rev,
-                              blockId: thread.block_id,
-                            });
+                            onSelectBlock?.(thread.block_id);
                           }}
+                          className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
                         >
-                          <GitCompareArrowsIcon className="size-3" />
-                          <span>
-                            查看修订 ({thread.created_rev}→
-                            {thread.addressed_rev})
-                          </span>
-                        </Button>
+                          <ArrowUpRightIcon className="size-3.5" />
+                        </button>
                       )}
+                    </div>
                   </div>
 
-                  {thread.quote && (
-                    <div className="rounded border-l-2 border-amber-500 bg-amber-500/10 px-2 py-1 text-[11px]">
-                      划词：“{thread.quote.exact}”
-                    </div>
-                  )}
-
-                  {thread.anchor_snapshot && (
-                    <blockquote className="border-l-2 border-muted-foreground/30 pl-2 text-[11px] text-muted-foreground italic">
+                  {thread.quote ? (
+                    <p className="line-clamp-2 border-l-2 border-border pl-2.5 text-[11px] text-muted-foreground">
+                      “{thread.quote.exact}”
+                    </p>
+                  ) : thread.anchor_snapshot ? (
+                    <p className="line-clamp-1 text-[11px] text-muted-foreground">
                       {thread.anchor_snapshot}
-                    </blockquote>
-                  )}
+                    </p>
+                  ) : null}
 
-                  {thread.status === "addressed" && addressedSummary ? (
-                    <div className="space-y-2">
-                      {thread.messages[0] && (
-                        <div className="rounded-lg bg-muted/40 p-2">
-                          <div className="mb-0.5 text-[10px] text-muted-foreground">
-                            原始批注 · {thread.messages[0].author}
+                  <div className="space-y-2">
+                    {messagesToShow.map((message, index) => (
+                      <div
+                        key={message.message_id}
+                        className={
+                          index > 0 ? "border-t border-border/60 pt-2" : ""
+                        }
+                      >
+                        {message.author_type === "agent" && (
+                          <div className="mb-0.5 text-[9px] font-medium tracking-wide text-muted-foreground/70 uppercase">
+                            AI
                           </div>
-                          <p className="whitespace-pre-wrap text-foreground">
-                            {thread.messages[0].body}
-                          </p>
-                        </div>
-                      )}
-                      <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/[0.06] p-2">
-                        <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-                          <CheckCircle2Icon className="size-3" />
-                          最新修改说明
-                        </div>
-                        <p className="whitespace-pre-wrap text-foreground">
-                          {addressedSummary.body}
+                        )}
+                        <p className="whitespace-pre-wrap leading-5 text-foreground">
+                          {message.body}
                         </p>
                       </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {thread.messages.map((message) => (
-                        <div
-                          key={message.message_id}
-                          className="rounded-lg bg-muted/40 p-2"
-                        >
-                          <div className="mb-0.5 flex items-center justify-between text-[11px] text-muted-foreground">
-                            <span className="font-medium text-foreground">
-                              {message.author} (
-                              {message.author_type === "agent"
-                                ? "Agent"
-                                : "人类"}
-                              )
-                            </span>
-                          </div>
-                          <p className="whitespace-pre-wrap text-foreground">
-                            {message.body}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                    ))}
+                  </div>
 
-                  {!readOnly && thread.status !== "archived" && (
-                    <div className="space-y-1.5 pt-1">
-                      <div className="flex gap-1.5">
+                  {!readOnly &&
+                    thread.status !== "archived" &&
+                    replyThreadId === thread.thread_id && (
+                      <div className="flex items-end gap-1.5 pt-1">
                         <Textarea
+                          ref={replyInputRef}
                           rows={1}
                           className="min-h-8 text-xs"
                           placeholder="回复..."
-                          value={replyByThread[thread.thread_id] ?? ""}
+                          value={replyDraft}
                           onClick={(event) => event.stopPropagation()}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setReplyByThread((prev) => ({
-                              ...prev,
-                              [thread.thread_id]: value,
-                            }));
+                          onChange={(event) =>
+                            setReplyDraft(event.target.value)
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              setReplyThreadId(null);
+                              setReplyDraft("");
+                              event.currentTarget.blur();
+                              return;
+                            }
+                            if (
+                              event.key === "Enter" &&
+                              !event.shiftKey &&
+                              !event.nativeEvent.isComposing
+                            ) {
+                              event.preventDefault();
+                              void submitReply(thread.thread_id);
+                            }
                           }}
                         />
                         <Button
                           type="button"
                           size="xs"
                           variant="outline"
-                          disabled={
-                            busy ||
-                            !(replyByThread[thread.thread_id] ?? "").trim()
-                          }
+                          disabled={busy || !replyDraft.trim()}
                           onClick={(event) => {
                             event.stopPropagation();
-                            const body = (
-                              replyByThread[thread.thread_id] ?? ""
-                            ).trim();
-                            if (!body || !onReply) return;
-                            void (async () => {
-                              setBusy(true);
-                              try {
-                                await onReply(thread.thread_id, body);
-                                setReplyByThread((prev) => ({
-                                  ...prev,
-                                  [thread.thread_id]: "",
-                                }));
-                              } finally {
-                                setBusy(false);
-                              }
-                            })();
+                            void submitReply(thread.thread_id);
                           }}
                         >
-                          回复
+                          发送
                         </Button>
                       </div>
-                    </div>
-                  )}
+                    )}
 
-                  <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-                    {!readOnly && thread.status === "open" && onAskAgent && (
-                      <Button
+                  <div className="flex flex-wrap items-center gap-3 border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
+                    {!readOnly && thread.status !== "archived" && onReply && (
+                      <button
                         type="button"
-                        size="xs"
-                        variant="secondary"
-                        className="gap-1"
+                        className="hover:text-foreground"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setReplyThreadId((current) =>
+                            current === thread.thread_id
+                              ? null
+                              : thread.thread_id,
+                          );
+                          setReplyDraft("");
+                        }}
+                      >
+                        回复
+                      </button>
+                    )}
+                    {!readOnly && thread.status === "open" && onAskAgent && (
+                      <button
+                        type="button"
+                        className="hover:text-foreground"
                         disabled={busy}
                         onClick={(event) => {
                           event.stopPropagation();
                           onAskAgent([thread]);
                         }}
                       >
-                        <SparklesIcon className="size-3" />
-                        交给 AI 修订
-                      </Button>
+                        AI 修订
+                      </button>
                     )}
+                    {!readOnly &&
+                      thread.status === "open" &&
+                      onUpdateStatus && (
+                        <button
+                          type="button"
+                          className="hover:text-foreground"
+                          disabled={busy}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void onUpdateStatus(thread.thread_id, "archived");
+                          }}
+                        >
+                          归档
+                        </button>
+                      )}
                     {!readOnly &&
                       thread.status === "addressed" &&
                       onUpdateStatus && (
-                        <Button
+                        <button
                           type="button"
-                          size="xs"
-                          variant="default"
-                          className="gap-1 bg-emerald-600 hover:bg-emerald-700"
+                          className="hover:text-foreground"
                           disabled={busy}
                           onClick={(event) => {
                             event.stopPropagation();
@@ -449,45 +482,23 @@ export function CommentsPanel({
                             })();
                           }}
                         >
-                          <CheckCircle2Icon className="size-3" />
                           确认归档
-                        </Button>
-                      )}
-                    {!readOnly &&
-                      thread.status === "open" &&
-                      onUpdateStatus && (
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="ghost"
-                          className="gap-1 text-muted-foreground"
-                          disabled={busy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void onUpdateStatus(thread.thread_id, "archived");
-                          }}
-                        >
-                          <ArchiveIcon className="size-3" />
-                          直接归档
-                        </Button>
+                        </button>
                       )}
                     {!readOnly &&
                       thread.status === "archived" &&
                       onUpdateStatus && (
-                        <Button
+                        <button
                           type="button"
-                          size="xs"
-                          variant="ghost"
-                          className="gap-1"
+                          className="hover:text-foreground"
                           disabled={busy}
                           onClick={(event) => {
                             event.stopPropagation();
                             void onUpdateStatus(thread.thread_id, "open");
                           }}
                         >
-                          <RotateCcwIcon className="size-3" />
                           重新打开
-                        </Button>
+                        </button>
                       )}
                   </div>
                 </div>
@@ -506,7 +517,7 @@ export function CommentsPanel({
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle className="text-sm">
-              修订对比 (rev {diffRange?.fromRev} → rev {diffRange?.toRev})
+              修订对比 r{diffRange?.fromRev}→r{diffRange?.toRev}
             </DialogTitle>
           </DialogHeader>
           <div className="max-h-[60vh] space-y-3 overflow-y-auto text-xs">
@@ -525,10 +536,10 @@ export function CommentsPanel({
                 return (
                   <div
                     key={idx}
-                    className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3"
+                    className="space-y-1 rounded-lg border border-border bg-card p-3"
                   >
-                    <div className="mb-1 font-mono text-[11px] text-emerald-700 dark:text-emerald-300">
-                      + 新增 #{entry.block.id}
+                    <div className="text-[11px] text-muted-foreground">
+                      + 新增
                     </div>
                     <div className="whitespace-pre-wrap">
                       {summarizeBlock(entry.block)}
@@ -540,12 +551,12 @@ export function CommentsPanel({
                 return (
                   <div
                     key={idx}
-                    className="rounded-lg border border-destructive/30 bg-destructive/10 p-3"
+                    className="space-y-1 rounded-lg border border-border bg-muted/40 p-3"
                   >
-                    <div className="mb-1 font-mono text-[11px] text-destructive">
-                      - 删除 #{entry.block.id}
+                    <div className="text-[11px] text-muted-foreground">
+                      − 删除
                     </div>
-                    <div className="line-through whitespace-pre-wrap opacity-80">
+                    <div className="line-through whitespace-pre-wrap opacity-70">
                       {summarizeBlock(entry.block)}
                     </div>
                   </div>
@@ -554,15 +565,15 @@ export function CommentsPanel({
               return (
                 <div
                   key={idx}
-                  className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
+                  className="space-y-2 rounded-lg border border-border bg-card p-3"
                 >
-                  <div className="font-mono text-[11px] text-amber-700 dark:text-amber-300">
-                    ~ 修改 #{entry.block_id}
+                  <div className="text-[11px] text-muted-foreground">
+                    ~ 修改
                   </div>
-                  <div className="rounded bg-destructive/10 p-2 line-through whitespace-pre-wrap opacity-80">
+                  <div className="rounded bg-muted/40 p-2 line-through whitespace-pre-wrap opacity-70">
                     {summarizeBlock(entry.before)}
                   </div>
-                  <div className="rounded bg-emerald-500/10 p-2 whitespace-pre-wrap">
+                  <div className="rounded bg-muted/40 p-2 whitespace-pre-wrap">
                     {summarizeBlock(entry.after)}
                   </div>
                 </div>

@@ -2,7 +2,6 @@ import { useRef, useState } from "react";
 import {
   ArrowUpIcon,
   FileIcon,
-  MessageSquareQuoteIcon,
   Minimize2Icon,
   PlusIcon,
   QuoteIcon,
@@ -236,29 +235,26 @@ export function PromptComposer({
               key={ref.thread_id}
               type="button"
               onClick={() => onRemoveCommentRef?.(ref.thread_id)}
-              title={`移除批注引用 #${ref.block_id}`}
-              aria-label={`移除批注引用 ${ref.block_id}`}
-              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-amber-500/35 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-900 transition-colors hover:bg-amber-500/20 dark:text-amber-200"
+              title={`移除批注：${ref.comment}`}
+              aria-label={`移除批注：${ref.comment}`}
+              className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-muted/60 px-2.5 py-1 text-[11px] text-foreground transition-colors hover:bg-muted"
             >
-              <MessageSquareQuoteIcon className="size-3 shrink-0" />
-              <code className="shrink-0 font-mono text-[10px]">
-                #{ref.block_id}
-              </code>
-              <span className="max-w-[14rem] truncate text-muted-foreground">
+              <QuoteIcon className="size-3 shrink-0 text-muted-foreground" />
+              <span className="max-w-[16rem] truncate text-muted-foreground">
                 {ref.comment}
               </span>
-              <XIcon className="size-3 shrink-0 opacity-70" />
+              <XIcon className="size-3 shrink-0 text-muted-foreground" />
             </button>
           ))}
         </div>
       )}
 
       {quotedSnippet && (
-        <div className="flex items-start justify-between gap-2 rounded-xl border border-primary/25 bg-primary/[0.04] px-3 py-2 text-xs">
+        <div className="flex items-start justify-between gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2 text-xs">
           <div className="flex min-w-0 items-start gap-1.5">
-            <QuoteIcon className="mt-0.5 size-3.5 shrink-0 text-primary" />
+            <QuoteIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
-              <div className="text-[10px] font-medium text-primary">
+              <div className="text-[10px] font-medium text-muted-foreground">
                 引用报告块 #{quotedSnippet.blockId}
               </div>
               <div className="line-clamp-2 text-muted-foreground">

@@ -173,14 +173,14 @@ function renderHighlightedSegment(
               event.currentTarget.getBoundingClientRect(),
             );
           }}
-          className="inline cursor-pointer rounded-xs border-b-2 border-amber-500/80 bg-amber-500/10 px-0.5 text-left font-inherit transition-colors hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none dark:border-amber-400/80 dark:bg-amber-400/15 dark:hover:bg-amber-400/25"
+          className="inline cursor-pointer rounded-xs bg-amber-500/[0.06] px-0.5 text-left font-inherit underline decoration-amber-500/60 decoration-dashed underline-offset-4 transition-colors hover:bg-amber-500/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           {match}
         </button>
       ) : (
         <mark
           key={`${keyPrefix}-mark`}
-          className="rounded-xs border-b-2 border-amber-500/80 bg-amber-500/10 px-0.5 text-inherit dark:border-amber-400/80 dark:bg-amber-400/15"
+          className="rounded-xs bg-amber-500/[0.06] px-0.5 text-inherit underline decoration-amber-500/60 decoration-dashed underline-offset-4"
         >
           {match}
         </mark>

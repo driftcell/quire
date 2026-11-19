@@ -17,7 +17,6 @@ import {
   FileTextIcon,
   ListTreeIcon,
   LoaderCircleIcon,
-  MessageSquareQuoteIcon,
   SparklesIcon,
   SquareIcon,
   UsersIcon,
@@ -37,7 +36,6 @@ import {
   AttachmentMedia,
   AttachmentTitle,
 } from "@/components/ui/attachment";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
@@ -782,12 +780,6 @@ function HistoricalRunTrace({
   );
 }
 
-function commentStatusLabel(status: string): string {
-  if (status === "addressed") return "已处理";
-  if (status === "archived") return "已归档";
-  return "待处理";
-}
-
 function UserCommentRefCards({
   refs,
   onJumpToSection,
@@ -802,25 +794,16 @@ function UserCommentRefCards({
           key={ref.thread_id}
           type="button"
           onClick={() => onJumpToSection?.(ref.block_id)}
-          className="w-full cursor-pointer rounded-xl border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2 text-left text-xs transition-colors hover:bg-amber-500/10 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
+          className="w-full cursor-pointer rounded-md border-l-2 border-border/80 bg-muted/35 px-3 py-2 text-left text-xs transition-colors hover:bg-muted/55 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          <div className="flex flex-wrap items-center gap-1.5">
-            <MessageSquareQuoteIcon className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-            <code className="rounded bg-amber-500/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-800 dark:text-amber-200">
-              #{ref.block_id}
-            </code>
-            <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
-              {commentStatusLabel(ref.status)}
-            </Badge>
+          <div className="line-clamp-1 text-[11px] text-foreground">
+            {ref.quote ? `“${ref.quote}”` : ref.comment}
           </div>
           {ref.quote && (
-            <div className="mt-1.5 line-clamp-2 border-l-2 border-amber-500/60 pl-2 text-[11px] text-amber-900/80 dark:text-amber-200/80">
-              “{ref.quote}”
+            <div className="mt-0.5 line-clamp-1 text-[10px] text-muted-foreground">
+              {ref.comment}
             </div>
           )}
-          <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-muted-foreground">
-            {ref.comment}
-          </div>
         </button>
       ))}
     </div>
