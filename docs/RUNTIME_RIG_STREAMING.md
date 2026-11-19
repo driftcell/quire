@@ -37,7 +37,8 @@ operator to call `kb_upsert_agent`.
 ### Streaming and tool loop
 
 The provider calls `ModelRegistry::build_rig_model`, builds allow-listed `DynamicTool`s, and uses
-`DynModel<Completion>::stream`. `StreamEvent::Text` and `StreamEvent::Reasoning` map to
+`DynModel<Completion>::stream`. The allow-list applies the same wildcard semantics to both built-in
+and MCP tools: `"*"` enables every tool, while any other entry matches one tool name. `StreamEvent::Text` and `StreamEvent::Reasoning` map to
 `TextDelta`/`ThinkingDelta`; the service coalesces only main-agent deltas. When the provider turn
 finishes, the canonical `CompletionResponse.choice` supplies the assistant message and tool calls.
 Each call is answered with a `Message::tool_results` message, and the next model turn runs until the

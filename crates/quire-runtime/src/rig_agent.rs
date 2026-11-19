@@ -272,6 +272,14 @@ async fn parse_rpc_body(response: reqwest::Response) -> RuntimeResult<Value> {
     }
 }
 
+/// Match an agent allow-list entry against a tool name. `*` matches every tool.
+fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
+    allowed_tools.iter().any(|pattern| {
+        let pattern = pattern.trim();
+        pattern == "*" || pattern == tool_name
+    })
+}
+
 /// Adapt MCP descriptors into rig's dynamic tool registry, preserving allow-list policy.
 pub async fn build_rig_tools(
     client: McpHttpClient,
@@ -280,7 +288,7 @@ pub async fn build_rig_tools(
     let descriptors = client.list_tools().await?;
     Ok(descriptors
         .into_iter()
-        .filter(|descriptor| allowed_tools.iter().any(|name| name == &descriptor.name))
+        .filter(|descriptor| allow_list_matches(allowed_tools, &descriptor.name))
         .filter_map(|descriptor| {
             let name = ToolName::new(descriptor.name.clone()).ok()?;
             let tool_name = descriptor.name.clone();
@@ -1007,11 +1015,7 @@ impl RigModelCore {
         engine: Arc<RigModelCore>,
     ) -> RuntimeResult<Vec<DynamicTool>> {
         let mut tools = Vec::new();
-        if execution
-            .allowed_tools
-            .iter()
-            .any(|name| name == "preview_report")
-        {
+        if allow_list_matches(&execution.allowed_tools, "preview_report") {
             let cfg = self.config.clone();
             tools.push(DynamicTool::new(
                 ToolName::new("preview_report")
@@ -1046,11 +1050,7 @@ impl RigModelCore {
                 },
             ));
         }
-        if execution
-            .allowed_tools
-            .iter()
-            .any(|name| name == "load_skill")
-        {
+        if allow_list_matches(&execution.allowed_tools, "load_skill") {
             let kb = self.kb.clone();
             let branch = execution.kb_branch.clone();
             tools.push(DynamicTool::new(
@@ -1088,11 +1088,7 @@ impl RigModelCore {
                 },
             ));
         }
-        if execution
-            .allowed_tools
-            .iter()
-            .any(|name| name == "read_skill_resource")
-        {
+        if allow_list_matches(&execution.allowed_tools, "read_skill_resource") {
             let kb = self.kb.clone();
             let branch = execution.kb_branch.clone();
             tools.push(DynamicTool::new(
@@ -1151,11 +1147,7 @@ impl RigModelCore {
                 },
             ));
         }
-        if execution
-            .allowed_tools
-            .iter()
-            .any(|name| name == "describe_task")
-        {
+        if allow_list_matches(&execution.allowed_tools, "describe_task") {
             let task_scope = scope.clone();
             tools.push(DynamicTool::new(
                 ToolName::new("describe_task")
@@ -1204,10 +1196,7 @@ impl RigModelCore {
             ));
         }
         if !execution.run_id.starts_with("run_sub_")
-            && execution
-                .allowed_tools
-                .iter()
-                .any(|name| name == "ask_user")
+            && allow_list_matches(&execution.allowed_tools, "ask_user")
         {
             tools.push(DynamicTool::new(
                 ToolName::new("ask_user")
@@ -1258,11 +1247,7 @@ impl RigModelCore {
                 },
             ));
         }
-        if execution
-            .allowed_tools
-            .iter()
-            .any(|name| name == "spawn_subagents")
-        {
+        if allow_list_matches(&execution.allowed_tools, "spawn_subagents") {
             let spawn_scope = scope.clone();
             let spawn_execution = execution.clone();
             tools.push(DynamicTool::new(
@@ -1919,6 +1904,27 @@ fn inject_preview_ids(arguments: &mut Value, preview_ids: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wildcard_allow_list_enables_every_builtin_tool() {
+        let wildcard = vec!["*".to_string()];
+        for tool in BUILTIN_TOOLS {
+            assert!(
+                allow_list_matches(&wildcard, tool),
+                "wildcard should enable built-in tool `{tool}`"
+            );
+        }
+        assert!(allow_list_matches(&wildcard, "apply_operations"));
+    }
+
+    #[test]
+    fn exact_allow_list_stays_scoped() {
+        let allowed = vec!["spawn_subagents".to_string(), "lint_document".to_string()];
+        assert!(allow_list_matches(&allowed, "spawn_subagents"));
+        assert!(allow_list_matches(&allowed, "lint_document"));
+        assert!(!allow_list_matches(&allowed, "ask_user"));
+        assert!(!allow_list_matches(&[], "spawn_subagents"));
+    }
 
     #[test]
     fn preview_throttle_respects_the_interval() {
