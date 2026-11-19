@@ -50,7 +50,7 @@ import { PageChromeDialog } from "@/components/report/PageChromeDialog";
 import { ReportViewer } from "@/components/report/ReportViewer";
 import { TocOutline } from "@/components/report/TocOutline";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -1236,21 +1236,17 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 )}
               </Button>
 
-              <Button
-                size="icon-sm"
-                variant="ghost"
+              <Link
+                to="/docs/$docId/print"
+                params={{ docId: effectiveDocId }}
+                target="_blank"
+                rel="noreferrer"
                 aria-label="导出 PDF / 打印视图"
-                nativeButton={false}
-                render={
-                  <Link
-                    to="/docs/$docId/print"
-                    params={{ docId: effectiveDocId }}
-                    target="_blank"
-                  />
-                }
+                title="导出 PDF / 打印视图"
+                className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
               >
                 <PrinterIcon className="size-4" />
-              </Button>
+              </Link>
 
               <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
                 <Button

@@ -47,6 +47,7 @@ function DocumentPrintPage() {
   const { docId } = Route.useParams();
   const [pageCount, setPageCount] = useState(0);
   const [readyKey, setReadyKey] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   const docQuery = useQuery({
     queryKey: ["doc", docId],
@@ -74,33 +75,53 @@ function DocumentPrintPage() {
 
   const title = docQuery.data?.document.cover.title || docId;
 
+  const handlePrint = () => {
+    if (!assetsReady || printing) {
+      return;
+    }
+    setPrinting(true);
+    window.requestAnimationFrame(() => {
+      window.print();
+      setPrinting(false);
+    });
+  };
+
   return (
-    <div className="min-h-svh bg-neutral-100 print:min-h-0 print:w-[794px] print:bg-white print:p-0 print:m-0">
-      <div className="fixed top-4 right-4 z-50 flex items-center gap-3 rounded-lg border bg-background/95 px-3 py-2 shadow-md backdrop-blur print:hidden">
-        <div className="hidden max-w-[42vw] text-right sm:block">
-          <p className="truncate text-xs font-medium">{title}</p>
-          <p className="text-[11px] text-muted-foreground tabular-nums">
-            {pageCount > 0 ? `共 ${pageCount} 页` : "正在排版…"}
-          </p>
+    <div className="min-h-svh bg-neutral-100 px-4 py-8 print:min-h-0 print:w-[794px] print:bg-white print:p-0 print:m-0">
+      <div className="mx-auto mb-6 w-full max-w-[794px] print:hidden">
+        <div className="flex flex-col gap-4 border-b border-neutral-300 pb-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-semibold tracking-tight text-neutral-900">
+              {title}
+            </h1>
+            <p className="mt-1 text-xs text-neutral-500 tabular-nums">
+              A4 · {pageCount > 0 ? `共 ${pageCount} 页` : "正在排版"}
+              <span className="mx-1.5 text-neutral-300">/</span>
+              1:1 打印预览
+            </p>
+            <p className="mt-2 text-[11px] leading-5 text-neutral-500">
+              打印设置建议：A4、100% 缩放、关闭页边距。
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!assetsReady || printing}
+            onClick={handlePrint}
+            className="w-full shrink-0 sm:w-auto"
+          >
+            <PrinterIcon className="mr-1.5 size-4" />
+            {assetsReady
+              ? printing
+                ? "正在打开…"
+                : "导出 PDF / 打印"
+              : "正在准备…"}
+          </Button>
         </div>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!assetsReady}
-          onClick={() => {
-            if (assetsReady) {
-              window.print();
-            }
-          }}
-          className="shadow-sm"
-        >
-          <PrinterIcon className="mr-1.5 size-4" />
-          {assetsReady ? "导出 PDF / 打印" : "正在准备…"}
-        </Button>
       </div>
 
       {docQuery.isLoading && (
-        <div className="p-12 text-center text-sm text-muted-foreground">
+        <div className="mx-auto max-w-[794px] py-12 text-center text-sm text-muted-foreground print:hidden">
           正在排版 A4 打印视图...
         </div>
       )}

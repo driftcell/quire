@@ -331,7 +331,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
   return (
     <div className="group/chart relative w-full">
       {showTools && chartTables.length > 0 && (
-        <div className="pointer-events-none mb-1.5 flex items-center justify-end gap-1 opacity-0 transition-opacity group-hover/chart:pointer-events-auto group-hover/chart:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 print:hidden">
+        <div className="pointer-events-none absolute top-0 right-0 z-10 flex items-center gap-1 rounded-md bg-background/85 px-1 py-0.5 opacity-0 shadow-xs backdrop-blur transition-opacity group-hover/chart:pointer-events-auto group-hover/chart:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 print:hidden">
           <button
             type="button"
             onClick={() => setTableOpen(true)}
