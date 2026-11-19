@@ -60,14 +60,26 @@ pub(crate) const SERIES_TYPES: &[&str] = &[
 
 /// Merge the base option with `option_patch`.
 pub(crate) fn merged_option(chart: &EchartsBlock) -> Value {
-    let mut value = chart
-        .option
-        .clone()
-        .unwrap_or_else(|| Value::Object(Default::default()));
+    let mut value = chart.option.clone();
     if let Some(patch) = &chart.option_patch {
         value = merge_optional_json(Some(&value), patch);
     }
     value
+}
+
+/// Resolve the effective native ECharts option for a chart block.
+///
+/// The returned value is the complete `option` deep-merged with `option_patch`. Frontends and
+/// static validators share this projection so previews never diverge from the committed chart.
+pub fn effective_chart_option(chart: &EchartsBlock) -> Value {
+    merged_option(chart)
+}
+
+/// Deep-merge an incremental ECharts `option_patch` onto an optional base patch.
+///
+/// Arrays replace arrays and objects merge recursively, matching the canonical protocol merge.
+pub fn merge_chart_option_patch(base: Option<&Value>, patch: &Value) -> Value {
+    merge_optional_json(base, patch)
 }
 
 /// Return series entries whether `series` is an array or a single object.
@@ -916,5 +928,45 @@ fn json_scalar_label(value: &Value) -> String {
             let raw = serde_json::to_string(other).unwrap_or_default();
             truncate_chars(&raw, 80)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block::EchartsBlock;
+
+    fn chart(option: Value) -> EchartsBlock {
+        EchartsBlock {
+            title: None,
+            height: 360,
+            option,
+            option_patch: None,
+            fallback_summary: "Summary".into(),
+            numbering: None,
+            note: None,
+        }
+    }
+
+    #[test]
+    fn effective_option_merges_the_incremental_patch() {
+        let base = chart(serde_json::json!({
+            "series": [{"type": "bar", "data": [1]}],
+            "title": {"text": "Base"}
+        }));
+        let merged = merge_chart_option_patch(
+            Some(&base.option),
+            &serde_json::json!({
+                "series": [{"type": "bar", "data": [2, 3]}],
+                "title": {"subtext": "Patched"}
+            }),
+        );
+        let mut patched = base;
+        patched.option_patch = Some(merged);
+
+        let effective = effective_chart_option(&patched);
+        assert_eq!(effective["title"]["text"], "Base");
+        assert_eq!(effective["title"]["subtext"], "Patched");
+        assert_eq!(effective["series"][0]["data"], serde_json::json!([2, 3]));
     }
 }

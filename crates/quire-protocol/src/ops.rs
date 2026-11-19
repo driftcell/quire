@@ -11,10 +11,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    block::{
-        Block, BlockKind, BlockStyle, CellValue, EchartsMode, EchartsPreset, NumberingKind,
-        is_semantic_block_id,
-    },
+    block::{Block, BlockKind, BlockStyle, CellValue, NumberingKind, is_semantic_block_id},
     ids::{BlockId, SourceId},
     json::merge_optional_json,
     model::{CoverConfig, ReferencesConfig, ReportDocument, SourceEntry, ThemeConfig, TocConfig},
@@ -93,12 +90,6 @@ pub struct BlockPatch {
     /// Deep-merged into an ECharts block's existing `option_patch`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub option_patch: Option<serde_json::Value>,
-    /// Switch an ECharts block between `preset` and full `option` mode.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mode: Option<EchartsMode>,
-    /// Select a built-in ECharts skeleton.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preset: Option<EchartsPreset>,
     /// Replace the chart canvas height in pixels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
@@ -135,8 +126,6 @@ impl BlockPatch {
             && self.style.as_ref().is_none_or(BlockStylePatch::is_empty)
             && self.option.is_none()
             && self.option_patch.is_none()
-            && self.mode.is_none()
-            && self.preset.is_none()
             && self.height.is_none()
             && self.fallback_summary.is_none()
             && self.title.is_none()
@@ -881,18 +870,8 @@ fn apply_block_patch(block: &mut Block, patch: &BlockPatch) -> Result<(), PatchE
                 chart.note = (!note.trim().is_empty()).then(|| note.clone());
             }
             if let Some(option) = &patch.option {
-                chart.option = Some(option.clone());
+                chart.option = option.clone();
                 chart.option_patch = None;
-            }
-            if let Some(mode) = patch.mode {
-                chart.mode = mode;
-            } else if patch.option.is_some() {
-                chart.mode = EchartsMode::Option;
-            } else if patch.preset.is_some() {
-                chart.mode = EchartsMode::Preset;
-            }
-            if let Some(preset) = patch.preset {
-                chart.preset = Some(preset);
             }
             if let Some(height) = patch.height {
                 chart.height = height;
@@ -940,12 +919,10 @@ fn validate_patch_compatibility(block: &Block, patch: &BlockPatch) -> Result<(),
                 "note",
                 "option",
                 "option_patch",
-                "mode",
-                "preset",
                 "height",
                 "fallback_summary",
             ][..],
-            "title, numbering, note, option, option_patch, mode, preset, height, fallback_summary",
+            "title, numbering, note, option, option_patch, height, fallback_summary",
         ),
         BlockKind::CustomHtml(_) => (
             &["title", "numbering", "note", "fallback_text"][..],
@@ -962,8 +939,6 @@ fn validate_patch_compatibility(block: &Block, patch: &BlockPatch) -> Result<(),
         ("fallback_summary", patch.fallback_summary.is_some()),
         ("option", patch.option.is_some()),
         ("option_patch", patch.option_patch.is_some()),
-        ("mode", patch.mode.is_some()),
-        ("preset", patch.preset.is_some()),
         ("height", patch.height.is_some()),
         ("append_rows", !patch.append_rows.is_empty()),
         ("update_cell", patch.update_cell.is_some()),
@@ -1067,7 +1042,7 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use crate::{
-        block::{Block, ColumnNode, EchartsBlock, EchartsMode, EchartsPreset, TableBlock},
+        block::{Block, ColumnNode, EchartsBlock, TableBlock},
         model::ReportDocument,
     };
 
@@ -1282,9 +1257,7 @@ mod tests {
             BlockKind::Echarts(EchartsBlock {
                 title: None,
                 height: 300,
-                mode: EchartsMode::Preset,
-                preset: None,
-                option: None,
+                option: serde_json::json!({"series":[{"type":"bar","data":[1]}]}),
                 option_patch: Some(serde_json::json!({"series":[{"type":"bar"}]})),
                 fallback_summary: "Summary".into(),
                 numbering: None,
@@ -1313,16 +1286,14 @@ mod tests {
     }
 
     #[test]
-    fn echarts_patch_supports_full_option_mode_and_dimensions() {
+    fn echarts_patch_replaces_option_and_clears_patch() {
         let mut doc = ReportDocument::new(doc_id("doc"));
         doc.blocks.push(Block::new(
             block_id("chart"),
             BlockKind::Echarts(EchartsBlock {
                 title: None,
                 height: 300,
-                mode: EchartsMode::Preset,
-                preset: Some(EchartsPreset::Bar),
-                option: None,
+                option: serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
                 option_patch: Some(serde_json::json!({"series": [{"type": "bar"}]})),
                 fallback_summary: "Summary".into(),
                 numbering: None,
@@ -1338,7 +1309,6 @@ mod tests {
                         "dataset": {"source": [["Q", "V"], ["Q1", 10]]},
                         "series": [{"type": "bar", "data": [10]}]
                     })),
-                    mode: Some(EchartsMode::Option),
                     height: Some(480),
                     title: Some("Patched chart".into()),
                     ..Default::default()
@@ -1349,12 +1319,11 @@ mod tests {
         let BlockKind::Echarts(chart) = &doc.block("chart").unwrap().body else {
             panic!()
         };
-        assert_eq!(chart.mode, EchartsMode::Option);
         assert_eq!(chart.height, 480);
         assert!(chart.option_patch.is_none());
         assert_eq!(chart.title.as_deref(), Some("Patched chart"));
         assert_eq!(
-            chart.option.as_ref().unwrap()["dataset"]["source"][1][1],
+            chart.option["dataset"]["source"][1][1],
             serde_json::json!(10)
         );
 

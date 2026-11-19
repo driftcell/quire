@@ -13,8 +13,23 @@ import type {
   SessionSummary,
   ToolCallDetail,
 } from "@/contracts/session-protocol";
+import type {
+  ChartDataTable,
+  ChartRequirements,
+} from "@/contracts/report-protocol";
 import { bearerHeaders, getAuthTokens } from "@/lib/auth";
+import type { EchartsBlock } from "@/lib/document";
 import { isRecord } from "@/lib/guards";
+
+export interface ChartPreviewResponse {
+  preview_id: string;
+  chart: EchartsBlock;
+  requirements?: ChartRequirements;
+  tables?: ChartDataTable[];
+  title?: string | null;
+  note?: string | null;
+  based_on_preview_id?: string | null;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -47,11 +62,12 @@ async function runtimeFetch<T>(
   path: string,
   decode: (raw: unknown) => T,
   init: RequestInit = {},
+  tokenOverride?: string,
 ): Promise<T> {
   const { runtimeToken } = getAuthTokens();
   const response = await fetch(path, {
     ...init,
-    headers: buildHeaders(runtimeToken, init.headers),
+    headers: buildHeaders(tokenOverride ?? runtimeToken, init.headers),
   });
   if (!response.ok) {
     let code = `HTTP_${response.status}`;
@@ -190,6 +206,27 @@ export interface PostMessageResponse {
 
 function isPostMessageResponse(value: unknown): value is PostMessageResponse {
   return isRecord(value) && isSessionMessage(value.message);
+}
+
+function isChartPreviewResponse(value: unknown): value is ChartPreviewResponse {
+  return (
+    isRecord(value) &&
+    typeof value.preview_id === "string" &&
+    isRecord(value.chart) &&
+    isRecord(value.chart.option)
+  );
+}
+
+export function getChartPreview(
+  previewId: string,
+  tokenOverride?: string,
+): Promise<ChartPreviewResponse> {
+  return runtimeFetch(
+    `/api/chart-previews/${encodeURIComponent(previewId)}`,
+    (raw) => decodeWith(raw, isChartPreviewResponse, "chart preview"),
+    {},
+    tokenOverride,
+  );
 }
 
 export function listSessions(

@@ -23,6 +23,8 @@ pub enum RuntimeError {
     RunNotFound(String),
     #[error("tool call `{0}` was not found")]
     ToolCallNotFound(String),
+    #[error("chart preview `{0}` was not found or expired")]
+    ChartPreviewNotFound(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("knowledge-base branch promotion conflict")]
@@ -37,6 +39,7 @@ impl RuntimeError {
             Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
             Self::RunNotFound(_) => "RUN_NOT_FOUND",
             Self::ToolCallNotFound(_) => "TOOL_CALL_NOT_FOUND",
+            Self::ChartPreviewNotFound(_) => "CHART_PREVIEW_NOT_FOUND",
             Self::InvalidRequest(_) => "INVALID_REQUEST",
             Self::KbConflict(_) => "KB_BRANCH_CONFLICT",
             Self::Database(_)
@@ -55,6 +58,9 @@ impl RuntimeError {
             Self::ToolCallNotFound(_) => {
                 "Open the session detail and retry with a tool_call_id from this session."
             }
+            Self::ChartPreviewNotFound(_) => {
+                "Call preview_echarts again to create a fresh preview; chart previews expire after 30 minutes."
+            }
             Self::InvalidRequest(_) => {
                 "Check the request body against the session protocol schema."
             }
@@ -69,9 +75,10 @@ impl RuntimeError {
 impl IntoResponse for RuntimeError {
     fn into_response(self) -> axum::response::Response {
         let status = match &self {
-            Self::SessionNotFound(_) | Self::RunNotFound(_) | Self::ToolCallNotFound(_) => {
-                StatusCode::NOT_FOUND
-            }
+            Self::SessionNotFound(_)
+            | Self::RunNotFound(_)
+            | Self::ToolCallNotFound(_)
+            | Self::ChartPreviewNotFound(_) => StatusCode::NOT_FOUND,
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             Self::KbConflict(_) => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -80,6 +87,7 @@ impl IntoResponse for RuntimeError {
             Self::SessionNotFound(_)
             | Self::RunNotFound(_)
             | Self::ToolCallNotFound(_)
+            | Self::ChartPreviewNotFound(_)
             | Self::InvalidRequest(_)
             | Self::KbConflict(_) => self.to_string(),
             _ => {

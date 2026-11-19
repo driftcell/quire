@@ -20,6 +20,15 @@ import { isRecord } from "@/lib/guards";
 export type ReportBlock = Block & { id: string };
 
 /**
+ * The ECharts branch of the generated block union. Used by the standalone chart
+ * preview route, which receives a chart payload without a full report wrapper.
+ */
+export type EchartsBlock = Omit<
+  Extract<Block, { type: "echarts" }>,
+  "type"
+> & { type?: "echarts" };
+
+/**
  * Fully populated document view. The protocol schema marks most top-level
  * fields optional because agents may submit partial documents; the server
  * always serializes them, so the frontend normalizes them to required fields.

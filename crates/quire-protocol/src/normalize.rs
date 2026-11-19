@@ -77,10 +77,7 @@ pub fn normalize_block(block: &mut Block) -> Vec<Diagnostic> {
         .title
         .as_deref()
         .is_some_and(|title| !title.trim().is_empty());
-    let mut effective = chart
-        .option
-        .clone()
-        .unwrap_or_else(|| Value::Object(Default::default()));
+    let mut effective = chart.option.clone();
     if let Some(patch) = &chart.option_patch {
         effective = merge_optional_json(Some(&effective), patch);
     }
@@ -91,7 +88,7 @@ pub fn normalize_block(block: &mut Block) -> Vec<Diagnostic> {
     }
     stripped_toolbox |= strip_chart_toolbox(&mut effective);
     // Strip the same chrome from both sources so the merge cannot reintroduce it.
-    for option in [chart.option.as_mut(), chart.option_patch.as_mut()]
+    for option in [Some(&mut chart.option), chart.option_patch.as_mut()]
         .into_iter()
         .flatten()
     {
@@ -136,7 +133,7 @@ pub fn normalize_block(block: &mut Block) -> Vec<Diagnostic> {
 mod tests {
     use super::*;
     use crate::{
-        block::{Block, EchartsBlock, EchartsMode, EchartsPreset},
+        block::{Block, EchartsBlock},
         test_support::*,
     };
 
@@ -146,11 +143,9 @@ mod tests {
             BlockKind::Echarts(EchartsBlock {
                 title: Some("Outer".into()),
                 height: 300,
-                mode: EchartsMode::Preset,
-                preset: Some(EchartsPreset::Bar),
-                option: Some(serde_json::json!({
+                option: serde_json::json!({
                     "title": {"text": "Inner", "top": "top"}
-                })),
+                }),
                 option_patch: Some(serde_json::json!({
                     "title": {"text": "Center KPI", "top": "center"}
                 })),
@@ -170,7 +165,7 @@ mod tests {
         let BlockKind::Echarts(chart) = &block.body else {
             panic!("chart");
         };
-        assert!(chart.option.as_ref().unwrap().get("title").is_none());
+        assert!(chart.option.get("title").is_none());
         assert_eq!(
             chart.option_patch.as_ref().unwrap()["title"]["top"],
             "center"
@@ -181,9 +176,9 @@ mod tests {
     fn keeps_center_title_without_warning() {
         let mut block = chart();
         if let BlockKind::Echarts(chart) = &mut block.body {
-            chart.option = Some(serde_json::json!({
+            chart.option = serde_json::json!({
                 "title": {"text": "Center KPI", "top": "center"}
-            }));
+            });
         }
         let warnings = normalize_block(&mut block);
         assert!(warnings.is_empty());
@@ -196,9 +191,9 @@ mod tests {
             let BlockKind::Echarts(chart) = &mut block.body else {
                 panic!("chart");
             };
-            chart.option = Some(serde_json::json!({
+            chart.option = serde_json::json!({
                 "toolbox": {"feature": {"saveAsImage": {}}}
-            }));
+            });
             chart.option_patch = Some(serde_json::json!({
                 "toolbox": {"show": true},
                 "series": [{"type": "bar", "data": [1, 2]}]
@@ -213,7 +208,7 @@ mod tests {
         let BlockKind::Echarts(chart) = &block.body else {
             panic!("chart");
         };
-        assert!(chart.option.as_ref().unwrap().get("toolbox").is_none());
+        assert!(chart.option.get("toolbox").is_none());
         assert!(
             chart
                 .option_patch
@@ -232,9 +227,9 @@ mod tests {
             let BlockKind::Echarts(chart) = &mut block.body else {
                 panic!("chart");
             };
-            chart.option = Some(serde_json::json!({
+            chart.option = serde_json::json!({
                 "title": {"text": "Outer duplicate", "top": "top"}
-            }));
+            });
             chart.option_patch = Some(serde_json::json!({
                 "title": {"text": "Patch duplicate"}
             }));
@@ -248,7 +243,7 @@ mod tests {
         let BlockKind::Echarts(chart) = &block.body else {
             panic!("chart");
         };
-        assert!(chart.option.as_ref().unwrap().get("title").is_none());
+        assert!(chart.option.get("title").is_none());
         assert!(chart.option_patch.as_ref().unwrap().get("title").is_none());
     }
 }

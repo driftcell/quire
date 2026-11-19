@@ -300,14 +300,57 @@
           "description": "ECharts chart with mandatory fallback summary.",
           "type": "object",
           "properties": {
+            "fallback_summary": {
+              "description": "Mandatory one-sentence numeric summary for reviewers, Markdown projection and non-JS use.",
+              "type": "string",
+              "default": ""
+            },
+            "height": {
+              "description": "Canvas height in pixels, recommended 120..=2000.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 360,
+              "minimum": 0
+            },
+            "note": {
+              "description": "Explanatory footnote rendered below the chart.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "numbering": {
+              "description": "`figure` by default; use `none` to suppress the `图 N` label.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NumberingKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "option": {
+              "description": "Complete native ECharts 6.0 option object. Required: no presets or mode switches."
+            },
+            "option_patch": {
+              "description": "Deep-merged onto the base option. Arrays replace arrays, objects merge recursively."
+            },
+            "title": {
+              "description": "Optional chart title. `caption` is accepted as a legacy alias on input.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "type": {
               "type": "string",
               "const": "echarts"
             }
           },
-          "$ref": "#/$defs/EchartsBlock",
           "required": [
-            "type"
+            "type",
+            "option"
           ]
         },
         {
@@ -478,17 +521,6 @@
           "maximum": 255,
           "minimum": 0
         },
-        "mode": {
-          "description": "Switch an ECharts block between `preset` and full `option` mode.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EchartsMode"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "note": {
           "description": "Replace the explanatory footnote. Empty string clears it.",
           "type": [
@@ -512,17 +544,6 @@
         },
         "option_patch": {
           "description": "Deep-merged into an ECharts block's existing `option_patch`."
-        },
-        "preset": {
-          "description": "Select a built-in ECharts skeleton.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EchartsPreset"
-            },
-            {
-              "type": "null"
-            }
-          ]
         },
         "source_ids": {
           "type": [
@@ -1369,99 +1390,6 @@
         "theme_changed",
         "references_changed",
         "sources_changed"
-      ]
-    },
-    "EchartsBlock": {
-      "description": "An ECharts chart block. `fallback_summary` is mandatory so non-JS renderers stay useful.",
-      "type": "object",
-      "properties": {
-        "fallback_summary": {
-          "description": "Mandatory one-sentence numeric summary for reviewers, Markdown projection and non-JS use.",
-          "type": "string",
-          "default": ""
-        },
-        "height": {
-          "description": "Canvas height in pixels, recommended 120..=2000.",
-          "type": "integer",
-          "format": "uint32",
-          "default": 360,
-          "minimum": 0
-        },
-        "mode": {
-          "description": "`preset` starts from a built-in chart skeleton; `option` supplies the full option object.\nWhen omitted, `option` without `preset` is inferred as `option` mode.",
-          "$ref": "#/$defs/EchartsMode",
-          "default": "preset"
-        },
-        "note": {
-          "description": "Explanatory footnote rendered below the chart.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "numbering": {
-          "description": "`figure` by default; use `none` to suppress the `图 N` label.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/NumberingKind"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "option": {
-          "description": "Full ECharts option object when `mode` is `option`."
-        },
-        "option_patch": {
-          "description": "Deep-merged onto the base option. Arrays replace arrays, objects merge recursively."
-        },
-        "preset": {
-          "description": "Built-in skeleton such as bar, line, pie or donut.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/EchartsPreset"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "title": {
-          "description": "Optional chart title. `caption` is accepted as a legacy alias on input.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      }
-    },
-    "EchartsMode": {
-      "description": "Selects how an ECharts option is assembled.",
-      "oneOf": [
-        {
-          "description": "Start from the named preset and optionally apply `option_patch`.",
-          "type": "string",
-          "const": "preset"
-        },
-        {
-          "description": "Use `option` as the full option object, optionally merged with `option_patch`.",
-          "type": "string",
-          "const": "option"
-        }
-      ]
-    },
-    "EchartsPreset": {
-      "description": "Built-in ECharts presets. Series data can be supplied through `option_patch`.",
-      "type": "string",
-      "enum": [
-        "bar",
-        "horizontal_bar",
-        "line",
-        "area",
-        "pie",
-        "donut",
-        "scatter"
       ]
     },
     "EphemeralClearEvent": {

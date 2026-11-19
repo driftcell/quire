@@ -18,6 +18,7 @@ use std::{
 };
 
 use base64::Engine as _;
+use quire_protocol::{ChartRequirements, EchartsBlock};
 use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
     ModelStreamProvider, ModelTurnRequest, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
@@ -26,6 +27,7 @@ use quire_runtime::{
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
     mcp_registry::{McpServerInput, McpServerPatch},
+    preview::ChartPreviewRecord,
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, QuestionItem, QuestionOption, SendMessageRequest,
@@ -2401,4 +2403,73 @@ async fn mcp_sync_discovers_tools_and_preserves_admin_switches() {
     assert!(beta.enabled);
     service.mcp().delete_server(&server_id).await.unwrap();
     server.abort();
+}
+
+#[tokio::test]
+async fn chart_preview_endpoint_accepts_ro_token_and_hides_expired_previews() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let preview_id = unique("chart-preview");
+    let record = ChartPreviewRecord {
+        preview_id: preview_id.clone(),
+        chart: EchartsBlock {
+            title: Some("Preview".into()),
+            height: 300,
+            option: json!({"series": [{"type": "bar", "data": [1, 2]}]}),
+            option_patch: None,
+            fallback_summary: "Two bars.".into(),
+            numbering: None,
+            note: None,
+        },
+        requirements: ChartRequirements::default(),
+        tables: vec![],
+        title: Some("Preview".into()),
+        note: None,
+        based_on_preview_id: None,
+    };
+    store.bus().store_chart_preview(&record).await.unwrap();
+    let app = quire_runtime::http::router(service);
+    let authorized = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/chart-previews/{preview_id}"))
+                .header("authorization", "Bearer test-token")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(authorized.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(authorized.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["preview_id"], preview_id);
+    assert_eq!(body["chart"]["option"]["series"][0]["type"], "bar");
+
+    let unauthorized = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/chart-previews/{preview_id}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unauthorized.status(), axum::http::StatusCode::UNAUTHORIZED);
+
+    let missing = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/chart-previews/{}", unique("missing-chart")))
+                .header("authorization", "Bearer test-token")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), axum::http::StatusCode::NOT_FOUND);
+    store.bus().delete_chart_preview(&preview_id).await.unwrap();
 }

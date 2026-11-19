@@ -91,7 +91,42 @@ export type Block1 =
       [k: string]: unknown;
     }
   | TableBlock
-  | EchartsBlock
+  | {
+      /**
+       * Mandatory one-sentence numeric summary for reviewers, Markdown projection and non-JS use.
+       */
+      fallback_summary?: string;
+      /**
+       * Canvas height in pixels, recommended 120..=2000.
+       */
+      height?: number;
+      /**
+       * Explanatory footnote rendered below the chart.
+       */
+      note?: string | null;
+      /**
+       * `figure` by default; use `none` to suppress the `图 N` label.
+       */
+      numbering?: NumberingKind | null;
+      /**
+       * Complete native ECharts 6.0 option object. Required: no presets or mode switches.
+       */
+      option: {
+        [k: string]: unknown;
+      };
+      /**
+       * Deep-merged onto the base option. Arrays replace arrays, objects merge recursively.
+       */
+      option_patch?: {
+        [k: string]: unknown;
+      };
+      /**
+       * Optional chart title. `caption` is accepted as a legacy alias on input.
+       */
+      title?: string | null;
+      type: "echarts";
+      [k: string]: unknown;
+    }
   | CustomHtmlBlock;
 /**
  * Recursive multi-level table. Never compute colspan/rowspan manually.
@@ -157,14 +192,6 @@ export type PreviewAnchor =
  */
 export type PreviewStatus = "streaming" | "completed" | "aborted";
 export type Severity = "error" | "warning" | "info";
-/**
- * Selects how an ECharts option is assembled.
- */
-export type EchartsMode = "preset" | "option";
-/**
- * Built-in ECharts presets. Series data can be supplied through `option_patch`.
- */
-export type EchartsPreset = "bar" | "horizontal_bar" | "line" | "area" | "pie" | "donut" | "scatter";
 
 export interface QuireReportProtocol {
   agent_presence: AgentPresenceEvent;
@@ -783,13 +810,6 @@ export interface TableBlockHeaders {
   [k: string]: unknown;
 }
 /**
- * ECharts chart with mandatory fallback summary.
- */
-export interface EchartsBlock {
-  type: "echarts";
-  [k: string]: unknown;
-}
-/**
  * Trusted raw HTML with mandatory fallback text.
  */
 export interface CustomHtmlBlock {
@@ -1149,10 +1169,6 @@ export interface BlockPatch {
    */
   level?: number | null;
   /**
-   * Switch an ECharts block between `preset` and full `option` mode.
-   */
-  mode?: EchartsMode | null;
-  /**
    * Replace the explanatory footnote. Empty string clears it.
    */
   note?: string | null;
@@ -1174,10 +1190,6 @@ export interface BlockPatch {
   option_patch?: {
     [k: string]: unknown;
   };
-  /**
-   * Select a built-in ECharts skeleton.
-   */
-  preset?: EchartsPreset | null;
   source_ids?: SourceId[] | null;
   source_note?: string | null;
   style?: BlockStylePatch | null;

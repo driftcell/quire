@@ -10,8 +10,9 @@ use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::StreamExt;
 use quire_protocol::{
-    BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
-    PreviewStatus,
+    Block, BlockId, BlockKind, EchartsBlock, EphemeralPayload, EphemeralPreviewEvent,
+    PartialBlockPreview, PatchOp, PreviewAnchor, PreviewStatus, chart_data_tables_for_block,
+    chart_requirements, lint_echarts_block, merge_chart_option_patch,
 };
 use quire_session_protocol::{ContextUsage, MessageRole, QuestionItem};
 use rig_core::{
@@ -59,6 +60,8 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "spawn_subagents",
     "ask_user",
     "preview_report",
+    "preview_echarts",
+    "commit_chart",
     "sandbox_execute",
     "sandbox_read_file",
     "sandbox_write_file",
@@ -258,7 +261,11 @@ impl ToolPreviewStreamer {
 struct PreviewImage {
     base64: String,
     mime_type: String,
+    caption: String,
 }
+
+const REPORT_PREVIEW_CAPTION: &str = "Rendered screenshot from preview_report. Inspect visual layout, spacing, tables, and charts alongside the diagnostic JSON.";
+const CHART_PREVIEW_CAPTION: &str = "Rendered ECharts screenshot from preview_echarts. Verify the chart type, series data, axis labels, legend, tooltip/static labels, colors, clipping/overflow, and that the visual matches fallback_summary. Refine with preview_echarts + based_on_preview_id + option_patch only, then call commit_chart once it looks right.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig_core::schemars::JsonSchema)]
 pub struct SubagentTask {
@@ -476,9 +483,312 @@ async fn preview_report_tool(
             .pending_preview_images
             .lock()
             .await
-            .push(PreviewImage { base64, mime_type });
+            .push(PreviewImage {
+                base64,
+                mime_type,
+                caption: REPORT_PREVIEW_CAPTION.to_string(),
+            });
     }
     Ok(result.to_diagnostics_json())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[rig_tool(
+    name = "preview_echarts",
+    description = "Validate and render one ECharts chart before writing it. First call: send the complete native ECharts 6.0 `option`. Refinement calls: send `based_on_preview_id` plus a small `option_patch`; never resend the full option. Returns preview_id, lint_issues and preview_url. Vision models also receive a screenshot. Commit with commit_chart."
+)]
+async fn preview_echarts_tool(
+    #[rig(context)] context: &mut ToolContext,
+    option: Option<Value>,
+    option_patch: Option<Value>,
+    based_on_preview_id: Option<String>,
+    height: Option<u32>,
+    title: Option<String>,
+    note: Option<String>,
+    fallback_summary: Option<String>,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let config = runtime.engine.config.as_ref();
+    let bus = runtime.engine.kb.store().bus();
+    let based_on = based_on_preview_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    let mut based_on_id = None;
+    let chart = if let Some(base_id) = based_on {
+        if option.is_some() {
+            return Err(ToolExecutionError::invalid_args(
+                "`option` must not be sent when `based_on_preview_id` is set; send only `option_patch` so the full ECharts configuration is not repeated",
+            ));
+        }
+        let existing = bus
+            .load_chart_preview(base_id)
+            .await
+            .map_err(tool_other)?
+            .ok_or_else(|| {
+                ToolExecutionError::invalid_args(format!(
+                    "chart preview `{base_id}` was not found or expired after 30 minutes; call preview_echarts again with the complete native `option`"
+                ))
+            })?;
+        based_on_id = Some(base_id.to_string());
+        let mut chart = existing.chart;
+        let mut changed = false;
+        if let Some(patch) = &option_patch {
+            if !patch.is_object() {
+                return Err(ToolExecutionError::invalid_args(
+                    "`option_patch` must be a JSON object",
+                ));
+            }
+            chart.option_patch = Some(merge_chart_option_patch(chart.option_patch.as_ref(), patch));
+            changed = true;
+        }
+        if let Some(height) = height {
+            chart.height = height;
+            changed = true;
+        }
+        if title.is_some() {
+            chart.title = normalize_optional_text(title);
+            changed = true;
+        }
+        if note.is_some() {
+            chart.note = normalize_optional_text(note);
+            changed = true;
+        }
+        if let Some(summary) = fallback_summary {
+            chart.fallback_summary = summary;
+            changed = true;
+        }
+        if !changed {
+            return Err(ToolExecutionError::invalid_args(
+                "iterative preview requires `option_patch` or at least one top-level override",
+            ));
+        }
+        chart
+    } else {
+        let option = option.ok_or_else(|| {
+            ToolExecutionError::invalid_args(
+                "`option` is required on the first preview_echarts call; send the complete native ECharts 6.0 option",
+            )
+        })?;
+        if !option.is_object() {
+            return Err(ToolExecutionError::invalid_args(
+                "`option` must be a JSON object",
+            ));
+        }
+        if let Some(patch) = &option_patch
+            && !patch.is_object()
+        {
+            return Err(ToolExecutionError::invalid_args(
+                "`option_patch` must be a JSON object",
+            ));
+        }
+        EchartsBlock {
+            title: normalize_optional_text(title),
+            height: height.unwrap_or(360),
+            option,
+            option_patch,
+            fallback_summary: fallback_summary.unwrap_or_default(),
+            numbering: None,
+            note: normalize_optional_text(note),
+        }
+    };
+
+    let preview_id = format!("chart_{}", uuid::Uuid::new_v4().simple());
+    let preview_block_id = BlockId::parse("chart_preview").map_err(tool_other)?;
+    let lint = lint_echarts_block(preview_block_id, &chart);
+    let requirements = chart_requirements(&chart);
+    let tables = chart_data_tables_for_block(&chart);
+    let record = crate::preview::ChartPreviewRecord {
+        preview_id: preview_id.clone(),
+        title: chart.title.clone(),
+        note: chart.note.clone(),
+        chart,
+        requirements,
+        tables,
+        based_on_preview_id: based_on_id,
+    };
+    bus.store_chart_preview(&record).await.map_err(tool_other)?;
+
+    let mut preview_url = crate::preview::build_public_chart_preview_url(config, &preview_id);
+    let mut preview_error = None;
+    let mut image_included = false;
+    if runtime.supports_vision {
+        match crate::preview::execute_preview_echarts(config, &preview_id).await {
+            Ok(result) => {
+                preview_url = result.preview_url;
+                if let (Some(base64), Some(mime_type)) =
+                    (result.image_base64, result.image_mime_type)
+                {
+                    runtime
+                        .pending_preview_images
+                        .lock()
+                        .await
+                        .push(PreviewImage {
+                            base64,
+                            mime_type,
+                            caption: CHART_PREVIEW_CAPTION.to_string(),
+                        });
+                    image_included = true;
+                }
+            }
+            Err(error) => preview_error = Some(error.to_string()),
+        }
+    }
+
+    let lint_issues = lint.diagnostics;
+    let lint_summary = lint.summary;
+    Ok(json!({
+        "preview_id": preview_id,
+        "preview_url": preview_url,
+        "lint_issues": lint_issues,
+        "lint_summary": lint_summary,
+        "image_included": image_included,
+        "preview_error": preview_error,
+    }))
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[rig_tool(
+    name = "commit_chart",
+    description = "Commit a chart that already passed preview_echarts into the report. Accepts only preview_id, doc_id, block_id and an insertion anchor; never send the ECharts option again. Omit expected_revision to read the current revision first. Use after visual and lint review passes."
+)]
+async fn commit_chart_tool(
+    #[rig(context)] context: &mut ToolContext,
+    preview_id: String,
+    doc_id: String,
+    block_id: String,
+    after_block_id: Option<String>,
+    before_block_id: Option<String>,
+    section_id: Option<String>,
+    expected_revision: Option<i64>,
+    summary: Option<String>,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let preview_id = preview_id.trim().to_string();
+    if preview_id.is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "`preview_id` must not be empty",
+        ));
+    }
+    let doc_id = doc_id.trim().to_string();
+    if doc_id.is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "`doc_id` must not be empty",
+        ));
+    }
+    let preview = runtime
+        .engine
+        .kb
+        .store()
+        .bus()
+        .load_chart_preview(&preview_id)
+        .await
+        .map_err(tool_other)?
+        .ok_or_else(|| {
+            ToolExecutionError::invalid_args(format!(
+                "chart preview `{preview_id}` was not found or expired after 30 minutes; call preview_echarts again to regenerate it"
+            ))
+        })?;
+    let anchors = [
+        after_block_id.is_some(),
+        before_block_id.is_some(),
+        section_id.is_some(),
+    ];
+    if anchors.iter().filter(|present| **present).count() > 1 {
+        return Err(ToolExecutionError::invalid_args(
+            "use at most one of `after_block_id`, `before_block_id` or `section_id`",
+        ));
+    }
+    if !preview.chart.option.is_object() {
+        return Err(ToolExecutionError::invalid_args(
+            "stored chart preview has no native ECharts `option`; call preview_echarts again",
+        ));
+    }
+
+    let target_id = BlockId::parse(block_id.trim()).map_err(tool_other)?;
+    let block = Block::new(target_id.clone(), BlockKind::Echarts(preview.chart));
+    let op = if let Some(anchor) = after_block_id {
+        PatchOp::InsertAfter {
+            target_id: BlockId::parse(anchor.trim()).map_err(tool_other)?,
+            blocks: vec![block],
+        }
+    } else if let Some(anchor) = before_block_id {
+        PatchOp::InsertBefore {
+            target_id: BlockId::parse(anchor.trim()).map_err(tool_other)?,
+            blocks: vec![block],
+        }
+    } else if let Some(section) = section_id {
+        PatchOp::AppendToSection {
+            section_id: BlockId::parse(section.trim()).map_err(tool_other)?,
+            blocks: vec![block],
+        }
+    } else {
+        PatchOp::Append {
+            blocks: vec![block],
+        }
+    };
+
+    let config = runtime.engine.config.as_ref();
+    let client = RmcpClient::connect(
+        &config.quire_base_url,
+        Some(config.quire_rw_token.clone()),
+        &runtime.execution.session_id,
+        &runtime.execution.agent_id,
+    )
+    .await
+    .map_err(tool_other)?;
+    let expected_revision = match expected_revision {
+        Some(value) if value >= 0 => value,
+        Some(_) => {
+            return Err(ToolExecutionError::invalid_args(
+                "`expected_revision` must be non-negative",
+            ));
+        }
+        None => {
+            let digest = client
+                .call_tool("get_document_digest", json!({ "doc_id": doc_id }))
+                .await
+                .map_err(tool_other)?;
+            digest
+                .get("digest")
+                .and_then(|digest| digest.get("current_rev"))
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    ToolExecutionError::other(
+                        "get_document_digest did not return digest.current_rev",
+                    )
+                })?
+        }
+    };
+    let summary = summary
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("commit previewed chart `{target_id}`"));
+    let receipt = client
+        .call_tool(
+            "apply_operations",
+            json!({
+                "doc_id": doc_id,
+                "expected_revision": expected_revision,
+                "summary": summary,
+                "ops": [serde_json::to_value(&op).map_err(tool_other)?],
+            }),
+        )
+        .await
+        .map_err(tool_other)?;
+    let mut payload = receipt;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("preview_id".to_string(), json!(preview_id));
+        object.insert("block_id".to_string(), json!(target_id.as_str()));
+    }
+    Ok(payload)
 }
 
 #[rig_tool(
@@ -1064,10 +1374,11 @@ impl RigModelCore {
                 std::mem::take(&mut *guard)
             };
             if !preview_images.is_empty() {
-                let mut parts = vec![UserContent::text(
-                    "Rendered screenshot from preview_report. Inspect visual layout, spacing, tables, and charts alongside the diagnostic JSON.",
-                )];
+                let mut parts = Vec::new();
                 for image in preview_images {
+                    if !image.caption.trim().is_empty() {
+                        parts.push(UserContent::text(image.caption));
+                    }
                     let media_type = match image.mime_type.as_str() {
                         "image/jpeg" => ImageMediaType::JPEG,
                         "image/webp" => ImageMediaType::WEBP,
@@ -1118,6 +1429,16 @@ impl RigModelCore {
         if allow_list_matches(&execution.allowed_tools, "preview_report") {
             tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
                 PreviewReportTool
+            })?);
+        }
+        if allow_list_matches(&execution.allowed_tools, "preview_echarts") {
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                PreviewEchartsTool
+            })?);
+        }
+        if allow_list_matches(&execution.allowed_tools, "commit_chart") {
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                CommitChartTool
             })?);
         }
         if allow_list_matches(&execution.allowed_tools, "sandbox_execute") {
@@ -1307,6 +1628,9 @@ fn runtime_preamble(execution: &AgentExecution) -> String {
             "When the topic of this conversation is clear (especially on the first turn), call `set_session_title` with a concise title.\n",
         );
     }
+    preamble.push_str(
+        "For complex ECharts charts, call `preview_echarts` first with the complete native ECharts 6.0 `option`. Inspect the rendered screenshot and `lint_issues`, refine with `based_on_preview_id` plus a small `option_patch` only (never resend the full option), and commit the approved chart with `commit_chart` using the final `preview_id`. Do not write chart blocks directly through apply_operations when the preview workflow is available.\n",
+    );
     if let Some(branch) = execution.kb_branch.as_deref() {
         preamble.push_str(&format!(
             "Knowledge-base branch for this session: `{branch}`. Agent and skill lookups use this branch.\n"
@@ -1905,6 +2229,29 @@ mod tests {
             parameters.get("required"),
             Some(&json!(["language", "code"]))
         );
+    }
+
+    #[test]
+    fn chart_preview_tools_enforce_the_no_repeat_option_contract() {
+        let preview = PREVIEW_ECHARTS_TOOL.parameters();
+        let preview_properties = preview
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("preview_echarts schema should have properties");
+        assert!(preview_properties.contains_key("option"));
+        assert!(preview_properties.contains_key("option_patch"));
+        assert!(preview_properties.contains_key("based_on_preview_id"));
+
+        let commit = COMMIT_CHART_TOOL.parameters();
+        let commit_properties = commit
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("commit_chart schema should have properties");
+        assert!(commit_properties.contains_key("preview_id"));
+        assert!(commit_properties.contains_key("doc_id"));
+        assert!(commit_properties.contains_key("block_id"));
+        assert!(!commit_properties.contains_key("option"));
+        assert!(!commit_properties.contains_key("option_patch"));
     }
 
     #[test]

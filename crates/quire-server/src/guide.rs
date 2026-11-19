@@ -161,10 +161,9 @@ ECHARTS BLOCK EXAMPLE (dual axis)
   "numbering": "figure",
   "note": "Margins are unaudited.",
   "height": 360,
-  "mode": "preset",
-  "preset": "bar",
-  "option_patch": {
-    "xAxis": { "data": ["Q1", "Q2"] },
+  "option": {
+    "tooltip": { "trigger": "axis" },
+    "xAxis": { "type": "category", "data": ["Q1", "Q2"] },
     "yAxis": [
       { "type": "value", "name": "Revenue" },
       { "type": "value", "name": "Margin", "max": 100 }
@@ -180,9 +179,8 @@ ECHARTS BLOCK EXAMPLE (dual axis)
 Rules:
 - Put the title in outer `title` ONLY; never duplicate it inside ECharts `option.title`. A center donut KPI (`top: "center"`) is the only allowed inner title.
 - `fallback_summary` is mandatory and must state the main numeric takeaway.
-- Simple skeletons can use `mode: "preset"` + `preset` (bar, horizontal_bar, line, area, pie, donut, scatter) + `option_patch`.
-- Complex charts should use `mode: "option"` with a complete ECharts 6.0 `option`. When `mode` is omitted, providing `option` without `preset` is automatically inferred as option mode.
-- ECharts 6.0 option mode supports `dataset` (2D arrays or object rows, multiple datasets), multi-axis Cartesian series, `matrix`, `radar`, `sankey`, `graph`, `chord`, `beeswarm`, `treemap`, `sunburst`, `tree`, `candlestick`, `boxplot`, `heatmap` and extension series such as `wordCloud`, `liquidFill` and `bar3D`. For deterministic multi-column ordering, prefer a two-dimensional `dataset.source` with a header row, or declare explicit `dimensions`; object-row key order is not guaranteed.
+- `option` is the single, required source of truth: always send a complete native ECharts 6.0 option object.
+- ECharts 6.0 supports `dataset` (2D arrays or object rows, multiple datasets), multi-axis Cartesian series, `matrix`, `radar`, `sankey`, `graph`, `chord`, `beeswarm`, `treemap`, `sunburst`, `tree`, `candlestick`, `boxplot`, `heatmap` and extension series such as `wordCloud`, `liquidFill` and `bar3D`. For deterministic multi-column ordering, prefer a two-dimensional `dataset.source` with a header row, or declare explicit `dimensions`; object-row key order is not guaranteed.
 - Formatter strings are allowed and encouraged, for example `"formatter": "{b}: {c} ({d}%)"`. JavaScript callbacks are forbidden: strings containing `function(` or `=>` fail lint with `ECHARTS_JS_FUNCTION_STRING`.
 - Static-report chrome is removed automatically: `toolbox` is stripped during normalization/normalization warnings. Do not design interactions that require it.
 - Indexed series must stay in range: `xAxisIndex`, `yAxisIndex`, `gridIndex`, `polarIndex` and `radarIndex` are validated against their configured arrays. A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object.
@@ -190,7 +188,7 @@ Rules:
   `{"matrix":{"x":{"data":["A","B"]},"y":{"data":["C","D"]}},"series":[{"type":"custom","coordinateSystem":"matrix","data":[1,2]}]}`.
   Missing `matrix` reports `ECHARTS_MATRIX_MISSING`; missing `radar`/`polar` components report `ECHARTS_COORDINATE_MISSING`.
 - Every chart needs a real data source: `series[*].data`, `series[*].links`/`edges`, or a non-empty `dataset.source`. Otherwise lint reports `ECHARTS_DATA_MISSING`.
-- Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge. The same patch can update `mode`, `preset`, `height`, `title`, `numbering`, `note` and `fallback_summary`.
+- Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge an incremental change. The same patch can update `height`, `title`, `numbering`, `note` and `fallback_summary`.
 - `read_as_markdown(include_chart_data=true)` expands dataset, Cartesian, relation, radar and hierarchy data into tables for reviewers.
 - `GET /api/docs/{doc_id}` exposes `computed.chart_requirements[block_id].required_maps` and `.required_extensions` so the frontend can register maps/extensions before rendering.
 - Every table/chart block needs `id`, and charts need non-empty `fallback_summary`.

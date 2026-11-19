@@ -7,6 +7,7 @@
 
 use std::time::{Duration, Instant};
 
+use quire_protocol::{ChartDataTable, ChartRequirements, EchartsBlock};
 use rmcp::model::{CallToolResult, ContentBlock};
 use schemars::JsonSchema;
 use secrecy::ExposeSecret;
@@ -21,6 +22,36 @@ use crate::{
 
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Redis-backed single-chart preview record.
+///
+/// The chart keeps the original native `option` plus the accumulated incremental `option_patch`,
+/// so iterative agent refinements never resend the full ECharts configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChartPreviewRecord {
+    pub preview_id: String,
+    pub chart: EchartsBlock,
+    #[serde(default)]
+    pub requirements: ChartRequirements,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tables: Vec<ChartDataTable>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub based_on_preview_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChartPreviewResult {
+    pub preview_id: String,
+    pub preview_url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_base64: Option<String>,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -223,6 +254,28 @@ fn build_preview_url_for_base(
         query_parts.join("&"),
         hash
     )
+}
+
+fn chart_preview_path(preview_id: &str) -> String {
+    format!("/charts/{}/preview", percent_encode(preview_id.trim()))
+}
+
+/// Internal URL opened by Playwright MCP. The read-only token stays in the hash fragment.
+pub fn build_chart_preview_url(config: &Config, preview_id: &str) -> String {
+    let base = config.preview_base_url.trim_end_matches('/');
+    let ro_token = config.quire_ro_token.expose_secret().trim();
+    let hash = if ro_token.is_empty() {
+        String::new()
+    } else {
+        format!("#ro_token={}", percent_encode(ro_token))
+    };
+    format!("{base}{}{hash}", chart_preview_path(preview_id))
+}
+
+/// Public URL returned to agents; it never contains the read-only token.
+pub fn build_public_chart_preview_url(config: &Config, preview_id: &str) -> String {
+    let base = config.preview_public_url.trim_end_matches('/');
+    format!("{base}{}", chart_preview_path(preview_id))
 }
 
 fn extract_eval_json(raw: &Value) -> Option<Value> {
@@ -454,6 +507,88 @@ pub async fn execute_preview_report(
     })
 }
 
+/// Navigate to the stateless single-chart preview route, wait for the chart to render, and capture
+/// a PNG screenshot via `mcp/playwright`.
+pub async fn execute_preview_echarts(
+    config: &Config,
+    preview_id: &str,
+) -> RuntimeResult<ChartPreviewResult> {
+    let preview_id = preview_id.trim();
+    if preview_id.is_empty() {
+        return Err(RuntimeError::InvalidRequest(
+            "`preview_id` is required".into(),
+        ));
+    }
+    let playwright_url = config
+        .playwright_mcp_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            RuntimeError::InvalidRequest(
+                "PLAYWRIGHT_MCP_URL is not configured on quire-runtime".into(),
+            )
+        })?;
+
+    let preview_url = build_chart_preview_url(config, preview_id);
+    let public_preview_url = build_public_chart_preview_url(config, preview_id);
+    let client = RmcpClient::connect(playwright_url, None, "preview", "quire-preview").await?;
+
+    client
+        .call_tool_raw("browser_navigate", json!({ "url": preview_url }))
+        .await?;
+
+    let started = Instant::now();
+    loop {
+        let probe = client
+            .call_tool_raw(
+                "browser_evaluate",
+                json!({
+                    "function": "() => ({ ready: Boolean(document.querySelector('[data-preview-ready=\"true\"]')), error: document.querySelector('[data-preview-error=\"true\"]')?.textContent ?? null, rendered: Boolean(document.querySelector('[data-chart-canvas] canvas, [data-chart-canvas] svg')) })"
+                }),
+            )
+            .await?;
+
+        if let Some(val) = extract_eval_json(&probe) {
+            if let Some(err_msg) = val.get("error").and_then(Value::as_str) {
+                return Err(RuntimeError::Internal(format!(
+                    "Chart preview page failed to load: {err_msg}"
+                )));
+            }
+            if val.get("ready").and_then(Value::as_bool) == Some(true)
+                && val.get("rendered").and_then(Value::as_bool) == Some(true)
+            {
+                break;
+            }
+        }
+        if started.elapsed() >= READY_TIMEOUT {
+            return Err(RuntimeError::Internal(
+                "Timed out waiting for the chart preview to render".into(),
+            ));
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+
+    let screenshot_raw = client
+        .call_tool_raw(
+            "browser_take_screenshot",
+            json!({ "fullPage": true, "type": "png" }),
+        )
+        .await?;
+    let (data, mime) = extract_image_content(&screenshot_raw).ok_or_else(|| {
+        RuntimeError::Internal(
+            "Playwright MCP browser_take_screenshot did not return ImageContent".into(),
+        )
+    })?;
+
+    Ok(ChartPreviewResult {
+        preview_id: preview_id.to_string(),
+        preview_url: public_preview_url,
+        image_mime_type: Some(mime),
+        image_base64: Some(data),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,6 +645,22 @@ mod tests {
         assert!(!public.contains("ro_token"));
         let internal = build_preview_url_for_base("http://localhost:5173", "secret", &input, true);
         assert!(internal.contains("ro_token=secret"));
+    }
+
+    #[test]
+    fn chart_preview_urls_keep_the_token_in_the_hash_only() {
+        let mut config = Config::from_env();
+        config.preview_base_url = "http://127.0.0.1:5173".into();
+        config.preview_public_url = "http://localhost:5173".into();
+        config.quire_ro_token = secrecy::SecretString::from("secret".to_string());
+        let internal = build_chart_preview_url(&config, "chart_abc");
+        assert_eq!(
+            internal,
+            "http://127.0.0.1:5173/charts/chart_abc/preview#ro_token=secret"
+        );
+        let public = build_public_chart_preview_url(&config, "chart_abc");
+        assert_eq!(public, "http://localhost:5173/charts/chart_abc/preview");
+        assert!(!public.contains("secret"));
     }
 
     #[test]

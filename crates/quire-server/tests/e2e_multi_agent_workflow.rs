@@ -622,7 +622,6 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             "type": "echarts",
             "title": "Regional coverage",
             "height": 260,
-            "mode": "option",
             "option": {
                 "geo": {"map": "china"},
                 "series": [
@@ -979,10 +978,10 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                 "type":"echarts",
                 "title":"Revenue and margin",
                 "height":340,
-                "mode":"preset",
-                "preset":"bar",
-                "option_patch":{
-                    "xAxis":{"data":["FY25","FY26"]},
+                "option":{
+                    "tooltip":{"trigger":"axis"},
+                    "grid":{"containLabel":true,"left":12,"right":16,"top":24,"bottom":16},
+                    "xAxis":{"type":"category","data":["FY25","FY26"]},
                     "yAxis":[
                         {"type":"value","name":"Revenue"},
                         {"type":"value","name":"Margin","max":100}
@@ -1187,7 +1186,6 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                         "type": "echarts",
                         "title": "Invalid chart",
                         "height": 300,
-                        "mode": "option",
                         "option": {
                             "xAxis": {},
                             "series": [
@@ -1445,10 +1443,9 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .iter()
         .find(|block| block["id"] == "ch0_dataset")
         .ok_or_else(|| anyhow!("dataset chart missing from final document"))?;
-    assert_eq!(
-        dataset_chart["mode"].as_str(),
-        Some("option"),
-        "omitted mode must be inferred as option when option is supplied without preset"
+    assert!(
+        dataset_chart["option"].is_object(),
+        "native ECharts option must be stored on the chart block"
     );
     let map_requirements = &final_doc["computed"]["chart_requirements"]["ch0_map"];
     let required_maps = map_requirements["required_maps"].as_array().unwrap();

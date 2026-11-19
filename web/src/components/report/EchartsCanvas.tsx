@@ -7,12 +7,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type {
-  ChartDataTable,
-  ChartRequirements,
-  EchartsBlock,
-  EchartsPreset,
-} from "@/contracts/report-protocol";
+import type { ChartDataTable, ChartRequirements } from "@/contracts/report-protocol";
+import type { EchartsBlock } from "@/lib/document";
 
 export interface EchartsCanvasProps {
   blockId: string;
@@ -22,29 +18,13 @@ export interface EchartsCanvasProps {
   renderer?: "canvas" | "svg";
   printSafe?: boolean;
   showTools?: boolean;
+  onRenderError?: (message: string | null) => void;
 }
 
 type JsonObject = Record<string, unknown>;
 
-const ECHARTS_PRESETS: readonly EchartsPreset[] = [
-  "bar",
-  "line",
-  "area",
-  "pie",
-  "donut",
-  "scatter",
-  "horizontal_bar",
-];
-
 function isPlainObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isEchartsPreset(value: unknown): value is EchartsPreset {
-  return (
-    typeof value === "string" &&
-    ECHARTS_PRESETS.some((preset) => preset === value)
-  );
 }
 
 function chartHeight(chart: EchartsBlock): number {
@@ -70,45 +50,75 @@ function deepMerge(base: JsonObject, patch: JsonObject): JsonObject {
   return result;
 }
 
-function presetSkeleton(preset: EchartsPreset | undefined): JsonObject {
-  switch (preset) {
-    case "horizontal_bar":
-      return {
-        tooltip: { trigger: "axis" },
-        grid: { containLabel: true, left: 12, right: 16, top: 24, bottom: 16 },
-        xAxis: { type: "value" },
-        yAxis: { type: "category" },
-      };
-    case "line":
-    case "area":
-      return {
-        tooltip: { trigger: "axis" },
-        grid: { containLabel: true, left: 12, right: 16, top: 24, bottom: 16 },
-        xAxis: { type: "category" },
-        yAxis: { type: "value" },
-      };
-    case "pie":
-    case "donut":
-      return {
-        tooltip: { trigger: "item" },
-        legend: { type: "scroll", bottom: 0 },
-      };
-    case "scatter":
-      return {
-        tooltip: { trigger: "item" },
-        grid: { containLabel: true, left: 12, right: 16, top: 24, bottom: 16 },
-        xAxis: { type: "value" },
-        yAxis: { type: "value" },
-      };
-    case "bar":
-    default:
-      return {
-        tooltip: { trigger: "axis" },
-        grid: { containLabel: true, left: 12, right: 16, top: 24, bottom: 16 },
-        xAxis: { type: "category" },
-        yAxis: { type: "value" },
-      };
+function chartSeries(option: JsonObject): JsonObject[] {
+  const series = option.series;
+  if (Array.isArray(series)) {
+    return series.filter(isPlainObject);
   }
+  return isPlainObject(series) ? [series] : [];
+}
+
+function chartHasLegend(option: JsonObject): boolean {
+  if (option.legend === false) {
+    return false;
+  }
+  if (isPlainObject(option.legend)) {
+    return option.legend.show !== false;
+  }
+  return chartSeries(option).some(
+    (series) =>
+      typeof series.name === "string" && series.name.trim().length > 0,
+  );
+}
+
+function applyLegendDefaults(option: JsonObject) {
+  if (!chartHasLegend(option)) {
+    return;
+  }
+  const legend = isPlainObject(option.legend) ? { ...option.legend } : {};
+  if (legend.show === false || Array.isArray(option.legend)) {
+    return;
+  }
+  const positioned = ["top", "bottom", "left", "right", "orient"].some(
+    (key) => key in legend,
+  );
+  if (!positioned) {
+    option.legend = { ...legend, top: 8, left: "center" };
+  }
+}
+
+function buildEffectiveOption(
+  chart: EchartsBlock,
+  printSafe: boolean,
+): JsonObject {
+  let option: JsonObject = isPlainObject(chart.option) ? { ...chart.option } : {};
+
+  if (isPlainObject(chart.option_patch)) {
+    option = deepMerge(option, chart.option_patch);
+  }
+
+  applyLegendDefaults(option);
+  const legendVisible = chartHasLegend(option);
+  if (
+    (option.xAxis !== undefined || option.yAxis !== undefined) &&
+    option.grid === undefined
+  ) {
+    option.grid = {
+      containLabel: true,
+      left: 12,
+      right: 16,
+      top: legendVisible ? 48 : 24,
+      bottom: 16,
+    };
+  }
+  option = deepMerge(ACADEMIC_DEFAULTS, option);
+  applyAxisDefaults(option, "xAxis");
+  applyAxisDefaults(option, "yAxis");
+  if (printSafe) {
+    // Static previews and print exports must be fully painted before screenshots.
+    option.animation = false;
+  }
+  return option;
 }
 
 const ACADEMIC_DEFAULTS: JsonObject = {
@@ -174,38 +184,6 @@ function applyAxisDefaults(option: JsonObject, key: "xAxis" | "yAxis") {
   }
 }
 
-function buildEffectiveOption(chart: EchartsBlock): JsonObject {
-  const preset = isEchartsPreset(chart.preset) ? chart.preset : undefined;
-  let option: JsonObject =
-    chart.mode === "option" && isPlainObject(chart.option)
-      ? { ...chart.option }
-      : presetSkeleton(preset);
-
-  if (chart.mode === "preset" && isPlainObject(chart.option)) {
-    option = deepMerge(option, chart.option);
-  }
-  if (isPlainObject(chart.option_patch)) {
-    option = deepMerge(option, chart.option_patch);
-  }
-
-  if (
-    (option.xAxis !== undefined || option.yAxis !== undefined) &&
-    option.grid === undefined
-  ) {
-    option.grid = {
-      containLabel: true,
-      left: 12,
-      right: 16,
-      top: 24,
-      bottom: 16,
-    };
-  }
-  option = deepMerge(ACADEMIC_DEFAULTS, option);
-  applyAxisDefaults(option, "xAxis");
-  applyAxisDefaults(option, "yAxis");
-  return option;
-}
-
 function downloadCsv(table: ChartDataTable, filename: string) {
   const escape = (cell: string) =>
     cell.includes(",") || cell.includes('"') || cell.includes("\n")
@@ -234,6 +212,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
   renderer = "canvas",
   printSafe = false,
   showTools = true,
+  onRenderError,
 }: EchartsCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<echarts.ECharts | null>(null);
@@ -249,7 +228,14 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       ? chart.title.trim()
       : "图表数据";
 
-  const effectiveOption = useMemo(() => buildEffectiveOption(chart), [chart]);
+  const effectiveOption = useMemo(
+    () => buildEffectiveOption(chart, printSafe),
+    [chart, printSafe],
+  );
+
+  useEffect(() => {
+    onRenderError?.(runtimeError);
+  }, [onRenderError, runtimeError]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -376,6 +362,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       ) : (
         <div
           ref={containerRef}
+          data-chart-canvas="true"
           style={{ height: `${effectiveHeight}px` }}
           className="w-full"
         />

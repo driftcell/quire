@@ -662,49 +662,19 @@ fn looks_like_date(text: &str) -> bool {
         })
 }
 
-/// Selects how an ECharts option is assembled.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EchartsMode {
-    /// Start from the named preset and optionally apply `option_patch`.
-    #[default]
-    Preset,
-    /// Use `option` as the full option object, optionally merged with `option_patch`.
-    Option,
-}
-
-/// Built-in ECharts presets. Series data can be supplied through `option_patch`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EchartsPreset {
-    Bar,
-    HorizontalBar,
-    Line,
-    Area,
-    Pie,
-    Donut,
-    Scatter,
-}
-
-/// An ECharts chart block. `fallback_summary` is mandatory so non-JS renderers stay useful.
-#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+/// An ECharts 6.0 chart block backed by one native `option` object.
+/// `fallback_summary` is mandatory so non-JS renderers stay useful.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EchartsBlock {
     /// Optional chart title. `caption` is accepted as a legacy alias on input.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "caption", skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// Canvas height in pixels, recommended 120..=2000.
     #[serde(default = "default_chart_height")]
     pub height: u32,
-    /// `preset` starts from a built-in chart skeleton; `option` supplies the full option object.
-    /// When omitted, `option` without `preset` is inferred as `option` mode.
-    #[serde(default)]
-    pub mode: EchartsMode,
-    /// Built-in skeleton such as bar, line, pie or donut.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub preset: Option<EchartsPreset>,
-    /// Full ECharts option object when `mode` is `option`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub option: Option<serde_json::Value>,
+    /// Complete native ECharts 6.0 option object. Required: no presets or mode switches.
+    pub option: serde_json::Value,
     /// Deep-merged onto the base option. Arrays replace arrays, objects merge recursively.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub option_patch: Option<serde_json::Value>,
@@ -717,56 +687,6 @@ pub struct EchartsBlock {
     /// Explanatory footnote rendered below the chart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct EchartsBlockWire {
-    #[serde(default, alias = "caption")]
-    title: Option<String>,
-    #[serde(default = "default_chart_height")]
-    height: u32,
-    #[serde(default)]
-    mode: Option<EchartsMode>,
-    #[serde(default)]
-    preset: Option<EchartsPreset>,
-    #[serde(default)]
-    option: Option<serde_json::Value>,
-    #[serde(default)]
-    option_patch: Option<serde_json::Value>,
-    #[serde(default)]
-    fallback_summary: String,
-    #[serde(default)]
-    numbering: Option<NumberingKind>,
-    #[serde(default)]
-    note: Option<String>,
-}
-
-impl<'de> Deserialize<'de> for EchartsBlock {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wire = EchartsBlockWire::deserialize(deserializer)?;
-        let mode = wire.mode.unwrap_or_else(|| {
-            if wire.option.as_ref().is_some_and(|option| !option.is_null()) && wire.preset.is_none()
-            {
-                EchartsMode::Option
-            } else {
-                EchartsMode::Preset
-            }
-        });
-        Ok(Self {
-            title: wire.title,
-            height: wire.height,
-            mode,
-            preset: wire.preset,
-            option: wire.option,
-            option_patch: wire.option_patch,
-            fallback_summary: wire.fallback_summary,
-            numbering: wire.numbering,
-            note: wire.note,
-        })
-    }
 }
 
 impl EchartsBlock {
@@ -1168,45 +1088,25 @@ mod tests {
     }
 
     #[test]
-    fn echarts_mode_is_inferred_when_omitted() {
-        let inferred: Block = serde_json::from_value(serde_json::json!({
+    fn echarts_requires_native_option_and_accepts_caption_alias() {
+        let missing = serde_json::from_value::<Block>(serde_json::json!({
             "id": "chart",
             "type": "echarts",
-            "option": {"series": [{"type": "bar", "data": [1, 2]}]},
             "fallback_summary": "Two points"
-        }))
-        .unwrap();
-        let BlockKind::Echarts(inferred) = inferred.body else {
-            panic!("chart");
-        };
-        assert_eq!(inferred.mode, EchartsMode::Option);
+        }));
+        assert!(missing.is_err(), "option must be required");
 
-        let explicit: Block = serde_json::from_value(serde_json::json!({
+        let legacy_mode = serde_json::from_value::<Block>(serde_json::json!({
             "id": "chart",
             "type": "echarts",
-            "mode": "preset",
-            "option": {"series": [{"type": "bar", "data": [1, 2]}]},
-            "fallback_summary": "Two points"
-        }))
-        .unwrap();
-        let BlockKind::Echarts(explicit) = explicit.body else {
-            panic!("chart");
-        };
-        assert_eq!(explicit.mode, EchartsMode::Preset);
-
-        let preset: Block = serde_json::from_value(serde_json::json!({
-            "id": "chart",
-            "type": "echarts",
-            "preset": "bar",
-            "option_patch": {"series": [{"type": "bar", "data": [1, 2]}]},
-            "fallback_summary": "Two points"
-        }))
-        .unwrap();
-        let BlockKind::Echarts(preset) = preset.body else {
-            panic!("chart");
-        };
-        assert_eq!(preset.mode, EchartsMode::Preset);
-        assert_eq!(preset.preset, Some(EchartsPreset::Bar));
+            "mode": "option",
+            "option": {"series": [{"type": "bar", "data": [1]}]},
+            "fallback_summary": "One point"
+        }));
+        assert!(
+            legacy_mode.is_err(),
+            "removed chart mode/preset fields must not be accepted"
+        );
 
         let legacy: Block = serde_json::from_value(serde_json::json!({
             "id": "chart",
@@ -1220,6 +1120,6 @@ mod tests {
             panic!("chart");
         };
         assert_eq!(legacy.title.as_deref(), Some("Legacy caption"));
-        assert_eq!(legacy.mode, EchartsMode::Option);
+        assert_eq!(legacy.option["series"][0]["data"], serde_json::json!([1]));
     }
 }

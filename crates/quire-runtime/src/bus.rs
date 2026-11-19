@@ -5,12 +5,14 @@ use quire_session_protocol::SessionEvent;
 use redis::{AsyncCommands, Client, aio::PubSub};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::error::RuntimeResult;
+use crate::{error::RuntimeResult, preview::ChartPreviewRecord};
 
 const INTERRUPT_CHANNEL: &str = "runtime:interrupt";
 const KB_INVALIDATE_CHANNEL: &str = "runtime:kb:invalidate";
 const MODEL_INVALIDATE_CHANNEL: &str = "runtime:models:invalidate";
 const MCP_INVALIDATE_CHANNEL: &str = "runtime:mcp:invalidate";
+const CHART_PREVIEW_PREFIX: &str = "quire:chart_preview:";
+const CHART_PREVIEW_TTL_SECONDS: u64 = 1800;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InterruptCommand {
@@ -118,6 +120,53 @@ impl RedisBus {
         Ok(McpInvalidateSubscriber { pubsub })
     }
 
+    pub fn chart_preview_key(preview_id: &str) -> String {
+        format!("{CHART_PREVIEW_PREFIX}{}", preview_id.trim())
+    }
+
+    /// Store one single-chart preview for 30 minutes.
+    pub async fn store_chart_preview(&self, preview: &ChartPreviewRecord) -> RuntimeResult<()> {
+        if preview.preview_id.trim().is_empty() {
+            return Err(crate::error::RuntimeError::InvalidRequest(
+                "chart preview_id must not be empty".into(),
+            ));
+        }
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let payload = serde_json::to_string(preview)?;
+        let _: () = connection
+            .set_ex(
+                Self::chart_preview_key(&preview.preview_id),
+                payload,
+                CHART_PREVIEW_TTL_SECONDS,
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Load a single-chart preview. Returns `None` when it never existed or the 30-minute TTL
+    /// has expired.
+    pub async fn load_chart_preview(
+        &self,
+        preview_id: &str,
+    ) -> RuntimeResult<Option<ChartPreviewRecord>> {
+        let preview_id = preview_id.trim();
+        if preview_id.is_empty() {
+            return Ok(None);
+        }
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let payload: Option<String> = connection.get(Self::chart_preview_key(preview_id)).await?;
+        payload
+            .map(|payload| serde_json::from_str(&payload).map_err(Into::into))
+            .transpose()
+    }
+
+    /// Remove a chart preview when it is no longer needed.
+    pub async fn delete_chart_preview(&self, preview_id: &str) -> RuntimeResult<()> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let _: i64 = connection.del(Self::chart_preview_key(preview_id)).await?;
+        Ok(())
+    }
+
     pub async fn health(&self) -> RuntimeResult<()> {
         let mut connection = self.client.get_multiplexed_async_connection().await?;
         let _: String = redis::cmd("PING").query_async(&mut connection).await?;
@@ -181,4 +230,18 @@ async fn next_json<T: DeserializeOwned>(pubsub: &mut PubSub) -> Option<T> {
     let message = pubsub.on_message().next().await?;
     let payload: String = message.get_payload().ok()?;
     serde_json::from_str(&payload).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chart_preview_keys_use_the_documented_namespace() {
+        assert_eq!(
+            RedisBus::chart_preview_key("chart_abc"),
+            "quire:chart_preview:chart_abc"
+        );
+        assert_eq!(CHART_PREVIEW_TTL_SECONDS, 1800);
+    }
 }

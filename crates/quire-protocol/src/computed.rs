@@ -120,6 +120,20 @@ impl ChartRequirements {
     }
 }
 
+/// Compute map/extension dependencies for one chart block before it is committed.
+pub fn chart_requirements(chart: &crate::block::EchartsBlock) -> ChartRequirements {
+    let option = merged_option(chart);
+    ChartRequirements {
+        required_maps: required_maps(&option),
+        required_extensions: required_extensions(&option),
+    }
+}
+
+/// Compute the structured data tables for one chart block before it is committed.
+pub fn chart_data_tables_for_block(chart: &crate::block::EchartsBlock) -> Vec<ChartDataTable> {
+    chart_data_tables(&merged_option(chart))
+}
+
 /// Everything the external frontend needs beyond the canonical Block AST.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ComputedDocumentMeta {
@@ -152,15 +166,11 @@ pub fn compute_document_meta(document: &ReportDocument) -> ComputedDocumentMeta 
                 }
             }
             BlockKind::Echarts(chart) => {
-                let option = merged_option(chart);
-                let requirements = ChartRequirements {
-                    required_maps: required_maps(&option),
-                    required_extensions: required_extensions(&option),
-                };
+                let requirements = crate::computed::chart_requirements(chart);
                 if !requirements.is_empty() {
                     chart_requirements.insert(block.id.clone(), requirements);
                 }
-                let tables = chart_data_tables(&option);
+                let tables = chart_data_tables_for_block(chart);
                 if !tables.is_empty() {
                     chart_tables.insert(block.id.clone(), tables);
                 }
@@ -901,9 +911,7 @@ mod tests {
                 crate::block::BlockKind::Echarts(crate::block::EchartsBlock {
                     title: None,
                     height: 240,
-                    mode: crate::block::EchartsMode::Preset,
-                    preset: Some(crate::block::EchartsPreset::Bar),
-                    option: None,
+                    option: serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
                     option_patch: None,
                     fallback_summary: "Chart summary".into(),
                     numbering: None,
@@ -986,9 +994,7 @@ mod tests {
             BlockKind::Echarts(crate::block::EchartsBlock {
                 title: Some("Trend".into()),
                 height: 300,
-                mode: crate::block::EchartsMode::Preset,
-                preset: Some(crate::block::EchartsPreset::Line),
-                option: None,
+                option: serde_json::json!({"series": [{"type": "line", "data": [1]}]}),
                 option_patch: None,
                 fallback_summary: "Upward trend".into(),
                 numbering: None,
@@ -1026,16 +1032,14 @@ mod tests {
             BlockKind::Echarts(crate::block::EchartsBlock {
                 title: None,
                 height: 300,
-                mode: crate::block::EchartsMode::Option,
-                preset: None,
-                option: Some(serde_json::json!({
+                option: serde_json::json!({
                     "geo": [{"map": "china"}],
                     "series": [
                         {"type": "map", "map": "world", "data": [1]},
                         {"type": "wordCloud", "data": [1]},
                         {"type": "bar3D", "data": [1]}
                     ]
-                })),
+                }),
                 option_patch: None,
                 fallback_summary: "Maps and extensions.".into(),
                 numbering: None,
@@ -1047,11 +1051,9 @@ mod tests {
             BlockKind::Echarts(crate::block::EchartsBlock {
                 title: None,
                 height: 300,
-                mode: crate::block::EchartsMode::Option,
-                preset: None,
-                option: Some(serde_json::json!({
+                option: serde_json::json!({
                     "series": [{"type": "bar", "data": [1]}]
-                })),
+                }),
                 option_patch: None,
                 fallback_summary: "Plain chart.".into(),
                 numbering: None,
@@ -1078,12 +1080,10 @@ mod tests {
             BlockKind::Echarts(crate::block::EchartsBlock {
                 title: Some("Quarterly revenue".into()),
                 height: 300,
-                mode: crate::block::EchartsMode::Option,
-                preset: None,
-                option: Some(serde_json::json!({
+                option: serde_json::json!({
                     "xAxis": {"type": "category", "data": ["Q1", "Q2"]},
                     "series": [{"name": "Revenue", "type": "bar", "data": [120, 150]}]
-                })),
+                }),
                 option_patch: None,
                 fallback_summary: "Revenue grew.".into(),
                 numbering: None,

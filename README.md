@@ -354,10 +354,14 @@ P90 visual-width heuristic (`CJK = 2.0`, ASCII = 1.0), `fit`/`grow` weights and
   center-positioned KPI; interactive `toolbox` chrome is stripped from static exports.
   `lint_document` flags `MANUAL_PREFIX_IN_TITLE`, `DUPLICATE_INNER_TITLE`, JS callback strings,
   invalid series types/indices, missing matrix coordinates and empty data sources.
-- ECharts 6.0 `option` mode supports `dataset`, multi-series Cartesian charts, `matrix`, `radar`,
-  `sankey`/`graph`/`chord`, `beeswarm`, `treemap`/`sunburst`/`tree`, and extension series such as
-  `wordCloud`, `liquidFill` and `bar3D`. `computed.chart_requirements` lists required map names and
-  extension registrations per chart block.
+- ECharts blocks are pure native ECharts 6.0 `option` objects. `option_patch` deep-merges incremental
+  edits for `patch_block`; there are no preset or mode abstractions. Native options support `dataset`,
+  multi-series Cartesian charts, `matrix`, `radar`, `sankey`/`graph`/`chord`, `beeswarm`,
+  `treemap`/`sunburst`/`tree`, and extension series such as `wordCloud`, `liquidFill` and `bar3D`.
+  `computed.chart_requirements` lists required map names and extension registrations per chart block.
+- `preview_echarts` validates and renders one chart through Playwright MCP before writing; later
+  refinements use `based_on_preview_id` + `option_patch`, and `commit_chart` persists the approved
+  `preview_id` without resending the ECharts option.
 - Fractional base-62 ranks use PostgreSQL `COLLATE "C"` ordering; inserting/moving touches one block row.
 - Revisions store both `forward_ops` and exact `inverse_ops`. Rollback replays inverse ops in reverse
   order into a new revision; history is never rewritten.

@@ -30,8 +30,7 @@ pub(crate) mod text;
 
 pub use block::{
     Align, Block, BlockKind, BlockStyle, CellValue, ColumnDataType, ColumnNode, ColumnSizing,
-    CustomHtmlBlock, DataType, EchartsBlock, EchartsMode, EchartsPreset, NumberingKind, RichCell,
-    TableBlock,
+    CustomHtmlBlock, DataType, EchartsBlock, NumberingKind, RichCell, TableBlock,
 };
 pub use citation::{
     BibliographyEntry, CitationLocation, CitationResolution, CitationScan, CitationUse,
@@ -42,12 +41,14 @@ pub use comment::{
 };
 pub use computed::{
     BlockFraming, ChartRequirements, CitationMapEntry, ComputedDocumentMeta, LayoutHeaderCell,
-    LayoutLeafColumn, TableLayout, TocNode, compute_block_framing, compute_document_meta,
-    compute_table_layout, compute_toc_tree,
+    LayoutLeafColumn, TableLayout, TocNode, chart_data_tables_for_block, chart_requirements,
+    compute_block_framing, compute_document_meta, compute_table_layout, compute_toc_tree,
 };
 pub use diff::{BlockDiffEntry, DocumentDiffReport, DocumentMetadataDiff, diff_documents};
 pub use draft::{DraftError, ReportDraft};
-pub use echarts::{ChartDataTable, chart_data_tables};
+pub use echarts::{
+    ChartDataTable, chart_data_tables, effective_chart_option, merge_chart_option_patch,
+};
 pub use error::ProtocolError;
 pub use events::{
     AgentPresenceEvent, CommentUpdatedEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralClearEvent,
@@ -55,7 +56,9 @@ pub use events::{
     RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 pub use ids::{BlockId, DocId, Rank, Revision, SessionId, SourceId};
-pub use linter::{Diagnostic, LintReport, LintSummary, Severity, lint_document};
+pub use linter::{
+    Diagnostic, LintReport, LintSummary, Severity, lint_document, lint_echarts_block,
+};
 pub use markdown::{
     MarkdownError, MarkdownOptions, MarkdownProjector, project_blocks, project_markdown,
     project_section,

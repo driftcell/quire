@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     block::{
-        BlockKind, CustomHtmlBlock, EchartsBlock, EchartsMode, TableBlock, is_semantic_block_id,
+        BlockKind, CustomHtmlBlock, EchartsBlock, TableBlock, is_semantic_block_id,
         looks_like_uuid_v4,
     },
     citation::{CitationLocation, scan_document_citations},
@@ -91,6 +91,22 @@ pub fn lint_document(document: &ReportDocument) -> LintReport {
     linter.check_sources();
     linter.check_empty_document();
     linter.finish()
+}
+
+/// Validate one ECharts block in isolation before it is written to a report.
+///
+/// Preview tools use this to surface `ECHARTS_DATA_MISSING`, empty fallback summaries, invalid
+/// series types and other chart diagnostics without mutating a document.
+pub fn lint_echarts_block(block_id: BlockId, chart: &EchartsBlock) -> LintReport {
+    let Ok(doc_id) = crate::ids::DocId::parse("chart-preview") else {
+        return LintReport::default();
+    };
+    let mut document = ReportDocument::new(doc_id);
+    document.blocks.push(crate::block::Block::new(
+        block_id,
+        BlockKind::Echarts(chart.clone()),
+    ));
+    lint_document(&document)
 }
 
 struct Linter<'a> {
@@ -526,43 +542,21 @@ impl Linter<'_> {
                 Some(format!("blocks[{index}].height")),
             );
         }
-        let effective_mode = if chart.mode == EchartsMode::Preset
-            && chart.preset.is_none()
-            && chart
-                .option
-                .as_ref()
-                .is_some_and(|option| !option.is_null())
-        {
-            EchartsMode::Option
-        } else {
-            chart.mode
-        };
-        if effective_mode == EchartsMode::Option && chart.option.is_none() {
+        if chart.option.is_null() {
             self.error(
                 "ECHARTS_OPTION_MISSING",
-                format!(
-                    "chart `{}` uses mode `option` without an `option` object",
-                    block.id
-                ),
-                "set `option` or switch mode to `preset` and supply `option_patch`",
+                format!("chart `{}` has no native ECharts `option`", block.id),
+                "Provide the complete ECharts 6.0 option object; presets and mode switches are not supported.",
                 Some(block.id.clone()),
                 Some(format!("blocks[{index}].option")),
             );
         }
-        if effective_mode == EchartsMode::Preset && chart.preset.is_none() {
-            self.warning(
-                "ECHARTS_PRESET_MISSING",
-                format!("chart `{}` uses mode `preset` without a preset", block.id),
-                "set preset to bar, horizontal_bar, line, area, pie, donut or scatter",
-                Some(block.id.clone()),
-                Some(format!("blocks[{index}].preset")),
-            );
-        }
         for (field, value) in [
-            ("option", chart.option.as_ref()),
+            ("option", Some(&chart.option)),
             ("option_patch", chart.option_patch.as_ref()),
         ] {
             if let Some(value) = value
+                && !value.is_null()
                 && !value.is_object()
             {
                 self.error(
@@ -575,7 +569,7 @@ impl Linter<'_> {
             }
         }
         for (field, value) in [
-            ("option", chart.option.as_ref()),
+            ("option", Some(&chart.option)),
             ("option_patch", chart.option_patch.as_ref()),
         ] {
             let Some(value) = value else {
@@ -1030,9 +1024,7 @@ mod tests {
     use super::*;
     use crate::test_support::*;
     use crate::{
-        block::{
-            Block, CellValue, ColumnNode, CustomHtmlBlock, EchartsBlock, EchartsMode, TableBlock,
-        },
+        block::{Block, CellValue, ColumnNode, CustomHtmlBlock, EchartsBlock, TableBlock},
         model::{ReportDocument, SourceEntry},
     };
     use std::collections::BTreeMap;
@@ -1216,9 +1208,7 @@ mod tests {
             BlockKind::Echarts(EchartsBlock {
                 title: None,
                 height: 30,
-                mode: EchartsMode::Option,
-                preset: None,
-                option: None,
+                option: serde_json::Value::Null,
                 option_patch: None,
                 fallback_summary: "".into(),
                 numbering: None,
@@ -1247,9 +1237,7 @@ mod tests {
             BlockKind::Echarts(EchartsBlock {
                 title: Some("Revenue".into()),
                 height: 300,
-                mode: EchartsMode::Option,
-                preset: None,
-                option: Some(option),
+                option,
                 option_patch: None,
                 fallback_summary: "Revenue rose.".into(),
                 numbering: None,
@@ -1426,7 +1414,7 @@ mod tests {
     }
 
     #[test]
-    fn echarts_mode_is_inferred_without_preset_warning() {
+    fn echarts_native_option_is_lint_clean_and_lintable_in_isolation() {
         let block: Block = serde_json::from_value(serde_json::json!({
             "id": "chart",
             "type": "echarts",
@@ -1438,9 +1426,14 @@ mod tests {
         let mut doc = valid_doc();
         doc.blocks.push(block);
         let report = lint_document(&doc);
-        assert!(!has_code(&report, "ECHARTS_PRESET_MISSING"));
         assert!(!has_code(&report, "ECHARTS_OPTION_MISSING"));
         assert_eq!(report.summary.errors, 0, "{:?}", report.diagnostics);
+
+        let BlockKind::Echarts(chart) = &doc.blocks.last().unwrap().body else {
+            panic!("chart");
+        };
+        let isolated = lint_echarts_block(block_id("preview-chart"), chart);
+        assert_eq!(isolated.summary.errors, 0, "{:?}", isolated.diagnostics);
     }
 
     #[test]
@@ -1451,11 +1444,9 @@ mod tests {
             BlockKind::Echarts(EchartsBlock {
                 title: Some("Revenue".into()),
                 height: 300,
-                mode: EchartsMode::Option,
-                preset: None,
-                option: Some(serde_json::json!({
+                option: serde_json::json!({
                     "series": [{"type": "bar", "data": [1]}]
-                })),
+                }),
                 option_patch: Some(serde_json::json!({
                     "title": {"text": "Revenue", "top": "top"}
                 })),

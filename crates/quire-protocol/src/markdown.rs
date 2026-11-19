@@ -398,7 +398,7 @@ impl<'a> MarkdownProjector<'a> {
         if !self.options.include_chart_data {
             return;
         }
-        let option = effective_chart_option(chart);
+        let option = markdown_chart_option(chart);
         let tables = chart_data_tables(&option);
         if tables.is_empty() {
             output.push_str("_No chart series data supplied; use the fallback summary above._\n\n");
@@ -444,13 +444,10 @@ impl<'a> MarkdownProjector<'a> {
     }
 }
 
-/// Compute the effective option agents describe. Preset templates are a frontend concern; data
-/// supplied through `option` and `option_patch` is merged here so reviewers can inspect it.
-pub fn effective_chart_option(chart: &EchartsBlock) -> serde_json::Value {
-    let mut value = chart
-        .option
-        .clone()
-        .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
+/// Compute the effective ECharts option agents describe. The native `option` is the single
+/// source of truth and `option_patch` is merged here so reviewers can inspect the result.
+fn markdown_chart_option(chart: &EchartsBlock) -> serde_json::Value {
+    let mut value = chart.option.clone();
     if let Some(patch) = &chart.option_patch {
         value = merge_optional_json(Some(&value), patch);
     }
@@ -663,12 +660,10 @@ mod tests {
             BlockKind::Echarts(EchartsBlock {
                 title: Some("Revenue trend".into()),
                 height: 320,
-                mode: crate::block::EchartsMode::Preset,
-                preset: Some(crate::block::EchartsPreset::Bar),
-                option: Some(serde_json::json!({
+                option: serde_json::json!({
                     "xAxis": {"data": ["Q1", "Q2"]},
                     "series": [{"name": "North America", "type": "bar", "data": [100, 120]}]
-                })),
+                }),
                 option_patch: None,
                 fallback_summary: "Revenue rose from 100 to 120.".into(),
                 numbering: None,
@@ -715,9 +710,7 @@ mod tests {
             BlockKind::Echarts(EchartsBlock {
                 title: Some("Chart".into()),
                 height: 320,
-                mode: crate::block::EchartsMode::Option,
-                preset: None,
-                option: Some(option),
+                option,
                 option_patch: None,
                 fallback_summary: "Fallback summary.".into(),
                 numbering: None,

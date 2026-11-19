@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as DocsDocIdRouteImport } from './routes/docs.$docId'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
+import { Route as ChartsPreviewIdPreviewRouteImport } from './routes/charts.$previewId.preview'
 import { Route as DocsDocIdPreviewRouteImport } from './routes/docs.$docId_.preview'
 import { Route as DocsDocIdPrintRouteImport } from './routes/docs.$docId_.print'
 
@@ -30,6 +31,11 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
   path: '/sessions/$sessionId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChartsPreviewIdPreviewRoute = ChartsPreviewIdPreviewRouteImport.update({
+  id: '/charts/$previewId/preview',
+  path: '/charts/$previewId/preview',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DocsDocIdPreviewRoute = DocsDocIdPreviewRouteImport.update({
   id: '/docs/$docId_/preview',
   path: '/docs/$docId/preview',
@@ -45,6 +51,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/charts/$previewId/preview': typeof ChartsPreviewIdPreviewRoute
   '/docs/$docId/preview': typeof DocsDocIdPreviewRoute
   '/docs/$docId/print': typeof DocsDocIdPrintRoute
 }
@@ -52,6 +59,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/charts/$previewId/preview': typeof ChartsPreviewIdPreviewRoute
   '/docs/$docId/preview': typeof DocsDocIdPreviewRoute
   '/docs/$docId/print': typeof DocsDocIdPrintRoute
 }
@@ -60,6 +68,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/charts/$previewId/preview': typeof ChartsPreviewIdPreviewRoute
   '/docs/$docId_/preview': typeof DocsDocIdPreviewRoute
   '/docs/$docId_/print': typeof DocsDocIdPrintRoute
 }
@@ -69,6 +78,7 @@ export interface FileRouteTypes {
     | '/'
     | '/docs/$docId'
     | '/sessions/$sessionId'
+    | '/charts/$previewId/preview'
     | '/docs/$docId/preview'
     | '/docs/$docId/print'
   fileRoutesByTo: FileRoutesByTo
@@ -76,6 +86,7 @@ export interface FileRouteTypes {
     | '/'
     | '/docs/$docId'
     | '/sessions/$sessionId'
+    | '/charts/$previewId/preview'
     | '/docs/$docId/preview'
     | '/docs/$docId/print'
   id:
@@ -83,6 +94,7 @@ export interface FileRouteTypes {
     | '/'
     | '/docs/$docId'
     | '/sessions/$sessionId'
+    | '/charts/$previewId/preview'
     | '/docs/$docId_/preview'
     | '/docs/$docId_/print'
   fileRoutesById: FileRoutesById
@@ -91,6 +103,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   DocsDocIdRoute: typeof DocsDocIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
+  ChartsPreviewIdPreviewRoute: typeof ChartsPreviewIdPreviewRoute
   DocsDocIdPreviewRoute: typeof DocsDocIdPreviewRoute
   DocsDocIdPrintRoute: typeof DocsDocIdPrintRoute
 }
@@ -118,6 +131,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SessionsSessionIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/charts/$previewId/preview': {
+      id: '/charts/$previewId/preview'
+      path: '/charts/$previewId/preview'
+      fullPath: '/charts/$previewId/preview'
+      preLoaderRoute: typeof ChartsPreviewIdPreviewRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/docs/$docId_/preview': {
       id: '/docs/$docId_/preview'
       path: '/docs/$docId/preview'
@@ -139,6 +159,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DocsDocIdRoute: DocsDocIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
+  ChartsPreviewIdPreviewRoute: ChartsPreviewIdPreviewRoute,
   DocsDocIdPreviewRoute: DocsDocIdPreviewRoute,
   DocsDocIdPrintRoute: DocsDocIdPrintRoute,
 }
