@@ -1,5 +1,7 @@
 import {
+  Fragment,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -43,7 +45,6 @@ import {
   MessageScrollerItem,
   MessageScrollerProvider,
   MessageScrollerViewport,
-  useMessageScroller,
 } from "@/components/ui/message-scroller";
 import {
   Tooltip,
@@ -86,7 +87,6 @@ const STREAMDOWN_CONTROLS: ControlsConfig = {
 export interface SessionStreamViewProps {
   sessionId: string;
   messages: SessionMessage[];
-  optimisticMessages?: SessionMessage[];
   attachments?: AttachmentMeta[];
   traces?: RunTraceSummary[];
   liveMain: LiveAgentTrace | null;
@@ -202,14 +202,23 @@ const VISIBLE_RECENT_TOOLS = 4;
 const ToolCallList = memo(function ToolCallList({
   sessionId,
   tools: rawTools,
+  questionSlots,
 }: {
   sessionId: string;
   tools: ToolCallTraceItem[];
+  questionSlots?: Map<string, ReactNode>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const tools = useMemo(
     () => rawTools.filter((t) => t.toolName !== "describe_task"),
     [rawTools],
+  );
+
+  const renderTool = (tool: ToolCallTraceItem) => (
+    <Fragment key={tool.toolCallId}>
+      <ToolCallTrace sessionId={sessionId} item={tool} />
+      {questionSlots?.get(tool.toolCallId)}
+    </Fragment>
   );
 
   if (tools.length === 0) {
@@ -232,13 +241,7 @@ const ToolCallList = memo(function ToolCallList({
             </span>
           </button>
         )}
-        {tools.map((tool) => (
-          <ToolCallTrace
-            key={tool.toolCallId}
-            sessionId={sessionId}
-            item={tool}
-          />
-        ))}
+        {tools.map(renderTool)}
       </div>
     );
   }
@@ -246,34 +249,31 @@ const ToolCallList = memo(function ToolCallList({
   const splitAt = tools.length - VISIBLE_RECENT_TOOLS;
   const hiddenTools = tools.slice(0, splitAt);
   const recentTools = tools.slice(splitAt);
-  const runningHidden = hiddenTools.filter((t) => t.status === "running");
+  const pinnedTools = hiddenTools.filter((tool) =>
+    questionSlots?.has(tool.toolCallId),
+  );
+  const restHidden = hiddenTools.filter(
+    (tool) => !questionSlots?.has(tool.toolCallId),
+  );
+  const runningHidden = restHidden.filter((t) => t.status === "running");
 
   return (
     <div className="space-y-1">
-      <button
-        type="button"
-        onClick={() => setExpanded(true)}
-        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground"
-      >
-        <ChevronDownIcon className="size-3" />
-        <span>
-          显示更早的 {hiddenTools.length} 个调用（共 {tools.length} 个）
-        </span>
-      </button>
-      {runningHidden.map((tool) => (
-        <ToolCallTrace
-          key={tool.toolCallId}
-          sessionId={sessionId}
-          item={tool}
-        />
-      ))}
-      {recentTools.map((tool) => (
-        <ToolCallTrace
-          key={tool.toolCallId}
-          sessionId={sessionId}
-          item={tool}
-        />
-      ))}
+      {restHidden.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground"
+        >
+          <ChevronDownIcon className="size-3" />
+          <span>
+            显示更早的 {restHidden.length} 个调用（共 {tools.length} 个）
+          </span>
+        </button>
+      )}
+      {pinnedTools.map(renderTool)}
+      {runningHidden.map(renderTool)}
+      {recentTools.map(renderTool)}
     </div>
   );
 });
@@ -302,7 +302,7 @@ function toToolTraceItems(
   }));
 }
 
-type ThinkingRenderSegment = {
+type ThinkingActivity = {
   key: string;
   kind: "thinking";
   text: string;
@@ -312,7 +312,7 @@ type ThinkingRenderSegment = {
   durationMs?: number;
 };
 
-type ExecutionRenderSegment = {
+type ExecutionActivity = {
   key: string;
   kind: "execution";
   tools: ToolCallTraceItem[];
@@ -321,72 +321,278 @@ type ExecutionRenderSegment = {
   defaultOpen: boolean;
 };
 
-type TextRenderSegment = { key: string; kind: "text"; text: string };
+type TextActivity = {
+  key: string;
+  kind: "text";
+  text: string;
+  isStreaming: boolean;
+};
 
-type RenderSegment =
-  ThinkingRenderSegment | ExecutionRenderSegment | TextRenderSegment;
+type ActivityItem = ThinkingActivity | ExecutionActivity | TextActivity;
+
+type ActivityRenderSegment = {
+  key: string;
+  kind: "activity";
+  items: ActivityItem[];
+};
+
+type TextRenderSegment = {
+  key: string;
+  kind: "text";
+  text: string;
+  isStreaming: boolean;
+};
+
+type RenderSegment = ActivityRenderSegment | TextRenderSegment;
+
+function activityHasQuestion(
+  items: ActivityItem[],
+  questionSlots?: Map<string, ReactNode>,
+) {
+  if (!questionSlots) {
+    return false;
+  }
+  return items.some(
+    (item) =>
+      item.kind === "execution" &&
+      item.tools.some((tool) => questionSlots.has(tool.toolCallId)),
+  );
+}
+
+function ExecutionTrace({
+  segmentKey,
+  sessionId,
+  tools,
+  subagentItems,
+  subagentCount,
+  defaultOpen,
+  questionSlots,
+}: {
+  segmentKey: string;
+  sessionId: string;
+  tools: ToolCallTraceItem[];
+  subagentItems: ReactNode[];
+  subagentCount: number;
+  defaultOpen: boolean;
+  questionSlots?: Map<string, ReactNode>;
+}) {
+  if (tools.length === 0 && subagentCount === 0) {
+    return null;
+  }
+  const summaryParts: string[] = [];
+  if (tools.length > 0) {
+    summaryParts.push(`${tools.length} 个工具`);
+  }
+  if (subagentCount > 0) {
+    summaryParts.push(`${subagentCount} 个子代理`);
+  }
+  return (
+    <Trace key={segmentKey}>
+      <TraceCollapsible defaultOpen={defaultOpen}>
+        <TraceCollapsibleTrigger>
+          <TraceLine className="h-6 text-xs leading-5">
+            <TraceIcon>
+              <ListTreeIcon className="size-3.5" />
+            </TraceIcon>
+            <TraceTitle>执行详情</TraceTitle>
+            <TraceDescription className="text-[11px]">
+              {summaryParts.join(" · ")}
+            </TraceDescription>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
+          <ToolCallList
+            sessionId={sessionId}
+            tools={tools}
+            questionSlots={questionSlots}
+          />
+          {subagentItems}
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
+  );
+}
+
+function ActivitySegment({
+  sessionId,
+  segment,
+  questionSlots,
+}: {
+  sessionId: string;
+  segment: ActivityRenderSegment;
+  questionSlots?: Map<string, ReactNode>;
+}) {
+  const thinkingItems = segment.items.filter(
+    (item): item is ThinkingActivity => item.kind === "thinking",
+  );
+  const executionItems = segment.items.filter(
+    (item): item is ExecutionActivity => item.kind === "execution",
+  );
+  const textItems = segment.items.filter(
+    (item): item is TextActivity => item.kind === "text",
+  );
+  const hasQuestion = activityHasQuestion(segment.items, questionSlots);
+
+  if (executionItems.length === 0 && textItems.length === 0) {
+    return (
+      <>
+        {thinkingItems.map((item) => (
+          <ThinkingTrace
+            key={item.key}
+            content={item.text}
+            isStreaming={item.isStreaming}
+            isActive={item.isActive}
+            defaultOpen={item.defaultOpen}
+            durationMs={item.durationMs}
+          />
+        ))}
+      </>
+    );
+  }
+
+  if (thinkingItems.length === 0 && textItems.length === 0) {
+    return (
+      <ExecutionTrace
+        segmentKey={segment.key}
+        sessionId={sessionId}
+        tools={executionItems.flatMap((item) => item.tools)}
+        subagentItems={executionItems.flatMap((item) => item.subagentItems)}
+        subagentCount={executionItems.reduce(
+          (total, item) => total + item.subagentCount,
+          0,
+        )}
+        defaultOpen={
+          hasQuestion || executionItems.some((item) => item.defaultOpen)
+        }
+        questionSlots={questionSlots}
+      />
+    );
+  }
+
+  const tools = executionItems.flatMap((item) => item.tools);
+  const subagentCount = executionItems.reduce(
+    (total, item) => total + item.subagentCount,
+    0,
+  );
+  const summaryParts: string[] = [];
+  if (tools.length > 0) {
+    summaryParts.push(`${tools.length} 个工具`);
+  }
+  if (subagentCount > 0) {
+    summaryParts.push(`${subagentCount} 个子代理`);
+  }
+  const streaming = segment.items.some(
+    (item) =>
+      (item.kind === "thinking" || item.kind === "text") && item.isStreaming,
+  );
+  const title =
+    tools.length > 0 || subagentCount > 0
+      ? thinkingItems.length > 0
+        ? "思考与执行"
+        : "执行详情"
+      : "思考过程";
+
+  return (
+    <Trace key={segment.key}>
+      <TraceCollapsible
+        defaultOpen={
+          hasQuestion ||
+          streaming ||
+          executionItems.some((item) => item.defaultOpen)
+        }
+      >
+        <TraceCollapsibleTrigger>
+          <TraceLine
+            status={streaming ? "running" : undefined}
+            className="h-6 text-xs leading-5"
+          >
+            <TraceIcon>
+              {streaming ? (
+                <LoaderCircleIcon className="size-3.5 animate-spin" />
+              ) : (
+                <ListTreeIcon className="size-3.5" />
+              )}
+            </TraceIcon>
+            <TraceTitle>{streaming ? "正在处理" : title}</TraceTitle>
+            <TraceDescription className="text-[11px]">
+              {summaryParts.join(" · ")}
+            </TraceDescription>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent className="mt-1.5 space-y-2 border-l pl-4">
+          {segment.items.map((item) => {
+            if (item.kind === "thinking") {
+              return (
+                <ThinkingTrace
+                  key={item.key}
+                  content={item.text}
+                  isStreaming={item.isStreaming}
+                  isActive={item.isActive}
+                  defaultOpen={item.defaultOpen}
+                  durationMs={item.durationMs}
+                />
+              );
+            }
+            if (item.kind === "text") {
+              return (
+                <div key={item.key} className={`${CHAT_PROSE} text-sm`}>
+                  <Streamdown
+                    mode={item.isStreaming ? "streaming" : "static"}
+                    controls={STREAMDOWN_CONTROLS}
+                  >
+                    {item.text}
+                  </Streamdown>
+                </div>
+              );
+            }
+            return (
+              <Fragment key={item.key}>
+                <ToolCallList
+                  sessionId={sessionId}
+                  tools={item.tools}
+                  questionSlots={questionSlots}
+                />
+                {item.subagentItems}
+              </Fragment>
+            );
+          })}
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
+  );
+}
 
 const RenderSegments = memo(function RenderSegments({
   sessionId,
   segments,
+  questionSlots,
 }: {
   sessionId: string;
   segments: RenderSegment[];
+  questionSlots?: Map<string, ReactNode>;
 }) {
   return (
     <div className="w-full space-y-1">
       {segments.map((segment) => {
-        if (segment.kind === "thinking") {
-          return (
-            <ThinkingTrace
-              key={segment.key}
-              content={segment.text}
-              isStreaming={segment.isStreaming}
-              isActive={segment.isActive}
-              defaultOpen={segment.defaultOpen}
-              durationMs={segment.durationMs}
-            />
-          );
-        }
         if (segment.kind === "text") {
           return (
             <div key={segment.key} className={`${CHAT_PROSE} pt-1`}>
-              <Streamdown controls={STREAMDOWN_CONTROLS}>
+              <Streamdown
+                mode={segment.isStreaming ? "streaming" : "static"}
+                controls={STREAMDOWN_CONTROLS}
+              >
                 {segment.text}
               </Streamdown>
             </div>
           );
         }
-        if (segment.tools.length === 0 && segment.subagentCount === 0) {
-          return null;
-        }
-        const summaryParts: string[] = [];
-        if (segment.tools.length > 0) {
-          summaryParts.push(`${segment.tools.length} 个工具`);
-        }
-        if (segment.subagentCount > 0) {
-          summaryParts.push(`${segment.subagentCount} 个子代理`);
-        }
         return (
-          <Trace key={segment.key}>
-            <TraceCollapsible defaultOpen={segment.defaultOpen}>
-              <TraceCollapsibleTrigger>
-                <TraceLine className="h-6 text-xs leading-5">
-                  <TraceIcon>
-                    <ListTreeIcon className="size-3.5" />
-                  </TraceIcon>
-                  <TraceTitle>执行详情</TraceTitle>
-                  <TraceDescription className="text-[11px]">
-                    {summaryParts.join(" · ")}
-                  </TraceDescription>
-                </TraceLine>
-              </TraceCollapsibleTrigger>
-              <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
-                <ToolCallList sessionId={sessionId} tools={segment.tools} />
-                {segment.subagentItems}
-              </TraceCollapsibleContent>
-            </TraceCollapsible>
-          </Trace>
+          <ActivitySegment
+            key={segment.key}
+            sessionId={sessionId}
+            segment={segment}
+            questionSlots={questionSlots}
+          />
         );
       })}
     </div>
@@ -468,13 +674,24 @@ function buildHistoricalSegments(
     (last, segment, index) => (segment.kind === "thinking" ? index : last),
     -1,
   );
+  // The trailing text run is the run's visible body. Everything before it is
+  // process: thinking, tool calls and any commentary the model emitted between
+  // them. Keeping that process in one group makes the text the only divider.
+  let tailStart = source.length;
+  while (tailStart > 0 && source[tailStart - 1]?.kind === "text") {
+    tailStart -= 1;
+  }
+  const head = source.slice(0, tailStart);
+  const tail = source.slice(tailStart);
+
   const segments: RenderSegment[] = [];
-  source.forEach((segment, index) => {
+  const activity: ActivityItem[] = [];
+  head.forEach((segment, index) => {
     if (segment.kind === "thinking") {
       if (!segment.text.trim()) {
         return;
       }
-      segments.push({
+      activity.push({
         key: `thinking-${index}`,
         kind: "thinking",
         text: segment.text,
@@ -491,10 +708,11 @@ function buildHistoricalSegments(
       if (!segment.text.trim()) {
         return;
       }
-      segments.push({
+      activity.push({
         key: `text-${index}`,
         kind: "text",
         text: segment.text,
+        isStreaming: false,
       });
       return;
     }
@@ -503,7 +721,7 @@ function buildHistoricalSegments(
     if (tools.length === 0 && subagents.length === 0) {
       return;
     }
-    segments.push({
+    activity.push({
       key: `execution-${index}`,
       kind: "execution",
       tools,
@@ -518,21 +736,47 @@ function buildHistoricalSegments(
       defaultOpen: false,
     });
   });
+  if (activity.length > 0) {
+    segments.push({
+      key: `activity-${activity[0]?.key ?? segments.length}`,
+      kind: "activity",
+      items: activity,
+    });
+  }
+  tail.forEach((segment, index) => {
+    if (segment.kind !== "text" || !segment.text.trim()) {
+      return;
+    }
+    segments.push({
+      key: `text-${tailStart + index}`,
+      kind: "text",
+      text: segment.text,
+      isStreaming: false,
+    });
+  });
   return segments;
 }
 
 function HistoricalRunTrace({
   sessionId,
   trace,
+  questionSlots,
 }: {
   sessionId: string;
   trace: RunTraceSummary;
+  questionSlots?: Map<string, ReactNode>;
 }) {
   const segments = buildHistoricalSegments(sessionId, trace);
   if (segments.length === 0) {
     return null;
   }
-  return <RenderSegments sessionId={sessionId} segments={segments} />;
+  return (
+    <RenderSegments
+      sessionId={sessionId}
+      segments={segments}
+      questionSlots={questionSlots}
+    />
+  );
 }
 
 const HistoricalMessageItem = memo(function HistoricalMessageItem({
@@ -540,11 +784,13 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
   msg,
   attachmentMap,
   trace,
+  questionSlots,
 }: {
   sessionId: string;
   msg: SessionMessage;
   attachmentMap: Map<string, AttachmentMeta>;
   trace?: RunTraceSummary;
+  questionSlots?: Map<string, ReactNode>;
 }) {
   const msgAttachmentIds = msg.attachment_ids ?? [];
   const sentAt = formatMsgTime(msg.created_at);
@@ -610,7 +856,13 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
   return (
     <MessageGroup className="group/assistant">
       <Message align="start" className="flex-col items-start">
-        {trace && <HistoricalRunTrace sessionId={sessionId} trace={trace} />}
+        {trace && (
+          <HistoricalRunTrace
+            sessionId={sessionId}
+            trace={trace}
+            questionSlots={questionSlots}
+          />
+        )}
         {!hasTextSegment && (
           <MessageContent className={CHAT_PROSE}>
             <Streamdown controls={STREAMDOWN_CONTROLS}>
@@ -695,14 +947,22 @@ function buildLiveSegments(
   options?: { defaultCollapsed?: boolean },
 ): RenderSegment[] {
   const lastIndex = trace.segments.length - 1;
+  let tailStart = trace.segments.length;
+  while (tailStart > 0 && trace.segments[tailStart - 1]?.kind === "text") {
+    tailStart -= 1;
+  }
+  const head = trace.segments.slice(0, tailStart);
+  const tail = trace.segments.slice(tailStart);
+
   const segments: RenderSegment[] = [];
-  trace.segments.forEach((segment: LiveTraceSegment, index) => {
+  const activity: ActivityItem[] = [];
+  head.forEach((segment: LiveTraceSegment, index) => {
     const isLast = index === lastIndex;
     if (segment.kind === "thinking") {
       if (!segment.text.trim()) {
         return;
       }
-      segments.push({
+      activity.push({
         key: `thinking-${index}`,
         kind: "thinking",
         text: segment.text,
@@ -716,10 +976,11 @@ function buildLiveSegments(
       if (!segment.text.trim()) {
         return;
       }
-      segments.push({
+      activity.push({
         key: `text-${index}`,
         kind: "text",
         text: segment.text,
+        isStreaming: false,
       });
       return;
     }
@@ -729,7 +990,7 @@ function buildLiveSegments(
     if (segment.tools.length === 0 && runs.length === 0) {
       return;
     }
-    segments.push({
+    activity.push({
       key: `execution-${index}`,
       kind: "execution",
       tools: segment.tools,
@@ -740,6 +1001,24 @@ function buildLiveSegments(
       defaultOpen: !options?.defaultCollapsed,
     });
   });
+  if (activity.length > 0) {
+    segments.push({
+      key: `activity-${activity[0]?.key ?? segments.length}`,
+      kind: "activity",
+      items: activity,
+    });
+  }
+  tail.forEach((segment, index) => {
+    if (segment.kind !== "text" || !segment.text.trim()) {
+      return;
+    }
+    segments.push({
+      key: `text-${tailStart + index}`,
+      kind: "text",
+      text: segment.text,
+      isStreaming: trace.isStreaming,
+    });
+  });
   return segments;
 }
 
@@ -747,54 +1026,25 @@ function LiveTraceSegments({
   sessionId,
   trace,
   subagents,
+  questionSlots,
 }: {
   sessionId: string;
   trace: LiveAgentTrace;
   subagents: LiveSubagentRun[];
+  questionSlots?: Map<string, ReactNode>;
 }) {
   return (
     <RenderSegments
       sessionId={sessionId}
       segments={buildLiveSegments(sessionId, trace, subagents)}
+      questionSlots={questionSlots}
     />
   );
-}
-
-function AutoFollowOnSend({
-  lastUserTurnKey,
-  hasLiveMain,
-}: {
-  lastUserTurnKey: string | null;
-  hasLiveMain: boolean;
-}) {
-  const { scrollToEnd } = useMessageScroller();
-  const prevTurnKeyRef = useRef<string | null>(lastUserTurnKey);
-  const prevLiveRef = useRef<boolean>(hasLiveMain);
-
-  useEffect(() => {
-    if (
-      lastUserTurnKey !== null &&
-      lastUserTurnKey !== prevTurnKeyRef.current
-    ) {
-      scrollToEnd({ behavior: "smooth" });
-    }
-    prevTurnKeyRef.current = lastUserTurnKey;
-  }, [lastUserTurnKey, scrollToEnd]);
-
-  useEffect(() => {
-    if (hasLiveMain && !prevLiveRef.current) {
-      scrollToEnd({ behavior: "smooth" });
-    }
-    prevLiveRef.current = hasLiveMain;
-  }, [hasLiveMain, scrollToEnd]);
-
-  return null;
 }
 
 export function SessionStreamView({
   sessionId,
   messages,
-  optimisticMessages = [],
   attachments = [],
   traces = [],
   liveMain,
@@ -822,34 +1072,6 @@ export function SessionStreamView({
     }
     return map;
   }, [traces]);
-
-  const visibleMessages = useMemo(() => {
-    const persisted = messages.filter(
-      (msg) => msg.role === "user" || msg.role === "assistant",
-    );
-    if (optimisticMessages.length === 0) {
-      return persisted;
-    }
-    const persistedContents = new Set(
-      persisted.map((m) => `${m.role}:${m.content}`),
-    );
-    const pending = optimisticMessages.filter(
-      (opt) => !persistedContents.has(`${opt.role}:${opt.content}`),
-    );
-    return [...persisted, ...pending];
-  }, [messages, optimisticMessages]);
-
-  const lastUserTurnKey = useMemo(() => {
-    let userCount = 0;
-    let lastContent: string | null = null;
-    for (const msg of visibleMessages) {
-      if (msg.role === "user") {
-        userCount += 1;
-        lastContent = msg.content;
-      }
-    }
-    return lastContent !== null ? `${userCount}:${lastContent}` : null;
-  }, [visibleMessages]);
 
   const allQuestionCards = useMemo(() => {
     const byId = new Map<
@@ -884,72 +1106,132 @@ export function SessionStreamView({
     return map;
   }, [allQuestionCards]);
 
-  const anchoredQuestionIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const msg of visibleMessages) {
-      if (msg.role === "assistant" && msg.run_id) {
-        const matched = questionsByRunId.get(msg.run_id);
-        if (matched) {
-          for (const entry of matched) {
-            ids.add(entry.question.question_id);
-          }
-        }
-      }
-    }
-    return ids;
-  }, [visibleMessages, questionsByRunId]);
+  const answerQuestionRef = useRef(onAnswerQuestion);
+  useEffect(() => {
+    answerQuestionRef.current = onAnswerQuestion;
+  }, [onAnswerQuestion]);
 
-  const unanchoredQuestions = useMemo(
-    () =>
-      allQuestionCards.filter(
-        (entry) => !anchoredQuestionIds.has(entry.question.question_id),
-      ),
-    [allQuestionCards, anchoredQuestionIds],
+  const renderQuestionCard = useCallback(
+    (entry: (typeof allQuestionCards)[number]) => (
+      <QuestionCard
+        key={entry.question.question_id}
+        pending={entry.question}
+        resolvedState={entry.resolvedState}
+        isSubmitting={entry.resolvedState ? false : isAnsweringQuestion}
+        onSubmit={(answers, skipped) => {
+          if (!entry.resolvedState) {
+            answerQuestionRef.current(
+              entry.question.question_id,
+              answers,
+              skipped,
+            );
+          }
+        }}
+      />
+    ),
+    [isAnsweringQuestion],
   );
 
-  const renderQuestionCard = (entry: (typeof allQuestionCards)[number]) => (
-    <QuestionCard
-      key={entry.question.question_id}
-      pending={entry.question}
-      resolvedState={entry.resolvedState}
-      isSubmitting={entry.resolvedState ? false : isAnsweringQuestion}
-      onSubmit={(answers, skipped) => {
-        if (!entry.resolvedState) {
-          onAnswerQuestion(entry.question.question_id, answers, skipped);
-        }
-      }}
-    />
+  const questionSlots = useMemo(() => {
+    const map = new Map<string, ReactNode>();
+    for (const entry of allQuestionCards) {
+      const toolCallId = entry.question.tool_call_id;
+      if (toolCallId) {
+        map.set(toolCallId, renderQuestionCard(entry));
+      }
+    }
+    return map;
+  }, [allQuestionCards, renderQuestionCard]);
+
+  const visibleMessages = useMemo(() => {
+    const persisted = messages.filter(
+      (msg) =>
+        msg.role === "user" || msg.role === "assistant" || msg.role === "tool",
+    );
+    const assistantRunIds = new Set(
+      persisted
+        .filter((msg) => msg.role === "assistant" && msg.run_id)
+        .map((msg) => msg.run_id),
+    );
+    return persisted.filter((msg) => {
+      if (msg.role !== "tool") {
+        return true;
+      }
+      if (!msg.run_id) {
+        return false;
+      }
+      return (
+        !assistantRunIds.has(msg.run_id) &&
+        questionsByRunId.has(msg.run_id) &&
+        traceByRunId.has(msg.run_id)
+      );
+    });
+  }, [messages, questionsByRunId, traceByRunId]);
+
+  const lastUserMessageId = useMemo(() => {
+    for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
+      const message = visibleMessages[index];
+      if (message?.role === "user") {
+        return message.message_id;
+      }
+    }
+    return null;
+  }, [visibleMessages]);
+
+  const orphanQuestions = useMemo(
+    () =>
+      allQuestionCards.filter((entry) => {
+        // Every new question carries its ask_user tool-call ID. Rendering it at
+        // the bottom while its trace is being fetched causes a visible jump, so
+        // wait for the trace instead. Only legacy rows without an ID fall back.
+        return !entry.question.tool_call_id;
+      }),
+    [allQuestionCards],
   );
 
   return (
-    <MessageScrollerProvider autoScroll scrollEdgeThreshold={24}>
-      <AutoFollowOnSend
-        lastUserTurnKey={lastUserTurnKey}
-        hasLiveMain={liveMain !== null}
-      />
+    <MessageScrollerProvider
+      autoScroll
+      defaultScrollPosition="last-anchor"
+      scrollEdgeThreshold={24}
+    >
       <MessageScroller className="h-full">
         <MessageScrollerViewport className="px-4">
           <MessageScrollerContent className={`${contentClassName} py-4`}>
             {visibleMessages.map((msg) => {
-              const attachedQuestions =
-                msg.role === "assistant" && msg.run_id
-                  ? questionsByRunId.get(msg.run_id)
-                  : undefined;
+              const trace = msg.run_id
+                ? traceByRunId.get(msg.run_id)
+                : undefined;
+              if (msg.role === "tool") {
+                if (!trace) {
+                  return null;
+                }
+                return (
+                  <MessageScrollerItem
+                    key={msg.message_id}
+                    messageId={msg.message_id}
+                  >
+                    <HistoricalRunTrace
+                      sessionId={sessionId}
+                      trace={trace}
+                      questionSlots={questionSlots}
+                    />
+                  </MessageScrollerItem>
+                );
+              }
               return (
                 <MessageScrollerItem
                   key={msg.message_id}
                   messageId={msg.message_id}
-                  scrollAnchor={msg.role === "user"}
+                  scrollAnchor={msg.message_id === lastUserMessageId}
                 >
                   <HistoricalMessageItem
                     sessionId={sessionId}
                     msg={msg}
                     attachmentMap={attachmentMap}
-                    trace={
-                      msg.run_id ? traceByRunId.get(msg.run_id) : undefined
-                    }
+                    trace={trace}
+                    questionSlots={questionSlots}
                   />
-                  {attachedQuestions?.map(renderQuestionCard)}
                 </MessageScrollerItem>
               );
             })}
@@ -1018,6 +1300,7 @@ export function SessionStreamView({
                         sessionId={sessionId}
                         trace={liveMain}
                         subagents={liveSubagents}
+                        questionSlots={questionSlots}
                       />
                     </MessageContent>
                   </Message>
@@ -1025,7 +1308,7 @@ export function SessionStreamView({
               </MessageScrollerItem>
             )}
 
-            {unanchoredQuestions.map((entry) => (
+            {orphanQuestions.map((entry) => (
               <MessageScrollerItem
                 key={`question-${entry.question.question_id}`}
                 messageId={`question-${entry.question.question_id}`}

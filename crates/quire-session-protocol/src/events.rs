@@ -106,6 +106,8 @@ pub enum SessionEventKind {
     },
     QuestionnaireRequested {
         question_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_call_id: Option<String>,
         questions: Vec<QuestionItem>,
     },
     QuestionnaireAnswered {
@@ -237,6 +239,7 @@ mod tests {
             None,
             SessionEventKind::QuestionnaireRequested {
                 question_id: "q_1".into(),
+                tool_call_id: Some("run_main:call_1".into()),
                 questions: vec![crate::session::QuestionItem {
                     id: "scope".into(),
                     title: "Which scope?".into(),

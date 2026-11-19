@@ -186,6 +186,13 @@
         },
         "run_id": {
           "type": "string"
+        },
+        "tool_call_id": {
+          "description": "The `ask_user` tool call that opened this question, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -282,6 +289,28 @@
         "label"
       ]
     },
+    "ResolvedQuestion": {
+      "type": "object",
+      "properties": {
+        "answers": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/QuestionAnswer"
+          }
+        },
+        "question": {
+          "$ref": "#/$defs/PendingQuestion"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "question",
+        "status"
+      ]
+    },
     "RunTaskFocus": {
       "type": "object",
       "properties": {
@@ -374,6 +403,12 @@
         "agent_name": {
           "type": "string"
         },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "section_id": {
           "type": [
             "string",
@@ -414,12 +449,6 @@
           "items": {
             "$ref": "#/$defs/RunTraceToolItem"
           }
-        },
-        "display_name": {
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [
@@ -601,6 +630,13 @@
               "type": "null"
             }
           ]
+        },
+        "resolved_questions": {
+          "description": "Answered, skipped and dismissed question cards in creation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResolvedQuestion"
+          }
         },
         "session_id": {
           "type": "string"
@@ -848,6 +884,12 @@
             "agent_name": {
               "type": "string"
             },
+            "display_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "event": {
               "type": "string",
               "const": "subagent_started"
@@ -863,12 +905,6 @@
             },
             "task": {
               "type": "string"
-            },
-            "display_name": {
-              "type": [
-                "string",
-                "null"
-              ]
             }
           },
           "required": [
@@ -959,6 +995,12 @@
               "items": {
                 "$ref": "#/$defs/QuestionItem"
               }
+            },
+            "tool_call_id": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [

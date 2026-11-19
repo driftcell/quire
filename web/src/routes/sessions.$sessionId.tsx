@@ -68,8 +68,8 @@ import type {
   ContextUsage,
   PendingQuestion,
   QuestionAnswer,
+  SessionDetail,
   SessionEvent,
-  SessionMessage,
 } from "@/contracts/session-protocol";
 import { useIsMobile } from "@/hooks/use-mobile";
 import {
@@ -192,9 +192,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [floatingComment, setFloatingComment] =
     useState<FloatingCommentAnchor | null>(null);
   const [mobileTab, setMobileTab] = useState<"report" | "chat">("report");
-  const [optimisticMessages, setOptimisticMessages] = useState<
-    SessionMessage[]
-  >([]);
   const [quotedForChat, setQuotedForChat] = useState<QuotedChatSnippet | null>(
     null,
   );
@@ -236,6 +233,31 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     },
     [],
   );
+
+  const mergedResolvedQuestions = useMemo(() => {
+    const byId = new Map<
+      string,
+      {
+        question: PendingQuestion;
+        status: "answered" | "skipped" | "dismissed";
+        answers?: QuestionAnswer[];
+      }
+    >();
+    for (const item of sessionQuery.data?.resolved_questions ?? []) {
+      byId.set(item.question.question_id, {
+        question: item.question,
+        status:
+          item.status === "skipped" || item.status === "dismissed"
+            ? item.status
+            : "answered",
+        answers: item.answers,
+      });
+    }
+    for (const item of resolvedQuestions) {
+      byId.set(item.question.question_id, item);
+    }
+    return Array.from(byId.values());
+  }, [sessionQuery.data?.resolved_questions, resolvedQuestions]);
 
   const docQuery = useQuery({
     queryKey: ["doc", effectiveDocId],
@@ -431,6 +453,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         setLivePendingQuestion({
           question_id: ev.question_id,
           run_id: ev.run_id,
+          tool_call_id: ev.tool_call_id,
           questions: ev.questions,
           created_at: ev.timestamp,
         });
@@ -446,6 +469,12 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         setLivePendingQuestion((curr) =>
           curr?.question_id === ev.question_id ? null : curr,
         );
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["session-traces", sessionId],
+        });
       } else if (ev.event === "questionnaire_dismissed") {
         const target = effectivePendingQuestionRef.current;
         if (target && target.question_id === ev.question_id) {
@@ -454,6 +483,12 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         setLivePendingQuestion((curr) =>
           curr?.question_id === ev.question_id ? null : curr,
         );
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["session-traces", sessionId],
+        });
       } else if (ev.event === "turn_finished") {
         setLiveRunStatus("idle");
         void (async () => {
@@ -674,42 +709,43 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const handleSend = async (text: string, files: File[]) => {
     const content = text || `请处理已上传的 ${files.length} 个附件。`;
-    const tempId = `opt_${randomUuid()}`;
-    const optimistic: SessionMessage = {
-      message_id: tempId,
-      session_id: sessionId,
-      role: "user",
-      content,
-      created_at: new Date().toISOString(),
-    };
-    setOptimisticMessages((prev) => [...prev, optimistic]);
-    try {
-      const attachmentIds: string[] = [];
-      for (const file of files) {
-        const uploaded = await uploadAttachment(sessionId, file);
-        attachmentIds.push(uploaded.attachment_id);
-      }
-      await postMessage(sessionId, {
-        client_msg_id: `msg_${randomUuid()}`,
-        content,
-        attachment_ids: attachmentIds,
-      });
-      if (effectivePendingQuestion) {
-        recordResolvedQuestion(effectivePendingQuestion, "dismissed");
-      }
-      setLivePendingQuestion(null);
-      await queryClient.invalidateQueries({
-        queryKey: ["session", sessionId],
-      });
-      setOptimisticMessages((prev) =>
-        prev.filter((m) => m.message_id !== tempId),
-      );
-    } catch (err) {
-      setOptimisticMessages((prev) =>
-        prev.filter((m) => m.message_id !== tempId),
-      );
-      throw err;
+    const attachmentIds: string[] = [];
+    for (const file of files) {
+      const uploaded = await uploadAttachment(sessionId, file);
+      attachmentIds.push(uploaded.attachment_id);
     }
+    const response = await postMessage(sessionId, {
+      client_msg_id: `msg_${randomUuid()}`,
+      content,
+      attachment_ids: attachmentIds,
+    });
+    // Insert the persisted row under its stable server ID. A temporary
+    // optimistic row would change keys when the real row arrives and lose the
+    // turn anchor; refetching the whole session here causes the same jump.
+    queryClient.setQueryData<SessionDetail>(
+      ["session", sessionId],
+      (current) => {
+        if (!current) {
+          return current;
+        }
+        const existing = current.messages ?? [];
+        if (
+          existing.some(
+            (message) => message.message_id === response.message.message_id,
+          )
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          messages: [...existing, response.message],
+        };
+      },
+    );
+    if (effectivePendingQuestion) {
+      recordResolvedQuestion(effectivePendingQuestion, "dismissed");
+    }
+    setLivePendingQuestion(null);
   };
 
   const handleAnswerQuestion = async (
@@ -732,6 +768,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       }
       setLivePendingQuestion(null);
       void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["session-traces", sessionId],
+      });
     } finally {
       setIsAnsweringQuestion(false);
     }
@@ -788,7 +827,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           <SessionStreamView
             sessionId={sessionId}
             messages={sessionQuery.data?.messages ?? []}
-            optimisticMessages={optimisticMessages}
             contentClassName={
               hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"
             }
@@ -803,7 +841,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             liveMain={liveMain}
             liveSubagents={liveSubagents}
             pendingQuestion={effectivePendingQuestion}
-            resolvedQuestions={resolvedQuestions}
+            resolvedQuestions={mergedResolvedQuestions}
             isAnsweringQuestion={isAnsweringQuestion}
             onAnswerQuestion={(qId, answers, skipped) => {
               void handleAnswerQuestion(qId, answers, skipped);

@@ -125,6 +125,7 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
         preview_base_url: "http://127.0.0.1:5173".into(),
         preview_public_url: "http://localhost:5173".into(),
         playwright_mcp_url: None,
+        sandbox: quire_runtime::sandbox::SandboxConfig::default(),
     });
     let service = RuntimeService::new(store.clone(), kb, Arc::new(models), config);
     (service, store)
@@ -1887,6 +1888,7 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
     );
     let pending = waiting.pending_question.clone().expect("pending question");
     assert_eq!(pending.questions.len(), 1);
+    assert_eq!(pending.tool_call_id.as_deref(), Some("tc_ask"));
 
     let app = quire_runtime::http::router(service.clone());
     let (status, body) = http_json(
@@ -1914,6 +1916,20 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
     let resumed = service.session_detail(&session.session_id).await.unwrap();
     assert_eq!(resumed.summary.active_run_status, ActiveRunStatus::Idle);
     assert!(resumed.pending_question.is_none());
+    let resolved = resumed
+        .resolved_questions
+        .first()
+        .expect("resolved question should be hydrated after reload");
+    assert_eq!(resolved.status, "answered");
+    assert_eq!(resolved.question.tool_call_id.as_deref(), Some("tc_ask"));
+    assert_eq!(
+        resolved
+            .answers
+            .first()
+            .and_then(|answer| answer.selected_option_ids.first())
+            .map(String::as_str),
+        Some("q3")
+    );
     assert!(resumed.messages.iter().any(|message| {
         message.role == MessageRole::Assistant && message.content.contains("resumed after answer")
     }));

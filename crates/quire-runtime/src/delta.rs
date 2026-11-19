@@ -28,9 +28,10 @@ struct Buffer {
 
 /// Buffers deltas per `(run_id, agent_id)`.
 ///
-/// Buffers flush after 180ms or 100 characters. Callers must force a flush before any structural
-/// event (`ToolCallStarted`, `TaskFocus`, `TurnFinished`, `TurnFailed`) or cancellation so event
-/// order remains durable and replay-safe.
+/// Buffers flush after 50ms or 64 characters so the browser receives text at frame-friendly
+/// intervals. Callers must force a flush before any structural event (`ToolCallStarted`,
+/// `TaskFocus`, `TurnFinished`, `TurnFailed`) or cancellation so event order remains durable and
+/// replay-safe.
 #[derive(Debug)]
 pub struct DeltaCoalescer {
     buffers: BTreeMap<(String, String), Buffer>,
@@ -40,7 +41,7 @@ pub struct DeltaCoalescer {
 
 impl Default for DeltaCoalescer {
     fn default() -> Self {
-        Self::new(Duration::from_millis(180), 100)
+        Self::new(Duration::from_millis(50), 64)
     }
 }
 

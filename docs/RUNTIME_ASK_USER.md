@@ -22,16 +22,19 @@ or the report protocol itself.
 - `QuestionOption { id, label, description? }`
 - `QuestionItem { id, title, description?, multiple, required, options }` with no freeform fields
 - `QuestionAnswer { question_id, selected_option_ids, freeform_text?, skipped }`
-- `PendingQuestion { question_id, run_id, questions, created_at }`
+- `PendingQuestion { question_id, run_id, tool_call_id?, questions, created_at }`
+- `ResolvedQuestion { question, status, answers }`
 - `SessionDetail.pending_question: Option<PendingQuestion>`, restored from the latest pending row
+- `SessionDetail.resolved_questions: Vec<ResolvedQuestion>`, restored in creation order so history
+  can anchor each card to its originating `ask_user` tool call
 
 SSE additions:
 
-- `questionnaire_requested { question_id, questions }`
+- `questionnaire_requested { question_id, tool_call_id?, questions }`
 - `questionnaire_answered { question_id, answers, skipped_all }`
 - `questionnaire_dismissed { question_id, reason }`
 
-`contracts/session-protocol.schema.json` includes all new types and the pending field.
+`contracts/session-protocol.schema.json` includes all new types and both session fields.
 
 ### Storage
 
@@ -43,8 +46,9 @@ The consolidated `migrations/0001_init.sql` adds `agent_questions`:
 - `status` constrained to `pending`, `answered`, `skipped`, `dismissed`
 - `created_at`, `resolved_at`
 
-`RuntimeStore` creates pending questions, loads the latest pending card for `SessionDetail`, resolves
-one pending card, dismisses all pending cards for a session, and transitions the suspended run.
+`RuntimeStore` creates pending questions, loads the latest pending card and the resolved question
+history for `SessionDetail`, resolves one pending card, dismisses all pending cards for a session,
+and transitions the suspended run.
 
 ### ask_user suspension
 
@@ -84,6 +88,8 @@ the user's message.
 ## 3. Invariants & Verification
 
 - A pending card is durable and appears in `SessionDetail.pending_question` after refresh/restart.
+- Resolved cards remain available in `SessionDetail.resolved_questions`; `tool_call_id` matches the
+  persisted `ask_user` trace entry so the frontend can render the card under that call.
 - Answering validates pending state; a resolved card cannot be answered again.
 - Skip and dismiss both produce their SSE event and a new or finalized run as appropriate.
 - A new message always wins over a pending card and starts a normal turn.

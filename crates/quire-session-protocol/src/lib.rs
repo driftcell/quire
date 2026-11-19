@@ -10,7 +10,7 @@ pub mod session;
 pub use events::{SessionEvent, SessionEventKind};
 pub use session::{
     ActiveRunStatus, AttachmentMeta, ContextUsage, CreateSessionRequest, MessageRole,
-    PendingQuestion, QuestionAnswer, QuestionItem, QuestionOption, RunTaskFocus, RunTraceSegment,
-    RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest, SessionDetail,
-    SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
+    PendingQuestion, QuestionAnswer, QuestionItem, QuestionOption, ResolvedQuestion, RunTaskFocus,
+    RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
+    SessionDetail, SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
 };

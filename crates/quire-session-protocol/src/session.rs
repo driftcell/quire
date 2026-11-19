@@ -161,6 +161,9 @@ pub struct QuestionAnswer {
 pub struct PendingQuestion {
     pub question_id: String,
     pub run_id: String,
+    /// The `ask_user` tool call that opened this question, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     pub questions: Vec<QuestionItem>,
     pub created_at: DateTime<Utc>,
 }
@@ -273,6 +276,17 @@ pub struct SessionDetail {
     /// Latest unresolved question card, restored after refresh or reconnect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_question: Option<PendingQuestion>,
+    /// Answered, skipped and dismissed question cards in creation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolved_questions: Vec<ResolvedQuestion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ResolvedQuestion {
+    pub question: PendingQuestion,
+    pub status: String,
+    #[serde(default)]
+    pub answers: Vec<QuestionAnswer>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -348,9 +362,11 @@ mod tests {
                 created_at: now,
             }],
             attachments: Vec::new(),
+            resolved_questions: Vec::new(),
             pending_question: Some(PendingQuestion {
                 question_id: "q_1".into(),
                 run_id: "run_1".into(),
+                tool_call_id: Some("run_1:call_1".into()),
                 questions: vec![QuestionItem {
                     id: "scope".into(),
                     title: "Which scope?".into(),

@@ -101,11 +101,11 @@ export type SessionEvent1 =
     }
   | {
       agent_name: string;
+      display_name?: string | null;
       event: "subagent_started";
       section_id?: string | null;
       subagent_run_id: string;
       task: string;
-      display_name?: string | null;
       [k: string]: unknown;
     }
   | {
@@ -128,6 +128,7 @@ export type SessionEvent1 =
       event: "questionnaire_requested";
       question_id: string;
       questions: QuestionItem[];
+      tool_call_id?: string | null;
       [k: string]: unknown;
     }
   | {
@@ -194,6 +195,10 @@ export interface PendingQuestion {
   question_id: string;
   questions: QuestionItem[];
   run_id: string;
+  /**
+   * The `ask_user` tool call that opened this question, when known.
+   */
+  tool_call_id?: string | null;
   [k: string]: unknown;
 }
 export interface QuestionItem {
@@ -226,6 +231,7 @@ export interface RunTraceSummary {
 }
 export interface RunTraceSubagent {
   agent_name: string;
+  display_name?: string | null;
   section_id?: string | null;
   status: string;
   subagent_run_id: string;
@@ -234,7 +240,6 @@ export interface RunTraceSubagent {
   task_focus?: RunTaskFocus | null;
   thinking: string;
   tools?: RunTraceToolItem[];
-  display_name?: string | null;
   [k: string]: unknown;
 }
 export interface RunTaskFocus {
@@ -282,6 +287,10 @@ export interface SessionDetail {
    * Latest unresolved question card, restored after refresh or reconnect.
    */
   pending_question?: PendingQuestion | null;
+  /**
+   * Answered, skipped and dismissed question cards in creation order.
+   */
+  resolved_questions?: ResolvedQuestion[];
   session_id: string;
   status: SessionStatus;
   title: string;
@@ -304,6 +313,12 @@ export interface SessionMessage {
   role: MessageRole;
   run_id?: string | null;
   session_id: string;
+  [k: string]: unknown;
+}
+export interface ResolvedQuestion {
+  answers?: QuestionAnswer[];
+  question: PendingQuestion;
+  status: string;
   [k: string]: unknown;
 }
 export interface SessionSummary {

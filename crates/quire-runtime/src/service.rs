@@ -985,6 +985,7 @@ impl RuntimeService {
                                 None,
                                 SessionEventKind::QuestionnaireRequested {
                                     question_id: question.question_id.clone(),
+                                    tool_call_id: question.tool_call_id.clone(),
                                     questions: question.questions.clone(),
                                 },
                             )

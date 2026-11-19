@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use quire_session_protocol::{
     ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem,
-    RunTaskFocus, RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem,
-    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
-    SessionStatus, SessionSummary, ToolCallDetail,
+    ResolvedQuestion, RunTaskFocus, RunTraceSegment, RunTraceSubagent, RunTraceSummary,
+    RunTraceToolItem, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind,
+    SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
@@ -138,11 +138,13 @@ impl RuntimeStore {
         let messages = self.list_messages(session_id).await?;
         let attachments = self.list_attachments(session_id).await?;
         let pending_question = self.pending_question(session_id).await?;
+        let resolved_questions = self.list_resolved_questions(session_id).await?;
         Ok(SessionDetail {
             summary,
             messages,
             attachments,
             pending_question,
+            resolved_questions,
         })
     }
 
@@ -422,6 +424,7 @@ impl RuntimeStore {
         Ok(PendingQuestion {
             question_id,
             run_id: run_id.to_string(),
+            tool_call_id: tool_call_id.map(str::to_string),
             questions: questions.to_vec(),
             created_at,
         })
@@ -432,7 +435,7 @@ impl RuntimeStore {
         session_id: &str,
     ) -> RuntimeResult<Option<PendingQuestion>> {
         let row = sqlx::query(
-            r#"SELECT question_id, run_id, questions, created_at
+            r#"SELECT question_id, run_id, tool_call_id, questions, created_at
                FROM agent_questions
                WHERE session_id = $1 AND status = 'pending'
                ORDER BY created_at DESC LIMIT 1"#,
@@ -449,7 +452,7 @@ impl RuntimeStore {
         question_id: &str,
     ) -> RuntimeResult<Option<PendingQuestion>> {
         let row = sqlx::query(
-            r#"SELECT question_id, run_id, questions, created_at
+            r#"SELECT question_id, run_id, tool_call_id, questions, created_at
                FROM agent_questions
                WHERE session_id = $1 AND question_id = $2 AND status = 'pending'"#,
         )
@@ -458,6 +461,22 @@ impl RuntimeStore {
         .fetch_optional(&self.pool)
         .await?;
         row.as_ref().map(row_to_pending_question).transpose()
+    }
+
+    pub async fn list_resolved_questions(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<Vec<ResolvedQuestion>> {
+        let rows = sqlx::query(
+            r#"SELECT question_id, run_id, tool_call_id, questions, status, answers, created_at
+               FROM agent_questions
+               WHERE session_id = $1 AND status <> 'pending'
+               ORDER BY created_at ASC"#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_resolved_question).collect()
     }
 
     pub async fn resolve_question(
@@ -496,7 +515,7 @@ impl RuntimeStore {
             r#"UPDATE agent_questions
                SET status = 'dismissed', resolved_at = NOW()
                WHERE session_id = $1 AND status = 'pending'
-               RETURNING question_id, run_id, questions, created_at"#,
+               RETURNING question_id, run_id, tool_call_id, questions, created_at"#,
         )
         .bind(session_id)
         .fetch_all(&self.pool)
@@ -1013,10 +1032,24 @@ fn row_to_pending_question(row: &PgRow) -> RuntimeResult<PendingQuestion> {
     Ok(PendingQuestion {
         question_id: row.try_get("question_id")?,
         run_id: row.try_get("run_id")?,
+        tool_call_id: row.try_get("tool_call_id")?,
         questions: serde_json::from_value(questions).map_err(|error| {
             RuntimeError::Internal(format!("corrupt question payload: {error}"))
         })?,
         created_at: row.try_get("created_at")?,
+    })
+}
+
+fn row_to_resolved_question(row: &PgRow) -> RuntimeResult<ResolvedQuestion> {
+    let answers: Option<Value> = row.try_get("answers")?;
+    Ok(ResolvedQuestion {
+        question: row_to_pending_question(row)?,
+        status: row.try_get("status")?,
+        answers: answers
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(|error| RuntimeError::Internal(format!("corrupt question answers: {error}")))?
+            .unwrap_or_default(),
     })
 }
 
