@@ -3,12 +3,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   CheckIcon,
-  FileTextIcon,
   KeyRoundIcon,
+  LoaderCircleIcon,
+  MoreHorizontalIcon,
+  PanelLeftCloseIcon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
 import { deleteSession, listSessions } from "@/api/runtime";
+import { ProductBrand } from "@/components/layout/ProductBrand";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +21,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -29,60 +39,112 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
-  SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
-import type {
-  ActiveRunStatus,
-  SessionSummary,
-} from "@/contracts/session-protocol";
+import type { SessionSummary } from "@/contracts/session-protocol";
 import { getAuthTokens, saveAuthTokens } from "@/lib/auth";
 
-function statusDotClass(status: ActiveRunStatus): string {
-  switch (status) {
-    case "running":
-      return "bg-emerald-500 animate-pulse";
-    case "awaiting_input":
-      return "bg-amber-500 animate-pulse";
-    case "interrupted":
-    case "failed":
-      return "bg-destructive";
-    case "idle":
-    default:
-      return "bg-muted-foreground/30";
-  }
+function GridLoader() {
+  return (
+    <output
+      className="ml-auto grid shrink-0 grid-cols-5 gap-[1.5px]"
+      aria-label="Agent 正在运行"
+    >
+      {Array.from({ length: 25 }, (_, index) => {
+        const row = Math.floor(index / 5);
+        const column = index % 5;
+        return (
+          <span
+            key={index}
+            className="grid-loader-cell size-[2px] rounded-[0.5px] bg-muted-foreground"
+            style={{ animationDelay: `${(row + column) * 90}ms` }}
+          />
+        );
+      })}
+    </output>
+  );
+}
+
+type SessionGroupKey = "today" | "yesterday" | "thisWeek" | "earlier";
+
+const GROUP_ORDER: readonly SessionGroupKey[] = [
+  "today",
+  "yesterday",
+  "thisWeek",
+  "earlier",
+];
+
+const GROUP_LABELS: Record<SessionGroupKey, string> = {
+  today: "今天",
+  yesterday: "昨天",
+  thisWeek: "本周",
+  earlier: "更早",
+};
+
+const DAY_MS = 86_400_000;
+
+const shanghaiDayFormatter = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Asia/Shanghai",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function shanghaiCalendarDay(value: Date): number | undefined {
+  if (!Number.isFinite(value.getTime())) return undefined;
+  const parts = shanghaiDayFormatter.formatToParts(value);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  const day = Number(parts.find((part) => part.type === "day")?.value);
+  if (!year || !month || !day) return undefined;
+  return Math.floor(Date.UTC(year, month - 1, day) / DAY_MS);
+}
+
+function startOfWeek(day: number): number {
+  const weekday = new Date(day * DAY_MS).getUTCDay();
+  return day - ((weekday + 6) % 7);
 }
 
 function groupSessionsByDate(sessions: SessionSummary[]) {
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime();
-  const startOfYesterday = startOfToday - 86_400_000;
+  const today = shanghaiCalendarDay(new Date());
+  const weekStart = today === undefined ? undefined : startOfWeek(today);
+  const groups: Record<SessionGroupKey, SessionSummary[]> = {
+    today: [],
+    yesterday: [],
+    thisWeek: [],
+    earlier: [],
+  };
 
-  const today: SessionSummary[] = [];
-  const yesterday: SessionSummary[] = [];
-  const earlier: SessionSummary[] = [];
+  const sorted = [...sessions].sort((left, right) => {
+    const diff =
+      Date.parse(right.updated_at || right.created_at) -
+      Date.parse(left.updated_at || left.created_at);
+    return diff || right.session_id.localeCompare(left.session_id);
+  });
 
-  for (const s of sessions) {
-    const ts = Date.parse(s.updated_at || s.created_at);
-    if (Number.isNaN(ts) || ts >= startOfToday) {
-      today.push(s);
-    } else if (ts >= startOfYesterday) {
-      yesterday.push(s);
-    } else {
-      earlier.push(s);
+  for (const session of sorted) {
+    const day = shanghaiCalendarDay(
+      new Date(session.updated_at || session.created_at),
+    );
+    let key: SessionGroupKey = "earlier";
+    if (day !== undefined && today !== undefined && weekStart !== undefined) {
+      if (day >= today) {
+        key = "today";
+      } else if (day === today - 1) {
+        key = "yesterday";
+      } else if (day >= weekStart) {
+        key = "thisWeek";
+      }
     }
+    groups[key].push(session);
   }
 
-  return [
-    { label: "今天", items: today },
-    { label: "昨天", items: yesterday },
-    { label: "更早", items: earlier },
-  ].filter((g) => g.items.length > 0);
+  return GROUP_ORDER.flatMap((key) =>
+    groups[key].length > 0
+      ? [{ key, label: GROUP_LABELS[key], items: groups[key] }]
+      : [],
+  );
 }
 
 export function AppSidebar() {
@@ -90,6 +152,7 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const activeSessionId = params.sessionId;
+  const { toggleSidebar } = useSidebar();
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions"],
@@ -97,22 +160,33 @@ export function AppSidebar() {
     refetchInterval: 10_000,
   });
 
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [confirmingSessionId, setConfirmingSessionId] = useState<string | null>(
+    null,
+  );
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
-    if (!pendingDeleteId) return undefined;
-    const timer = window.setTimeout(() => setPendingDeleteId(null), 3000);
+    if (!confirmingSessionId) return undefined;
+    const timer = window.setTimeout(() => setConfirmingSessionId(null), 3000);
     return () => window.clearTimeout(timer);
-  }, [pendingDeleteId]);
+  }, [confirmingSessionId]);
 
   const deleteMutation = useMutation({
     mutationFn: (sessionId: string) => deleteSession(sessionId),
+    onMutate: (sessionId) => {
+      setDeletingSessionId(sessionId);
+    },
     onSuccess: (_data, deletedId) => {
-      setPendingDeleteId(null);
+      setConfirmingSessionId(null);
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
       if (activeSessionId === deletedId) {
         void navigate({ to: "/" });
       }
+    },
+    onSettled: () => {
+      setDeletingSessionId(null);
     },
   });
 
@@ -137,47 +211,73 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="offcanvas">
-      <SidebarHeader className="gap-2.5 border-b px-3 py-2.5">
-        <div className="flex items-center justify-between">
-          <Link to="/" className="flex items-center gap-2 font-semibold">
-            <span className="flex size-6 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground">
-              Q
-            </span>
-            <span className="text-sm tracking-tight">Quire Studio</span>
+      <SidebarHeader className="gap-2 px-3 pt-3 pb-1">
+        <div className="flex h-10 items-center justify-between px-1">
+          <Link to="/" className="min-w-0">
+            <ProductBrand />
           </Link>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="收起侧边栏"
+            title="收起侧边栏"
+            onClick={toggleSidebar}
+          >
+            <PanelLeftCloseIcon className="size-[18px]" aria-hidden="true" />
+          </Button>
         </div>
 
         <Button
           type="button"
-          size="sm"
           variant="outline"
-          className="w-full justify-between bg-background font-normal shadow-2xs"
           onClick={() => {
             void navigate({ to: "/" });
           }}
+          className="h-11 w-full justify-start gap-2 rounded-xl bg-background px-3 font-normal"
         >
-          <span className="flex items-center gap-1.5 text-xs">
-            <PlusIcon className="size-3.5" />
-            <span>新建会话</span>
+          <PlusIcon className="size-4" aria-hidden="true" />
+          <span>新建会话</span>
+          <span
+            className="ml-auto hidden items-center gap-1 md:flex"
+            aria-label="Command or Control plus N"
+          >
+            <kbd className="flex h-6 w-6 items-center justify-center rounded border bg-muted/60 text-base leading-none font-normal text-muted-foreground">
+              ⌘
+            </kbd>
+            <kbd className="flex h-6 w-6 items-center justify-center rounded border bg-muted/60 text-xs font-normal text-muted-foreground">
+              N
+            </kbd>
           </span>
-          <kbd className="rounded bg-muted px-1.5 py-0.5 font-sans text-[10px] text-muted-foreground">
-            ⌘ N
-          </kbd>
         </Button>
       </SidebarHeader>
 
-      <SidebarContent className="overscroll-contain">
+      <SidebarContent className="overscroll-contain px-1 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {groups.map((group) => (
-          <SidebarGroup key={group.label}>
-            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+          <SidebarGroup key={group.key} className="py-1">
+            <SidebarGroupLabel className="px-3 text-[11px] font-medium text-muted-foreground/70">
+              {group.label}
+            </SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu className="gap-1">
                 {group.items.map((session) => {
-                  const isConfirming = pendingDeleteId === session.session_id;
+                  const confirming = confirmingSessionId === session.session_id;
+                  const deleting = deletingSessionId === session.session_id;
+                  const isActive = activeSessionId === session.session_id;
+                  const title = session.title || "未命名会话";
+
                   return (
-                    <SidebarMenuItem key={session.session_id}>
-                      <SidebarMenuButton
-                        isActive={activeSessionId === session.session_id}
+                    <SidebarMenuItem
+                      key={session.session_id}
+                      className="group/session relative"
+                    >
+                      <Button
+                        variant="ghost"
+                        nativeButton={false}
+                        className={`h-10 w-full justify-start gap-2 rounded-lg px-3 pr-9 font-normal ${
+                          isActive ? "bg-background shadow-sm" : ""
+                        }`}
+                        title={title}
                         render={
                           <Link
                             to="/sessions/$sessionId"
@@ -185,41 +285,92 @@ export function AppSidebar() {
                           />
                         }
                       >
-                        <span
-                          className={`size-2 shrink-0 rounded-full ${statusDotClass(session.active_run_status)}`}
-                        />
-                        <span className="truncate">{session.title}</span>
-                        {session.doc_id && (
-                          <FileTextIcon className="ml-auto size-3.5 shrink-0 text-muted-foreground" />
+                        <span className="truncate">{title}</span>
+                        {session.active_run_status === "running" && (
+                          <GridLoader />
                         )}
-                      </SidebarMenuButton>
-                      <SidebarMenuAction
-                        showOnHover={!isConfirming}
-                        aria-label={
-                          isConfirming
-                            ? `确认删除 ${session.title}`
-                            : `删除 ${session.title}`
-                        }
-                        title={isConfirming ? "再次点击确认删除" : "删除会话"}
-                        className={
-                          isConfirming
-                            ? "text-destructive opacity-100 hover:bg-destructive/10"
-                            : undefined
-                        }
-                        onClick={() => {
-                          if (isConfirming) {
-                            deleteMutation.mutate(session.session_id);
-                          } else {
-                            setPendingDeleteId(session.session_id);
+                        {session.active_run_status === "awaiting_input" && (
+                          <span
+                            className="ml-auto size-2 shrink-0 rounded-full bg-amber-500"
+                            title="等待确认"
+                          />
+                        )}
+                      </Button>
+
+                      <DropdownMenu
+                        onOpenChange={(open) => {
+                          if (!open && confirming) {
+                            setConfirmingSessionId(null);
                           }
                         }}
                       >
-                        {isConfirming ? (
-                          <CheckIcon className="size-3.5" />
-                        ) : (
-                          <Trash2Icon className="size-3.5" />
-                        )}
-                      </SidebarMenuAction>
+                        <DropdownMenuTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className={`absolute inset-y-0 right-1 my-auto text-muted-foreground transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 ${
+                                deleting
+                                  ? "pointer-events-auto opacity-100"
+                                  : "pointer-events-none opacity-0 group-hover/session:pointer-events-auto group-hover/session:opacity-100 aria-expanded:pointer-events-auto aria-expanded:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
+                              }`}
+                              aria-label={`会话操作 ${title}`}
+                              title="会话操作"
+                              disabled={deleting}
+                            />
+                          }
+                        >
+                          {deleting ? (
+                            <LoaderCircleIcon
+                              className="size-4 animate-spin"
+                              aria-hidden="true"
+                            />
+                          ) : (
+                            <MoreHorizontalIcon
+                              className="size-4"
+                              aria-hidden="true"
+                            />
+                          )}
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent
+                          side="right"
+                          align="start"
+                          className="w-40"
+                        >
+                          <DropdownMenuGroup>
+                            <DropdownMenuItem
+                              variant="destructive"
+                              disabled={deleting}
+                              closeOnClick={confirming}
+                              onClick={() => {
+                                if (!confirming) {
+                                  setConfirmingSessionId(session.session_id);
+                                  return;
+                                }
+                                setConfirmingSessionId(null);
+                                deleteMutation.mutate(session.session_id);
+                              }}
+                            >
+                              {deleting ? (
+                                <LoaderCircleIcon
+                                  className="animate-spin"
+                                  aria-hidden="true"
+                                />
+                              ) : confirming ? (
+                                <CheckIcon aria-hidden="true" />
+                              ) : (
+                                <Trash2Icon aria-hidden="true" />
+                              )}
+                              {deleting
+                                ? "正在删除…"
+                                : confirming
+                                  ? "再次点击确认删除"
+                                  : "删除会话"}
+                            </DropdownMenuItem>
+                          </DropdownMenuGroup>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </SidebarMenuItem>
                   );
                 })}
@@ -235,7 +386,7 @@ export function AppSidebar() {
         )}
       </SidebarContent>
 
-      <SidebarFooter className="border-t p-2">
+      <SidebarFooter className="p-2">
         <Dialog open={tokenDialogOpen} onOpenChange={setTokenDialogOpen}>
           <DialogTrigger
             render={

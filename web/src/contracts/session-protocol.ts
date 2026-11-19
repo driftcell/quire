@@ -148,6 +148,11 @@ export type SessionEvent1 =
       event: "doc_linked";
       title: string;
       [k: string]: unknown;
+    }
+  | {
+      event: "session_title_updated";
+      title: string;
+      [k: string]: unknown;
     };
 
 export interface QuireSessionProtocol {

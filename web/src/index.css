@@ -131,6 +131,7 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  --brand-blue: #0a66ff;
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
@@ -248,4 +249,132 @@
 .quire-flash-highlight {
   border-radius: 0.5rem;
   animation: quire-flash-ring 1.6s ease-out forwards;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Brand sigil, sidebar grid-loader & home suggestion marquee                */
+/* ------------------------------------------------------------------------- */
+.brand-lockup {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.brand-sigil {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 120px;
+  height: 120px;
+}
+
+.brand-sigil-glow {
+  position: absolute;
+  inset: -44px;
+  background: radial-gradient(
+    circle at 50% 48%,
+    color-mix(in oklab, var(--brand-blue) 18%, transparent),
+    color-mix(in oklab, var(--brand-blue) 0%, transparent) 68%
+  );
+  pointer-events: none;
+}
+
+.brand-sigil-mark {
+  width: 88px;
+  height: 88px;
+  filter: drop-shadow(
+    0 16px 28px color-mix(in oklab, var(--brand-blue) 26%, transparent)
+  );
+}
+
+.brand-mark-face {
+  fill: var(--brand-blue);
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+}
+
+.brand-mark-bars {
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+
+.brand-tagline {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin: 1.5rem 0 0;
+  color: color-mix(in oklab, var(--brand-blue) 32%, var(--muted-foreground));
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+}
+
+.brand-tagline::before,
+.brand-tagline::after {
+  content: "";
+  width: 34px;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in oklab, var(--brand-blue) 45%, transparent)
+  );
+}
+
+.brand-tagline::after {
+  background: linear-gradient(
+    to left,
+    transparent,
+    color-mix(in oklab, var(--brand-blue) 45%, transparent)
+  );
+}
+
+.grid-loader-cell {
+  animation: grid-loader 1.4s ease-in-out infinite;
+}
+
+@keyframes grid-loader {
+  0%,
+  60%,
+  100% {
+    opacity: 0.16;
+  }
+
+  30% {
+    opacity: 1;
+  }
+}
+
+.suggestion-fade-x {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 24px,
+    black calc(100% - 24px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black 24px,
+    black calc(100% - 24px),
+    transparent 100%
+  );
+}
+
+.suggestion-marquee {
+  animation: suggestion-marquee 96s linear infinite;
+  will-change: transform;
+}
+
+@keyframes suggestion-marquee {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-50%);
+  }
 }

@@ -276,6 +276,11 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       if (ev.event === "doc_linked") {
         setLiveDocId(ev.doc_id);
         void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      } else if (ev.event === "session_title_updated") {
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
+        void queryClient.invalidateQueries({ queryKey: ["sessions"] });
       } else if (ev.event === "turn_started") {
         setLiveRunStatus("running");
         setLiveMain(emptyLiveTrace("main"));
