@@ -6,7 +6,6 @@ import {
   KeyRoundIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
-  PanelLeftCloseIcon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -40,7 +39,6 @@ import {
   SidebarHeader,
   SidebarMenu,
   SidebarMenuItem,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import type { SessionSummary } from "@/contracts/session-protocol";
 import { getAuthTokens, saveAuthTokens } from "@/lib/auth";
@@ -152,7 +150,6 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const activeSessionId = params.sessionId;
-  const { toggleSidebar } = useSidebar();
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions"],
@@ -212,20 +209,10 @@ export function AppSidebar() {
   return (
     <Sidebar collapsible="offcanvas">
       <SidebarHeader className="gap-2 px-3 pt-3 pb-1">
-        <div className="flex h-10 items-center justify-between px-1">
+        <div className="flex h-10 items-center px-1">
           <Link to="/" className="min-w-0">
             <ProductBrand />
           </Link>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="收起侧边栏"
-            title="收起侧边栏"
-            onClick={toggleSidebar}
-          >
-            <PanelLeftCloseIcon className="size-[18px]" aria-hidden="true" />
-          </Button>
         </div>
 
         <Button
