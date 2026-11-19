@@ -143,6 +143,12 @@ export function PromptComposer({
     }
   }, [prefill]);
 
+  useEffect(() => {
+    if (quotedSnippet) {
+      textareaRef.current?.focus();
+    }
+  }, [quotedSnippet]);
+
   const isRunning = runStatus === "running";
   const canRetry = runStatus === "interrupted" || runStatus === "failed";
 

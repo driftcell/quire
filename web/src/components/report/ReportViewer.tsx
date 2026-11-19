@@ -625,8 +625,10 @@ function ScaledPage({
         ref={innerRef}
         style={{
           width: `${A4_PAGE_WIDTH_PX}px`,
-          transform: `scale(${scale})`,
+          transform: `translateZ(0) scale(${scale})`,
           transformOrigin: "top left",
+          willChange: "transform",
+          backfaceVisibility: "hidden",
         }}
       >
         {children}
@@ -1130,7 +1132,9 @@ export function ReportViewer({
   }, []);
 
   const handleMouseUp = useCallback(() => {
-    if (suppressChrome || !onOpenCommentForBlock) return;
+    if (suppressChrome || (!onOpenCommentForBlock && !onAskAgentWithQuote)) {
+      return;
+    }
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
       setQuoteAction(null);
@@ -1176,7 +1180,7 @@ export function ReportViewer({
       },
       viewportRect: toViewportRect(rect),
     });
-  }, [suppressChrome, onOpenCommentForBlock]);
+  }, [suppressChrome, onOpenCommentForBlock, onAskAgentWithQuote]);
 
   useEffect(() => {
     window.document.addEventListener("mouseup", handleMouseUp);
@@ -1573,7 +1577,7 @@ export function ReportViewer({
                   }}
                   className="a4-page relative flex flex-col overflow-hidden bg-white text-[var(--rpt-ink)] shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
                 >
-                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <div className="flex min-h-0 flex-1 flex-col overflow-visible print:overflow-hidden">
                     {hasPageHeader(effectivePageChrome) &&
                       (pageIdx > 0 ||
                         !effectivePageChrome.hide_header_on_first_page) && (
@@ -1598,7 +1602,7 @@ export function ReportViewer({
                           </div>
                         </div>
                       )}
-                    <div className="min-h-0 flex-1 overflow-hidden">
+                    <div className="min-h-0 flex-1 overflow-visible print:overflow-hidden">
                       {page.includeCover && renderCover()}
                       {(pagedMixedItems[pageIdx] ?? []).map((item) => (
                         <div key={item.key}>

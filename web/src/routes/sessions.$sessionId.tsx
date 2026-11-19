@@ -904,6 +904,14 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   }, [isMobile, prefs.rightSidebarOpen, updatePrefs]);
 
+  const handleAskAgentWithQuote = useCallback(
+    (blockId: string, exact: string) => {
+      setQuotedForChat({ blockId, exact });
+      showChat();
+    },
+    [showChat],
+  );
+
   const openCommentThread = useCallback(
     (threadId: string, blockId: string) => {
       setActiveCommentThreadId(threadId);
@@ -1305,6 +1313,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               setFloatingComment(anchor);
             }}
             onOpenCommentThread={openCommentThread}
+            onAskAgentWithQuote={handleAskAgentWithQuote}
           />
         </div>
       </div>
