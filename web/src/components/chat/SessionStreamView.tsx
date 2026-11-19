@@ -444,21 +444,23 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
   return (
     <MessageGroup className="group/assistant">
       <Message align="start" className="flex-col items-start">
-        {sentAt && (
-          <time
-            dateTime={msg.created_at}
-            title={sentAt.full}
-            className="mb-1 px-1 text-[11px] text-muted-foreground/60 tabular-nums"
-          >
-            {sentAt.label}
-          </time>
-        )}
         {trace && <HistoricalRunTrace sessionId={sessionId} trace={trace} />}
         <MessageContent className={CHAT_PROSE}>
           <Streamdown controls={STREAMDOWN_CONTROLS}>{msg.content}</Streamdown>
         </MessageContent>
-        <div className="mt-1 flex items-center gap-1 opacity-0 transition-opacity group-hover/assistant:opacity-100 focus-within:opacity-100">
-          <CopyMessageButton content={msg.content} />
+        <div className="-mt-1 flex w-full items-center gap-2">
+          {sentAt && (
+            <time
+              dateTime={msg.created_at}
+              title={sentAt.full}
+              className="px-1 text-[11px] text-muted-foreground/60 tabular-nums"
+            >
+              {sentAt.label}
+            </time>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            <CopyMessageButton content={msg.content} />
+          </div>
         </div>
       </Message>
     </MessageGroup>
@@ -522,12 +524,11 @@ export function SessionStreamView({
     <MessageScrollerProvider autoScroll>
       <MessageScroller className="h-full">
         <MessageScrollerViewport className="h-full px-4">
-          <MessageScrollerContent className={contentClassName}>
+          <MessageScrollerContent className={`${contentClassName} py-4`}>
             {visibleMessages.map((msg) => (
               <MessageScrollerItem
                 key={msg.message_id}
                 messageId={msg.message_id}
-                scrollAnchor={msg.role === "user"}
               >
                 <HistoricalMessageItem
                   sessionId={sessionId}
