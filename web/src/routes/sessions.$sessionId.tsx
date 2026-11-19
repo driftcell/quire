@@ -40,11 +40,7 @@ import {
   PromptComposer,
   type QuotedChatSnippet,
 } from "@/components/chat/PromptComposer";
-import {
-  SessionStreamView,
-  type LiveAgentTrace,
-  type LiveSubagentRun,
-} from "@/components/chat/SessionStreamView";
+import { SessionStreamView } from "@/components/chat/SessionStreamView";
 import { CommentsDrawer } from "@/components/report/CommentsDrawer";
 import {
   FloatingCommentPopover,
@@ -76,33 +72,24 @@ import type {
   SessionMessage,
 } from "@/contracts/session-protocol";
 import { useIsMobile } from "@/hooks/use-mobile";
+import {
+  appendSubagentSegment,
+  appendTextSegment,
+  appendThinkingSegment,
+  appendToolSegment,
+  emptyLiveTrace,
+  finishToolSegment,
+  type LiveAgentTrace,
+  type LiveSubagentRun,
+} from "@/lib/liveTrace";
 import { loadPreferences, savePreferences } from "@/lib/preferences";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   component: SessionWorkspaceRoute,
 });
 
-function emptyLiveTrace(agentId: string): LiveAgentTrace {
-  return {
-    agentId,
-    thinking: "",
-    text: "",
-    tools: [],
-    isStreaming: true,
-  };
-}
-
-function matchesSubagent(
-  sub: LiveSubagentRun,
-  agentId: string,
-  parentRunId?: string | null,
-): boolean {
-  return (
-    (parentRunId !== undefined &&
-      parentRunId !== null &&
-      sub.subagentRunId === parentRunId) ||
-    sub.agentName === agentId
-  );
+function matchesSubagent(sub: LiveSubagentRun, runId: string): boolean {
+  return sub.subagentRunId === runId;
 }
 
 function SessionWorkspaceRoute() {
@@ -271,40 +258,35 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         if (isSubagentEvent) {
           setLiveSubagents((prev) =>
             prev.map((sub) =>
-              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
+              matchesSubagent(sub, ev.run_id)
                 ? {
                     ...sub,
-                    trace: {
-                      ...sub.trace,
-                      thinking: sub.trace.thinking + ev.delta,
-                    },
+                    trace: appendThinkingSegment(sub.trace, ev.delta),
                   }
                 : sub,
             ),
           );
         } else {
-          setLiveMain((prev) => ({
-            ...(prev ?? emptyLiveTrace("main")),
-            thinking: (prev?.thinking ?? "") + ev.delta,
-          }));
+          setLiveMain((prev) =>
+            appendThinkingSegment(prev ?? emptyLiveTrace("main"), ev.delta),
+          );
         }
       } else if (ev.event === "text_delta") {
         if (isSubagentEvent) {
           setLiveSubagents((prev) =>
             prev.map((sub) =>
-              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
+              matchesSubagent(sub, ev.run_id)
                 ? {
                     ...sub,
-                    trace: { ...sub.trace, text: sub.trace.text + ev.delta },
+                    trace: appendTextSegment(sub.trace, ev.delta),
                   }
                 : sub,
             ),
           );
         } else {
-          setLiveMain((prev) => ({
-            ...(prev ?? emptyLiveTrace("main")),
-            text: (prev?.text ?? "") + ev.delta,
-          }));
+          setLiveMain((prev) =>
+            appendTextSegment(prev ?? emptyLiveTrace("main"), ev.delta),
+          );
         }
       } else if (ev.event === "task_focus") {
         const focus = {
@@ -315,7 +297,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         if (isSubagentEvent) {
           setLiveSubagents((prev) =>
             prev.map((sub) =>
-              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
+              matchesSubagent(sub, ev.run_id)
                 ? { ...sub, trace: { ...sub.trace, taskFocus: focus } }
                 : sub,
             ),
@@ -337,59 +319,49 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         if (isSubagentEvent) {
           setLiveSubagents((prev) =>
             prev.map((sub) =>
-              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
+              matchesSubagent(sub, ev.run_id)
                 ? {
                     ...sub,
-                    trace: {
-                      ...sub.trace,
-                      tools: [...sub.trace.tools, toolItem],
-                    },
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) => ({
-            ...(prev ?? emptyLiveTrace("main")),
-            tools: [...(prev?.tools ?? []), toolItem],
-          }));
-        }
-      } else if (ev.event === "tool_call_finished") {
-        const nextStatus: "completed" | "failed" =
-          ev.status === "failed" || ev.status === "error"
-            ? "failed"
-            : "completed";
-        const updateTools = (tools: LiveAgentTrace["tools"]) =>
-          tools.map((t) =>
-            t.toolCallId === ev.tool_call_id
-              ? {
-                  ...t,
-                  status: nextStatus,
-                  outputPreview: ev.output_preview,
-                  durationMs: ev.duration_ms,
-                }
-              : t,
-          );
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.agent_id, ev.parent_run_id)
-                ? {
-                    ...sub,
-                    trace: {
-                      ...sub.trace,
-                      tools: updateTools(sub.trace.tools),
-                    },
+                    trace: appendToolSegment(sub.trace, toolItem),
                   }
                 : sub,
             ),
           );
         } else {
           setLiveMain((prev) =>
-            prev ? { ...prev, tools: updateTools(prev.tools) } : prev,
+            appendToolSegment(prev ?? emptyLiveTrace("main"), toolItem),
+          );
+        }
+      } else if (ev.event === "tool_call_finished") {
+        const nextStatus: "completed" | "failed" =
+          ev.status === "failed" || ev.status === "error"
+            ? "failed"
+            : "completed";
+        const patch = {
+          status: nextStatus,
+          outputPreview: ev.output_preview,
+          durationMs: ev.duration_ms,
+        };
+        if (isSubagentEvent) {
+          setLiveSubagents((prev) =>
+            prev.map((sub) =>
+              matchesSubagent(sub, ev.run_id)
+                ? {
+                    ...sub,
+                    trace: finishToolSegment(sub.trace, ev.tool_call_id, patch),
+                  }
+                : sub,
+            ),
+          );
+        } else {
+          setLiveMain((prev) =>
+            prev ? finishToolSegment(prev, ev.tool_call_id, patch) : prev,
           );
         }
       } else if (ev.event === "subagent_started") {
+        setLiveMain((prev) =>
+          prev ? appendSubagentSegment(prev, ev.subagent_run_id) : prev,
+        );
         setLiveSubagents((prev) => [
           ...prev,
           {

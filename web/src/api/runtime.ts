@@ -2,6 +2,7 @@ import type {
   AttachmentMeta,
   CreateSessionRequest,
   QuestionAnswer,
+  RunTraceSegment,
   RunTraceSubagent,
   RunTraceSummary,
   RunTraceToolItem,
@@ -146,17 +147,34 @@ function isRunTraceSubagent(value: unknown): value is RunTraceSubagent {
   );
 }
 
+function isRunTraceSegment(value: unknown): value is RunTraceSegment {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.kind === "thinking" || value.kind === "text") {
+    return typeof value.text === "string";
+  }
+  if (value.kind === "execution") {
+    return (
+      (value.tools === undefined ||
+        (Array.isArray(value.tools) &&
+          value.tools.every(isRunTraceToolItem))) &&
+      (value.subagents === undefined ||
+        (Array.isArray(value.subagents) &&
+          value.subagents.every(isRunTraceSubagent)))
+    );
+  }
+  return false;
+}
+
 function isRunTraceSummary(value: unknown): value is RunTraceSummary {
   return (
     isRecord(value) &&
     typeof value.run_id === "string" &&
     typeof value.status === "string" &&
-    typeof value.thinking === "string" &&
-    (value.tools === undefined ||
-      (Array.isArray(value.tools) && value.tools.every(isRunTraceToolItem))) &&
-    (value.subagents === undefined ||
-      (Array.isArray(value.subagents) &&
-        value.subagents.every(isRunTraceSubagent)))
+    (value.segments === undefined ||
+      (Array.isArray(value.segments) &&
+        value.segments.every(isRunTraceSegment)))
   );
 }
 

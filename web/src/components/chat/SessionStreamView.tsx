@@ -1,8 +1,7 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useState, type ReactNode } from "react";
 import {
   CheckIcon,
   ChevronDownIcon,
-  ChevronRightIcon,
   ChevronUpIcon,
   CompassIcon,
   CopyIcon,
@@ -57,10 +56,16 @@ import type {
   AttachmentMeta,
   PendingQuestion,
   QuestionAnswer,
+  RunTraceSubagent,
   RunTraceSummary,
   RunTraceToolItem,
   SessionMessage,
 } from "@/contracts/session-protocol";
+import type {
+  LiveAgentTrace,
+  LiveSubagentRun,
+  LiveTraceSegment,
+} from "@/lib/liveTrace";
 
 const CHAT_PROSE =
   "prose prose-sm dark:prose-invert max-w-none prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1.5 prose-h1:text-base prose-h2:text-[15px] prose-h3:text-sm prose-p:my-1.5 prose-p:leading-6 prose-ul:my-1.5 prose-ol:my-1.5 prose-pre:my-2 prose-pre:text-xs prose-code:text-[12.5px]";
@@ -69,25 +74,6 @@ const STREAMDOWN_CONTROLS: ControlsConfig = {
   table: false,
   code: true,
 };
-
-export interface LiveAgentTrace {
-  agentId: string;
-  thinking: string;
-  text: string;
-  taskFocus?: { title: string; detail?: string; sectionId?: string };
-  tools: ToolCallTraceItem[];
-  isStreaming: boolean;
-}
-
-export interface LiveSubagentRun {
-  subagentRunId: string;
-  agentName: string;
-  task: string;
-  sectionId?: string;
-  status: "running" | "completed" | "failed";
-  summary?: string;
-  trace: LiveAgentTrace;
-}
 
 export interface SessionStreamViewProps {
   sessionId: string;
@@ -283,6 +269,205 @@ function toToolTraceItems(
   }));
 }
 
+type RenderSegment =
+  | {
+      key: string;
+      kind: "thinking";
+      text: string;
+      isStreaming: boolean;
+      isActive: boolean;
+      durationMs?: number;
+    }
+  | {
+      key: string;
+      kind: "execution";
+      tools: ToolCallTraceItem[];
+      subagents: ReactNode;
+      subagentCount: number;
+      defaultOpen: boolean;
+    }
+  | { key: string; kind: "text"; text: string };
+
+const RenderSegments = memo(function RenderSegments({
+  sessionId,
+  segments,
+}: {
+  sessionId: string;
+  segments: RenderSegment[];
+}) {
+  return (
+    <div className="w-full space-y-1">
+      {segments.map((segment) => {
+        if (segment.kind === "thinking") {
+          return (
+            <ThinkingTrace
+              key={segment.key}
+              content={segment.text}
+              isStreaming={segment.isStreaming}
+              isActive={segment.isActive}
+              durationMs={segment.durationMs}
+            />
+          );
+        }
+        if (segment.kind === "text") {
+          return (
+            <div key={segment.key} className={`${CHAT_PROSE} pt-1`}>
+              <Streamdown controls={STREAMDOWN_CONTROLS}>
+                {segment.text}
+              </Streamdown>
+            </div>
+          );
+        }
+        if (segment.tools.length === 0 && segment.subagentCount === 0) {
+          return null;
+        }
+        const summaryParts: string[] = [];
+        if (segment.tools.length > 0) {
+          summaryParts.push(`${segment.tools.length} 个工具`);
+        }
+        if (segment.subagentCount > 0) {
+          summaryParts.push(`${segment.subagentCount} 个子代理`);
+        }
+        return (
+          <Trace key={segment.key}>
+            <TraceCollapsible defaultOpen={segment.defaultOpen}>
+              <TraceCollapsibleTrigger>
+                <TraceLine className="h-6 text-xs leading-5">
+                  <TraceIcon>
+                    <ListTreeIcon className="size-3.5" />
+                  </TraceIcon>
+                  <TraceTitle>执行详情</TraceTitle>
+                  <TraceDescription className="text-[11px]">
+                    {summaryParts.join(" · ")}
+                  </TraceDescription>
+                </TraceLine>
+              </TraceCollapsibleTrigger>
+              <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
+                <ToolCallList sessionId={sessionId} tools={segment.tools} />
+                {segment.subagents}
+              </TraceCollapsibleContent>
+            </TraceCollapsible>
+          </Trace>
+        );
+      })}
+    </div>
+  );
+});
+
+function HistoricalSubagent({
+  sessionId,
+  subagent,
+}: {
+  sessionId: string;
+  subagent: RunTraceSubagent;
+}) {
+  return (
+    <Trace>
+      <TraceCollapsible defaultOpen={false}>
+        <TraceCollapsibleTrigger>
+          <TraceLine
+            className="h-6 text-xs leading-5"
+            status={subagent.status === "failed" ? "error" : undefined}
+          >
+            <TraceIcon>
+              <UsersIcon className="size-3.5" />
+            </TraceIcon>
+            <TraceTitle>{subagent.agent_name}</TraceTitle>
+            {subagent.task && (
+              <Badge variant="outline" className="text-[10px]">
+                {subagent.task}
+              </Badge>
+            )}
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
+          {subagent.task_focus && (
+            <div className="text-xs text-muted-foreground">
+              {subagent.task_focus.title}
+            </div>
+          )}
+          <ThinkingTrace content={subagent.thinking} isStreaming={false} />
+          <ToolCallList
+            sessionId={sessionId}
+            tools={toToolTraceItems(subagent.tools)}
+          />
+          {subagent.summary && (
+            <div className="text-xs text-muted-foreground">
+              {subagent.summary}
+            </div>
+          )}
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
+  );
+}
+
+function buildHistoricalSegments(
+  sessionId: string,
+  trace: RunTraceSummary,
+): RenderSegment[] {
+  const source = trace.segments ?? [];
+  const lastThinkingIndex = source.reduce(
+    (last, segment, index) => (segment.kind === "thinking" ? index : last),
+    -1,
+  );
+  const segments: RenderSegment[] = [];
+  source.forEach((segment, index) => {
+    if (segment.kind === "thinking") {
+      if (!segment.text.trim()) {
+        return;
+      }
+      segments.push({
+        key: `thinking-${index}`,
+        kind: "thinking",
+        text: segment.text,
+        isStreaming: false,
+        isActive: false,
+        durationMs:
+          index === lastThinkingIndex
+            ? (trace.duration_ms ?? undefined)
+            : undefined,
+      });
+      return;
+    }
+    if (segment.kind === "text") {
+      if (!segment.text.trim()) {
+        return;
+      }
+      segments.push({
+        key: `text-${index}`,
+        kind: "text",
+        text: segment.text,
+      });
+      return;
+    }
+    const tools = toToolTraceItems(segment.tools);
+    const subagents = segment.subagents ?? [];
+    if (tools.length === 0 && subagents.length === 0) {
+      return;
+    }
+    segments.push({
+      key: `execution-${index}`,
+      kind: "execution",
+      tools,
+      subagents: (
+        <>
+          {subagents.map((subagent) => (
+            <HistoricalSubagent
+              key={subagent.subagent_run_id}
+              sessionId={sessionId}
+              subagent={subagent}
+            />
+          ))}
+        </>
+      ),
+      subagentCount: subagents.length,
+      defaultOpen: false,
+    });
+  });
+  return segments;
+}
+
 function HistoricalRunTrace({
   sessionId,
   trace,
@@ -290,94 +475,11 @@ function HistoricalRunTrace({
   sessionId: string;
   trace: RunTraceSummary;
 }) {
-  const tools = toToolTraceItems(trace.tools);
-  const subagents = trace.subagents ?? [];
-  const hasExecution = tools.length > 0 || subagents.length > 0;
-  if (!trace.thinking.trim() && !hasExecution) {
+  const segments = buildHistoricalSegments(sessionId, trace);
+  if (segments.length === 0) {
     return null;
   }
-
-  const summaryParts: string[] = [];
-  if (tools.length > 0) {
-    summaryParts.push(`${tools.length} 个工具`);
-  }
-  if (subagents.length > 0) {
-    summaryParts.push(`${subagents.length} 个子代理`);
-  }
-
-  return (
-    <div className="w-full space-y-1">
-      <ThinkingTrace
-        content={trace.thinking}
-        isStreaming={false}
-        durationMs={trace.duration_ms ?? undefined}
-      />
-      {hasExecution && (
-        <Trace>
-          <TraceCollapsible defaultOpen={false}>
-            <TraceCollapsibleTrigger>
-              <TraceLine className="h-6 text-xs leading-5">
-                <TraceIcon>
-                  <ListTreeIcon className="size-3.5" />
-                </TraceIcon>
-                <TraceTitle>执行详情</TraceTitle>
-                <TraceDescription className="text-[11px]">
-                  {summaryParts.join(" · ")}
-                </TraceDescription>
-              </TraceLine>
-            </TraceCollapsibleTrigger>
-            <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
-              <ToolCallList sessionId={sessionId} tools={tools} />
-              {subagents.map((subagent) => (
-                <Trace key={subagent.subagent_run_id}>
-                  <TraceCollapsible defaultOpen={false}>
-                    <TraceCollapsibleTrigger>
-                      <TraceLine
-                        className="h-6 text-xs leading-5"
-                        status={
-                          subagent.status === "failed" ? "error" : undefined
-                        }
-                      >
-                        <TraceIcon>
-                          <UsersIcon className="size-3.5" />
-                        </TraceIcon>
-                        <TraceTitle>{subagent.agent_name}</TraceTitle>
-                        {subagent.task && (
-                          <Badge variant="outline" className="text-[10px]">
-                            {subagent.task}
-                          </Badge>
-                        )}
-                      </TraceLine>
-                    </TraceCollapsibleTrigger>
-                    <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
-                      {subagent.task_focus && (
-                        <div className="text-xs text-muted-foreground">
-                          {subagent.task_focus.title}
-                        </div>
-                      )}
-                      <ThinkingTrace
-                        content={subagent.thinking}
-                        isStreaming={false}
-                      />
-                      <ToolCallList
-                        sessionId={sessionId}
-                        tools={toToolTraceItems(subagent.tools)}
-                      />
-                      {subagent.summary && (
-                        <div className="text-xs text-muted-foreground">
-                          {subagent.summary}
-                        </div>
-                      )}
-                    </TraceCollapsibleContent>
-                  </TraceCollapsible>
-                </Trace>
-              ))}
-            </TraceCollapsibleContent>
-          </TraceCollapsible>
-        </Trace>
-      )}
-    </div>
-  );
+  return <RenderSegments sessionId={sessionId} segments={segments} />;
 }
 
 const HistoricalMessageItem = memo(function HistoricalMessageItem({
@@ -393,6 +495,17 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
 }) {
   const msgAttachmentIds = msg.attachment_ids ?? [];
   const sentAt = formatMsgTime(msg.created_at);
+  const hasTextSegment =
+    trace?.segments?.some(
+      (segment) => segment.kind === "text" && segment.text.trim().length > 0,
+    ) ?? false;
+  const textSegmentContent =
+    trace?.segments
+      ?.filter((segment) => segment.kind === "text")
+      .map((segment) => segment.text)
+      .join("") ?? "";
+  const copyContent =
+    msg.content.trim().length > 0 ? msg.content : textSegmentContent;
 
   if (msg.role === "user") {
     return (
@@ -445,9 +558,13 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
     <MessageGroup className="group/assistant">
       <Message align="start" className="flex-col items-start">
         {trace && <HistoricalRunTrace sessionId={sessionId} trace={trace} />}
-        <MessageContent className={CHAT_PROSE}>
-          <Streamdown controls={STREAMDOWN_CONTROLS}>{msg.content}</Streamdown>
-        </MessageContent>
+        {!hasTextSegment && (
+          <MessageContent className={CHAT_PROSE}>
+            <Streamdown controls={STREAMDOWN_CONTROLS}>
+              {msg.content}
+            </Streamdown>
+          </MessageContent>
+        )}
         <div className="-mt-1 flex w-full items-center gap-2">
           {sentAt && (
             <time
@@ -459,13 +576,138 @@ const HistoricalMessageItem = memo(function HistoricalMessageItem({
             </time>
           )}
           <div className="ml-auto flex items-center gap-1">
-            <CopyMessageButton content={msg.content} />
+            <CopyMessageButton content={copyContent} />
           </div>
         </div>
       </Message>
     </MessageGroup>
   );
 });
+
+function LiveSubagent({
+  sessionId,
+  sub,
+}: {
+  sessionId: string;
+  sub: LiveSubagentRun;
+}) {
+  const segments = buildLiveSegments(sessionId, sub.trace, []);
+  return (
+    <Trace>
+      <TraceCollapsible defaultOpen={sub.status === "running"}>
+        <TraceCollapsibleTrigger>
+          <TraceLine
+            className="h-6 text-xs leading-5"
+            status={
+              sub.status === "running"
+                ? "running"
+                : sub.status === "failed"
+                  ? "error"
+                  : undefined
+            }
+          >
+            <TraceIcon>
+              <UsersIcon className="size-3.5" />
+            </TraceIcon>
+            <TraceTitle>{sub.agentName}</TraceTitle>
+            <Badge variant="outline" className="text-[10px]">
+              {sub.task}
+            </Badge>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
+          {sub.trace.taskFocus && (
+            <div className="text-xs text-muted-foreground">
+              {sub.trace.taskFocus.title}
+            </div>
+          )}
+          <RenderSegments sessionId={sessionId} segments={segments} />
+          {sub.summary && (
+            <div className="text-xs text-muted-foreground">{sub.summary}</div>
+          )}
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
+  );
+}
+
+function buildLiveSegments(
+  sessionId: string,
+  trace: LiveAgentTrace,
+  subagents: LiveSubagentRun[],
+): RenderSegment[] {
+  const lastIndex = trace.segments.length - 1;
+  const segments: RenderSegment[] = [];
+  trace.segments.forEach((segment: LiveTraceSegment, index) => {
+    const isLast = index === lastIndex;
+    if (segment.kind === "thinking") {
+      if (!segment.text.trim()) {
+        return;
+      }
+      segments.push({
+        key: `thinking-${index}`,
+        kind: "thinking",
+        text: segment.text,
+        isStreaming: trace.isStreaming && isLast,
+        isActive: trace.isStreaming && isLast,
+      });
+      return;
+    }
+    if (segment.kind === "text") {
+      if (!segment.text.trim()) {
+        return;
+      }
+      segments.push({
+        key: `text-${index}`,
+        kind: "text",
+        text: segment.text,
+      });
+      return;
+    }
+    const runs = segment.subagentRunIds
+      .map((id) => subagents.find((sub) => sub.subagentRunId === id))
+      .filter((sub): sub is LiveSubagentRun => sub !== undefined);
+    if (segment.tools.length === 0 && runs.length === 0) {
+      return;
+    }
+    segments.push({
+      key: `execution-${index}`,
+      kind: "execution",
+      tools: segment.tools,
+      subagents: (
+        <>
+          {runs.map((sub) => (
+            <LiveSubagent
+              key={sub.subagentRunId}
+              sessionId={sessionId}
+              sub={sub}
+            />
+          ))}
+        </>
+      ),
+      subagentCount: runs.length,
+      defaultOpen: true,
+    });
+  });
+  return segments;
+}
+
+function LiveTraceSegments({
+  sessionId,
+  trace,
+  subagents,
+}: {
+  sessionId: string;
+  trace: LiveAgentTrace;
+  subagents: LiveSubagentRun[];
+}) {
+  return (
+    <RenderSegments
+      sessionId={sessionId}
+      segments={buildLiveSegments(sessionId, trace, subagents)}
+    />
+  );
+}
 
 export function SessionStreamView({
   sessionId,
@@ -483,8 +725,6 @@ export function SessionStreamView({
   onInterrupt,
   contentClassName,
 }: SessionStreamViewProps) {
-  const [detailsOpen, setDetailsOpen] = useState(true);
-
   const attachmentMap = useMemo(() => {
     const map = new Map<string, AttachmentMeta>();
     for (const item of attachments) {
@@ -516,9 +756,6 @@ export function SessionStreamView({
     );
     return [...persisted, ...pending];
   }, [messages, optimisticMessages]);
-
-  const hasExecutionDetails =
-    Boolean(liveMain && liveMain.tools.length > 0) || liveSubagents.length > 0;
 
   return (
     <MessageScrollerProvider autoScroll>
@@ -599,112 +836,11 @@ export function SessionStreamView({
                         </button>
                       )}
 
-                      <ThinkingTrace
-                        content={liveMain.thinking}
-                        isStreaming={
-                          liveMain.isStreaming && liveMain.text.length === 0
-                        }
-                        isActive={liveMain.isStreaming}
+                      <LiveTraceSegments
+                        sessionId={sessionId}
+                        trace={liveMain}
+                        subagents={liveSubagents}
                       />
-
-                      {hasExecutionDetails && (
-                        <div className="text-xs leading-5 text-muted-foreground">
-                          <button
-                            type="button"
-                            aria-expanded={detailsOpen}
-                            onClick={() => setDetailsOpen((o) => !o)}
-                            className="group flex h-6 items-center gap-2 transition-colors hover:text-foreground"
-                          >
-                            <span className="flex size-4 shrink-0 items-center justify-center">
-                              <ListTreeIcon className="size-3.5" />
-                            </span>
-                            <span>执行详情</span>
-                            <ChevronRightIcon
-                              className={`size-3.5 transition-transform duration-150 ${
-                                detailsOpen ? "rotate-90" : ""
-                              }`}
-                            />
-                          </button>
-
-                          {detailsOpen && (
-                            <div className="mt-1 space-y-1.5 border-l pl-3">
-                              <ToolCallList
-                                sessionId={sessionId}
-                                tools={liveMain.tools}
-                              />
-
-                              {liveSubagents.length > 0 && (
-                                <div className="space-y-1.5 pt-0.5">
-                                  {liveSubagents.map((sub) => (
-                                    <Trace key={sub.subagentRunId}>
-                                      <TraceCollapsible
-                                        defaultOpen={sub.status === "running"}
-                                      >
-                                        <TraceCollapsibleTrigger>
-                                          <TraceLine
-                                            className="h-6 text-xs leading-5"
-                                            status={
-                                              sub.status === "running"
-                                                ? "running"
-                                                : sub.status === "failed"
-                                                  ? "error"
-                                                  : undefined
-                                            }
-                                          >
-                                            <TraceIcon>
-                                              <UsersIcon className="size-3.5" />
-                                            </TraceIcon>
-                                            <TraceTitle>
-                                              {sub.agentName}
-                                            </TraceTitle>
-                                            <Badge
-                                              variant="outline"
-                                              className="text-[10px]"
-                                            >
-                                              {sub.task}
-                                            </Badge>
-                                          </TraceLine>
-                                        </TraceCollapsibleTrigger>
-                                        <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
-                                          {sub.trace.taskFocus && (
-                                            <div className="text-xs text-muted-foreground">
-                                              {sub.trace.taskFocus.title}
-                                            </div>
-                                          )}
-                                          <ThinkingTrace
-                                            content={sub.trace.thinking}
-                                            isStreaming={
-                                              sub.status === "running"
-                                            }
-                                            isActive={sub.status === "running"}
-                                          />
-                                          <ToolCallList
-                                            sessionId={sessionId}
-                                            tools={sub.trace.tools}
-                                          />
-                                          {sub.summary && (
-                                            <div className="text-xs text-muted-foreground">
-                                              {sub.summary}
-                                            </div>
-                                          )}
-                                        </TraceCollapsibleContent>
-                                      </TraceCollapsible>
-                                    </Trace>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {liveMain.text && (
-                        <div className={`${CHAT_PROSE} pt-1`}>
-                          <Streamdown controls={STREAMDOWN_CONTROLS}>
-                            {liveMain.text}
-                          </Streamdown>
-                        </div>
-                      )}
                     </MessageContent>
                   </Message>
                 </MessageGroup>
