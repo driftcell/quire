@@ -23,6 +23,23 @@ if (!rootElement) {
   throw new Error("Missing #root element");
 }
 
+// Mobile report readers should keep a stable page scale. iOS Safari still
+// exposes pinch gestures even with `user-scalable=no`, so stop them explicitly.
+if (
+  typeof window !== "undefined" &&
+  window.matchMedia("(pointer: coarse)").matches
+) {
+  const preventGestureZoom = (event: Event) => {
+    event.preventDefault();
+  };
+  document.addEventListener("gesturestart", preventGestureZoom, {
+    passive: false,
+  });
+  document.addEventListener("gesturechange", preventGestureZoom, {
+    passive: false,
+  });
+}
+
 createRoot(rootElement).render(
   <StrictMode>
     <RouterProvider router={router} />

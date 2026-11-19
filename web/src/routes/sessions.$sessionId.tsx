@@ -1298,7 +1298,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </button>
         )}
 
-        <div className="flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <ReportViewer
             document={docQuery.data.document}
             computed={docQuery.data.computed}
@@ -1414,11 +1414,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           >
             <div className="border-b bg-background px-3 py-1.5">
               <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="report">报告预览</TabsTrigger>
-                <TabsTrigger value="chat">Agent 对话</TabsTrigger>
-                <TabsTrigger value="comments">
-                  批注 ({openCommentsCount})
-                </TabsTrigger>
+                <TabsTrigger value="report">报告</TabsTrigger>
+                <TabsTrigger value="chat">对话</TabsTrigger>
+                <TabsTrigger value="comments">批注</TabsTrigger>
               </TabsList>
             </div>
             <TabsContent
