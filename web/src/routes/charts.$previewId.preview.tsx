@@ -78,12 +78,14 @@ function ChartPreviewPage() {
 
   const errorMessage = previewQuery.error?.message ?? renderError;
   const preview = previewQuery.data;
-  const title = preview?.title ?? (typeof preview?.chart.title === "string"
-    ? preview.chart.title
-    : undefined);
-  const note = preview?.note ?? (typeof preview?.chart.note === "string"
-    ? preview.chart.note
-    : undefined);
+  const title =
+    preview?.title ??
+    (typeof preview?.chart.title === "string"
+      ? preview.chart.title
+      : undefined);
+  const note =
+    preview?.note ??
+    (typeof preview?.chart.note === "string" ? preview.chart.note : undefined);
 
   return (
     <div

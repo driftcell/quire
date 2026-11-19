@@ -7,7 +7,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { ChartDataTable, ChartRequirements } from "@/contracts/report-protocol";
+import type {
+  ChartDataTable,
+  ChartRequirements,
+} from "@/contracts/report-protocol";
+import { centerReportChartGrid } from "@/components/report/echartsGridCenter";
 import type { EchartsBlock } from "@/lib/document";
 
 export interface EchartsCanvasProps {
@@ -87,11 +91,10 @@ function applyLegendDefaults(option: JsonObject) {
   }
 }
 
-function buildEffectiveOption(
-  chart: EchartsBlock,
-  printSafe: boolean,
-): JsonObject {
-  let option: JsonObject = isPlainObject(chart.option) ? { ...chart.option } : {};
+function buildEffectiveOption(chart: EchartsBlock): JsonObject {
+  let option: JsonObject = isPlainObject(chart.option)
+    ? { ...chart.option }
+    : {};
 
   if (isPlainObject(chart.option_patch)) {
     option = deepMerge(option, chart.option_patch);
@@ -114,10 +117,9 @@ function buildEffectiveOption(
   option = deepMerge(ACADEMIC_DEFAULTS, option);
   applyAxisDefaults(option, "xAxis");
   applyAxisDefaults(option, "yAxis");
-  if (printSafe) {
-    // Static previews and print exports must be fully painted before screenshots.
-    option.animation = false;
-  }
+  // Reports are screenshot/print artifacts: paint the final frame immediately so
+  // grid centering and preview readiness never observe an animated first frame.
+  option.animation = false;
   return option;
 }
 
@@ -228,10 +230,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       ? chart.title.trim()
       : "图表数据";
 
-  const effectiveOption = useMemo(
-    () => buildEffectiveOption(chart, printSafe),
-    [chart, printSafe],
-  );
+  const effectiveOption = useMemo(() => buildEffectiveOption(chart), [chart]);
 
   useEffect(() => {
     onRenderError?.(runtimeError);
@@ -243,8 +242,16 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       return undefined;
     }
 
-    let rafId = 0;
+    let resizeTimer = 0;
     let disposed = false;
+
+    const applyOption = (instance: echarts.ECharts) => {
+      instance.setOption(effectiveOption as echarts.EChartsOption, {
+        notMerge: true,
+        lazyUpdate: false,
+      });
+      centerReportChartGrid(instance);
+    };
 
     const mountOrUpdate = () => {
       if (disposed) return;
@@ -262,10 +269,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
 
       try {
         setRuntimeError(null);
-        instanceRef.current.setOption(
-          effectiveOption as echarts.EChartsOption,
-          { notMerge: true, lazyUpdate: false },
-        );
+        applyOption(instanceRef.current);
       } catch (err) {
         setRuntimeError(
           err instanceof Error ? err.message : "ECharts 渲染失败",
@@ -275,6 +279,23 @@ export const EchartsCanvas = memo(function EchartsCanvas({
 
     mountOrUpdate();
 
+    const resized = () => {
+      resizeTimer = 0;
+      if (disposed) return;
+      const instance = instanceRef.current;
+      if (!instance) {
+        mountOrUpdate();
+        return;
+      }
+      instance.resize({ animation: { duration: 0 } });
+      centerReportChartGrid(instance);
+    };
+    const scheduleResize = () => {
+      if (disposed) return;
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(resized, 100);
+    };
+
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
@@ -282,24 +303,16 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       if (width <= 0 || height <= 0) {
         return;
       }
-      window.cancelAnimationFrame(rafId);
-      rafId = window.requestAnimationFrame(() => {
-        if (disposed) return;
-        if (!instanceRef.current) {
-          mountOrUpdate();
-        } else {
-          instanceRef.current.resize({
-            animation: { duration: 0 },
-          });
-        }
-      });
+      scheduleResize();
     });
     observer.observe(el);
+    window.addEventListener("resize", scheduleResize);
 
     return () => {
       disposed = true;
-      window.cancelAnimationFrame(rafId);
+      window.clearTimeout(resizeTimer);
       observer.disconnect();
+      window.removeEventListener("resize", scheduleResize);
     };
   }, [effectiveOption, renderer]);
 

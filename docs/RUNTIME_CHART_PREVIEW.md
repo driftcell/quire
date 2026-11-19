@@ -67,9 +67,11 @@ The root sets:
 - `data-chart-canvas="true"` on the ECharts container so Playwright can verify that a canvas or SVG
   was actually produced.
 
-ECharts animations are disabled in `printSafe` mode so screenshots never capture a half-painted
-frame. Default legends are anchored to the top and the default Cartesian grid reserves top space when
-a legend is visible, preventing legend/X-axis label overlap.
+ECharts animations are disabled in report charts (including previews) so screenshots never capture a
+half-painted frame. Default legends are anchored to the top and the default Cartesian grid reserves top
+space when a legend is visible, preventing legend/X-axis label overlap. After each render the frontend
+measures the ZRender display list and nudges a single Cartesian grid horizontally so long Y-axis
+labels, axis names and legends stay visually centered, while preserving the plot-area width.
 
 ### Agent tools
 

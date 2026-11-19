@@ -23,10 +23,9 @@ export type ReportBlock = Block & { id: string };
  * The ECharts branch of the generated block union. Used by the standalone chart
  * preview route, which receives a chart payload without a full report wrapper.
  */
-export type EchartsBlock = Omit<
-  Extract<Block, { type: "echarts" }>,
-  "type"
-> & { type?: "echarts" };
+export type EchartsBlock = Omit<Extract<Block, { type: "echarts" }>, "type"> & {
+  type?: "echarts";
+};
 
 /**
  * Fully populated document view. The protocol schema marks most top-level
