@@ -98,7 +98,7 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
 
 Rules:
 - Do not invent IDs. On lookup failure use the `hint`/`valid_values` in the error.
-- Put visual titles in the outer block `title` ONLY. Never duplicate them inside ECharts `option.title` or `CustomHtml` headings.
+- Put the visual main title in the outer block `title` ONLY. For multi-panel charts, `option.title` arrays may carry subplot labels; do not repeat the outer title verbatim inside `option.title` or `CustomHtml` headings.
 - Tables/figures are auto-numbered (`表 N` / `图 N`); never hardcode `表 1` or `图 1` in a title.
 - Never send HTML/Tiptap rendering data; the frontend renders canonical JSON.
 - Headings drive the TOC. Use levels 1..6 without skipping.
@@ -177,19 +177,32 @@ ECHARTS BLOCK EXAMPLE (dual axis)
 }
 
 Rules:
-- Put the title in outer `title` ONLY; never duplicate it inside ECharts `option.title`. A center donut KPI (`top: "center"`) is the only allowed inner title.
+- Put the main title in outer `title` ONLY; never duplicate it inside ECharts `option.title`. A center donut KPI (`top: "center"`) is allowed, as are multi-panel subplot labels in an `option.title` array or a single positioned light subtitle (`left`/`right`/`bottom`, or `textStyle.fontSize <= 13`).
 - `fallback_summary` is mandatory and must state the main numeric takeaway.
 - `option` is the single, required source of truth: always send a complete native ECharts 6.0 option object.
 - ECharts 6.0 supports `dataset` (2D arrays or object rows, multiple datasets), multi-axis Cartesian series, `matrix`, `radar`, `sankey`, `graph`, `chord`, `beeswarm`, `treemap`, `sunburst`, `tree`, `candlestick`, `boxplot`, `heatmap` and extension series such as `wordCloud`, `liquidFill` and `bar3D`. For deterministic multi-column ordering, prefer a two-dimensional `dataset.source` with a header row, or declare explicit `dimensions`; object-row key order is not guaranteed.
 - Formatter strings are allowed and encouraged, for example `"formatter": "{b}: {c} ({d}%)"`. JavaScript callbacks are forbidden: strings containing `function(` or `=>` fail lint with `ECHARTS_JS_FUNCTION_STRING`.
 - Static-report chrome is removed automatically: `toolbox` is stripped during normalization/normalization warnings. Do not design interactions that require it.
-- Indexed series must stay in range: `xAxisIndex`, `yAxisIndex`, `gridIndex`, `polarIndex` and `radarIndex` are validated against their configured arrays. A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object.
+- Indexed series must stay in range: `xAxisIndex`, `yAxisIndex`, `gridIndex`, `datasetIndex`, `polarIndex` and `radarIndex` are validated against their configured arrays; axis-level `gridIndex` is validated too. A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object.
 - Matrix example:
   `{"matrix":{"x":{"data":["A","B"]},"y":{"data":["C","D"]}},"series":[{"type":"custom","coordinateSystem":"matrix","data":[1,2]}]}`.
   Missing `matrix` reports `ECHARTS_MATRIX_MISSING`; missing `radar`/`polar` components report `ECHARTS_COORDINATE_MISSING`.
 - Every chart needs a real data source: `series[*].data`, `series[*].links`/`edges`, or a non-empty `dataset.source`. Otherwise lint reports `ECHARTS_DATA_MISSING`.
 - Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge an incremental change. The same patch can update `height`, `title`, `numbering`, `note` and `fallback_summary`.
 - `read_as_markdown(include_chart_data=true)` expands dataset, Cartesian, relation, radar and hierarchy data into tables for reviewers.
+
+COMPOSITE / MULTI-PANEL CHARTS
+- Use one ECharts block with a `grid` array for side-by-side panels or 2×2 small multiples. Recommended height: 360 for 1×2, 460–520 for 2×2. Do not create separate chart blocks when the panels share a caption, units or legend.
+- Bind components explicitly. Each `xAxis[i]` / `yAxis[i]` sets `gridIndex` to its panel; each Cartesian series sets `xAxisIndex` / `yAxisIndex`; dataset-driven series also sets `datasetIndex`. Once more than one grid or axis exists, do not rely on implicit index 0.
+- Subplot titles belong in an `option.title` array (or one positioned light subtitle). Keep the outer block `title` for the main figure title and never repeat it inside `option.title`.
+- Left/right example (height 360):
+  `"grid":[{"left":"4%","right":"54%","top":36,"bottom":24,"containLabel":true},{"left":"54%","right":"4%","top":36,"bottom":24,"containLabel":true}]`
+  then `xAxis`/`yAxis` entries bind `gridIndex: 0` and `gridIndex: 1`, and series bind `xAxisIndex`/`yAxisIndex` to the matching panel. A right-hand pie may instead use `center` + `radius`; it needs no Cartesian axis.
+- 2×2 small-multiples example (height 460–520):
+  `"grid":[{"left":"6%","right":"52%","top":48,"bottom":"52%","containLabel":true},{"left":"52%","right":"6%","top":48,"bottom":"52%","containLabel":true},{"left":"6%","right":"52%","top":"56%","bottom":40,"containLabel":true},{"left":"52%","right":"6%","top":"56%","bottom":40,"containLabel":true}]`
+  Provide four `xAxis`/`yAxis` entries with `gridIndex` 0–3 and one subtitle per panel, for example `"title":[{"text":"华东区","left":"6%","top":16,"textStyle":{"fontSize":12}}, ...]`.
+- Cartesian and non-Cartesian series may share one option: pie uses `center`/`radius`, radar uses `radarIndex` and a `radar` component, and their grids can coexist with Cartesian panels. Every component still needs a real data source.
+- Call `preview_echarts` and inspect the screenshot before commit: subplot titles must not collide with legends, axis names or labels, and each panel must keep readable margins at the committed height.
 - `GET /api/docs/{doc_id}` exposes `computed.chart_requirements[block_id].required_maps` and `.required_extensions` so the frontend can register maps/extensions before rendering.
 - Every table/chart block needs `id`, and charts need non-empty `fallback_summary`.
 "##.into(),

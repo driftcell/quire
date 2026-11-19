@@ -4,32 +4,34 @@ use serde_json::Value;
 
 use crate::{
     block::{Block, BlockKind},
+    echarts::{inner_title_duplicates, is_center_inner_title, is_positioned_or_light_inner_title},
     json::merge_optional_json,
     linter::{Diagnostic, Severity},
     model::ReportDocument,
 };
 
-/// Strip a non-center inner ECharts title when the block already has an outer title.
-/// Returns `true` when anything was removed.
-pub fn strip_duplicate_inner_title(option: &mut Value, outer_title_present: bool) -> bool {
-    if !outer_title_present {
+/// Strip inner ECharts titles that duplicate the outer title or are not valid
+/// multi-panel subtitles. Returns `true` when anything was removed.
+pub fn strip_duplicate_inner_title(option: &mut Value, outer_title: Option<&str>) -> bool {
+    let Some(outer_title) = outer_title.map(str::trim).filter(|title| !title.is_empty()) else {
         return false;
-    }
+    };
     let Some(title) = option.get_mut("title") else {
         return false;
     };
     match title {
         Value::Object(map) => {
-            if is_center_title(map) {
-                false
-            } else {
+            let entry = Value::Object(map.clone());
+            let keep = !inner_title_duplicates(&entry, outer_title)
+                && (is_center_inner_title(&entry) || is_positioned_or_light_inner_title(&entry));
+            if !keep {
                 option.as_object_mut().map(|object| object.remove("title"));
-                true
             }
+            !keep
         }
         Value::Array(titles) => {
             let before = titles.len();
-            titles.retain(|title| title.as_object().is_some_and(is_center_title));
+            titles.retain(|entry| entry.is_object() && !inner_title_duplicates(entry, outer_title));
             let stripped = titles.len() != before;
             if titles.is_empty()
                 && let Some(object) = option.as_object_mut()
@@ -40,16 +42,6 @@ pub fn strip_duplicate_inner_title(option: &mut Value, outer_title_present: bool
         }
         _ => false,
     }
-}
-
-fn is_center_title(map: &serde_json::Map<String, Value>) -> bool {
-    matches!(
-        map.get("top")
-            .and_then(Value::as_str)
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("center" | "middle")
-    )
 }
 
 /// Remove the interactive `toolbox` from a static report chart. Returns `true` when removed.
@@ -84,7 +76,7 @@ pub fn normalize_block(block: &mut Block) -> Vec<Diagnostic> {
     let mut stripped_title = false;
     let mut stripped_toolbox = false;
     if has_outer_title {
-        stripped_title |= strip_duplicate_inner_title(&mut effective, true);
+        stripped_title |= strip_duplicate_inner_title(&mut effective, chart.title.as_deref());
     }
     stripped_toolbox |= strip_chart_toolbox(&mut effective);
     // Strip the same chrome from both sources so the merge cannot reintroduce it.
@@ -93,7 +85,7 @@ pub fn normalize_block(block: &mut Block) -> Vec<Diagnostic> {
         .flatten()
     {
         if has_outer_title {
-            stripped_title |= strip_duplicate_inner_title(option, true);
+            stripped_title |= strip_duplicate_inner_title(option, chart.title.as_deref());
         }
         stripped_toolbox |= strip_chart_toolbox(option);
     }
@@ -182,6 +174,55 @@ mod tests {
         }
         let warnings = normalize_block(&mut block);
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn keeps_multi_panel_subtitles_and_removes_outer_duplicates() {
+        let mut block = chart();
+        if let BlockKind::Echarts(chart) = &mut block.body {
+            chart.option = serde_json::json!({
+                "title": [
+                    {"text": "华东区", "left": "4%", "top": 4, "textStyle": {"fontSize": 12}},
+                    {"text": "Outer", "left": "54%", "top": 4},
+                    {"text": "华南区", "left": "54%", "top": 4, "textStyle": {"fontSize": 12}}
+                ]
+            });
+            chart.option_patch = None;
+        }
+        let warnings = normalize_block(&mut block);
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.code == "ECHARTS_INNER_TITLE_STRIPPED")
+        );
+        let BlockKind::Echarts(chart) = &block.body else {
+            panic!("chart");
+        };
+        let titles = chart.option["title"].as_array().expect("subtitle array");
+        assert_eq!(titles.len(), 2);
+        assert!(titles.iter().all(|title| title["text"] != "Outer"));
+    }
+
+    #[test]
+    fn keeps_a_single_positioned_light_subtitle() {
+        let mut block = chart();
+        if let BlockKind::Echarts(chart) = &mut block.body {
+            chart.option = serde_json::json!({
+                "title": {
+                    "text": "华东区",
+                    "left": "24%",
+                    "top": 4,
+                    "textStyle": {"fontSize": 12}
+                }
+            });
+            chart.option_patch = None;
+        }
+        let warnings = normalize_block(&mut block);
+        assert!(warnings.is_empty());
+        let BlockKind::Echarts(chart) = &block.body else {
+            panic!("chart");
+        };
+        assert_eq!(chart.option["title"]["text"], "华东区");
     }
 
     #[test]

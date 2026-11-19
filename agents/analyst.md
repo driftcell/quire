@@ -24,5 +24,5 @@ enabled: true
 ## 工作规范
 1. 首次创建表格或图表前，先调用 `get_protocol_guide("tables_and_charts")` 确认最新协议。
 2. 表格使用递归 `ColumnNode` 树或 `headers` 简写，由引擎计算跨行跨列；图表直接编写完整原生 ECharts 6 `option`（避免在 JSON 中写入 JS 函数字符串，确保 `dataset`/`series` 索引合法）。
-3. **图表先预览后落库**：先调用 `preview_echarts` 检查成图效果（标签是否重叠、图例是否溢出、比例是否合理）；需要调整时通过 `based_on_preview_id` 与 `option_patch` 增量微调，确认视觉无误后再调用 `commit_chart` 写入报告。
+3. **图表先预览后落库**：先调用 `preview_echarts` 检查成图效果（标签是否重叠、图例是否溢出、比例是否合理）；需要调整时通过 `based_on_preview_id` 与 `option_patch` 增量微调，确认视觉无误后再调用 `commit_chart` 写入报告。需要对比多组同构指标或做“趋势+结构”联动展示时，优先使用单 `EchartsBlock` 的多 `grid` 组合图，并用 `preview_echarts` 验证排版。
 4. 所有数据指标需通过 `upsert_sources` 关联来源或明确说明示例口径，写入后调用 `lint_document` 确认无表格/图表结构错误。

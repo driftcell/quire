@@ -12,7 +12,8 @@ use crate::{
     },
     citation::{CitationLocation, scan_document_citations},
     echarts::{
-        axis_count, configured_axis_count, find_js_function_string, has_data_source,
+        axis_count, configured_axis_count, entries, find_js_function_string, has_data_source,
+        inner_title_duplicates, is_center_inner_title, is_positioned_or_light_inner_title,
         is_valid_series_type, merged_option, series as chart_series,
     },
     ids::BlockId,
@@ -455,37 +456,40 @@ impl Linter<'_> {
         chart: &EchartsBlock,
         index: usize,
     ) {
-        if chart
+        let Some(outer_title) = chart
             .title
             .as_deref()
-            .is_none_or(|title| title.trim().is_empty())
-        {
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+        else {
             return;
-        }
+        };
         let option = merged_option(chart);
         let Some(title) = option.get("title") else {
             return;
         };
+        let is_array = title.is_array();
         let titles = title
             .as_array()
             .map(Vec::as_slice)
             .unwrap_or_else(|| std::slice::from_ref(title));
-        let has_top_inner = titles.iter().any(|title| {
-            let top = title
-                .get("top")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            !matches!(top.as_str(), "center" | "middle")
-        });
-        if has_top_inner {
+        let duplicate = titles
+            .iter()
+            .any(|entry| inner_title_duplicates(entry, outer_title));
+        let allowed = is_array
+            || titles.iter().all(|entry| {
+                is_center_inner_title(entry) || is_positioned_or_light_inner_title(entry)
+            });
+        if duplicate || !allowed {
+            let detail = if duplicate {
+                "repeats its outer title inside `option.title`"
+            } else {
+                "has a top-aligned inner ECharts title that is not a positioned subplot label"
+            };
             self.warning(
                 "DUPLICATE_INNER_TITLE",
-                format!(
-                    "chart `{}` has both outer `title` and a top-aligned inner ECharts title",
-                    block.id
-                ),
-                "Put titles in outer `title` ONLY; keep inner `option.title` only for center donut KPIs (`top: \"center\"`).",
+                format!("chart `{}` {detail}", block.id),
+                "Keep the main title in outer `title` only. For multi-panel charts, use an `option.title` array or light positioned subtitles (left/right/bottom or fontSize <= 13) that do not repeat the outer title.",
                 Some(block.id.clone()),
                 Some(format!("blocks[{index}].option.title")),
             );
@@ -590,6 +594,31 @@ impl Linter<'_> {
         }
         let option = merged_option(chart);
         let has_matrix = option.get("matrix").is_some_and(|value| !value.is_null());
+        for (axis_key, axis_path) in [("xAxis", "xAxis"), ("yAxis", "yAxis")] {
+            let grid_count = i64::try_from(axis_count(&option, "grid")).unwrap_or(i64::MAX);
+            for (axis_index, axis) in entries(option.get(axis_key)).iter().enumerate() {
+                let Some(grid_index) = axis.get("gridIndex").and_then(serde_json::Value::as_i64)
+                else {
+                    continue;
+                };
+                if grid_index < 0 || grid_index >= grid_count {
+                    self.error(
+                        "ECHARTS_INDEX_OUT_OF_RANGE",
+                        format!(
+                            "chart `{}` {axis_key}[{axis_index}].gridIndex is {grid_index}, but only {grid_count} `grid` entr{} exist",
+                            block.id,
+                            if grid_count == 1 { "y" } else { "ies" }
+                        ),
+                        format!(
+                            "Use a gridIndex in 0..={}. Bind each axis array entry to its matching `grid` and keep series xAxisIndex/yAxisIndex in range.",
+                            grid_count.saturating_sub(1)
+                        ),
+                        Some(block.id.clone()),
+                        Some(format!("blocks[{index}].{axis_path}[{axis_index}].gridIndex")),
+                    );
+                }
+            }
+        }
         for (series_index, series) in chart_series(&option).into_iter().enumerate() {
             let kind = series.get("type").and_then(serde_json::Value::as_str);
             match kind {
@@ -640,6 +669,7 @@ impl Linter<'_> {
                 ("xAxisIndex", "xAxis"),
                 ("yAxisIndex", "yAxis"),
                 ("gridIndex", "grid"),
+                ("datasetIndex", "dataset"),
             ] {
                 let Some(raw_index) = series.get(field).and_then(serde_json::Value::as_i64) else {
                     continue;
@@ -1457,6 +1487,88 @@ mod tests {
         ));
         let report = lint_document(&doc);
         assert!(has_code(&report, "DUPLICATE_INNER_TITLE"));
+    }
+
+    #[test]
+    fn echarts_allows_multi_panel_subtitle_arrays() {
+        let report = chart_diagnostics(serde_json::json!({
+            "grid": [{}, {}],
+            "xAxis": [
+                {"gridIndex": 0, "type": "category", "data": ["Q1", "Q2"]},
+                {"gridIndex": 1, "type": "category", "data": ["East", "West"]}
+            ],
+            "yAxis": [{"gridIndex": 0}, {"gridIndex": 1}],
+            "title": [
+                {"text": "华东区", "left": "4%", "top": 4, "textStyle": {"fontSize": 12}},
+                {"text": "华南区", "left": "54%", "top": 4, "textStyle": {"fontSize": 12}}
+            ],
+            "series": [
+                {"type": "bar", "xAxisIndex": 0, "yAxisIndex": 0, "data": [10, 20]},
+                {"type": "line", "xAxisIndex": 1, "yAxisIndex": 1, "data": [30, 40]}
+            ]
+        }));
+        assert!(!has_code(&report, "DUPLICATE_INNER_TITLE"));
+        assert_eq!(report.summary.errors, 0, "{:?}", report.diagnostics);
+    }
+
+    #[test]
+    fn echarts_allows_a_single_positioned_light_subtitle() {
+        let report = chart_diagnostics(serde_json::json!({
+            "title": {
+                "text": "华东区",
+                "left": "24%",
+                "top": 4,
+                "textStyle": {"fontSize": 12}
+            },
+            "series": [{"type": "bar", "data": [10, 20]}]
+        }));
+        assert!(!has_code(&report, "DUPLICATE_INNER_TITLE"));
+    }
+
+    #[test]
+    fn echarts_rejects_outer_title_repeated_in_subtitle_array() {
+        let report = chart_diagnostics(serde_json::json!({
+            "title": [
+                {"text": "Revenue", "left": "4%", "top": 4},
+                {"text": "华东区", "left": "54%", "top": 4}
+            ],
+            "series": [{"type": "bar", "data": [10, 20]}]
+        }));
+        assert!(has_code(&report, "DUPLICATE_INNER_TITLE"));
+    }
+
+    #[test]
+    fn echarts_validates_axis_grid_and_dataset_bindings() {
+        let report = chart_diagnostics(serde_json::json!({
+            "grid": [{}],
+            "xAxis": [{"gridIndex": 1}],
+            "yAxis": [{"gridIndex": 0}],
+            "dataset": [{"source": [["Quarter", "Value"], ["Q1", 10]]}],
+            "series": [{"type": "bar", "xAxisIndex": 0, "yAxisIndex": 0, "datasetIndex": 1}]
+        }));
+        assert!(has_code(&report, "ECHARTS_INDEX_OUT_OF_RANGE"));
+        assert!(
+            report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "ECHARTS_INDEX_OUT_OF_RANGE"
+                    && diagnostic
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.contains("xAxis[0].gridIndex"))
+            }),
+            "{:?}",
+            report.diagnostics
+        );
+        assert!(
+            report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.code == "ECHARTS_INDEX_OUT_OF_RANGE"
+                    && diagnostic
+                        .path
+                        .as_deref()
+                        .is_some_and(|path| path.contains("datasetIndex"))
+            }),
+            "{:?}",
+            report.diagnostics
+        );
     }
 
     #[test]

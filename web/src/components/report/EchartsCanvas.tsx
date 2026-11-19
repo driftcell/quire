@@ -91,7 +91,7 @@ function applyLegendDefaults(option: JsonObject) {
   }
 }
 
-function buildEffectiveOption(chart: EchartsBlock): JsonObject {
+export function buildEffectiveOption(chart: EchartsBlock): JsonObject {
   let option: JsonObject = isPlainObject(chart.option)
     ? { ...chart.option }
     : {};

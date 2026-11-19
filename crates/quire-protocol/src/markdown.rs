@@ -451,11 +451,7 @@ fn markdown_chart_option(chart: &EchartsBlock) -> serde_json::Value {
     if let Some(patch) = &chart.option_patch {
         value = merge_optional_json(Some(&value), patch);
     }
-    let has_outer_title = chart
-        .title
-        .as_deref()
-        .is_some_and(|title| !title.trim().is_empty());
-    let _ = strip_duplicate_inner_title(&mut value, has_outer_title);
+    let _ = strip_duplicate_inner_title(&mut value, chart.title.as_deref());
     value
 }
 
@@ -771,6 +767,53 @@ mod tests {
         assert!(output.contains("| Category | Revenue | Margin |"));
         assert!(output.contains("| Q1 | 120 | 62.5 |"));
         assert!(output.contains("| Q2 | 150 | 64 |"));
+    }
+
+    #[test]
+    fn projects_multi_panel_chart_and_multiple_chart_blocks() {
+        let mut doc = chart_doc(serde_json::json!({
+            "grid": [{}, {}],
+            "xAxis": [
+                {"gridIndex": 0, "data": ["Q1", "Q2"]},
+                {"gridIndex": 1, "data": ["East", "West"]}
+            ],
+            "yAxis": [{"gridIndex": 0}, {"gridIndex": 1}],
+            "title": [
+                {"text": "Trend", "left": "4%", "top": 4, "textStyle": {"fontSize": 12}},
+                {"text": "Structure", "left": "54%", "top": 4, "textStyle": {"fontSize": 12}}
+            ],
+            "series": [
+                {"name": "Revenue", "type": "bar", "xAxisIndex": 0, "yAxisIndex": 0, "data": [10, 20]},
+                {"name": "Share", "type": "line", "xAxisIndex": 1, "yAxisIndex": 1, "data": [30, 40]}
+            ]
+        }));
+        doc.blocks.push(Block::new(
+            block_id("chart2"),
+            BlockKind::Echarts(EchartsBlock {
+                title: Some("Mix".into()),
+                height: 320,
+                option: serde_json::json!({
+                    "series": [{"name": "Mix", "type": "pie", "data": [
+                        {"name": "A", "value": 60},
+                        {"name": "B", "value": 40}
+                    ]}]
+                }),
+                option_patch: None,
+                fallback_summary: "The mix is 60/40.".into(),
+                numbering: None,
+                note: None,
+            }),
+        ));
+
+        let output = project_markdown(&doc, &MarkdownOptions::default()).unwrap();
+        assert!(output.contains("_Chart data: Revenue (bar) · panel 1_"));
+        assert!(output.contains("| Q1 | 10 |"));
+        assert!(output.contains("_Chart data: Share (line) · panel 2_"));
+        assert!(output.contains("| East | 30 |"));
+        assert!(output.contains("<!-- block:chart2 | type:echarts -->"));
+        assert!(output.contains("_Chart data: Mix (pie)_"));
+        assert!(output.contains("| A | 60 |"));
+        assert!(output.contains("| B | 40 |"));
     }
 
     #[test]

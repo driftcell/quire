@@ -3,7 +3,7 @@
 //! These helpers are intentionally renderer-agnostic: they power the linter, Markdown
 //! projection and frontend dependency pre-computation from the same merged option view.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -127,6 +127,57 @@ pub(crate) fn configured_axis_count(option: &Value, key: &str) -> Option<usize> 
 /// Whether a series type is valid ECharts 6.0 or a documented extension series.
 pub(crate) fn is_valid_series_type(kind: &str) -> bool {
     SERIES_TYPES.contains(&kind)
+}
+
+/// Normalize chart title text for duplicate comparison.
+pub(crate) fn normalized_title_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Whether an inner ECharts title repeats the outer block title.
+pub(crate) fn inner_title_duplicates(entry: &Value, outer_title: &str) -> bool {
+    let outer = normalized_title_text(outer_title.trim());
+    if outer.is_empty() {
+        return false;
+    }
+    ["text", "subtext"].iter().any(|key| {
+        entry
+            .get(key)
+            .and_then(Value::as_str)
+            .map(normalized_title_text)
+            .is_some_and(|text| !text.is_empty() && text == outer)
+    })
+}
+
+/// Center titles are KPI labels inside donut charts, not duplicated chart titles.
+pub(crate) fn is_center_inner_title(entry: &Value) -> bool {
+    matches!(
+        entry
+            .get("top")
+            .and_then(Value::as_str)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("center" | "middle")
+    )
+}
+
+/// A single inner title is allowed as a lightweight subplot label when it is
+/// anchored away from the default top-center position or uses a small font.
+pub(crate) fn is_positioned_or_light_inner_title(entry: &Value) -> bool {
+    let positioned = ["left", "right", "bottom"].iter().any(|key| {
+        entry
+            .get(*key)
+            .is_some_and(|value| !value.is_null() && value.as_str() != Some(""))
+    });
+    let light = entry
+        .get("textStyle")
+        .and_then(|style| style.get("fontSize"))
+        .and_then(Value::as_f64)
+        .is_some_and(|size| size <= 13.0);
+    positioned || light
 }
 
 /// Whether a series type needs an extra ECharts extension registration.
@@ -632,7 +683,8 @@ fn flatten_hierarchy(
 }
 
 fn cartesian_tables(option: &Value, series: &[&Value]) -> Vec<ChartDataTable> {
-    let mut simple = Vec::new();
+    let mut cartesian: BTreeMap<i64, Vec<(usize, &Value)>> = BTreeMap::new();
+    let mut standalone = Vec::new();
     let mut multidimensional = Vec::new();
     for (index, series) in series.iter().enumerate() {
         let Some(kind) = series_type(series) else {
@@ -653,19 +705,46 @@ fn cartesian_tables(option: &Value, series: &[&Value]) -> Vec<ChartDataTable> {
         };
         if is_multidimensional(kind, data) {
             multidimensional.push((index, *series));
+        } else if is_simple_cartesian(kind, series) {
+            let x_axis_index = series_axis_index(series, "xAxisIndex");
+            cartesian
+                .entry(x_axis_index)
+                .or_default()
+                .push((index, *series));
         } else {
-            simple.push((index, *series));
+            standalone.push((index, *series));
         }
     }
+    let multi_panel =
+        entries(option.get("xAxis")).len() > 1 || entries(option.get("grid")).len() > 1;
     let mut tables = Vec::new();
-    if simple.len() > 1 {
-        if let Some(table) = combined_series_table(option, &simple) {
+    for (x_axis_index, group) in cartesian {
+        let y_axis_index = group
+            .first()
+            .map(|(_, series)| series_axis_index(series, "yAxisIndex"))
+            .unwrap_or(0);
+        let categories = chart_categories_for(option, x_axis_index, y_axis_index);
+        if group.len() > 1 {
+            if let Some(table) =
+                combined_series_table(&categories, &group, multi_panel, x_axis_index)
+            {
+                tables.push(table);
+            }
+        } else if let Some((index, series)) = group.first()
+            && let Some(table) = single_series_table(
+                series,
+                *index,
+                &categories,
+                multi_panel.then_some(x_axis_index),
+            )
+        {
             tables.push(table);
         }
-    } else if let Some((index, series)) = simple.first()
-        && let Some(table) = single_series_table(option, series, *index)
-    {
-        tables.push(table);
+    }
+    for (index, series) in standalone {
+        if let Some(table) = single_series_table(series, index, &[], None) {
+            tables.push(table);
+        }
     }
     for (index, series) in multidimensional {
         if let Some(table) = multidimensional_table(option, series, index) {
@@ -675,11 +754,15 @@ fn cartesian_tables(option: &Value, series: &[&Value]) -> Vec<ChartDataTable> {
     tables
 }
 
-fn single_series_table(option: &Value, series: &Value, index: usize) -> Option<ChartDataTable> {
+fn single_series_table(
+    series: &Value,
+    index: usize,
+    categories: &[String],
+    panel_index: Option<i64>,
+) -> Option<ChartDataTable> {
     let data = series.get("data").and_then(Value::as_array)?;
     let name = series_name(series, index);
     let kind = series_type(series).unwrap_or("chart");
-    let categories = chart_categories(option);
     let mut rows = Vec::new();
     for (data_index, item) in data.iter().enumerate().take(MAX_CHART_ROWS) {
         if let Some((category, value)) = chart_point(item, categories.get(data_index), data_index) {
@@ -689,15 +772,24 @@ fn single_series_table(option: &Value, series: &Value, index: usize) -> Option<C
     if rows.is_empty() {
         return None;
     }
+    let mut title = format!("{name} ({kind})");
+    if let Some(panel_index) = panel_index {
+        title.push_str(&format!(" · panel {}", panel_index + 1));
+    }
     Some(ChartDataTable {
-        title: format!("{name} ({kind})"),
+        title,
         headers: vec!["Category".into(), "Value".into()],
         rows,
     })
 }
 
-fn combined_series_table(option: &Value, series: &[(usize, &Value)]) -> Option<ChartDataTable> {
-    let mut categories = chart_categories(option);
+fn combined_series_table(
+    categories: &[String],
+    series: &[(usize, &Value)],
+    multi_panel: bool,
+    x_axis_index: i64,
+) -> Option<ChartDataTable> {
+    let mut categories = categories.to_vec();
     if categories.is_empty()
         && let Some((_, first)) = series.first()
         && let Some(data) = first.get("data").and_then(Value::as_array)
@@ -739,11 +831,23 @@ fn combined_series_table(option: &Value, series: &[(usize, &Value)]) -> Option<C
         }
         rows.push(row);
     }
+    let mut title = format!("{} ({})", names.join(", "), kinds.join(", "));
+    if multi_panel {
+        title.push_str(&format!(" · panel {}", x_axis_index + 1));
+    }
     Some(ChartDataTable {
-        title: format!("{} ({})", names.join(", "), kinds.join(", ")),
+        title,
         headers,
         rows,
     })
+}
+
+fn multidim_categories(option: &Value, series: &Value) -> Vec<String> {
+    chart_categories_for(
+        option,
+        series_axis_index(series, "xAxisIndex"),
+        series_axis_index(series, "yAxisIndex"),
+    )
 }
 
 fn multidimensional_table(option: &Value, series: &Value, index: usize) -> Option<ChartDataTable> {
@@ -784,7 +888,7 @@ fn multidimensional_table(option: &Value, series: &Value, index: usize) -> Optio
         }
     };
     let uses_category = matches!(kind, "candlestick" | "boxplot");
-    let categories = chart_categories(option);
+    let categories = multidim_categories(option, series);
     let mut headers = Vec::new();
     if uses_category {
         headers.push("Category".to_string());
@@ -835,6 +939,25 @@ fn is_multidimensional(kind: &str, data: &[Value]) -> bool {
     ) && data.iter().any(Value::is_array)
 }
 
+fn is_simple_cartesian(kind: &str, series: &Value) -> bool {
+    match series.get("coordinateSystem").and_then(Value::as_str) {
+        Some("cartesian2d" | "cartesian3D") => true,
+        Some(_) => false,
+        None => matches!(
+            kind,
+            "line" | "bar" | "scatter" | "effectScatter" | "pictorialBar" | "custom"
+        ),
+    }
+}
+
+fn series_axis_index(series: &Value, field: &str) -> i64 {
+    series
+        .get(field)
+        .and_then(Value::as_i64)
+        .filter(|index| *index >= 0)
+        .unwrap_or(0)
+}
+
 fn series_type(series: &Value) -> Option<&str> {
     series.get("type").and_then(Value::as_str)
 }
@@ -847,25 +970,22 @@ fn series_name(series: &Value, index: usize) -> String {
         .unwrap_or_else(|| format!("Series {}", index + 1))
 }
 
-fn chart_categories(option: &Value) -> Vec<String> {
-    for key in ["xAxis", "yAxis"] {
-        let Some(axis) = option.get(key) else {
-            continue;
-        };
-        let axes = axis
-            .as_array()
-            .map(Vec::as_slice)
-            .unwrap_or_else(|| std::slice::from_ref(axis));
-        for axis in axes {
-            let Some(data) = axis.get("data").and_then(Value::as_array) else {
-                continue;
-            };
-            if !data.is_empty() {
-                return data.iter().map(json_scalar_label).collect();
-            }
-        }
+fn chart_categories_for(option: &Value, x_axis_index: i64, y_axis_index: i64) -> Vec<String> {
+    let x = axis_categories(option, "xAxis", x_axis_index);
+    if !x.is_empty() {
+        return x;
     }
-    Vec::new()
+    axis_categories(option, "yAxis", y_axis_index)
+}
+
+fn axis_categories(option: &Value, key: &str, index: i64) -> Vec<String> {
+    let axis_index = usize::try_from(index).unwrap_or(0);
+    entries(option.get(key))
+        .get(axis_index)
+        .and_then(|axis| axis.get("data"))
+        .and_then(Value::as_array)
+        .map(|data| data.iter().map(json_scalar_label).collect())
+        .unwrap_or_default()
 }
 
 fn chart_point(
@@ -968,5 +1088,91 @@ mod tests {
         assert_eq!(effective["title"]["text"], "Base");
         assert_eq!(effective["title"]["subtext"], "Patched");
         assert_eq!(effective["series"][0]["data"], serde_json::json!([2, 3]));
+    }
+
+    #[test]
+    fn chart_data_tables_uses_each_panels_axis_categories() {
+        let option = serde_json::json!({
+            "grid": [{}, {}],
+            "xAxis": [
+                {"gridIndex": 0, "data": ["Q1", "Q2"]},
+                {"gridIndex": 1, "data": ["East", "West"]}
+            ],
+            "yAxis": [{"gridIndex": 0}, {"gridIndex": 1}],
+            "series": [
+                {"name": "Revenue", "type": "bar", "xAxisIndex": 0, "yAxisIndex": 0, "data": [10, 20]},
+                {"name": "Share", "type": "line", "xAxisIndex": 1, "yAxisIndex": 1, "data": [30, 40]}
+            ]
+        });
+        let tables = chart_data_tables(&option);
+        assert_eq!(tables.len(), 2, "{tables:?}");
+        let revenue = tables
+            .iter()
+            .find(|table| table.title.contains("Revenue"))
+            .expect("revenue table");
+        assert_eq!(
+            revenue.rows,
+            vec![
+                vec!["Q1".to_string(), "10".to_string()],
+                vec!["Q2".to_string(), "20".to_string()]
+            ]
+        );
+        let share = tables
+            .iter()
+            .find(|table| table.title.contains("Share"))
+            .expect("share table");
+        assert_eq!(
+            share.rows,
+            vec![
+                vec!["East".to_string(), "30".to_string()],
+                vec!["West".to_string(), "40".to_string()]
+            ]
+        );
+    }
+
+    #[test]
+    fn chart_data_tables_keeps_dual_axis_series_in_one_panel() {
+        let option = serde_json::json!({
+            "xAxis": {"data": ["Q1", "Q2"]},
+            "yAxis": [{}, {}],
+            "series": [
+                {"name": "Revenue", "type": "bar", "yAxisIndex": 0, "data": [10, 20]},
+                {"name": "Margin", "type": "line", "yAxisIndex": 1, "data": [62.5, 64.0]}
+            ]
+        });
+        let tables = chart_data_tables(&option);
+        assert_eq!(tables.len(), 1, "{tables:?}");
+        assert_eq!(tables[0].headers, vec!["Category", "Revenue", "Margin"]);
+        assert_eq!(tables[0].rows[0], vec!["Q1", "10", "62.5"]);
+    }
+
+    #[test]
+    fn chart_data_tables_includes_every_dataset_and_non_cartesian_series() {
+        let option = serde_json::json!({
+            "xAxis": {"data": ["Q1", "Q2"]},
+            "dataset": [
+                {"id": "north", "source": [["Quarter", "Value"], ["Q1", 10], ["Q2", 20]]},
+                {"id": "south", "source": [["Quarter", "Value"], ["Q1", 30], ["Q2", 40]]}
+            ],
+            "series": [
+                {"name": "Revenue", "type": "bar", "data": [10, 20]},
+                {"name": "Mix", "type": "pie", "data": [{"name": "A", "value": 60}, {"name": "B", "value": 40}]}
+            ]
+        });
+        let tables = chart_data_tables(&option);
+        assert!(tables.iter().any(|table| table.title.contains("north")));
+        assert!(tables.iter().any(|table| table.title.contains("south")));
+        assert!(tables.iter().any(|table| table.title.contains("Revenue")));
+        let pie = tables
+            .iter()
+            .find(|table| table.title.contains("Mix"))
+            .expect("pie table");
+        assert_eq!(
+            pie.rows,
+            vec![
+                vec!["A".to_string(), "60".to_string()],
+                vec!["B".to_string(), "40".to_string()]
+            ]
+        );
     }
 }
