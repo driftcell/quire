@@ -21,6 +21,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Allow the Playwright MCP container to reach the preview route via
+    // host.docker.internal instead of the IPv6-only default loopback.
+    host: true,
+    allowedHosts: ["host.docker.internal"],
     proxy: {
       // quire-server: read-only report and documentation APIs.
       "/api/docs": "http://127.0.0.1:8082",

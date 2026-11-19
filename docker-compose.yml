@@ -32,6 +32,28 @@ services:
       timeout: 3s
       retries: 30
 
+  playwright:
+    image: mcp/playwright:latest
+    container_name: quire-playwright
+    init: true
+    shm_size: "1gb"
+    command:
+      - "--port"
+      - "8931"
+      - "--host"
+      - "0.0.0.0"
+      # The MCP host check compares the full Host header, including the port.
+      - "--allowed-hosts"
+      - "localhost:${PLAYWRIGHT_MCP_PORT:-8931},127.0.0.1:${PLAYWRIGHT_MCP_PORT:-8931},quire-playwright:8931"
+      - "--image-responses"
+      - "allow"
+      - "--isolated"
+    ports:
+      - "${PLAYWRIGHT_MCP_PORT:-8931}:8931"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
 
 volumes:
   quire_pgdata:
