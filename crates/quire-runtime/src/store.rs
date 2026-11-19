@@ -1463,7 +1463,8 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             | SessionEventKind::QuestionnaireRequested { .. }
             | SessionEventKind::QuestionnaireAnswered { .. }
             | SessionEventKind::QuestionnaireDismissed { .. }
-            | SessionEventKind::DocLinked { .. } => {}
+            | SessionEventKind::DocLinked { .. }
+            | SessionEventKind::SessionTitleUpdated { .. } => {}
         }
     }
 

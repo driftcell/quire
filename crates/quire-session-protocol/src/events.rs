@@ -121,6 +121,9 @@ pub enum SessionEventKind {
         doc_id: String,
         title: String,
     },
+    SessionTitleUpdated {
+        title: String,
+    },
 }
 
 impl SessionEventKind {
@@ -142,6 +145,7 @@ impl SessionEventKind {
             Self::QuestionnaireAnswered { .. } => "questionnaire_answered",
             Self::QuestionnaireDismissed { .. } => "questionnaire_dismissed",
             Self::DocLinked { .. } => "doc_linked",
+            Self::SessionTitleUpdated { .. } => "session_title_updated",
         }
     }
 

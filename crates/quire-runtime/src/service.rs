@@ -124,7 +124,6 @@ pub struct RuntimeService {
     mcp: Arc<McpRegistry>,
     runs: RunRegistry,
     config: Arc<Config>,
-    quire: Arc<dyn QuireControl>,
     model_stream: Arc<dyn ModelStreamProvider>,
 }
 
@@ -134,7 +133,6 @@ impl RuntimeService {
         kb: KbService,
         models: Arc<ModelRegistry>,
         config: Arc<Config>,
-        quire: Arc<dyn QuireControl>,
     ) -> Self {
         let mcp = Arc::new(McpRegistry::new(store.clone(), config.master_key.clone()));
         Self {
@@ -144,7 +142,6 @@ impl RuntimeService {
             mcp,
             runs: RunRegistry::default(),
             config,
-            quire,
             model_stream: Arc::new(StubStreamProvider),
         }
     }
@@ -711,26 +708,7 @@ impl RuntimeService {
         content: &str,
         token: &CancellationToken,
     ) -> RuntimeResult<()> {
-        let mut session = self.store.get_session_summary(session_id).await?;
-        if session.doc_id.is_none() {
-            let linked = self
-                .quire
-                .create_report(session_id, "main", &session.title)
-                .await?;
-            self.store.bind_doc(session_id, &linked.doc_id).await?;
-            session.doc_id = Some(linked.doc_id.clone());
-            self.emit(
-                session_id,
-                run_id,
-                "main",
-                None,
-                SessionEventKind::DocLinked {
-                    doc_id: linked.doc_id.clone(),
-                    title: linked.title,
-                },
-            )
-            .await?;
-        }
+        let session = self.store.get_session_summary(session_id).await?;
         let (pinned, synced_version) = self.ensure_pinned_prompt(session_id).await?;
         let kb_version = self.kb.current_version().await?;
         let messages = self.store.list_messages(session_id).await?;
@@ -840,6 +818,30 @@ impl RuntimeService {
                                     detail,
                                     section_id,
                                 },
+                            )
+                            .await?;
+                        }
+                        Some(Ok(ModelStreamEvent::DocLinked { doc_id, title })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                SessionEventKind::DocLinked { doc_id, title },
+                            )
+                            .await?;
+                        }
+                        Some(Ok(ModelStreamEvent::SessionTitleUpdated { title })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                SessionEventKind::SessionTitleUpdated { title },
                             )
                             .await?;
                         }
@@ -1131,6 +1133,7 @@ impl RuntimeService {
                 )
                 .await?;
             }
+            ModelStreamEvent::DocLinked { .. } | ModelStreamEvent::SessionTitleUpdated { .. } => {}
             ModelStreamEvent::SubagentStarted {
                 subagent_run_id: nested_id,
                 agent_name: nested_name,

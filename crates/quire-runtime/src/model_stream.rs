@@ -23,6 +23,13 @@ pub enum ModelStreamEvent {
         detail: Option<String>,
         section_id: Option<String>,
     },
+    DocLinked {
+        doc_id: String,
+        title: String,
+    },
+    SessionTitleUpdated {
+        title: String,
+    },
     SubagentStarted {
         subagent_run_id: String,
         agent_name: String,

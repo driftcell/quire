@@ -6,8 +6,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use quire_runtime::{
-    Config, HttpQuireControl, KbService, ModelRegistry, RigModelStreamProvider, RuntimeService,
-    RuntimeStore, http,
+    Config, KbService, ModelRegistry, RigModelStreamProvider, RuntimeService, RuntimeStore, http,
 };
 use tracing::info;
 
@@ -43,15 +42,8 @@ async fn main() -> anyhow::Result<()> {
             "default model route is not active; register a provider/model before starting sessions"
         );
     }
-    let quire = HttpQuireControl::new(&config.quire_base_url, config.quire_rw_token.clone());
     let runtime_config = Arc::new(config.clone());
-    let service = RuntimeService::new(
-        store,
-        kb.clone(),
-        models.clone(),
-        runtime_config.clone(),
-        Arc::new(quire),
-    );
+    let service = RuntimeService::new(store, kb.clone(), models.clone(), runtime_config.clone());
     let mcp = service.mcp_registry();
     let service = service.with_model_stream_provider(Arc::new(RigModelStreamProvider::new(
         kb,

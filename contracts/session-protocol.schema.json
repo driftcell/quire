@@ -1033,6 +1033,22 @@
             "doc_id",
             "title"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "session_title_updated"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "title"
+          ]
         }
       ],
       "required": [

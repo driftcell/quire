@@ -49,6 +49,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "load_skill",
     "read_skill_resource",
     "describe_task",
+    "set_session_title",
     "list_subagents",
     "spawn_subagents",
     "ask_user",
@@ -414,6 +415,36 @@ pub fn build_builtin_tools(kb: KbService) -> RuntimeResult<Vec<DynamicTool>> {
                     "path": path,
                     "content": resource.content
                 })))
+            })
+        },
+    ));
+
+    let title_kb = kb.clone();
+    tools.push(DynamicTool::new(
+        ToolName::new("set_session_title")
+            .map_err(|error| RuntimeError::Internal(error.to_string()))?,
+        "Set or refine the current chat session title once the user's topic is clear.",
+        json!({
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Concise session title (1-60 characters)"
+                }
+            },
+            "required": ["title"],
+            "additionalProperties": false
+        }),
+        move |arguments| {
+            let _kb = title_kb.clone();
+            Box::pin(async move {
+                let title = arguments
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("`title` must be non-empty"))?;
+                Ok(ToolOutput::json(json!({ "title": title })))
             })
         },
     ));
@@ -928,7 +959,7 @@ impl RigModelCore {
 
     async fn run_turn(
         self: Arc<Self>,
-        execution: AgentExecution,
+        mut execution: AgentExecution,
         mut messages: Vec<Message>,
         scope: EventScope,
     ) -> RuntimeResult<String> {
@@ -1071,9 +1102,24 @@ impl RigModelCore {
                     suspended = true;
                     break;
                 }
-                answers.push(
-                    execute_tool_call(&tool_map, &scope, &execution, &mut previews, call).await,
-                );
+                let (answer, linked_doc) =
+                    execute_tool_call(&tool_map, &scope, &execution, &mut previews, call).await;
+                if let Some((doc_id, title)) = linked_doc
+                    && !execution.run_id.starts_with("run_sub_")
+                {
+                    if let Err(error) = self
+                        .kb
+                        .store()
+                        .bind_doc(&execution.session_id, &doc_id)
+                        .await
+                    {
+                        tracing::warn!(%error, %doc_id, session_id = %execution.session_id, "failed to bind lazily created report");
+                    } else {
+                        execution.doc_id = Some(doc_id.clone());
+                        scope.send(ModelStreamEvent::DocLinked { doc_id, title });
+                    }
+                }
+                answers.push(answer);
             }
             if suspended {
                 break;
@@ -1314,6 +1360,57 @@ impl RigModelCore {
                             "title": title,
                             "detail": detail,
                             "section_id": section_id
+                        })))
+                    })
+                },
+            ));
+        }
+        if !execution.run_id.starts_with("run_sub_")
+            && (allow_list_matches(&execution.allowed_tools, "set_session_title")
+                || allow_list_matches(&execution.allowed_tools, "describe_task"))
+        {
+            let title_store = self.kb.store().clone();
+            let title_session_id = execution.session_id.clone();
+            let title_scope = scope.clone();
+            tools.push(DynamicTool::new(
+                ToolName::new("set_session_title")
+                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
+                "Set or refine the current chat session title once the user's topic is clear.",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "title": {
+                            "type": "string",
+                            "description": "Concise session title (1-60 characters)"
+                        }
+                    },
+                    "required": ["title"],
+                    "additionalProperties": false
+                }),
+                move |arguments| {
+                    let store = title_store.clone();
+                    let session_id = title_session_id.clone();
+                    let scope = title_scope.clone();
+                    Box::pin(async move {
+                        let raw_title = arguments
+                            .get("title")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .ok_or_else(|| {
+                                ToolExecutionError::invalid_args("`title` must be non-empty")
+                            })?;
+                        let title: String = raw_title.chars().take(60).collect();
+                        store
+                            .update_session(&session_id, Some(&title), None)
+                            .await
+                            .map_err(|error| ToolExecutionError::other(error.to_string()))?;
+                        scope.send(ModelStreamEvent::SessionTitleUpdated {
+                            title: title.clone(),
+                        });
+                        Ok(ToolOutput::json(json!({
+                            "session_id": session_id,
+                            "title": title,
                         })))
                     })
                 },
@@ -1604,6 +1701,15 @@ fn runtime_preamble(execution: &AgentExecution) -> String {
         preamble.push_str(&format!(
             "Bound Quire report doc_id: `{doc_id}`. Use this doc_id for document tools and do not call create_report for this session.\n"
         ));
+    } else if !execution.run_id.starts_with("run_sub_") {
+        preamble.push_str(
+            "No Quire report is bound to this session yet. If the user asks to write or generate a report, choose an appropriate formal report title and call `create_report` first; for pure Q&A, reply directly without creating a report.\n",
+        );
+    }
+    if !execution.run_id.starts_with("run_sub_") {
+        preamble.push_str(
+            "When the topic of this conversation is clear (especially on the first turn), call `set_session_title` with a concise title.\n",
+        );
     }
     if let Some(branch) = execution.kb_branch.as_deref() {
         preamble.push_str(&format!(
@@ -1697,7 +1803,7 @@ async fn execute_tool_call(
     execution: &AgentExecution,
     previews: &mut PreviewState,
     call: ToolCall,
-) -> MessageToolResult {
+) -> (MessageToolResult, Option<(String, String)>) {
     let provider_call_id = call.id.wire().to_string();
     let tool_call_id = format!("{}:{provider_call_id}", execution.run_id);
     let tool_name = call.function.name.as_str().to_string();
@@ -1755,6 +1861,21 @@ async fn execute_tool_call(
             )
         }
     };
+    let linked_doc = if error.is_none() && tool_name == "create_report" {
+        output_value
+            .get("doc_id")
+            .and_then(Value::as_str)
+            .map(|doc_id| {
+                let title = output_value
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .or_else(|| arguments.get("title").and_then(Value::as_str))
+                    .unwrap_or("未命名报告");
+                (doc_id.to_string(), title.to_string())
+            })
+    } else {
+        None
+    };
     let (output_preview, output_truncated) = preview_json(&output_value);
     scope.send(ModelStreamEvent::ToolCallFinished {
         tool_call_id,
@@ -1767,7 +1888,7 @@ async fn execute_tool_call(
         output: output_value,
         error,
     });
-    call.answer(&result)
+    (call.answer(&result), linked_doc)
 }
 
 fn response_text(response: &CompletionResponse) -> String {

@@ -21,7 +21,7 @@ use base64::Engine as _;
 use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
     ModelStreamProvider, ModelTurnRequest, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
-    RuntimeError, RuntimeService, RuntimeStore, StaticQuireControl, ToolCallRecord,
+    RuntimeError, RuntimeService, RuntimeStore, ToolCallRecord,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
@@ -126,13 +126,7 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
         preview_public_url: "http://localhost:5173".into(),
         playwright_mcp_url: None,
     });
-    let service = RuntimeService::new(
-        store.clone(),
-        kb,
-        Arc::new(models),
-        config,
-        Arc::new(StaticQuireControl),
-    );
+    let service = RuntimeService::new(store.clone(), kb, Arc::new(models), config);
     (service, store)
 }
 
@@ -645,7 +639,7 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
             .any(|skill| skill.name == "report-review" && !skill.resources.is_empty())
     );
     let tools = quire_runtime::rig_agent::build_builtin_tools(service.kb().clone()).unwrap();
-    assert_eq!(tools.len(), 5);
+    assert_eq!(tools.len(), 6);
     let list_subagents = tools
         .iter()
         .find(|tool| tool.name().as_str() == "list_subagents")
