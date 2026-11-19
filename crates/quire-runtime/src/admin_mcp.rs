@@ -158,6 +158,9 @@ pub struct KbUpsertAgentParams {
     pub branch: String,
     /// Agent name, for example `main` or `reviewer`.
     pub name: String,
+    /// Short description of when to delegate to this agent.
+    #[serde(default)]
+    pub description: String,
     /// Registered model route ID.
     pub model: String,
     /// Full system prompt.
@@ -165,6 +168,9 @@ pub struct KbUpsertAgentParams {
     /// MCP tool names the agent may call.
     #[serde(default, alias = "tools")]
     pub allowed_tools: Vec<String>,
+    /// Whether this agent is the default primary agent for the branch.
+    #[serde(default)]
+    pub is_default: bool,
     /// Whether the agent is enabled. Default true.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -732,9 +738,11 @@ impl AdminMcpServer {
             .upsert_agent_on(
                 &request.branch,
                 &request.name,
+                &request.description,
                 &request.model,
                 &request.system_prompt,
                 &request.allowed_tools,
+                request.is_default,
                 request.enabled,
             )
             .await

@@ -1215,6 +1215,7 @@ fn ensure_subagent(summary: &mut RunTraceSummary, event: &SessionEvent) -> Optio
         RunTraceSubagent {
             subagent_run_id: event.run_id.clone(),
             agent_name: event.agent_id.clone(),
+            display_name: None,
             task: String::new(),
             section_id: None,
             status: "running".to_string(),
@@ -1386,6 +1387,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             SessionEventKind::SubagentStarted {
                 subagent_run_id,
                 agent_name,
+                display_name,
                 task,
                 section_id,
             } => {
@@ -1397,6 +1399,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                 {
                     subagent.subagent_run_id = subagent_run_id.clone();
                     subagent.agent_name = agent_name.clone();
+                    subagent.display_name = display_name.clone();
                     subagent.task = task.clone();
                     subagent.section_id = section_id.clone();
                     subagent.status = "running".to_string();
@@ -1406,6 +1409,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                         RunTraceSubagent {
                             subagent_run_id: subagent_run_id.clone(),
                             agent_name: agent_name.clone(),
+                            display_name: display_name.clone(),
                             task: task.clone(),
                             section_id: section_id.clone(),
                             status: "running".to_string(),
@@ -1438,6 +1442,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                         RunTraceSubagent {
                             subagent_run_id: subagent_run_id.clone(),
                             agent_name: event.agent_id.clone(),
+                            display_name: None,
                             task: String::new(),
                             section_id: None,
                             status: status.clone(),
@@ -1537,6 +1542,7 @@ mod tests {
                 SessionEventKind::SubagentStarted {
                     subagent_run_id: "sub_1".into(),
                     agent_name: "alpha".into(),
+                    display_name: None,
                     task: "draft intro".into(),
                     section_id: Some("intro".into()),
                 },
@@ -1793,6 +1799,7 @@ mod tests {
                 SessionEventKind::SubagentStarted {
                     subagent_run_id: "run_sub_a".into(),
                     agent_name: "main".into(),
+                    display_name: None,
                     task: "task A".into(),
                     section_id: None,
                 },
@@ -1805,6 +1812,7 @@ mod tests {
                 SessionEventKind::SubagentStarted {
                     subagent_run_id: "run_sub_b".into(),
                     agent_name: "main".into(),
+                    display_name: None,
                     task: "task B".into(),
                     section_id: None,
                 },

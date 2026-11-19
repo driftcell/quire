@@ -192,6 +192,8 @@ pub struct RunTraceToolItem {
 pub struct RunTraceSubagent {
     pub subagent_run_id: String,
     pub agent_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     pub task: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section_id: Option<String>,

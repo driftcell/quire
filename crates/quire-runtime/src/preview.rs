@@ -105,10 +105,9 @@ impl PreviewReportResult {
         CallToolResult::success(content)
     }
 
-    /// Build a JSON payload for internal `DynamicTool` execution. The screenshot is
-    /// omitted unless the caller explicitly requested it.
-    pub fn to_tool_json(&self) -> Value {
-        let mut payload = json!({
+    /// Build a text-only diagnostic JSON payload (never embeds raw base64).
+    pub fn to_diagnostics_json(&self) -> Value {
+        json!({
             "doc_id": self.doc_id,
             "preview_url": self.preview_url,
             "mode": self.mode,
@@ -117,7 +116,13 @@ impl PreviewReportResult {
             "layout_diagnostics": self.layout_diagnostics,
             "styles": self.styles,
             "image_included": self.image_base64.is_some(),
-        });
+        })
+    }
+
+    /// Build a JSON payload for internal `DynamicTool` execution. The screenshot is
+    /// omitted unless the caller explicitly requested it.
+    pub fn to_tool_json(&self) -> Value {
+        let mut payload = self.to_diagnostics_json();
         if let (Some(data), Some(mime)) = (&self.image_base64, &self.image_mime_type)
             && let Some(object) = payload.as_object_mut()
         {

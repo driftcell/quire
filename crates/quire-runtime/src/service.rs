@@ -576,6 +576,7 @@ impl RuntimeService {
             SessionEventKind::SubagentStarted {
                 subagent_run_id: subagent_run_id.to_string(),
                 agent_name: agent_name.to_string(),
+                display_name: None,
                 task: task.to_string(),
                 section_id: section_id.map(str::to_string),
             },
@@ -763,7 +764,7 @@ impl RuntimeService {
             return Ok(());
         }
         let branch = session.kb_branch.clone();
-        let agent = self.kb.get_agent_on(branch.as_deref(), "main").await?;
+        let agent = self.kb.get_default_agent_on(branch.as_deref()).await?;
         let model_route = agent
             .as_ref()
             .map(|agent| agent.model.clone())
@@ -845,6 +846,7 @@ impl RuntimeService {
                         Some(Ok(ModelStreamEvent::SubagentStarted {
                             subagent_run_id,
                             agent_name,
+                            display_name,
                             task,
                             section_id,
                         })) => {
@@ -858,6 +860,7 @@ impl RuntimeService {
                                 SessionEventKind::SubagentStarted {
                                     subagent_run_id,
                                     agent_name: agent_name.clone(),
+                                    display_name,
                                     task,
                                     section_id,
                                 },
@@ -1131,6 +1134,7 @@ impl RuntimeService {
             ModelStreamEvent::SubagentStarted {
                 subagent_run_id: nested_id,
                 agent_name: nested_name,
+                display_name,
                 task,
                 section_id,
             } => {
@@ -1142,6 +1146,7 @@ impl RuntimeService {
                     SessionEventKind::SubagentStarted {
                         subagent_run_id: nested_id,
                         agent_name: nested_name,
+                        display_name,
                         task,
                         section_id,
                     },

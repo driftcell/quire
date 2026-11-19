@@ -21,7 +21,7 @@ use rig_core::{
         AssistantContent, CompletionRequest, CompletionResponse, Message, ToolDefinition, Usage,
         message::ToolResult as MessageToolResult,
     },
-    message::{AssistantMessage, ToolCall, ToolName},
+    message::{AssistantMessage, ImageMediaType, ToolCall, ToolName, UserContent},
     streaming::{Item, PartKind, StreamEvent, parse_partial_arguments},
     tool::{DynamicTool, ToolExecutionError, ToolOutput, ToolResult as ExecutedToolResult},
 };
@@ -49,6 +49,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "load_skill",
     "read_skill_resource",
     "describe_task",
+    "list_subagents",
     "spawn_subagents",
     "ask_user",
     "preview_report",
@@ -446,10 +447,44 @@ pub fn build_builtin_tools(kb: KbService) -> RuntimeResult<Vec<DynamicTool>> {
         },
     ));
 
+    let list_kb = kb.clone();
+    tools.push(DynamicTool::new(
+        ToolName::new("list_subagents")
+            .map_err(|error| RuntimeError::Internal(error.to_string()))?,
+        "List available subagent names and descriptions on the active branch before calling spawn_subagents.",
+        json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+        move |_arguments| {
+            let kb = list_kb.clone();
+            Box::pin(async move {
+                let agents = kb
+                    .list_agents()
+                    .await
+                    .map_err(|error| ToolExecutionError::other(error.to_string()))?;
+                let subagents: Vec<Value> = agents
+                    .into_iter()
+                    .filter(|agent| agent.enabled && !agent.is_default)
+                    .map(|agent| {
+                        json!({
+                            "name": agent.name,
+                            "description": agent.description,
+                            "model": agent.model,
+                            "allowed_tools": agent.allowed_tools,
+                        })
+                    })
+                    .collect();
+                Ok(ToolOutput::json(json!({ "subagents": subagents })))
+            })
+        },
+    ));
+
     tools.push(DynamicTool::new(
         ToolName::new("spawn_subagents")
             .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-        "Run multiple subagents concurrently with a JoinSet.",
+        "Run multiple subagents concurrently with a JoinSet. Call list_subagents first to get valid subagent names.",
         json!({
             "type": "object",
             "properties": {
@@ -459,6 +494,7 @@ pub fn build_builtin_tools(kb: KbService) -> RuntimeResult<Vec<DynamicTool>> {
                         "type": "object",
                         "properties": {
                             "agent_name": {"type": "string"},
+                            "display_name": {"type": "string", "nullable": true},
                             "model": {"type": "string", "nullable": true},
                             "task": {"type": "string"},
                             "section_id": {"type": "string", "nullable": true}
@@ -667,9 +703,17 @@ impl ToolPreviewStreamer {
     }
 }
 
+#[derive(Debug, Clone)]
+struct PreviewImage {
+    base64: String,
+    mime_type: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentTask {
     pub agent_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     pub task: String,
@@ -913,7 +957,16 @@ impl RigModelCore {
                     execution.model_route
                 ))
             })?;
-        let mut tools = self.build_tools(&execution, scope.clone(), Arc::clone(&self))?;
+        let supports_vision = resolved.supports_vision;
+        let pending_preview_images: Arc<Mutex<Vec<PreviewImage>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let mut tools = self.build_tools(
+            &execution,
+            scope.clone(),
+            Arc::clone(&self),
+            Arc::clone(&pending_preview_images),
+            supports_vision,
+        )?;
         for binding in self.mcp.tools_for_agent(&execution.allowed_tools).await? {
             let allowed: Vec<String> = binding
                 .tool_names
@@ -1022,6 +1075,30 @@ impl RigModelCore {
                 break;
             }
             messages.push(Message::tool_results(answers));
+            let preview_images = {
+                let mut guard = pending_preview_images.lock().await;
+                std::mem::take(&mut *guard)
+            };
+            if !preview_images.is_empty() {
+                let mut parts = vec![UserContent::text(
+                    "Rendered screenshot from preview_report. Inspect visual layout, spacing, tables, and charts alongside the diagnostic JSON.",
+                )];
+                for image in preview_images {
+                    let media_type = match image.mime_type.as_str() {
+                        "image/jpeg" => ImageMediaType::JPEG,
+                        "image/webp" => ImageMediaType::WEBP,
+                        _ => ImageMediaType::PNG,
+                    };
+                    parts.push(UserContent::image_base64(
+                        image.base64,
+                        Some(media_type),
+                        None,
+                    ));
+                }
+                if !parts.is_empty() {
+                    messages.push(Message::User { content: parts });
+                }
+            }
         }
         if execution.cancellation.is_cancelled() {
             return Ok(final_text);
@@ -1038,14 +1115,22 @@ impl RigModelCore {
         execution: &AgentExecution,
         scope: EventScope,
         engine: Arc<RigModelCore>,
+        pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
+        supports_vision: bool,
     ) -> RuntimeResult<Vec<DynamicTool>> {
         let mut tools = Vec::new();
         if allow_list_matches(&execution.allowed_tools, "preview_report") {
             let cfg = self.config.clone();
+            let preview_images = Arc::clone(&pending_preview_images);
+            let description = if supports_vision {
+                "Render a preview of the Quire report via controlled Playwright MCP, returning structured layout diagnostics plus a preview URL and attaching the PNG screenshot as a multimodal image for visual inspection."
+            } else {
+                "Render a preview of the Quire report via controlled Playwright MCP and return structured layout diagnostics plus a preview URL. This model cannot consume images, so ask the user to inspect the preview URL for visual issues."
+            };
             tools.push(DynamicTool::new(
                 ToolName::new("preview_report")
                     .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Render a preview of the Quire report via controlled Playwright MCP and return structured layout diagnostics plus a preview URL. The PNG is not included for text-only agent runs; ask the user to inspect the preview URL for visual issues.",
+                description,
                 json!({
                     "type": "object",
                     "properties": {
@@ -1062,18 +1147,25 @@ impl RigModelCore {
                 }),
                 move |arguments| {
                     let cfg = cfg.clone();
+                    let preview_images = Arc::clone(&preview_images);
                     Box::pin(async move {
                         let mut input: crate::preview::PreviewReportInput =
                             serde_json::from_value(arguments).map_err(|error| {
                                 ToolExecutionError::invalid_args(error.to_string())
                             })?;
-                        // The agent tool result is text-only; never embed a base64 PNG
-                        // in the model context. Visual clients use the admin MCP tool.
-                        input.include_image = false;
-                        crate::preview::execute_preview_report(&cfg, input)
+                        input.include_image = supports_vision;
+                        let result = crate::preview::execute_preview_report(&cfg, input)
                             .await
-                            .map(|res| ToolOutput::json(res.to_tool_json()))
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))
+                            .map_err(|error| ToolExecutionError::other(error.to_string()))?;
+                        if let (Some(base64), Some(mime_type)) =
+                            (result.image_base64.clone(), result.image_mime_type.clone())
+                        {
+                            preview_images
+                                .lock()
+                                .await
+                                .push(PreviewImage { base64, mime_type });
+                        }
+                        Ok(ToolOutput::json(result.to_diagnostics_json()))
                     })
                 },
             ));
@@ -1275,13 +1367,59 @@ impl RigModelCore {
                 },
             ));
         }
+        if allow_list_matches(&execution.allowed_tools, "list_subagents")
+            || (!execution.run_id.starts_with("run_sub_")
+                && allow_list_matches(&execution.allowed_tools, "spawn_subagents"))
+        {
+            let list_kb = self.kb.clone();
+            let list_branch = execution.kb_branch.clone();
+            let current_agent = execution.agent_id.clone();
+            tools.push(DynamicTool::new(
+                ToolName::new("list_subagents")
+                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
+                "List available subagent names and descriptions on this branch. Always call this before spawn_subagents so you use exact subagent names.",
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }),
+                move |_arguments| {
+                    let kb = list_kb.clone();
+                    let branch = list_branch.clone();
+                    let current_agent = current_agent.clone();
+                    Box::pin(async move {
+                        let agents = kb
+                            .list_agents_on(branch.as_deref())
+                            .await
+                            .map_err(|error| ToolExecutionError::other(error.to_string()))?;
+                        let subagents: Vec<Value> = agents
+                            .into_iter()
+                            .filter(|agent| {
+                                agent.enabled
+                                    && !agent.is_default
+                                    && agent.name != current_agent
+                            })
+                            .map(|agent| {
+                                json!({
+                                    "name": agent.name,
+                                    "description": agent.description,
+                                    "model": agent.model,
+                                    "allowed_tools": agent.allowed_tools,
+                                })
+                            })
+                            .collect();
+                        Ok(ToolOutput::json(json!({ "subagents": subagents })))
+                    })
+                },
+            ));
+        }
         if allow_list_matches(&execution.allowed_tools, "spawn_subagents") {
             let spawn_scope = scope.clone();
             let spawn_execution = execution.clone();
             tools.push(DynamicTool::new(
                 ToolName::new("spawn_subagents")
                     .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Run multiple branch-scoped subagents concurrently with a JoinSet.",
+                "Run multiple branch-scoped subagents concurrently with a JoinSet. Call list_subagents first to inspect exact subagent names and descriptions.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -1291,6 +1429,7 @@ impl RigModelCore {
                                 "type": "object",
                                 "properties": {
                                     "agent_name": {"type": "string"},
+                                    "display_name": {"type": "string", "nullable": true},
                                     "model": {"type": "string", "nullable": true},
                                     "task": {"type": "string"},
                                     "section_id": {"type": "string", "nullable": true}
@@ -1351,6 +1490,7 @@ impl RigModelCore {
         parent_scope.send_raw(ModelStreamEvent::SubagentStarted {
             subagent_run_id: subagent_run_id.clone(),
             agent_name: task.agent_name.clone(),
+            display_name: task.display_name.clone(),
             task: task.task.clone(),
             section_id: task.section_id.clone(),
         });
@@ -1364,7 +1504,7 @@ impl RigModelCore {
                 .await?
                 .ok_or_else(|| {
                     RuntimeError::InvalidRequest(format!(
-                        "subagent `{}` is not defined on branch `{}`",
+                        "subagent `{}` is not defined on branch `{}`; call list_subagents to inspect available subagents",
                         task.agent_name,
                         parent.kb_branch.as_deref().unwrap_or("active")
                     ))
@@ -1835,7 +1975,6 @@ fn extract_preview_blocks(arguments: &Value) -> Vec<PreviewBlock> {
     let mut blocks = Vec::new();
     let mut seen = BTreeSet::new();
     collect_preview_blocks(arguments, 0, &mut blocks, &mut seen);
-    blocks.truncate(8);
     blocks
 }
 
@@ -1845,7 +1984,7 @@ fn collect_preview_blocks(
     blocks: &mut Vec<PreviewBlock>,
     seen: &mut BTreeSet<String>,
 ) {
-    if depth > 8 || blocks.len() >= 8 {
+    if depth > 8 {
         return;
     }
     match value {
@@ -1873,16 +2012,28 @@ fn collect_preview_blocks(
 }
 
 fn preview_block(object: &serde_json::Map<String, Value>) -> Option<PreviewBlock> {
-    let block_type = object.get("type").and_then(Value::as_str)?;
+    let text = object.get("text").and_then(Value::as_str);
+    let title = object.get("title").and_then(Value::as_str);
+    if text.is_none() && title.is_none() {
+        return None;
+    }
+    let inferred_type = if object.contains_key("level") {
+        "heading"
+    } else if object.contains_key("rows") || object.contains_key("columns") {
+        "table"
+    } else if object.contains_key("option") {
+        "echarts"
+    } else {
+        "paragraph"
+    };
+    let block_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or(inferred_type);
     if !matches!(
         block_type,
         "heading" | "paragraph" | "quote" | "table" | "echarts" | "custom_html"
     ) {
-        return None;
-    }
-    let text = object.get("text").and_then(Value::as_str);
-    let title = object.get("title").and_then(Value::as_str);
-    if text.is_none() && title.is_none() {
         return None;
     }
     let block_id = object
@@ -1968,12 +2119,14 @@ mod tests {
         let tasks = vec![
             SubagentTask {
                 agent_name: "a".into(),
+                display_name: None,
                 model: None,
                 task: "one".into(),
                 section_id: None,
             },
             SubagentTask {
                 agent_name: "b".into(),
+                display_name: None,
                 model: Some("subagent/model-b".into()),
                 task: "two".into(),
                 section_id: Some("ch2".into()),

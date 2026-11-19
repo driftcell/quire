@@ -32,9 +32,13 @@ pub struct KbDocumentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AgentDefinitionRecord {
     pub name: String,
+    #[serde(default)]
+    pub description: String,
     pub model: String,
     pub system_prompt: String,
     pub allowed_tools: Vec<String>,
+    #[serde(default)]
+    pub is_default: bool,
     pub version: u64,
     pub enabled: bool,
     pub updated_at: DateTime<Utc>,
@@ -271,9 +275,11 @@ impl KbItemEntry {
             }),
             Self::Agent(record) => json!({
                 "name": record.name,
+                "description": record.description,
                 "model": record.model,
                 "system_prompt": record.system_prompt,
                 "allowed_tools": record.allowed_tools,
+                "is_default": record.is_default,
                 "enabled": record.enabled,
             }),
             Self::Skill(record) => json!({
@@ -316,6 +322,8 @@ struct Frontmatter {
     system_prompt: Option<String>,
     #[serde(default, alias = "tools")]
     allowed_tools: Vec<String>,
+    #[serde(default)]
+    is_default: Option<bool>,
     #[serde(default)]
     enabled: Option<bool>,
 }
@@ -776,19 +784,21 @@ impl KbService {
         if let Some(cached) = self.prompt_cache.get(&cache_key).await {
             return Ok(cached);
         }
+        let default_agent = self.get_default_agent_on(Some(&branch)).await?;
         let docs = self.list_documents_on(Some(&branch)).await?;
         let skills = self.list_skills_on(Some(&branch)).await?;
-        let mut prompt = String::new();
+        let mut prompt = default_agent
+            .map(|agent| agent.system_prompt)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| {
+                "You are the Quire report agent. Use the provided MCP tools to author, review and lint reports."
+                    .to_string()
+            });
         for doc in &docs {
-            if !prompt.is_empty() {
+            if !doc.content.trim().is_empty() {
                 prompt.push_str("\n\n");
+                prompt.push_str(&doc.content);
             }
-            prompt.push_str(&doc.content);
-        }
-        if prompt.trim().is_empty() {
-            prompt.push_str(
-                "You are the Quire report agent. Use the provided MCP tools to author, review and lint reports.",
-            );
         }
         prompt.push_str("\n\n<available_skills>\n");
         for skill in skills.iter().filter(|skill| skill.enabled) {
@@ -821,28 +831,7 @@ impl KbService {
     pub async fn seed(&self, workspace: &Path, default_model: &str) -> RuntimeResult<SeedReport> {
         let branch = self.active_branch().await?.name;
         let mut report = SeedReport::default();
-        let document_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM kb_documents WHERE branch = $1")
-                .bind(&branch)
-                .fetch_one(self.store.pool())
-                .await?;
-        if document_count == 0 {
-            // The main system prompt is the AGENTS.md KB document. Seed it from the
-            // report editor definition so `agents/main.md` remains the single source.
-            let main_agent = workspace.join("agents").join("main.md");
-            if main_agent.is_file() {
-                let raw = tokio::fs::read_to_string(&main_agent).await?;
-                let (frontmatter, body) = parse_frontmatter(&raw)?;
-                let content = frontmatter
-                    .as_ref()
-                    .and_then(|value| value.system_prompt.clone())
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or(body);
-                self.insert_document_raw(&branch, "agents-md", "AGENTS.md", &content)
-                    .await?;
-                report.documents += 1;
-            }
-        }
+        let _ = report.documents;
 
         let agent_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*)::bigint FROM agent_definitions WHERE branch = $1")
@@ -869,6 +858,10 @@ impl KbService {
                         .as_ref()
                         .and_then(|value| value.name.clone())
                         .unwrap_or(fallback);
+                    let description = frontmatter
+                        .as_ref()
+                        .and_then(|value| value.description.clone())
+                        .unwrap_or_default();
                     let model = frontmatter
                         .as_ref()
                         .and_then(|value| value.model.clone())
@@ -882,6 +875,10 @@ impl KbService {
                         .as_ref()
                         .map(|value| value.allowed_tools.clone())
                         .unwrap_or_default();
+                    let is_default = frontmatter
+                        .as_ref()
+                        .and_then(|value| value.is_default)
+                        .unwrap_or(name == "main");
                     let enabled = frontmatter
                         .as_ref()
                         .and_then(|value| value.enabled)
@@ -889,9 +886,11 @@ impl KbService {
                     self.insert_agent_raw(
                         &branch,
                         &name,
+                        &description,
                         &model,
                         &system_prompt,
                         &allowed_tools,
+                        is_default,
                         enabled,
                     )
                     .await?;
@@ -1050,7 +1049,7 @@ impl KbService {
     ) -> RuntimeResult<Vec<AgentDefinitionRecord>> {
         let branch = self.resolve_branch(branch).await?.name;
         let rows = sqlx::query(
-            r#"SELECT name, model, system_prompt, allowed_tools, version, enabled, updated_at
+            r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
                FROM agent_definitions WHERE branch = $1 ORDER BY name ASC"#,
         )
         .bind(&branch)
@@ -1070,7 +1069,7 @@ impl KbService {
     ) -> RuntimeResult<Option<AgentDefinitionRecord>> {
         let branch = self.resolve_branch(branch).await?.name;
         let row = sqlx::query(
-            r#"SELECT name, model, system_prompt, allowed_tools, version, enabled, updated_at
+            r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
                FROM agent_definitions WHERE branch = $1 AND name = $2"#,
         )
         .bind(&branch)
@@ -1080,47 +1079,95 @@ impl KbService {
         row.as_ref().map(row_to_agent).transpose()
     }
 
+    pub async fn get_default_agent_on(
+        &self,
+        branch: Option<&str>,
+    ) -> RuntimeResult<Option<AgentDefinitionRecord>> {
+        let branch = self.resolve_branch(branch).await?.name;
+        let row = sqlx::query(
+            r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
+               FROM agent_definitions
+               WHERE branch = $1 AND is_default = TRUE AND enabled = TRUE
+               LIMIT 1"#,
+        )
+        .bind(&branch)
+        .fetch_optional(self.store.pool())
+        .await?;
+        row.as_ref().map(row_to_agent).transpose()
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_agent(
         &self,
         name: &str,
+        description: &str,
         model: &str,
         system_prompt: &str,
         allowed_tools: &[String],
+        is_default: bool,
         enabled: bool,
     ) -> RuntimeResult<AgentDefinitionRecord> {
         let branch = self.active_branch().await?.name;
-        self.upsert_agent_on(&branch, name, model, system_prompt, allowed_tools, enabled)
-            .await
+        self.upsert_agent_on(
+            &branch,
+            name,
+            description,
+            model,
+            system_prompt,
+            allowed_tools,
+            is_default,
+            enabled,
+        )
+        .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_agent_on(
         &self,
         branch: &str,
         name: &str,
+        description: &str,
         model: &str,
         system_prompt: &str,
         allowed_tools: &[String],
+        is_default: bool,
         enabled: bool,
     ) -> RuntimeResult<AgentDefinitionRecord> {
         let branch_record = self.mutable_branch(branch).await?;
         let tools = serde_json::to_value(allowed_tools)?;
+        let mut tx = self.store.pool().begin().await?;
+        if is_default {
+            sqlx::query(
+                r#"UPDATE agent_definitions
+                   SET is_default = FALSE, updated_at = NOW()
+                   WHERE branch = $1 AND name <> $2 AND is_default = TRUE"#,
+            )
+            .bind(&branch_record.name)
+            .bind(name)
+            .execute(&mut *tx)
+            .await?;
+        }
         sqlx::query(
             r#"INSERT INTO agent_definitions
-               (branch, name, model, system_prompt, allowed_tools, version, enabled)
-               VALUES ($1, $2, $3, $4, $5, 1, $6)
+               (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
                ON CONFLICT (branch, name) DO UPDATE
-               SET model = EXCLUDED.model, system_prompt = EXCLUDED.system_prompt,
-                   allowed_tools = EXCLUDED.allowed_tools, enabled = EXCLUDED.enabled,
+               SET description = EXCLUDED.description, model = EXCLUDED.model,
+                   system_prompt = EXCLUDED.system_prompt, allowed_tools = EXCLUDED.allowed_tools,
+                   is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled,
                    version = agent_definitions.version + 1, updated_at = NOW()"#,
         )
         .bind(&branch_record.name)
         .bind(name)
+        .bind(description)
         .bind(model)
         .bind(system_prompt)
         .bind(tools)
+        .bind(is_default)
         .bind(enabled)
-        .execute(self.store.pool())
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         self.after_kb_mutation_on(&branch_record.name, branch_record.status)
             .await?;
         self.get_agent_on(Some(&branch_record.name), name)
@@ -1400,47 +1447,31 @@ impl KbService {
         self.prompt_cache.run_pending_tasks().await;
     }
 
-    async fn insert_document_raw(
-        &self,
-        branch: &str,
-        doc_id: &str,
-        name: &str,
-        content: &str,
-    ) -> RuntimeResult<()> {
-        sqlx::query(
-            r#"INSERT INTO kb_documents (branch, doc_id, name, content, version)
-               VALUES ($1, $2, $3, $4, 1)
-               ON CONFLICT (branch, doc_id) DO NOTHING"#,
-        )
-        .bind(branch)
-        .bind(doc_id)
-        .bind(name)
-        .bind(content)
-        .execute(self.store.pool())
-        .await?;
-        Ok(())
-    }
-
+    #[allow(clippy::too_many_arguments)]
     async fn insert_agent_raw(
         &self,
         branch: &str,
         name: &str,
+        description: &str,
         model: &str,
         system_prompt: &str,
         allowed_tools: &[String],
+        is_default: bool,
         enabled: bool,
     ) -> RuntimeResult<()> {
         sqlx::query(
             r#"INSERT INTO agent_definitions
-               (branch, name, model, system_prompt, allowed_tools, version, enabled)
-               VALUES ($1, $2, $3, $4, $5, 1, $6)
+               (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
                ON CONFLICT (branch, name) DO NOTHING"#,
         )
         .bind(branch)
         .bind(name)
+        .bind(description)
         .bind(model)
         .bind(system_prompt)
         .bind(serde_json::to_value(allowed_tools)?)
+        .bind(is_default)
         .bind(enabled)
         .execute(self.store.pool())
         .await?;
@@ -1539,9 +1570,11 @@ fn row_to_agent(row: &sqlx::postgres::PgRow) -> RuntimeResult<AgentDefinitionRec
     let version: i64 = row.try_get("version")?;
     Ok(AgentDefinitionRecord {
         name: row.try_get("name")?,
+        description: row.try_get("description").unwrap_or_default(),
         model: row.try_get("model")?,
         system_prompt: row.try_get("system_prompt")?,
         allowed_tools: serde_json::from_value(tools).unwrap_or_default(),
+        is_default: row.try_get("is_default").unwrap_or(false),
         version: u64::try_from(version).unwrap_or(0),
         enabled: row.try_get("enabled")?,
         updated_at: row.try_get("updated_at")?,
@@ -1635,7 +1668,7 @@ async fn fetch_entries(conn: &mut PgConnection, branch: &str) -> RuntimeResult<K
         documents.push(row_to_document(row)?);
     }
     let agent_rows = sqlx::query(
-        r#"SELECT name, model, system_prompt, allowed_tools, version, enabled, updated_at
+        r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
            FROM agent_definitions WHERE branch = $1 ORDER BY name ASC"#,
     )
     .bind(branch)
@@ -1706,8 +1739,8 @@ async fn copy_branch_entries(
     .await?;
     sqlx::query(
         r#"INSERT INTO agent_definitions
-           (branch, name, model, system_prompt, allowed_tools, version, enabled, updated_at)
-           SELECT $1, name, model, system_prompt, allowed_tools, version, enabled, updated_at
+           (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at)
+           SELECT $1, name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
            FROM agent_definitions WHERE branch = $2"#,
     )
     .bind(target)
@@ -1901,20 +1934,34 @@ async fn upsert_item(
             .await?;
         }
         KbItemEntry::Agent(record) => {
+            if record.is_default {
+                sqlx::query(
+                    r#"UPDATE agent_definitions
+                       SET is_default = FALSE, updated_at = NOW()
+                       WHERE branch = $1 AND name <> $2 AND is_default = TRUE"#,
+                )
+                .bind(branch)
+                .bind(&record.name)
+                .execute(&mut *conn)
+                .await?;
+            }
             sqlx::query(
                 r#"INSERT INTO agent_definitions
-                   (branch, name, model, system_prompt, allowed_tools, version, enabled)
-                   VALUES ($1, $2, $3, $4, $5, 1, $6)
+                   (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
                    ON CONFLICT (branch, name) DO UPDATE
-                   SET model = EXCLUDED.model, system_prompt = EXCLUDED.system_prompt,
-                       allowed_tools = EXCLUDED.allowed_tools, enabled = EXCLUDED.enabled,
+                   SET description = EXCLUDED.description, model = EXCLUDED.model,
+                       system_prompt = EXCLUDED.system_prompt, allowed_tools = EXCLUDED.allowed_tools,
+                       is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled,
                        version = agent_definitions.version + 1, updated_at = NOW()"#,
             )
             .bind(branch)
             .bind(&record.name)
+            .bind(&record.description)
             .bind(&record.model)
             .bind(&record.system_prompt)
             .bind(serde_json::to_value(&record.allowed_tools)?)
+            .bind(record.is_default)
             .bind(record.enabled)
             .execute(&mut *conn)
             .await?;

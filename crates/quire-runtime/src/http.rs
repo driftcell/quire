@@ -746,10 +746,14 @@ async fn delete_kb_doc(
 struct AgentRequest {
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    description: String,
     model: String,
     system_prompt: String,
     #[serde(default)]
     allowed_tools: Vec<String>,
+    #[serde(default)]
+    is_default: bool,
     #[serde(default = "default_enabled")]
     enabled: bool,
 }
@@ -775,9 +779,11 @@ async fn create_agent(
         .kb()
         .upsert_agent(
             &name,
+            &request.description,
             &request.model,
             &request.system_prompt,
             &request.allowed_tools,
+            request.is_default,
             request.enabled,
         )
         .await
@@ -793,9 +799,11 @@ async fn update_agent(
         .kb()
         .upsert_agent(
             &name,
+            &request.description,
             &request.model,
             &request.system_prompt,
             &request.allowed_tools,
+            request.is_default,
             request.enabled,
         )
         .await

@@ -86,6 +86,8 @@ pub enum SessionEventKind {
     SubagentStarted {
         subagent_run_id: String,
         agent_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display_name: Option<String>,
         task: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         section_id: Option<String>,

@@ -414,6 +414,12 @@
           "items": {
             "$ref": "#/$defs/RunTraceToolItem"
           }
+        },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
@@ -857,6 +863,12 @@
             },
             "task": {
               "type": "string"
+            },
+            "display_name": {
+              "type": [
+                "string",
+                "null"
+              ]
             }
           },
           "required": [

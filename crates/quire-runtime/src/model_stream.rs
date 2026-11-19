@@ -26,6 +26,7 @@ pub enum ModelStreamEvent {
     SubagentStarted {
         subagent_run_id: String,
         agent_name: String,
+        display_name: Option<String>,
         task: String,
         section_id: Option<String>,
     },

@@ -622,17 +622,22 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
         .seed(workspace.path(), "stub/echo")
         .await
         .unwrap();
-    assert_eq!(first.documents, 1);
+    assert_eq!(first.documents, 0);
     assert_eq!(first.agents, 2);
     assert_eq!(first.skills, 1);
     assert!(first.kb_version > 1);
-    let documents = service.kb().list_documents().await.unwrap();
-    let agents_doc = documents
-        .iter()
-        .find(|doc| doc.doc_id == "agents-md")
-        .expect("AGENTS.md seeded from agents/main.md");
-    assert_eq!(agents_doc.name, "AGENTS.md");
-    assert_eq!(agents_doc.content, "Main prompt from agents/main.md");
+    let default_agent = service
+        .kb()
+        .get_default_agent_on(None)
+        .await
+        .unwrap()
+        .expect("default main agent seeded from agents/main.md");
+    assert_eq!(default_agent.name, "main");
+    assert!(default_agent.is_default);
+    assert_eq!(
+        default_agent.system_prompt,
+        "Main prompt from agents/main.md"
+    );
     let skills = service.kb().list_skills().await.unwrap();
     assert!(
         skills
@@ -640,7 +645,19 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
             .any(|skill| skill.name == "report-review" && !skill.resources.is_empty())
     );
     let tools = quire_runtime::rig_agent::build_builtin_tools(service.kb().clone()).unwrap();
-    assert_eq!(tools.len(), 4);
+    assert_eq!(tools.len(), 5);
+    let list_subagents = tools
+        .iter()
+        .find(|tool| tool.name().as_str() == "list_subagents")
+        .unwrap();
+    let output = list_subagents.run(serde_json::json!({})).await.unwrap();
+    assert!(
+        output
+            .as_json()
+            .and_then(|value| value.get("subagents"))
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|agents| agents.iter().any(|agent| agent["name"] == "reviewer"))
+    );
     let describe = tools
         .iter()
         .find(|tool| tool.name().as_str() == "describe_task")
@@ -694,17 +711,18 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
     );
     service
         .kb()
-        .upsert_document("agents-md", "AGENTS.md", "ONLINE EDIT")
+        .upsert_agent("main", "", "stub/echo", "ONLINE EDIT", &[], true, true)
         .await
         .unwrap();
     let second = service.seed().await.unwrap();
     assert_eq!(second.documents, 0);
-    let documents = service.kb().list_documents().await.unwrap();
-    let agents_doc = documents
-        .iter()
-        .find(|doc| doc.doc_id == "agents-md")
+    let default_agent = service
+        .kb()
+        .get_default_agent_on(None)
+        .await
+        .unwrap()
         .unwrap();
-    assert_eq!(agents_doc.content, "ONLINE EDIT");
+    assert_eq!(default_agent.system_prompt, "ONLINE EDIT");
     for statement in [
         "DELETE FROM skill_resources",
         "DELETE FROM skill_definitions",
@@ -962,7 +980,7 @@ async fn models_registry_imports_catalog_and_routes_context_limit() {
 
     service
         .kb()
-        .upsert_agent("main", &route.id, "Runtime test agent", &[], true)
+        .upsert_agent("main", "", &route.id, "Runtime test agent", &[], true, true)
         .await
         .unwrap();
     let session = service
@@ -1419,7 +1437,15 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
     let (service, store) = test_service().await;
     service
         .kb()
-        .upsert_agent("main", "stub/echo", "Runtime admin MCP test", &[], true)
+        .upsert_agent(
+            "main",
+            "",
+            "stub/echo",
+            "Runtime admin MCP test",
+            &[],
+            true,
+            true,
+        )
         .await
         .unwrap();
     let branch_name = unique("mcp-draft");
@@ -1701,9 +1727,11 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
         .upsert_agent_on(
             &branch,
             "main",
+            "",
             "stub/echo",
             "BRANCH AGENT PROMPT",
             &["describe_task".into(), "apply_operations".into()],
+            true,
             true,
         )
         .await
@@ -1745,6 +1773,7 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
         ModelStreamEvent::SubagentStarted {
             subagent_run_id: "run_sub_ctx".into(),
             agent_name: "reviewer".into(),
+            display_name: None,
             task: "review chapter".into(),
             section_id: Some("ch1".into()),
         },
