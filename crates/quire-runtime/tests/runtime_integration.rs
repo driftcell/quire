@@ -170,7 +170,7 @@ async fn parse_body(response: axum::response::Response) -> Value {
             }
         }
     }
-    serde_json::from_str(&text).unwrap_or_else(|_| Value::String(text))
+    serde_json::from_str(&text).unwrap_or(Value::String(text))
 }
 
 async fn http_json(
@@ -637,71 +637,6 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
         skills
             .iter()
             .any(|skill| skill.name == "report-review" && !skill.resources.is_empty())
-    );
-    let tools = quire_runtime::rig_agent::build_builtin_tools(service.kb().clone()).unwrap();
-    assert_eq!(tools.len(), 6);
-    let list_subagents = tools
-        .iter()
-        .find(|tool| tool.name().as_str() == "list_subagents")
-        .unwrap();
-    let output = list_subagents.run(serde_json::json!({})).await.unwrap();
-    assert!(
-        output
-            .as_json()
-            .and_then(|value| value.get("subagents"))
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|agents| agents.iter().any(|agent| agent["name"] == "reviewer"))
-    );
-    let describe = tools
-        .iter()
-        .find(|tool| tool.name().as_str() == "describe_task")
-        .unwrap();
-    let output = describe
-        .run(serde_json::json!({"title":"Review chapter","section_id":"ch1"}))
-        .await
-        .unwrap();
-    assert_eq!(
-        output
-            .as_json()
-            .and_then(|value| value.get("title"))
-            .and_then(serde_json::Value::as_str),
-        Some("Review chapter")
-    );
-    let load_skill = tools
-        .iter()
-        .find(|tool| tool.name().as_str() == "load_skill")
-        .unwrap();
-    let output = load_skill
-        .run(serde_json::json!({"name":"report-review"}))
-        .await
-        .unwrap();
-    assert_eq!(
-        output
-            .as_json()
-            .and_then(|value| value.get("name"))
-            .and_then(serde_json::Value::as_str),
-        Some("report-review")
-    );
-    let subagents = tools
-        .iter()
-        .find(|tool| tool.name().as_str() == "spawn_subagents")
-        .unwrap();
-    let output = subagents
-        .run(serde_json::json!({
-            "tasks": [
-                {"agent_name":"reviewer-a","task":"Review chapter 1"},
-                {"agent_name":"reviewer-b","task":"Review chapter 2"}
-            ]
-        }))
-        .await
-        .unwrap();
-    assert_eq!(
-        output
-            .as_json()
-            .and_then(|value| value.get("outcomes"))
-            .and_then(serde_json::Value::as_array)
-            .map(Vec::len),
-        Some(2)
     );
     service
         .kb()

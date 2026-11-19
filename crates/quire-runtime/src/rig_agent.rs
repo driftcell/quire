@@ -2,10 +2,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -22,8 +19,13 @@ use rig_core::{
         message::ToolResult as MessageToolResult,
     },
     message::{AssistantMessage, ImageMediaType, ToolCall, ToolName, UserContent},
+    rig_tool,
+    serve::adapters::ToolAdapter,
     streaming::{Item, PartKind, StreamEvent, parse_partial_arguments},
-    tool::{DynamicTool, ToolExecutionError, ToolOutput, ToolResult as ExecutedToolResult},
+    tool::{
+        DynamicTool, Tool, ToolContext, ToolExecutionError, ToolOutput,
+        ToolResult as ExecutedToolResult,
+    },
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
@@ -39,6 +41,7 @@ use crate::{
     config::Config,
     error::{RuntimeError, RuntimeResult},
     kb::KbService,
+    mcp_client::RmcpClient,
     mcp_registry::McpRegistry,
     model_stream::{ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest},
     models::{ModelRegistry, ProviderProtocol},
@@ -56,528 +59,36 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "preview_report",
 ];
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct McpToolDescriptor {
-    pub name: String,
-    pub description: String,
-    pub input_schema: Value,
-}
-
-impl McpToolDescriptor {
-    fn from_rmcp(tool: &rmcp::model::Tool) -> Option<Self> {
-        Some(Self {
-            name: tool.name.to_string(),
-            description: tool.description.as_deref().unwrap_or_default().to_string(),
-            input_schema: Value::Object((*tool.input_schema).clone()),
-        })
-    }
-}
-
-#[derive(Clone)]
-pub struct McpHttpClient {
-    http: reqwest::Client,
-    base_url: String,
-    token: Option<SecretString>,
-    x_session_id: String,
-    agent_id: String,
-    mcp_session_id: Arc<Mutex<Option<String>>>,
-    next_id: Arc<AtomicU64>,
-}
-
-impl McpHttpClient {
-    pub fn new(
-        base_url: impl Into<String>,
-        token: SecretString,
-        x_session_id: impl Into<String>,
-        agent_id: impl Into<String>,
-    ) -> Self {
-        Self::new_optional(base_url, Some(token), x_session_id, agent_id)
-    }
-
-    pub fn new_optional(
-        base_url: impl Into<String>,
-        token: Option<SecretString>,
-        x_session_id: impl Into<String>,
-        agent_id: impl Into<String>,
-    ) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            base_url: base_url.into().trim_end_matches('/').to_string(),
-            token,
-            x_session_id: x_session_id.into(),
-            agent_id: agent_id.into(),
-            mcp_session_id: Arc::new(Mutex::new(None)),
-            next_id: Arc::new(AtomicU64::new(1)),
-        }
-    }
-
-    fn authorized(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match &self.token {
-            Some(token) => request.header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", token.expose_secret()),
-            ),
-            None => request,
-        }
-    }
-
-    async fn ensure_initialized(&self) -> RuntimeResult<()> {
-        if self.mcp_session_id.lock().await.is_some() {
-            return Ok(());
-        }
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let response = self
-            .authorized(self.http.post(format!("{}/mcp", self.base_url)))
-            .header("accept", "application/json, text/event-stream")
-            .header("mcp-protocol-version", "2025-11-25")
-            .header("x-session-id", &self.x_session_id)
-            .header("x-actor", &self.agent_id)
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": {"name": "quire-runtime", "version": env!("CARGO_PKG_VERSION")}
-                }
-            }))
-            .send()
-            .await?;
-        let session_id = response
-            .headers()
-            .get("mcp-session-id")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
-        let body = parse_rpc_body(response, "initialize").await?;
-        if body.get("error").is_some() {
-            return Err(RuntimeError::Internal(format!(
-                "MCP initialize failed: {body}"
-            )));
-        }
-        if let Some(session_id) = session_id {
-            *self.mcp_session_id.lock().await = Some(session_id.clone());
-            // MCP notifications must not carry an id. Sending one as a request
-            // leaves an unread SSE body in the connection pool, which can make
-            // the next tools/call observe an empty response.
-            if let Ok(response) = self
-                .authorized(self.http.post(format!("{}/mcp", self.base_url)))
-                .header("accept", "application/json, text/event-stream")
-                .header("mcp-protocol-version", "2025-11-25")
-                .header("x-session-id", &self.x_session_id)
-                .header("x-actor", &self.agent_id)
-                .header("mcp-session-id", session_id)
-                .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized"}))
-                .send()
-                .await
-            {
-                // Drain the response so the pooled connection is reusable.
-                let _ = response.bytes().await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn rpc(&self, method: &str, params: Value) -> RuntimeResult<Value> {
-        self.ensure_initialized().await?;
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        let mut request = self
-            .authorized(self.http.post(format!("{}/mcp", self.base_url)))
-            .header("accept", "application/json, text/event-stream")
-            .header("mcp-protocol-version", "2025-11-25")
-            .header("x-session-id", &self.x_session_id)
-            .header("x-actor", &self.agent_id);
-        if let Some(session_id) = self.mcp_session_id.lock().await.clone() {
-            request = request.header("mcp-session-id", session_id);
-        }
-        let response = request
-            .json(&json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "method": method,
-                "params": params,
-            }))
-            .send()
-            .await?;
-        let context = if method == "tools/call" {
-            params
-                .get("name")
-                .and_then(Value::as_str)
-                .unwrap_or("tools/call")
-        } else {
-            method
-        };
-        let body = parse_rpc_body(response, context).await?;
-        if let Some(error) = body.get("error") {
-            return Err(RuntimeError::Internal(format!(
-                "MCP {method} failed: {error}"
-            )));
-        }
-        Ok(body.get("result").cloned().unwrap_or(Value::Null))
-    }
-
-    pub async fn list_tools(&self) -> RuntimeResult<Vec<McpToolDescriptor>> {
-        let result = self.rpc("tools/list", json!({})).await?;
-        let tools_value = result.get("tools").cloned().unwrap_or_else(|| json!([]));
-        let tools: Vec<rmcp::model::Tool> = serde_json::from_value(tools_value)?;
-        Ok(tools
-            .iter()
-            .filter_map(McpToolDescriptor::from_rmcp)
-            .collect())
-    }
-
-    pub async fn call_tool_raw(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
-        let result = self
-            .rpc("tools/call", json!({"name": name, "arguments": arguments}))
-            .await?;
-        if result.get("isError").and_then(Value::as_bool) == Some(true) {
-            return Err(RuntimeError::Internal(format!(
-                "MCP tool `{name}` returned isError: {result}"
-            )));
-        }
-        Ok(result)
-    }
-
-    pub async fn call_tool(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
-        let result = self.call_tool_raw(name, arguments).await?;
-        if let Some(structured) = result.get("structuredContent") {
-            return Ok(structured.clone());
-        }
-        if let Some(text) = result
-            .get("content")
-            .and_then(Value::as_array)
-            .and_then(|content| content.first())
-            .and_then(|item| item.get("text"))
-            .and_then(Value::as_str)
-        {
-            return Ok(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.into())));
-        }
-        Ok(result)
-    }
-}
-
-async fn parse_rpc_body(response: reqwest::Response, context: &str) -> RuntimeResult<Value> {
-    let status = response.status();
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
-    let text = response.text().await?;
-    if content_type.contains("text/event-stream") {
-        let mut found = None;
-        for line in text.lines() {
-            let Some(data) = line.strip_prefix("data:") else {
-                continue;
-            };
-            let data = data.trim();
-            if data.is_empty() {
-                continue;
-            }
-            if let Ok(value) = serde_json::from_str::<Value>(data)
-                && (value.get("result").is_some() || value.get("error").is_some())
-            {
-                found = Some(value);
-            }
-        }
-        found.ok_or_else(|| {
-            let preview: String = text.chars().take(400).collect();
-            warn!(
-                %status,
-                %content_type,
-                %context,
-                body = %preview,
-                "MCP SSE response had no result"
-            );
-            RuntimeError::Internal("MCP SSE response had no result".into())
-        })
-    } else if text.trim().is_empty() {
-        Ok(Value::Null)
-    } else {
-        Ok(serde_json::from_str(&text)?)
-    }
-}
-
 /// Match an agent allow-list entry against a tool name. `*` matches every tool.
+fn warn_missing_allowed_tools(
+    agent_id: &str,
+    allowed_tools: &[String],
+    tool_map: &BTreeMap<String, DynamicTool>,
+) {
+    for pattern in allowed_tools {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() || trimmed == "*" || trimmed.ends_with(":*") {
+            continue;
+        }
+        let tool_name = trimmed
+            .split_once(':')
+            .map(|(_, name)| name)
+            .unwrap_or(trimmed);
+        if !tool_map.contains_key(tool_name) {
+            warn!(
+                agent_id = %agent_id,
+                allowed_tool = %trimmed,
+                "configured allowed_tool does not exist or is unavailable; skipping without blocking workflow"
+            );
+        }
+    }
+}
+
 fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
     allowed_tools.iter().any(|pattern| {
         let pattern = pattern.trim();
         pattern == "*" || pattern == tool_name
     })
-}
-
-/// Adapt MCP descriptors into rig's dynamic tool registry, preserving allow-list policy.
-pub async fn build_rig_tools(
-    client: McpHttpClient,
-    allowed_tools: &[String],
-) -> RuntimeResult<Vec<DynamicTool>> {
-    let descriptors = client.list_tools().await?;
-    Ok(descriptors
-        .into_iter()
-        .filter(|descriptor| allow_list_matches(allowed_tools, &descriptor.name))
-        .filter_map(|descriptor| {
-            let name = ToolName::new(descriptor.name.clone()).ok()?;
-            let tool_name = descriptor.name.clone();
-            let call_client = client.clone();
-            Some(DynamicTool::new(
-                name,
-                descriptor.description,
-                descriptor.input_schema,
-                move |arguments| {
-                    let call_client = call_client.clone();
-                    let tool_name = tool_name.clone();
-                    Box::pin(async move {
-                        call_client
-                            .call_tool(&tool_name, arguments)
-                            .await
-                            .map(ToolOutput::json)
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))
-                    })
-                },
-            ))
-        })
-        .collect())
-}
-
-/// Register the runtime's built-in tools on the same rig dynamic registry.
-pub fn build_builtin_tools(kb: KbService) -> RuntimeResult<Vec<DynamicTool>> {
-    let mut tools = Vec::new();
-
-    let load_kb = kb.clone();
-    tools.push(DynamicTool::new(
-        ToolName::new("load_skill").map_err(|error| RuntimeError::Internal(error.to_string()))?,
-        "Load a skill definition from the runtime knowledge base.",
-        json!({
-            "type": "object",
-            "properties": {"name": {"type": "string"}},
-            "required": ["name"],
-            "additionalProperties": false
-        }),
-        move |arguments| {
-            let kb = load_kb.clone();
-            Box::pin(async move {
-                let name = arguments
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| ToolExecutionError::invalid_args("`name` is required"))?;
-                let skill = kb
-                    .get_skill(name)
-                    .await
-                    .map_err(|error| ToolExecutionError::other(error.to_string()))?
-                    .ok_or_else(|| ToolExecutionError::not_found(format!("skill `{name}`")))?;
-                serde_json::to_value(skill)
-                    .map(ToolOutput::json)
-                    .map_err(|error| ToolExecutionError::other(error.to_string()))
-            })
-        },
-    ));
-
-    let resource_kb = kb.clone();
-    tools.push(DynamicTool::new(
-        ToolName::new("read_skill_resource")
-            .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-        "Read one resource file bundled with a skill.",
-        json!({
-            "type": "object",
-            "properties": {
-                "skill": {"type": "string"},
-                "path": {"type": "string"}
-            },
-            "required": ["skill", "path"],
-            "additionalProperties": false
-        }),
-        move |arguments| {
-            let kb = resource_kb.clone();
-            Box::pin(async move {
-                let skill = arguments
-                    .get("skill")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| ToolExecutionError::invalid_args("`skill` is required"))?;
-                let path = arguments
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| ToolExecutionError::invalid_args("`path` is required"))?;
-                let definition = kb
-                    .get_skill(skill)
-                    .await
-                    .map_err(|error| ToolExecutionError::other(error.to_string()))?
-                    .ok_or_else(|| ToolExecutionError::not_found(format!("skill `{skill}`")))?;
-                let resource = definition
-                    .resources
-                    .iter()
-                    .find(|resource| resource.path == path)
-                    .ok_or_else(|| {
-                        ToolExecutionError::not_found(format!("resource `{path}` in `{skill}`"))
-                    })?;
-                Ok(ToolOutput::json(json!({
-                    "skill": skill,
-                    "path": path,
-                    "content": resource.content
-                })))
-            })
-        },
-    ));
-
-    let title_kb = kb.clone();
-    tools.push(DynamicTool::new(
-        ToolName::new("set_session_title")
-            .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-        "Set or refine the current chat session title once the user's topic is clear.",
-        json!({
-            "type": "object",
-            "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Concise session title (1-60 characters)"
-                }
-            },
-            "required": ["title"],
-            "additionalProperties": false
-        }),
-        move |arguments| {
-            let _kb = title_kb.clone();
-            Box::pin(async move {
-                let title = arguments
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| ToolExecutionError::invalid_args("`title` must be non-empty"))?;
-                Ok(ToolOutput::json(json!({ "title": title })))
-            })
-        },
-    ));
-
-    tools.push(DynamicTool::new(
-        ToolName::new("describe_task")
-            .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-        "Publish the current task focus to the frontend event stream.",
-        json!({
-            "type": "object",
-            "properties": {
-                "title": {"type": "string"},
-                "detail": {"type": "string", "nullable": true},
-                "section_id": {"type": "string", "nullable": true}
-            },
-            "required": ["title"],
-            "additionalProperties": false
-        }),
-        |arguments| {
-            Box::pin(async move {
-                let title = arguments
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| ToolExecutionError::invalid_args("`title` is required"))?;
-                Ok(ToolOutput::json(json!({
-                    "title": title,
-                    "detail": arguments.get("detail").cloned().unwrap_or(Value::Null),
-                    "section_id": arguments.get("section_id").cloned().unwrap_or(Value::Null)
-                })))
-            })
-        },
-    ));
-
-    let list_kb = kb.clone();
-    tools.push(DynamicTool::new(
-        ToolName::new("list_subagents")
-            .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-        "List available subagent names and descriptions on the active branch before calling spawn_subagents.",
-        json!({
-            "type": "object",
-            "properties": {},
-            "additionalProperties": false
-        }),
-        move |_arguments| {
-            let kb = list_kb.clone();
-            Box::pin(async move {
-                let agents = kb
-                    .list_agents()
-                    .await
-                    .map_err(|error| ToolExecutionError::other(error.to_string()))?;
-                let subagents: Vec<Value> = agents
-                    .into_iter()
-                    .filter(|agent| agent.enabled && !agent.is_default)
-                    .map(|agent| {
-                        json!({
-                            "name": agent.name,
-                            "description": agent.description,
-                            "model": agent.model,
-                            "allowed_tools": agent.allowed_tools,
-                        })
-                    })
-                    .collect();
-                Ok(ToolOutput::json(json!({ "subagents": subagents })))
-            })
-        },
-    ));
-
-    tools.push(DynamicTool::new(
-        ToolName::new("spawn_subagents")
-            .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-        "Run multiple subagents concurrently with a JoinSet. Call list_subagents first to get valid subagent names.",
-        json!({
-            "type": "object",
-            "properties": {
-                "tasks": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "agent_name": {"type": "string"},
-                            "display_name": {"type": "string", "nullable": true},
-                            "model": {"type": "string", "nullable": true},
-                            "task": {"type": "string"},
-                            "section_id": {"type": "string", "nullable": true}
-                        },
-                        "required": ["agent_name", "task"],
-                        "additionalProperties": false
-                    }
-                }
-            },
-            "required": ["tasks"],
-            "additionalProperties": false
-        }),
-        |arguments| {
-            Box::pin(async move {
-                let tasks: Vec<SubagentTask> = serde_json::from_value(
-                    arguments
-                        .get("tasks")
-                        .cloned()
-                        .ok_or_else(|| ToolExecutionError::invalid_args("`tasks` is required"))?,
-                )
-                .map_err(|error| ToolExecutionError::invalid_args(error.to_string()))?;
-                let outcomes = spawn_subagents(tasks, |task| async move {
-                    SubagentOutcome {
-                        agent_name: task.agent_name,
-                        status: "completed".into(),
-                        summary: task.task,
-                    }
-                })
-                .await
-                .map_err(|error| ToolExecutionError::other(error.to_string()))?;
-                Ok(ToolOutput::json(json!({"outcomes": outcomes})))
-            })
-        },
-    ));
-
-    Ok(tools)
-}
-
-/// Register built-in and allow-listed MCP tools together.
-pub async fn build_agent_tools(
-    kb: KbService,
-    client: McpHttpClient,
-    allowed_tools: &[String],
-) -> RuntimeResult<Vec<DynamicTool>> {
-    let mut tools = build_builtin_tools(kb)?;
-    let remote_allow: Vec<String> = allowed_tools
-        .iter()
-        .filter(|name| !BUILTIN_TOOLS.contains(&name.as_str()))
-        .cloned()
-        .collect();
-    tools.extend(build_rig_tools(client, &remote_allow).await?);
-    Ok(tools)
 }
 
 /// Throttle for streamed tool-argument preview frames.
@@ -744,7 +255,7 @@ struct PreviewImage {
     mime_type: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig_core::schemars::JsonSchema)]
 pub struct SubagentTask {
     pub agent_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -756,11 +267,271 @@ pub struct SubagentTask {
     pub section_id: Option<String>,
 }
 
+struct RuntimeToolScope {
+    engine: Arc<RigModelCore>,
+    execution: AgentExecution,
+    event_scope: EventScope,
+    pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
+    supports_vision: bool,
+}
+
+fn runtime_tool_scope(context: &ToolContext) -> Result<Arc<RuntimeToolScope>, ToolExecutionError> {
+    context
+        .scope::<RuntimeToolScope>()
+        .ok_or_else(|| ToolExecutionError::other("missing runtime tool context"))
+}
+
+fn scoped_dynamic_tool<T>(
+    scope: Arc<RuntimeToolScope>,
+    factory: fn() -> T,
+) -> RuntimeResult<DynamicTool>
+where
+    T: Tool + Default + 'static,
+{
+    let template = factory();
+    let name = ToolName::new(T::NAME).map_err(|error| RuntimeError::Internal(error.to_string()))?;
+    let description = template.description();
+    let parameters = template.parameters();
+    Ok(DynamicTool::new_with_context(
+        name,
+        description,
+        parameters,
+        move |context, arguments| {
+            let mut context = context.clone().with_scope(scope.clone());
+            let adapter = ToolAdapter::new(factory());
+            Box::pin(async move { adapter.run_with(&mut context, arguments).await })
+        },
+    ))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SubagentOutcome {
     pub agent_name: String,
     pub status: String,
     pub summary: String,
+}
+
+fn tool_other(error: impl std::fmt::Display) -> ToolExecutionError {
+    ToolExecutionError::other(error.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+#[rig_tool(
+    name = "preview_report",
+    description = "Render a preview of the Quire report via controlled Playwright MCP, returning layout diagnostics and a public preview URL. Vision-capable models also receive the screenshot."
+)]
+async fn preview_report_tool(
+    #[rig(context)] context: &mut ToolContext,
+    doc_id: String,
+    mode: Option<crate::preview::PreviewViewMode>,
+    section_id: Option<String>,
+    block_ids: Option<Vec<String>>,
+    page: Option<usize>,
+    rev: Option<u64>,
+    include_styles: Option<bool>,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let input = crate::preview::PreviewReportInput {
+        doc_id,
+        mode: mode.unwrap_or_default(),
+        section_id,
+        block_ids,
+        page,
+        rev,
+        include_styles: include_styles.unwrap_or(true),
+        include_image: runtime.supports_vision,
+    };
+    let result = crate::preview::execute_preview_report(&runtime.engine.config, input)
+        .await
+        .map_err(tool_other)?;
+    if let (Some(base64), Some(mime_type)) =
+        (result.image_base64.clone(), result.image_mime_type.clone())
+    {
+        runtime
+            .pending_preview_images
+            .lock()
+            .await
+            .push(PreviewImage { base64, mime_type });
+    }
+    Ok(result.to_diagnostics_json())
+}
+
+#[rig_tool(
+    name = "load_skill",
+    description = "Load a skill definition from the session knowledge-base branch."
+)]
+async fn load_skill_tool(
+    #[rig(context)] context: &mut ToolContext,
+    name: String,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let skill = runtime
+        .engine
+        .kb
+        .get_skill_on(runtime.execution.kb_branch.as_deref(), &name)
+        .await
+        .map_err(tool_other)?
+        .ok_or_else(|| ToolExecutionError::not_found(format!("skill `{name}`")))?;
+    serde_json::to_value(skill).map_err(tool_other)
+}
+
+#[rig_tool(
+    name = "read_skill_resource",
+    description = "Read one resource file bundled with a skill on the session branch."
+)]
+async fn read_skill_resource_tool(
+    #[rig(context)] context: &mut ToolContext,
+    skill: String,
+    path: String,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let definition = runtime
+        .engine
+        .kb
+        .get_skill_on(runtime.execution.kb_branch.as_deref(), &skill)
+        .await
+        .map_err(tool_other)?
+        .ok_or_else(|| ToolExecutionError::not_found(format!("skill `{skill}`")))?;
+    let resource = definition
+        .resources
+        .iter()
+        .find(|resource| resource.path == path)
+        .ok_or_else(|| ToolExecutionError::not_found(format!("resource `{path}` in `{skill}`")))?;
+    Ok(json!({
+        "skill": skill,
+        "path": path,
+        "content": resource.content,
+    }))
+}
+
+#[rig_tool(
+    name = "describe_task",
+    description = "Publish the current task focus to the frontend event stream."
+)]
+fn describe_task_tool(
+    #[rig(context)] context: &mut ToolContext,
+    title: String,
+    detail: Option<String>,
+    section_id: Option<String>,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    runtime.event_scope.send(ModelStreamEvent::TaskFocus {
+        title: title.clone(),
+        detail: detail.clone(),
+        section_id: section_id.clone(),
+    });
+    Ok(json!({
+        "title": title,
+        "detail": detail,
+        "section_id": section_id,
+    }))
+}
+
+#[rig_tool(
+    name = "set_session_title",
+    description = "Set or refine the current chat session title once the user's topic is clear."
+)]
+async fn set_session_title_tool(
+    #[rig(context)] context: &mut ToolContext,
+    title: String,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let title: String = title.trim().chars().take(60).collect();
+    if title.is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "`title` must be non-empty",
+        ));
+    }
+    runtime
+        .engine
+        .kb
+        .store()
+        .update_session(&runtime.execution.session_id, Some(&title), None)
+        .await
+        .map_err(tool_other)?;
+    runtime
+        .event_scope
+        .send(ModelStreamEvent::SessionTitleUpdated {
+            title: title.clone(),
+        });
+    Ok(json!({
+        "session_id": runtime.execution.session_id,
+        "title": title,
+    }))
+}
+
+#[rig_tool(
+    name = "ask_user",
+    description = "Pause the run and request structured choices from the user."
+)]
+fn ask_user_tool(
+    #[rig(context)] _context: &mut ToolContext,
+    _questions: Vec<QuestionItem>,
+) -> Result<Value, ToolExecutionError> {
+    Err(ToolExecutionError::other(
+        "ask_user is handled by the runtime question loop",
+    ))
+}
+
+#[rig_tool(
+    name = "list_subagents",
+    description = "List available subagent names and descriptions on this branch."
+)]
+async fn list_subagents_tool(
+    #[rig(context)] context: &mut ToolContext,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let agents = runtime
+        .engine
+        .kb
+        .list_agents_on(runtime.execution.kb_branch.as_deref())
+        .await
+        .map_err(tool_other)?;
+    let subagents: Vec<Value> = agents
+        .into_iter()
+        .filter(|agent| {
+            agent.enabled && !agent.is_default && agent.name != runtime.execution.agent_id
+        })
+        .map(|agent| {
+            json!({
+                "name": agent.name,
+                "description": agent.description,
+                "model": agent.model,
+                "allowed_tools": agent.allowed_tools,
+            })
+        })
+        .collect();
+    Ok(json!({ "subagents": subagents }))
+}
+
+#[rig_tool(
+    name = "spawn_subagents",
+    description = "Run multiple subagents concurrently with a JoinSet. Call list_subagents first to get valid subagent names."
+)]
+async fn run_subagents_tool(
+    #[rig(context)] context: &mut ToolContext,
+    tasks: Vec<SubagentTask>,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let mut joinset = JoinSet::new();
+    for task in tasks {
+        let engine = Arc::clone(&runtime.engine);
+        let scope = runtime.event_scope.clone();
+        let execution = runtime.execution.clone();
+        joinset.spawn(async move { engine.run_subagent(scope, execution, task).await });
+    }
+    let mut outcomes = Vec::new();
+    while let Some(joined) = joinset.join_next().await {
+        match joined {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(error) => outcomes.push(SubagentOutcome {
+                agent_name: "unknown".into(),
+                status: "failed".into(),
+                summary: format!("subagent join error: {error}"),
+            }),
+        }
+    }
+    serde_json::to_value(outcomes).map_err(tool_other)
 }
 
 /// Run subagent closures concurrently with a bounded JoinSet.
@@ -1012,14 +783,25 @@ impl RigModelCore {
             if allowed.is_empty() {
                 continue;
             }
-            let client = McpHttpClient::new_optional(
+            match RmcpClient::connect(
                 &binding.url,
                 binding.auth_token,
                 &execution.session_id,
                 &execution.agent_id,
-            );
-            match build_rig_tools(client, &allowed).await {
-                Ok(mut remote) => tools.append(&mut remote),
+            )
+            .await
+            {
+                Ok(client) => match client.dynamic_tools(&allowed) {
+                    Ok(mut remote) => tools.append(&mut remote),
+                    Err(error) => {
+                        warn!(
+                            %error,
+                            server_id = %binding.server_id,
+                            server_name = %binding.name,
+                            "skipping unavailable MCP server while assembling tools"
+                        );
+                    }
+                },
                 Err(error) => {
                     warn!(
                         %error,
@@ -1034,6 +816,7 @@ impl RigModelCore {
             .into_iter()
             .map(|tool| (tool.name().as_str().to_string(), tool))
             .collect();
+        warn_missing_allowed_tools(&execution.agent_id, &execution.allowed_tools, &tool_map);
         let mut total_usage = Usage::default();
         let mut final_text = String::new();
         let mut suspended = false;
@@ -1044,6 +827,13 @@ impl RigModelCore {
             let definitions: Vec<ToolDefinition> =
                 tool_map.values().map(|tool| tool.definition()).collect();
             let request = build_completion_request(&execution, &messages, definitions, max_tokens);
+            if let Err(error) = model.check(&request) {
+                warn!(
+                    %error,
+                    model = %execution.model_route,
+                    "model request preflight reported unsupported options"
+                );
+            }
             let mut stream = model.stream(request).map_err(model_provider_error)?;
             let mut previews = PreviewState::new(&execution, &self.config);
             let mut streamed_text = false;
@@ -1168,415 +958,57 @@ impl RigModelCore {
         pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
         supports_vision: bool,
     ) -> RuntimeResult<Vec<DynamicTool>> {
+        let runtime = Arc::new(RuntimeToolScope {
+            engine,
+            execution: execution.clone(),
+            event_scope: scope,
+            pending_preview_images,
+            supports_vision,
+        });
         let mut tools = Vec::new();
         if allow_list_matches(&execution.allowed_tools, "preview_report") {
-            let cfg = self.config.clone();
-            let preview_images = Arc::clone(&pending_preview_images);
-            let description = if supports_vision {
-                "Render a preview of the Quire report via controlled Playwright MCP, returning structured layout diagnostics plus a preview URL and attaching the PNG screenshot as a multimodal image for visual inspection."
-            } else {
-                "Render a preview of the Quire report via controlled Playwright MCP and return structured layout diagnostics plus a preview URL. This model cannot consume images, so ask the user to inspect the preview URL for visual issues."
-            };
-            tools.push(DynamicTool::new(
-                ToolName::new("preview_report")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                description,
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "doc_id": {"type": "string"},
-                        "mode": {"type": "string", "enum": ["paged", "continuous"]},
-                        "section_id": {"type": "string"},
-                        "block_ids": {"type": "array", "items": {"type": "string"}},
-                        "page": {"type": "integer", "minimum": 1},
-                        "rev": {"type": "integer", "minimum": 0},
-                        "include_styles": {"type": "boolean"}
-                    },
-                    "required": ["doc_id"],
-                    "additionalProperties": false
-                }),
-                move |arguments| {
-                    let cfg = cfg.clone();
-                    let preview_images = Arc::clone(&preview_images);
-                    Box::pin(async move {
-                        let mut input: crate::preview::PreviewReportInput =
-                            serde_json::from_value(arguments).map_err(|error| {
-                                ToolExecutionError::invalid_args(error.to_string())
-                            })?;
-                        input.include_image = supports_vision;
-                        let result = crate::preview::execute_preview_report(&cfg, input)
-                            .await
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))?;
-                        if let (Some(base64), Some(mime_type)) =
-                            (result.image_base64.clone(), result.image_mime_type.clone())
-                        {
-                            preview_images
-                                .lock()
-                                .await
-                                .push(PreviewImage { base64, mime_type });
-                        }
-                        Ok(ToolOutput::json(result.to_diagnostics_json()))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                PreviewReportTool
+            })?);
         }
         if allow_list_matches(&execution.allowed_tools, "load_skill") {
-            let kb = self.kb.clone();
-            let branch = execution.kb_branch.clone();
-            tools.push(DynamicTool::new(
-                ToolName::new("load_skill")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Load a skill definition from the session knowledge-base branch.",
-                json!({
-                    "type": "object",
-                    "properties": {"name": {"type": "string"}},
-                    "required": ["name"],
-                    "additionalProperties": false
-                }),
-                move |arguments| {
-                    let kb = kb.clone();
-                    let branch = branch.clone();
-                    Box::pin(async move {
-                        let name =
-                            arguments
-                                .get("name")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| {
-                                    ToolExecutionError::invalid_args("`name` is required")
-                                })?;
-                        let skill = kb
-                            .get_skill_on(branch.as_deref(), name)
-                            .await
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))?
-                            .ok_or_else(|| {
-                                ToolExecutionError::not_found(format!("skill `{name}`"))
-                            })?;
-                        serde_json::to_value(skill)
-                            .map(ToolOutput::json)
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || LoadSkillTool)?);
         }
         if allow_list_matches(&execution.allowed_tools, "read_skill_resource") {
-            let kb = self.kb.clone();
-            let branch = execution.kb_branch.clone();
-            tools.push(DynamicTool::new(
-                ToolName::new("read_skill_resource")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Read one resource file bundled with a skill on the session branch.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "skill": {"type": "string"},
-                        "path": {"type": "string"}
-                    },
-                    "required": ["skill", "path"],
-                    "additionalProperties": false
-                }),
-                move |arguments| {
-                    let kb = kb.clone();
-                    let branch = branch.clone();
-                    Box::pin(async move {
-                        let skill =
-                            arguments
-                                .get("skill")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| {
-                                    ToolExecutionError::invalid_args("`skill` is required")
-                                })?;
-                        let path =
-                            arguments
-                                .get("path")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| {
-                                    ToolExecutionError::invalid_args("`path` is required")
-                                })?;
-                        let definition = kb
-                            .get_skill_on(branch.as_deref(), skill)
-                            .await
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))?
-                            .ok_or_else(|| {
-                                ToolExecutionError::not_found(format!("skill `{skill}`"))
-                            })?;
-                        let resource = definition
-                            .resources
-                            .iter()
-                            .find(|resource| resource.path == path)
-                            .ok_or_else(|| {
-                                ToolExecutionError::not_found(format!(
-                                    "resource `{path}` in `{skill}`"
-                                ))
-                            })?;
-                        Ok(ToolOutput::json(json!({
-                            "skill": skill,
-                            "path": path,
-                            "content": resource.content
-                        })))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                ReadSkillResourceTool
+            })?);
         }
         if allow_list_matches(&execution.allowed_tools, "describe_task") {
-            let task_scope = scope.clone();
-            tools.push(DynamicTool::new(
-                ToolName::new("describe_task")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Publish the current task focus to the frontend event stream.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "detail": {"type": "string", "nullable": true},
-                        "section_id": {"type": "string", "nullable": true}
-                    },
-                    "required": ["title"],
-                    "additionalProperties": false
-                }),
-                move |arguments| {
-                    let scope = task_scope.clone();
-                    Box::pin(async move {
-                        let title =
-                            arguments
-                                .get("title")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| {
-                                    ToolExecutionError::invalid_args("`title` is required")
-                                })?;
-                        let detail = arguments
-                            .get("detail")
-                            .and_then(Value::as_str)
-                            .map(str::to_string);
-                        let section_id = arguments
-                            .get("section_id")
-                            .and_then(Value::as_str)
-                            .map(str::to_string);
-                        scope.send(ModelStreamEvent::TaskFocus {
-                            title: title.to_string(),
-                            detail: detail.clone(),
-                            section_id: section_id.clone(),
-                        });
-                        Ok(ToolOutput::json(json!({
-                            "title": title,
-                            "detail": detail,
-                            "section_id": section_id
-                        })))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                DescribeTaskTool
+            })?);
         }
         if !execution.run_id.starts_with("run_sub_")
             && (allow_list_matches(&execution.allowed_tools, "set_session_title")
                 || allow_list_matches(&execution.allowed_tools, "describe_task"))
         {
-            let title_store = self.kb.store().clone();
-            let title_session_id = execution.session_id.clone();
-            let title_scope = scope.clone();
-            tools.push(DynamicTool::new(
-                ToolName::new("set_session_title")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Set or refine the current chat session title once the user's topic is clear.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "title": {
-                            "type": "string",
-                            "description": "Concise session title (1-60 characters)"
-                        }
-                    },
-                    "required": ["title"],
-                    "additionalProperties": false
-                }),
-                move |arguments| {
-                    let store = title_store.clone();
-                    let session_id = title_session_id.clone();
-                    let scope = title_scope.clone();
-                    Box::pin(async move {
-                        let raw_title = arguments
-                            .get("title")
-                            .and_then(Value::as_str)
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty())
-                            .ok_or_else(|| {
-                                ToolExecutionError::invalid_args("`title` must be non-empty")
-                            })?;
-                        let title: String = raw_title.chars().take(60).collect();
-                        store
-                            .update_session(&session_id, Some(&title), None)
-                            .await
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))?;
-                        scope.send(ModelStreamEvent::SessionTitleUpdated {
-                            title: title.clone(),
-                        });
-                        Ok(ToolOutput::json(json!({
-                            "session_id": session_id,
-                            "title": title,
-                        })))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                SetSessionTitleTool
+            })?);
         }
         if !execution.run_id.starts_with("run_sub_")
             && allow_list_matches(&execution.allowed_tools, "ask_user")
         {
-            tools.push(DynamicTool::new(
-                ToolName::new("ask_user")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Pause the run and request structured choices from the user.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "questions": {
-                            "type": "array",
-                            "minItems": 1,
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "title": {"type": "string"},
-                                    "description": {"type": "string", "nullable": true},
-                                    "multiple": {"type": "boolean"},
-                                    "required": {"type": "boolean"},
-                                    "options": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "properties": {
-                                                "id": {"type": "string"},
-                                                "label": {"type": "string"},
-                                                "description": {"type": "string", "nullable": true}
-                                            },
-                                            "required": ["id", "label"],
-                                            "additionalProperties": false
-                                        }
-                                    }
-                                },
-                                "required": ["id", "title", "multiple", "required", "options"],
-                                "additionalProperties": false
-                            }
-                        }
-                    },
-                    "required": ["questions"],
-                    "additionalProperties": false
-                }),
-                |_arguments| {
-                    Box::pin(async move {
-                        Err(ToolExecutionError::other(
-                            "ask_user is handled by the runtime question loop",
-                        ))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || AskUserTool)?);
         }
         if allow_list_matches(&execution.allowed_tools, "list_subagents")
             || (!execution.run_id.starts_with("run_sub_")
                 && allow_list_matches(&execution.allowed_tools, "spawn_subagents"))
         {
-            let list_kb = self.kb.clone();
-            let list_branch = execution.kb_branch.clone();
-            let current_agent = execution.agent_id.clone();
-            tools.push(DynamicTool::new(
-                ToolName::new("list_subagents")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "List available subagent names and descriptions on this branch. Always call this before spawn_subagents so you use exact subagent names.",
-                json!({
-                    "type": "object",
-                    "properties": {},
-                    "additionalProperties": false
-                }),
-                move |_arguments| {
-                    let kb = list_kb.clone();
-                    let branch = list_branch.clone();
-                    let current_agent = current_agent.clone();
-                    Box::pin(async move {
-                        let agents = kb
-                            .list_agents_on(branch.as_deref())
-                            .await
-                            .map_err(|error| ToolExecutionError::other(error.to_string()))?;
-                        let subagents: Vec<Value> = agents
-                            .into_iter()
-                            .filter(|agent| {
-                                agent.enabled
-                                    && !agent.is_default
-                                    && agent.name != current_agent
-                            })
-                            .map(|agent| {
-                                json!({
-                                    "name": agent.name,
-                                    "description": agent.description,
-                                    "model": agent.model,
-                                    "allowed_tools": agent.allowed_tools,
-                                })
-                            })
-                            .collect();
-                        Ok(ToolOutput::json(json!({ "subagents": subagents })))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                ListSubagentsTool
+            })?);
         }
         if allow_list_matches(&execution.allowed_tools, "spawn_subagents") {
-            let spawn_scope = scope.clone();
-            let spawn_execution = execution.clone();
-            tools.push(DynamicTool::new(
-                ToolName::new("spawn_subagents")
-                    .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Run multiple branch-scoped subagents concurrently with a JoinSet. Call list_subagents first to inspect exact subagent names and descriptions.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "tasks": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "agent_name": {"type": "string"},
-                                    "display_name": {"type": "string", "nullable": true},
-                                    "model": {"type": "string", "nullable": true},
-                                    "task": {"type": "string"},
-                                    "section_id": {"type": "string", "nullable": true}
-                                },
-                                "required": ["agent_name", "task"],
-                                "additionalProperties": false
-                            }
-                        }
-                    },
-                    "required": ["tasks"],
-                    "additionalProperties": false
-                }),
-                move |arguments| {
-                    let engine = engine.clone();
-                    let scope = spawn_scope.clone();
-                    let execution = spawn_execution.clone();
-                    Box::pin(async move {
-                        let tasks: Vec<SubagentTask> =
-                            serde_json::from_value(arguments.get("tasks").cloned().ok_or_else(
-                                || ToolExecutionError::invalid_args("`tasks` is required"),
-                            )?)
-                            .map_err(|error| ToolExecutionError::invalid_args(error.to_string()))?;
-                        let mut joinset = JoinSet::new();
-                        for task in tasks {
-                            let engine = engine.clone();
-                            let scope = scope.clone();
-                            let execution = execution.clone();
-                            joinset.spawn(async move {
-                                engine.run_subagent(scope, execution, task).await
-                            });
-                        }
-                        let mut outcomes = Vec::new();
-                        while let Some(joined) = joinset.join_next().await {
-                            match joined {
-                                Ok(outcome) => outcomes.push(outcome),
-                                Err(error) => outcomes.push(SubagentOutcome {
-                                    agent_name: "unknown".into(),
-                                    status: "failed".into(),
-                                    summary: format!("subagent join error: {error}"),
-                                }),
-                            }
-                        }
-                        Ok(ToolOutput::json(json!({"outcomes": outcomes})))
-                    })
-                },
-            ));
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                RunSubagentsTool
+            })?);
         }
         Ok(tools)
     }

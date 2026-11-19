@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use crate::{
     config::Config,
     error::{RuntimeError, RuntimeResult},
-    rig_agent::McpHttpClient,
+    mcp_client::RmcpClient,
 };
 
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -308,7 +308,7 @@ pub async fn execute_preview_report(
 
     let preview_url = build_preview_url(config, &input);
     let public_preview_url = build_public_preview_url(config, &input);
-    let client = McpHttpClient::new_optional(playwright_url, None, "preview", "quire-preview");
+    let client = RmcpClient::connect(playwright_url, None, "preview", "quire-preview").await?;
 
     client
         .call_tool_raw("browser_navigate", json!({ "url": preview_url }))

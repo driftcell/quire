@@ -16,8 +16,8 @@ use tracing::warn;
 
 use crate::{
     error::{RuntimeError, RuntimeResult},
+    mcp_client::RmcpClient,
     models::{mask_secret_ref, normalize_secret_ref, resolve_api_key_ref},
-    rig_agent::McpHttpClient,
     store::RuntimeStore,
 };
 
@@ -274,7 +274,7 @@ impl McpRegistry {
             None => None,
         };
         let client =
-            McpHttpClient::new_optional(&server.url, token, "runtime-mcp-registry", "admin");
+            RmcpClient::connect(&server.url, token, "runtime-mcp-registry", "admin").await?;
         let descriptors = client.list_tools().await?;
         let mut discovered = BTreeMap::new();
         for descriptor in descriptors {

@@ -10,6 +10,7 @@ pub mod delta;
 pub mod error;
 pub mod http;
 pub mod kb;
+pub mod mcp_client;
 pub mod mcp_registry;
 pub mod model_stream;
 pub mod models;

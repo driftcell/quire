@@ -5,7 +5,9 @@
 //! surface used by authoring sub-agents.
 
 use chrono::{DateTime, Utc};
-use quire_session_protocol::{ContextUsage, SessionDetail, SessionSummary};
+use quire_session_protocol::{
+    ContextUsage, RunTraceSummary, SessionDetail, SessionStatus, SessionSummary, ToolCallDetail,
+};
 use rmcp::{
     ErrorData, ServerHandler,
     handler::server::{
@@ -28,7 +30,8 @@ use crate::{
     },
     mcp_registry::{McpServerInput, McpServerRecord, McpSyncReport, McpToolRecord},
     models::{
-        ModelRecord, ModelsDevImportRequest, ProviderInput, ProviderProtocol, ProviderRecord,
+        ModelInput, ModelRecord, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
+        ProviderRecord,
     },
     service::RuntimeService,
     store::RunRecord,
@@ -257,6 +260,126 @@ pub struct SessionsListParams {
 pub struct SessionsInspectParams {
     /// Session ID to inspect.
     pub session_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct KbDeleteItemParams {
+    /// Target branch. Omit to use the active branch.
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// doc, agent or skill.
+    #[serde(alias = "kind")]
+    pub item_kind: KbItemKind,
+    /// doc_id for documents, name for agents and skills.
+    #[serde(alias = "key", alias = "id")]
+    pub item_key: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ModelIdParams {
+    /// Registered model route ID.
+    pub id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderIdParams {
+    /// Registered provider ID.
+    pub provider_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionsToolCallParams {
+    /// Session ID.
+    pub session_id: String,
+    /// Tool call ID from run traces or stream events.
+    pub tool_call_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionsUpdateParams {
+    /// Session ID to update.
+    pub session_id: String,
+    /// Optional new title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Optional new status (active or archived).
+    #[serde(default)]
+    pub status: Option<SessionStatus>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionAdminAction {
+    Interrupt,
+    Retry,
+    Compact,
+    Delete,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionsActionParams {
+    /// Target session ID.
+    pub session_id: String,
+    /// Action to perform: interrupt, retry, compact or delete.
+    pub action: SessionAdminAction,
+    /// Optional run ID when action is `interrupt`.
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DeleteReceipt {
+    pub deleted: bool,
+    pub target: String,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ModelReceipt {
+    pub model: ModelRecord,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SessionsTracesReceipt {
+    pub session_id: String,
+    pub traces: Vec<RunTraceSummary>,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SessionsToolCallReceipt {
+    pub tool_call: ToolCallDetail,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SessionsUpdateReceipt {
+    pub session: SessionSummary,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SessionsActionReceipt {
+    pub session_id: String,
+    pub action: SessionAdminAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<SessionDetail>,
+    #[serde(rename = "_next_hint")]
+    pub next_hint: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -787,6 +910,57 @@ impl AdminMcpServer {
         Ok(Json(KbSkillReceipt { skill, next_hint }))
     }
 
+    #[tool(
+        name = "kb_delete_item",
+        description = "Delete a document, agent or skill from a KB branch (defaults to active branch)."
+    )]
+    pub async fn kb_delete_item(
+        &self,
+        Parameters(request): Parameters<KbDeleteItemParams>,
+    ) -> Result<Json<DeleteReceipt>, ErrorData> {
+        let branch = match request.branch {
+            Some(branch) => branch,
+            None => {
+                self.service
+                    .kb()
+                    .active_branch()
+                    .await
+                    .map_err(admin_error)?
+                    .name
+            }
+        };
+        match request.item_kind {
+            KbItemKind::Doc => self
+                .service
+                .kb()
+                .delete_document_on(&branch, &request.item_key)
+                .await
+                .map_err(admin_error)?,
+            KbItemKind::Agent => self
+                .service
+                .kb()
+                .delete_agent_on(&branch, &request.item_key)
+                .await
+                .map_err(admin_error)?,
+            KbItemKind::Skill => self
+                .service
+                .kb()
+                .delete_skill_on(&branch, &request.item_key)
+                .await
+                .map_err(admin_error)?,
+        }
+        let target = format!("{branch}:{:?}:{}", request.item_kind, request.item_key);
+        let next_hint = format!(
+            "Deleted `{}` from branch `{}`. Call kb_list_items to verify.",
+            request.item_key, branch
+        );
+        Ok(Json(DeleteReceipt {
+            deleted: true,
+            target,
+            next_hint,
+        }))
+    }
+
     // ---------------------------------------------------------------------
     // Model and provider registry
     // ---------------------------------------------------------------------
@@ -895,6 +1069,85 @@ impl AdminMcpServer {
             provider_id: report.provider_id,
             imported: report.imported,
             models: report.models,
+            next_hint,
+        }))
+    }
+
+    #[tool(
+        name = "models_upsert",
+        description = "Manually create or update a single model route configuration."
+    )]
+    pub async fn models_upsert(
+        &self,
+        Parameters(request): Parameters<ModelInput>,
+    ) -> Result<Json<ModelReceipt>, ErrorData> {
+        let model = self
+            .service
+            .models()
+            .upsert_model(request)
+            .await
+            .map_err(admin_error)?;
+        let warnings = self
+            .service
+            .models()
+            .preflight_warnings(&model.id)
+            .await
+            .unwrap_or_else(|error| vec![format!("preflight unavailable: {error}")]);
+        let next_hint = format!(
+            "Model `{}` saved under provider `{}`. Reference it in kb_upsert_agent.",
+            model.id, model.provider_id
+        );
+        Ok(Json(ModelReceipt {
+            model,
+            warnings,
+            next_hint,
+        }))
+    }
+
+    #[tool(
+        name = "models_delete",
+        description = "Delete a registered model route by ID."
+    )]
+    pub async fn models_delete(
+        &self,
+        Parameters(request): Parameters<ModelIdParams>,
+    ) -> Result<Json<DeleteReceipt>, ErrorData> {
+        self.service
+            .models()
+            .delete_model(&request.id)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!(
+            "Model `{}` deleted. Call models_list to verify remaining routes.",
+            request.id
+        );
+        Ok(Json(DeleteReceipt {
+            deleted: true,
+            target: request.id,
+            next_hint,
+        }))
+    }
+
+    #[tool(
+        name = "models_delete_provider",
+        description = "Delete a model provider and its associated model routes."
+    )]
+    pub async fn models_delete_provider(
+        &self,
+        Parameters(request): Parameters<ProviderIdParams>,
+    ) -> Result<Json<DeleteReceipt>, ErrorData> {
+        self.service
+            .models()
+            .delete_provider(&request.provider_id)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!(
+            "Provider `{}` deleted. Call models_list_providers to verify.",
+            request.provider_id
+        );
+        Ok(Json(DeleteReceipt {
+            deleted: true,
+            target: request.provider_id,
             next_hint,
         }))
     }
@@ -1008,6 +1261,30 @@ impl AdminMcpServer {
         Ok(Json(McpToolReceipt { tool, next_hint }))
     }
 
+    #[tool(
+        name = "mcp_delete_server",
+        description = "Delete a registered MCP server and its synced tool records."
+    )]
+    pub async fn mcp_delete_server(
+        &self,
+        Parameters(request): Parameters<McpSyncParams>,
+    ) -> Result<Json<DeleteReceipt>, ErrorData> {
+        self.service
+            .mcp()
+            .delete_server(&request.server_id)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!(
+            "Server `{}` deleted. Call mcp_list_servers to inspect remaining servers.",
+            request.server_id
+        );
+        Ok(Json(DeleteReceipt {
+            deleted: true,
+            target: request.server_id,
+            next_hint,
+        }))
+    }
+
     // ---------------------------------------------------------------------
     // Session observation
     // ---------------------------------------------------------------------
@@ -1068,6 +1345,133 @@ impl AdminMcpServer {
             session: inspection.detail,
             latest_run,
             context_usage,
+            next_hint,
+        }))
+    }
+
+    #[tool(
+        name = "sessions_traces",
+        description = "List run trace summaries (thinking, tool calls, subagents, errors) for a session."
+    )]
+    pub async fn sessions_traces(
+        &self,
+        Parameters(request): Parameters<SessionsInspectParams>,
+    ) -> Result<Json<SessionsTracesReceipt>, ErrorData> {
+        let traces = self
+            .service
+            .list_run_traces(&request.session_id)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = if traces.is_empty() {
+            "No run traces recorded for this session yet.".to_string()
+        } else {
+            "Call sessions_get_tool_call with a tool_call_id to inspect full input/output."
+                .to_string()
+        };
+        Ok(Json(SessionsTracesReceipt {
+            session_id: request.session_id,
+            traces,
+            next_hint,
+        }))
+    }
+
+    #[tool(
+        name = "sessions_get_tool_call",
+        description = "Fetch full untruncated input/output and error details for one tool_call_id."
+    )]
+    pub async fn sessions_get_tool_call(
+        &self,
+        Parameters(request): Parameters<SessionsToolCallParams>,
+    ) -> Result<Json<SessionsToolCallReceipt>, ErrorData> {
+        let tool_call = self
+            .service
+            .get_tool_call(&request.session_id, &request.tool_call_id)
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!(
+            "Tool `{}` finished with status `{}`.",
+            tool_call.tool_name, tool_call.status
+        );
+        Ok(Json(SessionsToolCallReceipt {
+            tool_call,
+            next_hint,
+        }))
+    }
+
+    #[tool(
+        name = "sessions_update",
+        description = "Update a session's title or status (active/archived)."
+    )]
+    pub async fn sessions_update(
+        &self,
+        Parameters(request): Parameters<SessionsUpdateParams>,
+    ) -> Result<Json<SessionsUpdateReceipt>, ErrorData> {
+        let session = self
+            .service
+            .update_session(
+                &request.session_id,
+                request.title.as_deref(),
+                request.status,
+            )
+            .await
+            .map_err(admin_error)?;
+        let next_hint = format!("Session `{}` updated.", session.session_id);
+        Ok(Json(SessionsUpdateReceipt { session, next_hint }))
+    }
+
+    #[tool(
+        name = "sessions_action",
+        description = "Perform a control action on a session: interrupt, retry, compact or delete."
+    )]
+    pub async fn sessions_action(
+        &self,
+        Parameters(request): Parameters<SessionsActionParams>,
+    ) -> Result<Json<SessionsActionReceipt>, ErrorData> {
+        let session = match request.action {
+            SessionAdminAction::Interrupt => Some(
+                self.service
+                    .interrupt(&request.session_id, request.run_id.as_deref())
+                    .await
+                    .map_err(admin_error)?,
+            ),
+            SessionAdminAction::Retry => Some(
+                self.service
+                    .retry(&request.session_id)
+                    .await
+                    .map_err(admin_error)?,
+            ),
+            SessionAdminAction::Compact => Some(
+                self.service
+                    .compact(&request.session_id)
+                    .await
+                    .map_err(admin_error)?,
+            ),
+            SessionAdminAction::Delete => {
+                self.service
+                    .delete_session(&request.session_id)
+                    .await
+                    .map_err(admin_error)?;
+                None
+            }
+        };
+        let next_hint = match request.action {
+            SessionAdminAction::Interrupt => {
+                "Interrupt sent. Call sessions_inspect to verify idle/failed state.".to_string()
+            }
+            SessionAdminAction::Retry => {
+                "Retry started. Watch Session-SSE or call sessions_inspect.".to_string()
+            }
+            SessionAdminAction::Compact => {
+                "Pinned system prompt compacted to latest KB version.".to_string()
+            }
+            SessionAdminAction::Delete => {
+                format!("Session `{}` deleted.", request.session_id)
+            }
+        };
+        Ok(Json(SessionsActionReceipt {
+            session_id: request.session_id,
+            action: request.action,
+            session,
             next_hint,
         }))
     }

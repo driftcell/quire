@@ -1,12 +1,15 @@
 //! Unified provider/model registry, secret references and models.dev import.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use moka::future::Cache;
+use rig_core::catalog::Catalog;
+use rig_core::completion::CompletionRequest;
 use rig_core::driver::DynModel;
 use rig_core::operation::Completion;
+use rig_core::providers::registry::ProviderId;
 use ring::{
     aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey},
     digest::{SHA256, digest},
@@ -89,7 +92,7 @@ pub struct ModelRecord {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ModelInput {
     pub id: String,
     pub provider_id: String,
@@ -157,52 +160,6 @@ pub struct ModelsDevImportReport {
     pub provider_id: String,
     pub imported: usize,
     pub models: Vec<ModelRecord>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ModelsDevModel {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub limit: Option<ModelsDevLimit>,
-    #[serde(default)]
-    pub reasoning: Option<bool>,
-    #[serde(default)]
-    pub tool_call: Option<bool>,
-    #[serde(default)]
-    pub attachment: Option<bool>,
-    #[serde(default)]
-    pub cost: Option<ModelsDevCost>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ModelsDevLimit {
-    #[serde(default)]
-    pub context: Option<i64>,
-    #[serde(default)]
-    pub output: Option<i64>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ModelsDevCost {
-    #[serde(default)]
-    pub input: Option<f64>,
-    #[serde(default)]
-    pub output: Option<f64>,
-    #[serde(default, alias = "cacheRead", alias = "cache_read")]
-    pub cache_read: Option<f64>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize)]
-pub struct ModelsDevProvider {
-    #[serde(default)]
-    pub id: Option<String>,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default)]
-    pub models: BTreeMap<String, ModelsDevModel>,
 }
 
 #[derive(Clone)]
@@ -457,6 +414,22 @@ impl ModelRegistry {
         }
     }
 
+    /// Local, no-network capability check for a route's first completion request.
+    pub async fn preflight_warnings(&self, route_id: &str) -> RuntimeResult<Vec<String>> {
+        let resolved = self.resolve(route_id).await?;
+        let mut warnings = Vec::new();
+        if !resolved.supports_tools {
+            warnings.push(
+                "model does not advertise tool calls, but Quire agents rely on tools".to_string(),
+            );
+        }
+        let model = self.build_rig_model(route_id).await?;
+        if let Err(error) = model.check(&CompletionRequest::new("preflight")) {
+            warnings.push(format!("request preflight: {error}"));
+        }
+        Ok(warnings)
+    }
+
     pub async fn import_models_dev(
         &self,
         request: ModelsDevImportRequest,
@@ -474,49 +447,58 @@ impl ModelRegistry {
             (None, Some(url)) => self.fetch_catalog(&url).await?,
             (None, None) => self.fetch_catalog(&self.models_dev_url).await?,
         };
-        let providers = parse_models_dev(&payload)?;
+        if let Some(filter) = request.provider_filter.as_deref() {
+            let _ = ProviderId::declare(filter);
+        }
+        let payload = serde_json::to_string(&payload)?;
+        let (catalog, skipped) = Catalog::from_models_dev(&payload).map_err(|error| {
+            RuntimeError::InvalidRequest(format!("invalid models.dev data: {error}"))
+        })?;
+        for entry in &skipped {
+            tracing::warn!(path = %entry.path, reason = ?entry.reason, "skipped models.dev entry");
+        }
         let provider_filter = request.provider_filter.as_deref();
         let wanted: Option<Vec<String>> = request.model_ids;
         let mut imported = Vec::new();
-        for (upstream_id, provider) in providers {
+        for spec in catalog.iter() {
+            let vendor = spec.provider.vendor();
             if let Some(filter) = provider_filter
-                && filter != upstream_id
-                && filter != provider.id.as_deref().unwrap_or_default()
+                && filter != vendor
+                && filter != spec.provider.to_string()
             {
                 continue;
             }
-            for (model_key, model) in provider.models {
-                let upstream_model_id = model.id.clone().unwrap_or_else(|| model_key.clone());
-                if let Some(wanted) = &wanted
-                    && !wanted
-                        .iter()
-                        .any(|id| id == &upstream_model_id || id == &model_key)
-                {
-                    continue;
-                }
-                let route_id = format!("{}/{}", request.provider_id, model_key);
-                let input = ModelInput {
-                    id: route_id,
-                    provider_id: request.provider_id.clone(),
-                    model_id: upstream_model_id,
-                    display_name: model.name.unwrap_or_else(|| model_key.clone()),
-                    context_limit: model
-                        .limit
-                        .as_ref()
-                        .and_then(|limit| limit.context)
-                        .filter(|context| *context > 0)
-                        .unwrap_or(128_000),
-                    max_output_tokens: model.limit.as_ref().and_then(|limit| limit.output),
-                    supports_reasoning: model.reasoning.unwrap_or(false),
-                    supports_tools: model.tool_call.unwrap_or(true),
-                    supports_vision: model.attachment.unwrap_or(false),
-                    cost_input: model.cost.as_ref().and_then(|cost| cost.input),
-                    cost_output: model.cost.as_ref().and_then(|cost| cost.output),
-                    cost_cache_read: model.cost.as_ref().and_then(|cost| cost.cache_read),
-                    enabled: true,
-                };
-                imported.push(self.upsert_model(input).await?);
+            if let Some(wanted) = &wanted
+                && !wanted.iter().any(|id| id == &spec.id)
+            {
+                continue;
             }
+            let route_id = format!("{}/{}", request.provider_id, spec.id);
+            let context_limit = spec
+                .context_window
+                .map(i64::from)
+                .filter(|value| *value > 0)
+                .unwrap_or(128_000);
+            let input = ModelInput {
+                id: route_id,
+                provider_id: request.provider_id.clone(),
+                model_id: spec.id.clone(),
+                display_name: if spec.display_name.trim().is_empty() {
+                    spec.id.clone()
+                } else {
+                    spec.display_name.clone()
+                },
+                context_limit,
+                max_output_tokens: spec.max_output_tokens.map(i64::from),
+                supports_reasoning: spec.reasoning.supported(),
+                supports_tools: spec.tools,
+                supports_vision: spec.input.image || spec.input.pdf,
+                cost_input: spec.pricing.map(|pricing| pricing.input),
+                cost_output: spec.pricing.map(|pricing| pricing.output),
+                cost_cache_read: spec.pricing.and_then(|pricing| pricing.cache_read),
+                enabled: true,
+            };
+            imported.push(self.upsert_model(input).await?);
         }
         Ok(ModelsDevImportReport {
             provider_id: request.provider_id,
@@ -698,59 +680,9 @@ fn master_aead_key(master_key: &SecretString) -> RuntimeResult<LessSafeKey> {
     Ok(LessSafeKey::new(unbound))
 }
 
-pub fn parse_models_dev(payload: &Value) -> RuntimeResult<BTreeMap<String, ModelsDevProvider>> {
-    let object = payload.as_object().ok_or_else(|| {
-        RuntimeError::InvalidRequest("models.dev payload must be a JSON object".into())
-    })?;
-    if let Some(Value::Array(providers)) = object.get("providers") {
-        let mut parsed = BTreeMap::new();
-        for provider in providers {
-            let provider: ModelsDevProvider = serde_json::from_value(provider.clone())?;
-            let id = provider
-                .id
-                .clone()
-                .unwrap_or_else(|| provider.name.clone().unwrap_or_else(|| "provider".into()));
-            parsed.insert(id, provider);
-        }
-        return Ok(parsed);
-    }
-    let mut parsed = BTreeMap::new();
-    for (key, value) in object {
-        if !value.is_object() {
-            continue;
-        }
-        let provider: ModelsDevProvider = serde_json::from_value(value.clone())?;
-        parsed.insert(key.clone(), provider);
-    }
-    Ok(parsed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn models_dev_parser_handles_missing_optional_fields() {
-        let payload = serde_json::json!({
-            "deepseek": {
-                "id": "deepseek",
-                "name": "DeepSeek",
-                "models": {
-                    "deepseek-chat": {
-                        "id": "deepseek-chat",
-                        "name": "DeepSeek Chat",
-                        "tool_call": true
-                    }
-                }
-            }
-        });
-        let providers = parse_models_dev(&payload).unwrap();
-        let provider = providers.get("deepseek").unwrap();
-        let model = provider.models.get("deepseek-chat").unwrap();
-        assert_eq!(model.name.as_deref(), Some("DeepSeek Chat"));
-        assert!(model.limit.is_none());
-        assert_eq!(model.tool_call, Some(true));
-    }
 
     #[test]
     fn encrypted_refs_hide_and_roundtrip_secret_values() {
