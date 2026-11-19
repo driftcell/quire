@@ -466,8 +466,9 @@ async fn set_session_title_tool(
 )]
 fn ask_user_tool(
     #[rig(context)] _context: &mut ToolContext,
-    _questions: Vec<QuestionItem>,
+    questions: Vec<QuestionItem>,
 ) -> Result<Value, ToolExecutionError> {
+    let _ = questions;
     Err(ToolExecutionError::other(
         "ask_user is handled by the runtime question loop",
     ))
@@ -1699,6 +1700,22 @@ mod tests {
             );
         }
         assert!(allow_list_matches(&wildcard, "apply_operations"));
+    }
+
+    #[test]
+    fn ask_user_schema_exposes_questions_array() {
+        let parameters = ASK_USER_TOOL.parameters();
+        let properties = parameters
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("ask_user schema should have properties");
+        assert!(properties.contains_key("questions"));
+        assert!(!properties.contains_key("_questions"));
+        assert_eq!(
+            parameters.get("required"),
+            Some(&json!(["questions"])),
+            "ask_user must require the `questions` array"
+        );
     }
 
     #[test]
