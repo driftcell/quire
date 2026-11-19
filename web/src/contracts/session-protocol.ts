@@ -5,6 +5,28 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
+/**
+ * One ordered slice of a run. Text output closes the preceding thinking and
+ * execution phase, so later reasoning or tools start a new segment instead of
+ * being folded back into an older block.
+ */
+export type RunTraceSegment =
+  | {
+      kind: "thinking";
+      text: string;
+      [k: string]: unknown;
+    }
+  | {
+      kind: "execution";
+      subagents?: RunTraceSubagent[];
+      tools?: RunTraceToolItem[];
+      [k: string]: unknown;
+    }
+  | {
+      kind: "text";
+      text: string;
+      [k: string]: unknown;
+    };
 export type ActiveRunStatus = "idle" | "running" | "interrupted" | "failed" | "awaiting_input";
 export type MessageRole = "user" | "assistant" | "tool" | "system";
 export type SessionStatus = "active" | "archived";
@@ -191,11 +213,9 @@ export interface QuestionAnswer {
 export interface RunTraceSummary {
   duration_ms?: number | null;
   run_id: string;
+  segments?: RunTraceSegment[];
   status: string;
-  subagents?: RunTraceSubagent[];
   task_focus?: RunTaskFocus | null;
-  thinking: string;
-  tools?: RunTraceToolItem[];
   [k: string]: unknown;
 }
 export interface RunTraceSubagent {

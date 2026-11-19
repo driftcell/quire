@@ -305,6 +305,69 @@
         "title"
       ]
     },
+    "RunTraceSegment": {
+      "description": "One ordered slice of a run. Text output closes the preceding thinking and\nexecution phase, so later reasoning or tools start a new segment instead of\nbeing folded back into an older block.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "thinking"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "execution"
+            },
+            "subagents": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/RunTraceSubagent"
+              }
+            },
+            "tools": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/RunTraceToolItem"
+              }
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        }
+      ]
+    },
     "RunTraceSubagent": {
       "type": "object",
       "properties": {
@@ -375,15 +438,15 @@
         "run_id": {
           "type": "string"
         },
-        "status": {
-          "type": "string"
-        },
-        "subagents": {
+        "segments": {
           "type": "array",
           "default": [],
           "items": {
-            "$ref": "#/$defs/RunTraceSubagent"
+            "$ref": "#/$defs/RunTraceSegment"
           }
+        },
+        "status": {
+          "type": "string"
         },
         "task_focus": {
           "anyOf": [
@@ -394,22 +457,11 @@
               "type": "null"
             }
           ]
-        },
-        "thinking": {
-          "type": "string"
-        },
-        "tools": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/RunTraceToolItem"
-          }
         }
       },
       "required": [
         "run_id",
-        "status",
-        "thinking"
+        "status"
       ]
     },
     "RunTraceToolItem": {

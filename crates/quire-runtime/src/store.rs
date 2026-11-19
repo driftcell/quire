@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use quire_session_protocol::{
     ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem,
-    RunTaskFocus, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
-    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
-    ToolCallDetail,
+    RunTaskFocus, RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem,
+    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
+    SessionStatus, SessionSummary, ToolCallDetail,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
@@ -1079,10 +1079,8 @@ fn ensure_run_trace(
             run_id: run_id.to_string(),
             status: "running".to_string(),
             duration_ms: None,
-            thinking: String::new(),
             task_focus: None,
-            tools: Vec::new(),
-            subagents: Vec::new(),
+            segments: Vec::new(),
         },
         started_at: Some(timestamp),
     });
@@ -1094,26 +1092,138 @@ fn is_subagent_event(event: &SessionEvent) -> bool {
     event.parent_run_id.is_some() || event.agent_id != "main"
 }
 
-fn ensure_subagent_trace(summary: &mut RunTraceSummary, event: &SessionEvent) -> usize {
-    if let Some(position) = summary
-        .subagents
-        .iter()
-        .position(|sub| sub.subagent_run_id == event.run_id || sub.agent_name == event.agent_id)
-    {
-        return position;
+fn append_thinking_segment(summary: &mut RunTraceSummary, delta: &str) {
+    if let Some(RunTraceSegment::Thinking { text }) = summary.segments.last_mut() {
+        text.push_str(delta);
+        return;
     }
-    summary.subagents.push(RunTraceSubagent {
-        subagent_run_id: event.run_id.clone(),
-        agent_name: event.agent_id.clone(),
-        task: String::new(),
-        section_id: None,
-        status: "running".to_string(),
-        summary: None,
-        thinking: String::new(),
-        task_focus: None,
-        tools: Vec::new(),
+    summary.segments.push(RunTraceSegment::Thinking {
+        text: delta.to_string(),
     });
-    summary.subagents.len() - 1
+}
+
+fn append_text_segment(summary: &mut RunTraceSummary, delta: &str) {
+    if let Some(RunTraceSegment::Text { text }) = summary.segments.last_mut() {
+        text.push_str(delta);
+        return;
+    }
+    summary.segments.push(RunTraceSegment::Text {
+        text: delta.to_string(),
+    });
+}
+
+fn append_execution_tool(summary: &mut RunTraceSummary, item: RunTraceToolItem) {
+    if let Some(RunTraceSegment::Execution { tools, .. }) = summary.segments.last_mut() {
+        tools.push(item);
+        return;
+    }
+    summary.segments.push(RunTraceSegment::Execution {
+        tools: vec![item],
+        subagents: Vec::new(),
+    });
+}
+
+fn append_execution_subagent(
+    summary: &mut RunTraceSummary,
+    subagent: RunTraceSubagent,
+) -> Option<(usize, usize)> {
+    if let Some(segment_index) = summary.segments.len().checked_sub(1)
+        && let Some(RunTraceSegment::Execution { subagents, .. }) =
+            summary.segments.get_mut(segment_index)
+    {
+        subagents.push(subagent);
+        return Some((segment_index, subagents.len().saturating_sub(1)));
+    }
+    summary.segments.push(RunTraceSegment::Execution {
+        tools: Vec::new(),
+        subagents: vec![subagent],
+    });
+    Some((summary.segments.len().saturating_sub(1), 0))
+}
+
+fn find_tool_location(summary: &RunTraceSummary, tool_call_id: &str) -> Option<(usize, usize)> {
+    for (segment_index, segment) in summary.segments.iter().enumerate().rev() {
+        if let RunTraceSegment::Execution { tools, .. } = segment
+            && let Some(tool_index) = tools
+                .iter()
+                .rposition(|tool| tool.tool_call_id == tool_call_id)
+        {
+            return Some((segment_index, tool_index));
+        }
+    }
+    None
+}
+
+fn finish_tool(
+    summary: &mut RunTraceSummary,
+    tool_call_id: &str,
+    status: &str,
+    output_preview: &str,
+    truncated: bool,
+    duration_ms: u64,
+) {
+    let Some((segment_index, tool_index)) = find_tool_location(summary, tool_call_id) else {
+        return;
+    };
+    let Some(RunTraceSegment::Execution { tools, .. }) = summary.segments.get_mut(segment_index)
+    else {
+        return;
+    };
+    let Some(tool) = tools.get_mut(tool_index) else {
+        return;
+    };
+    tool.status = status.to_string();
+    tool.output_preview = Some(output_preview.to_string());
+    tool.duration_ms = Some(duration_ms);
+    tool.truncated = truncated;
+}
+
+fn find_subagent_location<F>(summary: &RunTraceSummary, matches: F) -> Option<(usize, usize)>
+where
+    F: Fn(&RunTraceSubagent) -> bool,
+{
+    for (segment_index, segment) in summary.segments.iter().enumerate().rev() {
+        if let RunTraceSegment::Execution { subagents, .. } = segment
+            && let Some(subagent_index) = subagents.iter().rposition(&matches)
+        {
+            return Some((segment_index, subagent_index));
+        }
+    }
+    None
+}
+
+fn subagent_mut(
+    summary: &mut RunTraceSummary,
+    (segment_index, subagent_index): (usize, usize),
+) -> Option<&mut RunTraceSubagent> {
+    let Some(RunTraceSegment::Execution { subagents, .. }) =
+        summary.segments.get_mut(segment_index)
+    else {
+        return None;
+    };
+    subagents.get_mut(subagent_index)
+}
+
+fn ensure_subagent(summary: &mut RunTraceSummary, event: &SessionEvent) -> Option<(usize, usize)> {
+    if let Some(location) =
+        find_subagent_location(summary, |sub| sub.subagent_run_id == event.run_id)
+    {
+        return Some(location);
+    }
+    append_execution_subagent(
+        summary,
+        RunTraceSubagent {
+            subagent_run_id: event.run_id.clone(),
+            agent_name: event.agent_id.clone(),
+            task: String::new(),
+            section_id: None,
+            status: "running".to_string(),
+            summary: None,
+            thinking: String::new(),
+            task_focus: None,
+            tools: Vec::new(),
+        },
+    )
 }
 
 fn elapsed_ms(started_at: Option<DateTime<Utc>>, finished_at: DateTime<Utc>) -> Option<u64> {
@@ -1183,12 +1293,18 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             }
             SessionEventKind::ThinkingDelta { delta } => {
                 if subagent_event {
-                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
-                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
+                        && let Some(record) = subagent_mut(&mut trace.summary, location)
+                    {
                         record.thinking.push_str(delta);
                     }
                 } else {
-                    trace.summary.thinking.push_str(delta);
+                    append_thinking_segment(&mut trace.summary, delta);
+                }
+            }
+            SessionEventKind::TextDelta { delta } => {
+                if !subagent_event {
+                    append_text_segment(&mut trace.summary, delta);
                 }
             }
             SessionEventKind::TaskFocus {
@@ -1202,8 +1318,9 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                     section_id: section_id.clone(),
                 };
                 if subagent_event {
-                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
-                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
+                        && let Some(record) = subagent_mut(&mut trace.summary, location)
+                    {
                         record.task_focus = Some(focus);
                     }
                 } else {
@@ -1226,12 +1343,13 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                     truncated: *truncated,
                 };
                 if subagent_event {
-                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
-                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
+                        && let Some(record) = subagent_mut(&mut trace.summary, location)
+                    {
                         record.tools.push(item);
                     }
                 } else {
-                    trace.summary.tools.push(item);
+                    append_execution_tool(&mut trace.summary, item);
                 }
             }
             SessionEventKind::ToolCallFinished {
@@ -1242,8 +1360,9 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                 duration_ms,
             } => {
                 if subagent_event {
-                    let subagent = ensure_subagent_trace(&mut trace.summary, event);
-                    if let Some(record) = trace.summary.subagents.get_mut(subagent) {
+                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
+                        && let Some(record) = subagent_mut(&mut trace.summary, location)
+                    {
                         upsert_tool_finished(
                             &mut record.tools,
                             tool_call_id,
@@ -1254,8 +1373,8 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                         );
                     }
                 } else {
-                    upsert_tool_finished(
-                        &mut trace.summary.tools,
+                    finish_tool(
+                        &mut trace.summary,
                         tool_call_id,
                         status,
                         output_preview,
@@ -1270,27 +1389,32 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                 task,
                 section_id,
             } => {
-                let existing = trace.summary.subagents.iter_mut().find(|sub| {
-                    sub.subagent_run_id == *subagent_run_id || sub.agent_name == *agent_name
+                let existing = find_subagent_location(&trace.summary, |sub| {
+                    sub.subagent_run_id == *subagent_run_id
                 });
-                if let Some(subagent) = existing {
+                if let Some(location) = existing
+                    && let Some(subagent) = subagent_mut(&mut trace.summary, location)
+                {
                     subagent.subagent_run_id = subagent_run_id.clone();
                     subagent.agent_name = agent_name.clone();
                     subagent.task = task.clone();
                     subagent.section_id = section_id.clone();
                     subagent.status = "running".to_string();
                 } else {
-                    trace.summary.subagents.push(RunTraceSubagent {
-                        subagent_run_id: subagent_run_id.clone(),
-                        agent_name: agent_name.clone(),
-                        task: task.clone(),
-                        section_id: section_id.clone(),
-                        status: "running".to_string(),
-                        summary: None,
-                        thinking: String::new(),
-                        task_focus: None,
-                        tools: Vec::new(),
-                    });
+                    append_execution_subagent(
+                        &mut trace.summary,
+                        RunTraceSubagent {
+                            subagent_run_id: subagent_run_id.clone(),
+                            agent_name: agent_name.clone(),
+                            task: task.clone(),
+                            section_id: section_id.clone(),
+                            status: "running".to_string(),
+                            summary: None,
+                            thinking: String::new(),
+                            task_focus: None,
+                            tools: Vec::new(),
+                        },
+                    );
                 }
             }
             SessionEventKind::SubagentFinished {
@@ -1298,34 +1422,38 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                 status,
                 summary,
             } => {
-                let existing = trace.summary.subagents.iter_mut().find(|sub| {
-                    sub.subagent_run_id == *subagent_run_id || sub.subagent_run_id == event.run_id
+                let existing = find_subagent_location(&trace.summary, |sub| {
+                    sub.subagent_run_id == *subagent_run_id
                 });
-                if let Some(subagent) = existing {
+                if let Some(location) = existing
+                    && let Some(subagent) = subagent_mut(&mut trace.summary, location)
+                {
                     subagent.status = status.clone();
                     if !summary.is_empty() {
                         subagent.summary = Some(summary.clone());
                     }
                 } else {
-                    trace.summary.subagents.push(RunTraceSubagent {
-                        subagent_run_id: subagent_run_id.clone(),
-                        agent_name: event.agent_id.clone(),
-                        task: String::new(),
-                        section_id: None,
-                        status: status.clone(),
-                        summary: if summary.is_empty() {
-                            None
-                        } else {
-                            Some(summary.clone())
+                    append_execution_subagent(
+                        &mut trace.summary,
+                        RunTraceSubagent {
+                            subagent_run_id: subagent_run_id.clone(),
+                            agent_name: event.agent_id.clone(),
+                            task: String::new(),
+                            section_id: None,
+                            status: status.clone(),
+                            summary: if summary.is_empty() {
+                                None
+                            } else {
+                                Some(summary.clone())
+                            },
+                            thinking: String::new(),
+                            task_focus: None,
+                            tools: Vec::new(),
                         },
-                        thinking: String::new(),
-                        task_focus: None,
-                        tools: Vec::new(),
-                    });
+                    );
                 }
             }
-            SessionEventKind::TextDelta { .. }
-            | SessionEventKind::SyncRequired { .. }
+            SessionEventKind::SyncRequired { .. }
             | SessionEventKind::ContextUsage { .. }
             | SessionEventKind::QuestionnaireRequested { .. }
             | SessionEventKind::QuestionnaireAnswered { .. }
@@ -1480,15 +1608,22 @@ mod tests {
         assert_eq!(trace.run_id, "run_main");
         assert_eq!(trace.status, "completed");
         assert!(trace.duration_ms.is_some());
-        assert_eq!(trace.thinking, "plan");
+        assert_eq!(trace.segments.len(), 2);
+        let Some(RunTraceSegment::Thinking { text }) = trace.segments.first() else {
+            panic!("first segment should be thinking");
+        };
+        assert_eq!(text, "plan");
         let focus = trace.task_focus.as_ref().expect("focus");
         assert_eq!(focus.title, "Intro");
-        assert_eq!(trace.tools.len(), 1);
-        let main_tool = trace.tools.first().expect("main tool");
+        let Some(RunTraceSegment::Execution { tools, subagents }) = trace.segments.get(1) else {
+            panic!("second segment should be execution");
+        };
+        assert_eq!(tools.len(), 1);
+        let main_tool = tools.first().expect("main tool");
         assert_eq!(main_tool.status, "completed");
         assert_eq!(main_tool.duration_ms, Some(300));
-        assert_eq!(trace.subagents.len(), 1);
-        let subagent = trace.subagents.first().expect("subagent");
+        assert_eq!(subagents.len(), 1);
+        let subagent = subagents.first().expect("subagent");
         assert_eq!(subagent.subagent_run_id, "sub_1");
         assert_eq!(subagent.thinking, "sub-thought");
         assert_eq!(subagent.status, "completed");
@@ -1497,6 +1632,223 @@ mod tests {
         assert_eq!(
             subagent.tools.first().expect("sub tool").duration_ms,
             Some(42)
+        );
+    }
+
+    #[test]
+    fn interleaved_output_starts_new_segments_after_text() {
+        let events = vec![
+            SessionEvent::new(
+                1,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::TurnStarted,
+            ),
+            SessionEvent::new(
+                2,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::ThinkingDelta {
+                    delta: "first thought".into(),
+                },
+            ),
+            SessionEvent::new(
+                3,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::ToolCallStarted {
+                    tool_call_id: "tc_1".into(),
+                    tool_name: "apply_operations".into(),
+                    input_preview: "{}".into(),
+                    truncated: false,
+                },
+            ),
+            SessionEvent::new(
+                4,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::ToolCallFinished {
+                    tool_call_id: "tc_1".into(),
+                    status: "completed".into(),
+                    output_preview: "ok-1".into(),
+                    truncated: false,
+                    duration_ms: 10,
+                },
+            ),
+            SessionEvent::new(
+                5,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::TextDelta {
+                    delta: "first answer".into(),
+                },
+            ),
+            SessionEvent::new(
+                6,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::ThinkingDelta {
+                    delta: "second thought".into(),
+                },
+            ),
+            SessionEvent::new(
+                7,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::ToolCallStarted {
+                    tool_call_id: "tc_2".into(),
+                    tool_name: "lint_document".into(),
+                    input_preview: "{}".into(),
+                    truncated: false,
+                },
+            ),
+            SessionEvent::new(
+                8,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::ToolCallFinished {
+                    tool_call_id: "tc_2".into(),
+                    status: "completed".into(),
+                    output_preview: "ok-2".into(),
+                    truncated: false,
+                    duration_ms: 20,
+                },
+            ),
+            SessionEvent::new(
+                9,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::TextDelta {
+                    delta: "second answer".into(),
+                },
+            ),
+            SessionEvent::new(
+                10,
+                "run_segments",
+                "main",
+                None,
+                SessionEventKind::TurnFinished,
+            ),
+        ];
+
+        let traces = aggregate_run_traces(&events);
+        let trace = traces.first().expect("trace");
+        assert_eq!(trace.segments.len(), 6);
+        assert!(matches!(
+            trace.segments.first(),
+            Some(RunTraceSegment::Thinking { text }) if text == "first thought"
+        ));
+        let Some(RunTraceSegment::Execution { tools, .. }) = trace.segments.get(1) else {
+            panic!("second segment should be execution");
+        };
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools.first().expect("first tool").output_preview.as_deref(),
+            Some("ok-1")
+        );
+        assert!(matches!(
+            trace.segments.get(2),
+            Some(RunTraceSegment::Text { text }) if text == "first answer"
+        ));
+        assert!(matches!(
+            trace.segments.get(3),
+            Some(RunTraceSegment::Thinking { text }) if text == "second thought"
+        ));
+        let Some(RunTraceSegment::Execution { tools, .. }) = trace.segments.get(4) else {
+            panic!("fifth segment should be execution");
+        };
+        assert_eq!(tools.len(), 1);
+        assert_eq!(
+            tools
+                .first()
+                .expect("second tool")
+                .output_preview
+                .as_deref(),
+            Some("ok-2")
+        );
+        assert!(matches!(
+            trace.segments.get(5),
+            Some(RunTraceSegment::Text { text }) if text == "second answer"
+        ));
+    }
+
+    #[test]
+    fn same_agent_name_runs_stay_as_separate_subagents() {
+        let events = vec![
+            SessionEvent::new(1, "run_dup", "main", None, SessionEventKind::TurnStarted),
+            SessionEvent::new(
+                2,
+                "run_dup",
+                "main",
+                None,
+                SessionEventKind::SubagentStarted {
+                    subagent_run_id: "run_sub_a".into(),
+                    agent_name: "main".into(),
+                    task: "task A".into(),
+                    section_id: None,
+                },
+            ),
+            SessionEvent::new(
+                3,
+                "run_dup",
+                "main",
+                None,
+                SessionEventKind::SubagentStarted {
+                    subagent_run_id: "run_sub_b".into(),
+                    agent_name: "main".into(),
+                    task: "task B".into(),
+                    section_id: None,
+                },
+            ),
+            SessionEvent::new(
+                4,
+                "run_dup",
+                "main",
+                None,
+                SessionEventKind::SubagentFinished {
+                    subagent_run_id: "run_sub_a".into(),
+                    status: "completed".into(),
+                    summary: "done A".into(),
+                },
+            ),
+            SessionEvent::new(
+                5,
+                "run_dup",
+                "main",
+                None,
+                SessionEventKind::SubagentFinished {
+                    subagent_run_id: "run_sub_b".into(),
+                    status: "completed".into(),
+                    summary: "done B".into(),
+                },
+            ),
+            SessionEvent::new(6, "run_dup", "main", None, SessionEventKind::TurnFinished),
+        ];
+
+        let traces = aggregate_run_traces(&events);
+        let trace = traces.first().expect("trace");
+        let Some(RunTraceSegment::Execution { subagents, .. }) = trace.segments.first() else {
+            panic!("first segment should be execution");
+        };
+        assert_eq!(subagents.len(), 2);
+        assert_eq!(subagents.first().expect("sub A").task, "task A");
+        assert_eq!(
+            subagents.first().expect("sub A").summary.as_deref(),
+            Some("done A")
+        );
+        assert_eq!(subagents.get(1).expect("sub B").task, "task B");
+        assert_eq!(
+            subagents.get(1).expect("sub B").summary.as_deref(),
+            Some("done B")
         );
     }
 

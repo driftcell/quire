@@ -205,19 +205,36 @@ pub struct RunTraceSubagent {
     pub tools: Vec<RunTraceToolItem>,
 }
 
+/// One ordered slice of a run. Text output closes the preceding thinking and
+/// execution phase, so later reasoning or tools start a new segment instead of
+/// being folded back into an older block.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RunTraceSegment {
+    Thinking {
+        text: String,
+    },
+    Execution {
+        #[serde(default)]
+        tools: Vec<RunTraceToolItem>,
+        #[serde(default)]
+        subagents: Vec<RunTraceSubagent>,
+    },
+    Text {
+        text: String,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct RunTraceSummary {
     pub run_id: String,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
-    pub thinking: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_focus: Option<RunTaskFocus>,
     #[serde(default)]
-    pub tools: Vec<RunTraceToolItem>,
-    #[serde(default)]
-    pub subagents: Vec<RunTraceSubagent>,
+    pub segments: Vec<RunTraceSegment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
