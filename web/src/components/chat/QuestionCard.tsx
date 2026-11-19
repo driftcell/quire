@@ -4,7 +4,6 @@ import {
   HelpCircleIcon,
   SkipForwardIcon,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Questionnaire,
@@ -114,12 +113,6 @@ export function QuestionCard({
                   ? "已忽略问题"
                   : "Agent 需要你的确认"}
           </span>
-          <Badge
-            variant={isFrozen ? "outline" : "secondary"}
-            className="ml-auto text-[11px]"
-          >
-            {isFrozen ? "已锁定" : "可跳过或直接输入新消息"}
-          </Badge>
         </CardTitle>
       </CardHeader>
       <CardContent>
