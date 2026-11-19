@@ -28,6 +28,8 @@ import { TableBlockView } from "@/components/report/TableBlockView";
 import {
   A4_CONTENT_HEIGHT_PX,
   A4_CONTENT_WIDTH_PX,
+  A4_FOOTER_HEIGHT_PX,
+  A4_HEADER_HEIGHT_PX,
   A4_PAGE_HEIGHT_PX,
   A4_PAGE_WIDTH_PX,
   A4_PADDING_X_PX,
@@ -584,15 +586,20 @@ function referenceDomain(url: string | null | undefined): string | null {
 // jitter while the panel is resized. The outer box reserves the scaled size.
 function ScaledPage({
   scale,
+  plain = false,
   children,
 }: {
   scale: number;
+  plain?: boolean;
   children: ReactNode;
 }) {
   const outerRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
+    if (plain) {
+      return undefined;
+    }
     const outer = outerRef.current;
     const inner = innerRef.current;
     if (!outer || !inner) {
@@ -606,7 +613,11 @@ function ScaledPage({
     const observer = new ResizeObserver(apply);
     observer.observe(inner);
     return () => observer.disconnect();
-  }, [scale]);
+  }, [scale, plain]);
+
+  if (plain) {
+    return <>{children}</>;
+  }
 
   return (
     <div ref={outerRef} className="relative shrink-0">
@@ -896,9 +907,10 @@ export function ReportViewer({
   const effectivePageChrome = pageChrome
     ? normalizePageChromeConfig(pageChrome)
     : resolvedPageChrome;
-  const effectivePageHeight = hasPageHeader(effectivePageChrome)
-    ? A4_CONTENT_HEIGHT_PX - 28
-    : A4_CONTENT_HEIGHT_PX;
+  const effectivePageHeight =
+    A4_CONTENT_HEIGHT_PX -
+    (hasPageHeader(effectivePageChrome) ? A4_HEADER_HEIGHT_PX : 0) -
+    (hasPageFooter(effectivePageChrome) ? A4_FOOTER_HEIGHT_PX : 0);
   const showFooter = hasPageFooter(effectivePageChrome);
   const rootRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
@@ -1002,7 +1014,8 @@ export function ReportViewer({
     for (const el of items) {
       const id = el.dataset.measureId;
       if (!id) continue;
-      blockHeights[id] = el.getBoundingClientRect().height;
+      const blockHeight = el.getBoundingClientRect().height;
+      blockHeights[id] = blockHeight;
 
       const theadEl = el.querySelector<HTMLElement>(
         '[data-measure-thead="true"]',
@@ -1018,10 +1031,18 @@ export function ReportViewer({
         for (const rowEl of rowEls) {
           rowHeights.push(rowEl.getBoundingClientRect().height);
         }
+        const tfootHeight = tfootEl
+          ? tfootEl.getBoundingClientRect().height
+          : 0;
+        const rowsHeight = rowHeights.reduce((sum, height) => sum + height, 0);
         tableMeasurements[id] = {
           theadHeight: theadEl ? theadEl.getBoundingClientRect().height : 0,
-          tfootHeight: tfootEl ? tfootEl.getBoundingClientRect().height : 0,
+          tfootHeight,
           rowHeights,
+          chromeHeight: Math.max(
+            0,
+            blockHeight - rowsHeight - tfootHeight,
+          ),
         };
       }
     }
@@ -1455,11 +1476,13 @@ export function ReportViewer({
           ref={measureRef}
           aria-hidden="true"
           style={{ width: `${A4_CONTENT_WIDTH_PX}px` }}
-          className="pointer-events-none fixed top-0 -left-[99999px] opacity-0"
+          className="report-root pointer-events-none absolute top-0 -left-[99999px] opacity-0"
         >
-          <div data-measure-cover="true">{renderCover()}</div>
+          <div data-measure-cover="true" className="flow-root">
+            {renderCover()}
+          </div>
           {document.blocks.map((block) => (
-            <div key={block.id} data-measure-id={block.id}>
+            <div key={block.id} data-measure-id={block.id} className="flow-root">
               <ReportBlockItem
                 slice={{ block }}
                 isPaged
@@ -1472,7 +1495,9 @@ export function ReportViewer({
               />
             </div>
           ))}
-          <div data-measure-bib="true">{renderBibliography()}</div>
+          <div data-measure-bib="true" className="flow-root">
+            {renderBibliography()}
+          </div>
         </div>
       )}
 
@@ -1503,7 +1528,7 @@ export function ReportViewer({
           {renderBibliography()}
         </article>
       ) : (
-        <div className="flex flex-col items-center gap-6 py-6 print:gap-0 print:py-0">
+        <div className="flex flex-col items-center gap-6 py-6 print:block print:w-full print:gap-0 print:p-0 print:m-0">
           {visiblePages.map(({ page, pageIdx }) => {
             const pageContext = {
               page: page.pageNumber,
@@ -1518,20 +1543,21 @@ export function ReportViewer({
               <ScaledPage
                 key={page.pageNumber}
                 scale={suppressChrome ? 1 : pageScale}
+                plain={suppressChrome}
               >
                 <section
                   style={{
                     width: `${A4_PAGE_WIDTH_PX}px`,
-                    minHeight: `${A4_PAGE_HEIGHT_PX}px`,
+                    height: `${A4_PAGE_HEIGHT_PX}px`,
                     padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
                   }}
-                  className="a4-page relative flex flex-col justify-between bg-white text-[var(--rpt-ink)] shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
+                  className="a4-page relative flex flex-col overflow-hidden bg-white text-[var(--rpt-ink)] shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
                 >
-                  <div className="flex-1">
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                     {hasPageHeader(effectivePageChrome) &&
                       (pageIdx > 0 ||
                         !effectivePageChrome.hide_header_on_first_page) && (
-                        <div className="mb-3 grid grid-cols-3 items-center gap-2 border-b border-[var(--rpt-border)] pb-1 text-[10px] tracking-[0.06em] text-[var(--rpt-muted)]">
+                        <div className="mb-3 grid shrink-0 grid-cols-3 items-center gap-2 border-b border-[var(--rpt-border)] pb-1 text-[10px] tracking-[0.06em] text-[var(--rpt-muted)]">
                           <div className="truncate text-left">
                             {formatPageTemplate(
                               effectivePageChrome.header.left,
@@ -1552,36 +1578,38 @@ export function ReportViewer({
                           </div>
                         </div>
                       )}
-                    {page.includeCover && renderCover()}
-                    {(pagedMixedItems[pageIdx] ?? []).map((item) => (
-                      <div key={item.key}>
-                        {item.preview ? (
-                          <EhemeralBlock preview={item.preview} />
-                        ) : item.slice ? (
-                          <ReportBlockItem
-                            slice={item.slice}
-                            isPaged
-                            printMode={suppressChrome}
-                            showChartTools={!suppressChrome}
-                            computed={computed}
-                            bibliographyById={bibliographyById}
-                            commentCount={
-                              openCountByBlock.get(item.slice.block.id) ?? 0
-                            }
-                            blockQuotes={quotesByBlock.get(item.slice.block.id)}
-                            onCitationClick={scrollToSource}
-                            onOpenCommentForBlock={onOpenCommentForBlock}
-                            onOpenCommentThread={onOpenCommentThread}
-                          />
-                        ) : null}
-                      </div>
-                    ))}
-                    {page.includeBibliography && renderBibliography()}
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      {page.includeCover && renderCover()}
+                      {(pagedMixedItems[pageIdx] ?? []).map((item) => (
+                        <div key={item.key}>
+                          {item.preview ? (
+                            <EhemeralBlock preview={item.preview} />
+                          ) : item.slice ? (
+                            <ReportBlockItem
+                              slice={item.slice}
+                              isPaged
+                              printMode={suppressChrome}
+                              showChartTools={!suppressChrome}
+                              computed={computed}
+                              bibliographyById={bibliographyById}
+                              commentCount={
+                                openCountByBlock.get(item.slice.block.id) ?? 0
+                              }
+                              blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                              onCitationClick={scrollToSource}
+                              onOpenCommentForBlock={onOpenCommentForBlock}
+                              onOpenCommentThread={onOpenCommentThread}
+                            />
+                          ) : null}
+                        </div>
+                      ))}
+                      {page.includeBibliography && renderBibliography()}
+                    </div>
                   </div>
                   {showFooter &&
                     (pageIdx > 0 ||
                       !effectivePageChrome.hide_footer_on_first_page) && (
-                      <footer className="mt-4 grid grid-cols-3 items-center gap-2 border-t border-[var(--rpt-border)] pt-2 text-[11px] text-[var(--rpt-muted)]">
+                      <footer className="mt-4 grid shrink-0 grid-cols-3 items-center gap-2 border-t border-[var(--rpt-border)] pt-2 text-[11px] text-[var(--rpt-muted)]">
                         <span className="truncate text-left">
                           {formatPageTemplate(
                             effectivePageChrome.footer.left,

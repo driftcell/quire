@@ -21,6 +21,8 @@ export interface TableMeasurement {
   theadHeight: number;
   tfootHeight: number;
   rowHeights: number[];
+  /** Measured non-row table chrome: figure margins, caption, thead and notes. */
+  chromeHeight?: number;
 }
 
 export interface PageMeasurements {
@@ -34,13 +36,33 @@ export const A4_PAGE_WIDTH_PX = 794;
 export const A4_PAGE_HEIGHT_PX = 1123;
 export const A4_PADDING_X_PX = 56;
 export const A4_PADDING_Y_PX = 56;
+export const A4_HEADER_HEIGHT_PX = 28;
+export const A4_FOOTER_HEIGHT_PX = 32;
+export const A4_PAGE_SAFETY_PX = 8;
 export const A4_CONTENT_WIDTH_PX = A4_PAGE_WIDTH_PX - A4_PADDING_X_PX * 2;
 export const A4_CONTENT_HEIGHT_PX =
-  A4_PAGE_HEIGHT_PX - A4_PADDING_Y_PX * 2 - 32;
+  A4_PAGE_HEIGHT_PX - A4_PADDING_Y_PX * 2 - A4_PAGE_SAFETY_PX;
 
 const DEFAULT_ROW_HEIGHT_PX = 34;
-const DEFAULT_TABLE_CAPTION_PX = 42;
-const CONTINUATION_FOOTER_PX = 24;
+const DEFAULT_TABLE_CAPTION_PX = 48;
+const CONTINUATION_FOOTER_PX = 28;
+
+function tableChromeHeight(
+  blockId: string,
+  metrics: TableMeasurement | undefined,
+  blockHeights: Record<string, number>,
+): number {
+  const fallback = DEFAULT_TABLE_CAPTION_PX + (metrics?.theadHeight ?? 40);
+  if (metrics?.chromeHeight !== undefined && metrics.chromeHeight > 0) {
+    return Math.max(fallback, metrics.chromeHeight);
+  }
+  const blockHeight = blockHeights[blockId];
+  if (metrics && blockHeight !== undefined && blockHeight > 0) {
+    const rowsHeight = metrics.rowHeights.reduce((sum, row) => sum + row, 0);
+    return Math.max(fallback, blockHeight - rowsHeight - metrics.tfootHeight);
+  }
+  return fallback;
+}
 
 /**
  * Bin-pack blocks into fixed A4 pages using real per-block and per-row DOM measurements.
@@ -123,12 +145,12 @@ export function paginateBlocks(
     }
 
     const tableMetrics = tableMeasurements[block.id];
-    const theadHeight =
-      tableMetrics && tableMetrics.theadHeight > 0
-        ? tableMetrics.theadHeight
-        : 40;
     const tfootHeight = tableMetrics ? tableMetrics.tfootHeight : 0;
-    const chromeHeight = DEFAULT_TABLE_CAPTION_PX + theadHeight;
+    const chromeHeight = tableChromeHeight(
+      block.id,
+      tableMetrics,
+      blockHeights,
+    );
 
     let cursor = 0;
     while (cursor < rows.length) {
@@ -194,8 +216,7 @@ export function paginateBlocks(
               : (slice.rowEnd - slice.rowStart) * DEFAULT_ROW_HEIGHT_PX;
             return (
               sum +
-              DEFAULT_TABLE_CAPTION_PX +
-              (metrics?.theadHeight ?? 40) +
+              tableChromeHeight(slice.block.id, metrics, blockHeights) +
               rowsCost +
               (slice.includeSummary
                 ? (metrics?.tfootHeight ?? 0)

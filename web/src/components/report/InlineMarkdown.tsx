@@ -114,8 +114,10 @@ function CitationGroup({
 
   if (printMode) {
     return (
-      <sup className="ml-0.5 text-[11px] font-normal text-neutral-500 tabular-nums">
-        {label}
+      <sup className="ml-0.5">
+        <span className="inline-block rounded px-1 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">
+          {label}
+        </span>
       </sup>
     );
   }
