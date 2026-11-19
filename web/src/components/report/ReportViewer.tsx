@@ -568,6 +568,51 @@ function referenceDomain(url: string | null | undefined): string | null {
   }
 }
 
+// Scale the fixed-width A4 page with a compositor transform. CSS `zoom` would
+// reflow text at fractional scales, making the page height and line wrapping
+// jitter while the panel is resized. The outer box reserves the scaled size.
+function ScaledPage({
+  scale,
+  children,
+}: {
+  scale: number;
+  children: ReactNode;
+}) {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) {
+      return undefined;
+    }
+    const apply = () => {
+      outer.style.width = `${A4_PAGE_WIDTH_PX * scale}px`;
+      outer.style.height = `${inner.offsetHeight * scale}px`;
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(inner);
+    return () => observer.disconnect();
+  }, [scale]);
+
+  return (
+    <div ref={outerRef} className="relative shrink-0">
+      <div
+        ref={innerRef}
+        style={{
+          width: `${A4_PAGE_WIDTH_PX}px`,
+          transform: `scale(${scale})`,
+          transformOrigin: "top left",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function CoverCustomHtml({ html }: { html: string }) {
   const setHost = useCallback(
     (node: HTMLDivElement | null) => {
@@ -1449,10 +1494,9 @@ export function ReportViewer({
               authors: (document.cover.authors ?? []).join("、"),
             };
             return (
-              <div
+              <ScaledPage
                 key={page.pageNumber}
-                style={suppressChrome ? undefined : { zoom: pageScale }}
-                className="relative shrink-0"
+                scale={suppressChrome ? 1 : pageScale}
               >
                 <section
                   style={{
@@ -1537,7 +1581,7 @@ export function ReportViewer({
                       </footer>
                     )}
                 </section>
-              </div>
+              </ScaledPage>
             );
           })}
         </div>

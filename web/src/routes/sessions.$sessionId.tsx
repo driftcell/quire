@@ -955,7 +955,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           </button>
         )}
 
-        <div className="flex-1 overflow-y-auto overscroll-contain">
+        <div className="flex-1 overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <ReportViewer
             document={docQuery.data.document}
             computed={docQuery.data.computed}
@@ -1057,8 +1057,25 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 ? "[&_[data-panel]]:transition-[flex-grow] [&_[data-panel]]:duration-300 [&_[data-panel]]:ease-out"
                 : ""
             }`}
+            onLayoutChanged={(layout, meta) => {
+              if (!meta.isUserInteraction) {
+                return;
+              }
+              const pct = layout["chat-panel"];
+              if (pct === undefined) {
+                return;
+              }
+              if (pct <= 1 && prefs.rightSidebarOpen) {
+                updatePrefs({ rightSidebarOpen: false });
+                return;
+              }
+              if (prefs.rightSidebarOpen && pct >= 20 && pct <= 60) {
+                updatePrefs({ rightPanelPct: Math.round(pct) });
+              }
+            }}
           >
             <ResizablePanel
+              id="report-panel"
               defaultSize={`${
                 prefs.rightSidebarOpen ? 100 - prefs.rightPanelPct : 100
               }%`}
@@ -1074,6 +1091,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               }`}
             />
             <ResizablePanel
+              id="chat-panel"
               panelRef={rightPanelRef}
               collapsible
               collapsedSize="0%"
@@ -1083,25 +1101,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               minSize="22%"
               maxSize="55%"
               className="min-w-0 overflow-hidden"
-              onResize={(size) => {
-                const pct = typeof size === "number" ? size : size.asPercentage;
-                if (
-                  !rightPanelAnimating &&
-                  pct <= 1 &&
-                  prefs.rightSidebarOpen
-                ) {
-                  updatePrefs({ rightSidebarOpen: false });
-                  return;
-                }
-                if (
-                  !rightPanelAnimating &&
-                  prefs.rightSidebarOpen &&
-                  pct >= 20 &&
-                  pct <= 60
-                ) {
-                  updatePrefs({ rightPanelPct: Math.round(pct) });
-                }
-              }}
             >
               <div
                 className="h-full min-w-0"
