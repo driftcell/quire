@@ -25,6 +25,8 @@ pub enum RuntimeError {
     ToolCallNotFound(String),
     #[error("chart preview `{0}` was not found or expired")]
     ChartPreviewNotFound(String),
+    #[error("pending queue item `{0}` was not found")]
+    PendingQueueItemNotFound(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("knowledge-base branch promotion conflict")]
@@ -40,6 +42,7 @@ impl RuntimeError {
             Self::RunNotFound(_) => "RUN_NOT_FOUND",
             Self::ToolCallNotFound(_) => "TOOL_CALL_NOT_FOUND",
             Self::ChartPreviewNotFound(_) => "CHART_PREVIEW_NOT_FOUND",
+            Self::PendingQueueItemNotFound(_) => "QUEUE_ITEM_NOT_FOUND",
             Self::InvalidRequest(_) => "INVALID_REQUEST",
             Self::KbConflict(_) => "KB_BRANCH_CONFLICT",
             Self::Database(_)
@@ -61,6 +64,9 @@ impl RuntimeError {
             Self::ChartPreviewNotFound(_) => {
                 "Call preview_echarts again to create a fresh preview; chart previews expire after 30 minutes."
             }
+            Self::PendingQueueItemNotFound(_) => {
+                "Refresh the session and retry with a queue item that is still pending."
+            }
             Self::InvalidRequest(_) => {
                 "Check the request body against the session protocol schema."
             }
@@ -78,7 +84,8 @@ impl IntoResponse for RuntimeError {
             Self::SessionNotFound(_)
             | Self::RunNotFound(_)
             | Self::ToolCallNotFound(_)
-            | Self::ChartPreviewNotFound(_) => StatusCode::NOT_FOUND,
+            | Self::ChartPreviewNotFound(_)
+            | Self::PendingQueueItemNotFound(_) => StatusCode::NOT_FOUND,
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
             Self::KbConflict(_) => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -88,6 +95,7 @@ impl IntoResponse for RuntimeError {
             | Self::RunNotFound(_)
             | Self::ToolCallNotFound(_)
             | Self::ChartPreviewNotFound(_)
+            | Self::PendingQueueItemNotFound(_)
             | Self::InvalidRequest(_)
             | Self::KbConflict(_) => self.to_string(),
             _ => {

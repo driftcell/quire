@@ -20,6 +20,7 @@ import type {
   CommentThread,
   TextQuoteSelector,
 } from "@/contracts/report-protocol";
+import type { PendingQueueItem } from "@/contracts/session-protocol";
 import { bearerHeaders, getAuthTokens } from "@/lib/auth";
 import type { EchartsBlock } from "@/lib/document";
 import { isRecord } from "@/lib/guards";
@@ -202,13 +203,31 @@ function isRunTraceSummaryList(value: unknown): value is RunTraceSummary[] {
 }
 
 export interface PostMessageResponse {
-  message: SessionMessage;
+  message?: SessionMessage;
   inserted: boolean;
   run_id?: string;
+  queued: boolean;
+  queue_item?: PendingQueueItem;
+}
+
+function isPendingQueueItem(value: unknown): value is PendingQueueItem {
+  return (
+    isRecord(value) &&
+    typeof value.queue_id === "string" &&
+    typeof value.session_id === "string" &&
+    typeof value.content === "string" &&
+    (value.source === "user" || value.source === "comment")
+  );
 }
 
 function isPostMessageResponse(value: unknown): value is PostMessageResponse {
-  return isRecord(value) && isSessionMessage(value.message);
+  if (!isRecord(value) || typeof value.inserted !== "boolean") {
+    return false;
+  }
+  if (value.queued === true) {
+    return isPendingQueueItem(value.queue_item);
+  }
+  return isSessionMessage(value.message);
 }
 
 function isChartPreviewResponse(value: unknown): value is ChartPreviewResponse {
@@ -448,5 +467,55 @@ export function updateSessionCommentStatus(
       method: "PATCH",
       body: JSON.stringify({ status }),
     },
+  );
+}
+
+export function deleteSessionComment(
+  sessionId: string,
+  threadId: string,
+): Promise<void> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/comments/${encodeURIComponent(threadId)}`,
+    () => undefined,
+    { method: "DELETE" },
+  );
+}
+
+function isPendingQueueList(value: unknown): value is PendingQueueItem[] {
+  return Array.isArray(value) && value.every(isPendingQueueItem);
+}
+
+export function getSessionQueue(
+  sessionId: string,
+): Promise<PendingQueueItem[]> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue`,
+    (raw) => decodeWith(raw, isPendingQueueList, "pending queue"),
+  );
+}
+
+export function updateSessionQueueItem(
+  sessionId: string,
+  queueId: string,
+  content: string,
+): Promise<PendingQueueItem> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(queueId)}`,
+    (raw) => decodeWith(raw, isPendingQueueItem, "pending queue item"),
+    {
+      method: "PATCH",
+      body: JSON.stringify({ content }),
+    },
+  );
+}
+
+export function deleteSessionQueueItem(
+  sessionId: string,
+  queueId: string,
+): Promise<void> {
+  return runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(queueId)}`,
+    () => undefined,
+    { method: "DELETE" },
   );
 }

@@ -9,16 +9,20 @@ import {
   type ReactNode,
 } from "react";
 import {
+  ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   CompassIcon,
   CopyIcon,
+  CornerUpLeftIcon,
   FileTextIcon,
   ListTreeIcon,
   LoaderCircleIcon,
+  PencilIcon,
   SparklesIcon,
   SquareIcon,
+  Trash2Icon,
   UsersIcon,
 } from "lucide-react";
 import { Streamdown, type ControlsConfig } from "streamdown";
@@ -38,7 +42,7 @@ import {
 } from "@/components/ui/attachment";
 import { Button } from "@/components/ui/button";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
-import {
+import { Textarea } from "@/components/ui/textarea";import {
   MessageScroller,
   MessageScrollerButton,
   MessageScrollerContent,
@@ -63,6 +67,7 @@ import {
 } from "@/components/ui/trace";
 import type {
   AttachmentMeta,
+  PendingQueueItem,
   PendingQuestion,
   QuestionAnswer,
   RunTraceSubagent,
@@ -75,7 +80,12 @@ import type {
   LiveSubagentRun,
   LiveTraceSegment,
 } from "@/lib/liveTrace";
-import { parseCommentRefs, type CommentRefPayload } from "@/lib/commentRefXml";
+import {
+  editableCommentRefText,
+  parseCommentRefs,
+  updateCommentRefContent,
+  type CommentRefPayload,
+} from "@/lib/commentRefXml";
 
 const CHAT_PROSE =
   "prose prose-sm dark:prose-invert max-w-none prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1.5 prose-h1:text-base prose-h2:text-[15px] prose-h3:text-sm prose-p:my-1.5 prose-p:leading-6 prose-ul:my-1.5 prose-ol:my-1.5 prose-pre:my-2 prose-pre:text-xs prose-code:text-[12.5px]";
@@ -105,6 +115,10 @@ export interface SessionStreamViewProps {
     skipped: boolean,
   ) => void;
   onJumpToSection?: (sectionId: string) => void;
+  pendingQueue?: PendingQueueItem[];
+  onEditPending?: (queueId: string, content: string) => Promise<void>;
+  onRecallPending?: (item: PendingQueueItem) => Promise<void>;
+  onDeletePending?: (queueId: string) => Promise<void>;
   onInterrupt?: () => Promise<void>;
   contentClassName?: string;
 }
@@ -810,6 +824,200 @@ function UserCommentRefCards({
   );
 }
 
+function PendingUserBubble({
+  item,
+  index,
+  count,
+  attachmentMap,
+  onJumpToSection,
+  onEdit,
+  onRecall,
+  onDelete,
+}: {
+  item: PendingQueueItem;
+  index: number;
+  count: number;
+  attachmentMap: Map<string, AttachmentMeta>;
+  onJumpToSection?: (sectionId: string) => void;
+  onEdit?: (queueId: string, content: string) => Promise<void>;
+  onRecall?: (item: PendingQueueItem) => Promise<void>;
+  onDelete?: (queueId: string) => Promise<void>;
+}) {
+  const parsed = parseCommentRefs(item.content);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus();
+    }
+  }, [editing]);
+
+  const startEditing = () => {
+    setDraft(editableCommentRefText(item.content));
+    setEditing(true);
+  };
+
+  const save = async () => {
+    const trimmed = draft.trim();
+    if (!trimmed || !onEdit || busy) {
+      return;
+    }
+    setBusy(true);
+    try {
+      await onEdit(item.queue_id, updateCommentRefContent(item.content, trimmed));
+      setEditing(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runAction = async (action?: () => Promise<void>) => {
+    if (!action || busy) return;
+    setBusy(true);
+    try {
+      await action();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <MessageGroup className="gap-1">
+      <Message align="end" className="items-end">
+        <div className="flex max-w-[85%] flex-col items-end">
+          {parsed.refs.length > 0 && (
+            <div className="w-full">
+              <UserCommentRefCards
+                refs={parsed.refs}
+                onJumpToSection={onJumpToSection}
+              />
+            </div>
+          )}
+          {(item.attachment_ids ?? []).length > 0 && (
+            <AttachmentGroup className="mb-1.5 justify-end">
+              {(item.attachment_ids ?? []).map((attId) => {
+                const meta = attachmentMap.get(attId);
+                return (
+                  <Attachment key={attId} size="xs">
+                    <AttachmentMedia variant="icon">
+                      <FileTextIcon className="size-3.5" />
+                    </AttachmentMedia>
+                    <AttachmentContent>
+                      <AttachmentTitle>
+                        {meta?.filename ?? attId}
+                      </AttachmentTitle>
+                      {meta && (
+                        <AttachmentDescription>
+                          {formatBytes(meta.size_bytes)}
+                        </AttachmentDescription>
+                      )}
+                    </AttachmentContent>
+                  </Attachment>
+                );
+              })}
+            </AttachmentGroup>
+          )}
+          {editing ? (
+            <div className="w-full space-y-1.5">
+              <Textarea
+                ref={inputRef}
+                rows={2}
+                className="min-h-10 text-sm"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setEditing(false);
+                    event.currentTarget.blur();
+                    return;
+                  }
+                  if (
+                    event.key === "Enter" &&
+                    !event.shiftKey &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    void save();
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-2 text-[11px] text-muted-foreground">
+                <button
+                  type="button"
+                  className="hover:text-foreground"
+                  onClick={() => setEditing(false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="hover:text-foreground disabled:opacity-50"
+                  disabled={busy || !draft.trim()}
+                  onClick={() => void save()}
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          ) : (
+            (parsed.refs.length === 0 || parsed.body.length > 0) && (
+              <div className="w-fit max-w-full rounded-2xl border border-dashed border-border/80 bg-muted/50 px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap text-foreground/85">
+                {parsed.refs.length > 0 ? parsed.body : item.content}
+              </div>
+            )
+          )}
+          <div className="mt-1 flex items-center justify-end gap-2 px-1 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1">
+              <ArrowUpIcon className="size-3" />
+              等待中{count > 1 ? ` · #${index + 1}` : ""}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                aria-label="编辑排队消息"
+                title="编辑"
+                disabled={busy}
+                className="rounded p-0.5 hover:bg-muted hover:text-foreground disabled:opacity-50"
+                onClick={startEditing}
+              >
+                <PencilIcon className="size-3" />
+              </button>
+              <button
+                type="button"
+                aria-label="撤回到输入框"
+                title="撤回到输入框"
+                disabled={busy}
+                className="rounded p-0.5 hover:bg-muted hover:text-foreground disabled:opacity-50"
+                onClick={() => {
+                  if (onRecall) void runAction(() => onRecall(item));
+                }}
+              >
+                <CornerUpLeftIcon className="size-3" />
+              </button>
+              <button
+                type="button"
+                aria-label="删除排队消息"
+                title="删除"
+                disabled={busy}
+                className="rounded p-0.5 hover:bg-muted hover:text-destructive disabled:opacity-50"
+                onClick={() => {
+                  if (onDelete) void runAction(() => onDelete(item.queue_id));
+                }}
+              >
+                <Trash2Icon className="size-3" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </Message>
+    </MessageGroup>
+  );
+}
+
 const HistoricalMessageItem = memo(function HistoricalMessageItem({
   sessionId,
   msg,
@@ -1101,6 +1309,10 @@ export function SessionStreamView({
   isAnsweringQuestion,
   onAnswerQuestion,
   onJumpToSection,
+  pendingQueue = [],
+  onEditPending,
+  onRecallPending,
+  onDeletePending,
   onInterrupt,
   contentClassName,
 }: SessionStreamViewProps) {
@@ -1111,6 +1323,15 @@ export function SessionStreamView({
     }
     return map;
   }, [attachments]);
+  const pendingEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (pendingQueue.length > 0) {
+      pendingEndRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "end",
+      });
+    }
+  }, [pendingQueue.length]);
 
   const traceByRunId = useMemo(() => {
     const map = new Map<string, RunTraceSummary>();
@@ -1355,6 +1576,25 @@ export function SessionStreamView({
                 </MessageGroup>
               </MessageScrollerItem>
             )}
+
+            {pendingQueue.map((item, index) => (
+              <MessageScrollerItem
+                key={`pending-${item.queue_id}`}
+                messageId={`pending-${item.queue_id}`}
+              >
+                <PendingUserBubble
+                  item={item}
+                  index={index}
+                  count={pendingQueue.length}
+                  attachmentMap={attachmentMap}
+                  onJumpToSection={onJumpToSection}
+                  onEdit={onEditPending}
+                  onRecall={onRecallPending}
+                  onDelete={onDeletePending}
+                />
+              </MessageScrollerItem>
+            ))}
+            {pendingQueue.length > 0 && <div ref={pendingEndRef} />}
 
             {orphanQuestions.map((entry) => (
               <MessageScrollerItem

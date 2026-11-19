@@ -109,6 +109,46 @@ pub struct ContextUsage {
     pub context_limit: u64,
 }
 
+/// Why a message is waiting in the per-session queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingQueueSource {
+    User,
+    Comment,
+}
+
+impl PendingQueueSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Comment => "comment",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "user" => Some(Self::User),
+            "comment" => Some(Self::Comment),
+            _ => None,
+        }
+    }
+}
+
+/// One message waiting for the session's active run to finish.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PendingQueueItem {
+    pub queue_id: String,
+    pub session_id: String,
+    pub content: String,
+    pub source: PendingQueueSource,
+    /// Comment thread that produced this item, when `source` is `comment`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachment_ids: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionMessage {
     pub message_id: String,
@@ -279,6 +319,9 @@ pub struct SessionDetail {
     /// Answered, skipped and dismissed question cards in creation order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resolved_questions: Vec<ResolvedQuestion>,
+    /// Messages waiting for the current run to finish, in FIFO order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_queue: Vec<PendingQueueItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -381,6 +424,7 @@ mod tests {
                 }],
                 created_at: now,
             }),
+            pending_queue: Vec::new(),
         };
         let json = serde_json::to_value(&detail).unwrap();
         assert_eq!(json["session_id"], "sess_1");

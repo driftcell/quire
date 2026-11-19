@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpIcon,
   FileIcon,
@@ -6,7 +6,6 @@ import {
   PlusIcon,
   QuoteIcon,
   RotateCcwIcon,
-  SquareIcon,
   UploadCloudIcon,
   XIcon,
 } from "lucide-react";
@@ -57,12 +56,12 @@ export interface PromptComposerProps {
   contextUsage?: ContextUsage;
   quotedSnippet?: QuotedChatSnippet | null;
   pendingCommentRefs?: CommentRefPayload[];
+  prefill?: { key: string; text: string } | null;
   onClearQuote?: () => void;
   onRemoveCommentRef?: (threadId: string) => void;
   onClearCommentRefs?: () => void;
   disabled?: boolean;
   onSend: (text: string, files: File[]) => Promise<void>;
-  onInterrupt?: () => Promise<void>;
   onRetry?: () => Promise<void>;
   onCompact?: () => Promise<void>;
 }
@@ -116,12 +115,12 @@ export function PromptComposer({
   contextUsage,
   quotedSnippet,
   pendingCommentRefs = [],
+  prefill,
   onClearQuote,
   onRemoveCommentRef,
   onClearCommentRefs,
   disabled = false,
   onSend,
-  onInterrupt,
   onRetry,
   onCompact,
 }: PromptComposerProps) {
@@ -131,6 +130,18 @@ export function PromptComposer({
   const [dragging, setDragging] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (prefill) {
+      // Recalling a queued message is an external event that refills the
+      // composer; there is no render-time equivalent for the focus handoff.
+      // oxlint-disable-next-line react/set-state-in-effect -- draft refill is driven by an outside queue action
+      setText(prefill.text);
+      setSendError(null);
+      textareaRef.current?.focus();
+    }
+  }, [prefill]);
 
   const isRunning = runStatus === "running";
   const canRetry = runStatus === "interrupted" || runStatus === "failed";
@@ -298,8 +309,15 @@ export function PromptComposer({
         </div>
       )}
 
+      {isRunning && (
+        <div className="px-1 text-[11px] text-muted-foreground">
+          Agent 正在运行，发送后将进入队列
+        </div>
+      )}
+
       <InputGroup className="rounded-2xl bg-card shadow-xs">
         <InputGroupTextarea
+          ref={textareaRef}
           value={text}
           placeholder={placeholder}
           rows={2}
@@ -429,38 +447,25 @@ export function PromptComposer({
                 <span>重试</span>
               </Button>
             )}
-            {isRunning && onInterrupt ? (
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="destructive"
-                aria-label="停止生成"
-                onClick={() => {
-                  void onInterrupt();
-                }}
-              >
-                <SquareIcon className="size-3.5 fill-current" />
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="icon-sm"
-                aria-label="发送消息"
-                disabled={
-                  disabled ||
-                  sending ||
-                  (text.trim().length === 0 &&
-                    files.length === 0 &&
-                    !quotedSnippet &&
-                    pendingCommentRefs.length === 0)
-                }
-                onClick={() => {
-                  void submit();
-                }}
-              >
-                <ArrowUpIcon className="size-4" />
-              </Button>
-            )}
+            <Button
+              type="button"
+              size="icon-sm"
+              aria-label={isRunning ? "排队发送消息" : "发送消息"}
+              title={isRunning ? "加入等待队列" : "发送消息"}
+              disabled={
+                disabled ||
+                sending ||
+                (text.trim().length === 0 &&
+                  files.length === 0 &&
+                  !quotedSnippet &&
+                  pendingCommentRefs.length === 0)
+              }
+              onClick={() => {
+                void submit();
+              }}
+            >
+              <ArrowUpIcon className="size-4" />
+            </Button>
           </div>
         </InputGroupAddon>
       </InputGroup>

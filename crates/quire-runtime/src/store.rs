@@ -4,10 +4,11 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use quire_session_protocol::{
-    ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem,
-    ResolvedQuestion, RunTaskFocus, RunTraceSegment, RunTraceSubagent, RunTraceSummary,
-    RunTraceToolItem, SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind,
-    SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
+    ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, PendingQueueItem,
+    PendingQueueSource, QuestionAnswer, QuestionItem, ResolvedQuestion, RunTaskFocus,
+    RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
+    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
+    ToolCallDetail,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
@@ -139,12 +140,14 @@ impl RuntimeStore {
         let attachments = self.list_attachments(session_id).await?;
         let pending_question = self.pending_question(session_id).await?;
         let resolved_questions = self.list_resolved_questions(session_id).await?;
+        let pending_queue = self.list_pending_queue(session_id).await?;
         Ok(SessionDetail {
             summary,
             messages,
             attachments,
             pending_question,
             resolved_questions,
+            pending_queue,
         })
     }
 
@@ -318,6 +321,22 @@ impl RuntimeStore {
         Ok((row_to_message(&row)?, false))
     }
 
+    pub async fn find_message_by_client_id(
+        &self,
+        session_id: &str,
+        client_msg_id: &str,
+    ) -> RuntimeResult<Option<SessionMessage>> {
+        let row = sqlx::query(
+            r#"SELECT message_id, session_id, role, content, attachment_ids, run_id, created_at
+               FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
+        )
+        .bind(session_id)
+        .bind(client_msg_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(row_to_message).transpose()
+    }
+
     pub async fn insert_assistant_message(
         &self,
         session_id: &str,
@@ -358,6 +377,186 @@ impl RuntimeStore {
         .fetch_all(&self.pool)
         .await?;
         rows.iter().map(row_to_message).collect()
+    }
+
+    pub async fn list_sessions_with_pending_queue(&self) -> RuntimeResult<Vec<String>> {
+        let sessions = sqlx::query_scalar::<_, String>(
+            "SELECT DISTINCT session_id FROM session_pending_queue ORDER BY session_id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(sessions)
+    }
+
+    pub async fn list_pending_queue(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<Vec<PendingQueueItem>> {
+        self.get_session_summary(session_id).await?;
+        let rows = sqlx::query(
+            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+               FROM session_pending_queue
+               WHERE session_id = $1
+               ORDER BY sequence ASC"#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_pending_queue_item).collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn enqueue_pending_message(
+        &self,
+        session_id: &str,
+        client_msg_id: &str,
+        content: &str,
+        source: PendingQueueSource,
+        thread_id: Option<&str>,
+        attachment_ids: &[String],
+    ) -> RuntimeResult<PendingQueueItem> {
+        if client_msg_id.trim().is_empty() {
+            return Err(RuntimeError::InvalidRequest(
+                "pending queue client_msg_id must not be empty".into(),
+            ));
+        }
+        if content.trim().is_empty() {
+            return Err(RuntimeError::InvalidRequest(
+                "pending queue content must not be empty".into(),
+            ));
+        }
+        self.get_session_summary(session_id).await?;
+        let queue_id = format!("q_{}", Uuid::new_v4().simple());
+        let attachments = serde_json::to_value(attachment_ids)?;
+        let inserted = sqlx::query(
+            r#"INSERT INTO session_pending_queue
+               (queue_id, session_id, client_msg_id, content, source, thread_id, attachment_ids)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               ON CONFLICT (session_id, client_msg_id) DO NOTHING
+               RETURNING queue_id, session_id, content, source, thread_id, attachment_ids, created_at"#,
+        )
+        .bind(&queue_id)
+        .bind(session_id)
+        .bind(client_msg_id)
+        .bind(content)
+        .bind(source.as_str())
+        .bind(thread_id)
+        .bind(attachments)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(row) = inserted {
+            return row_to_pending_queue_item(&row);
+        }
+        let row = sqlx::query(
+            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+               FROM session_pending_queue
+               WHERE session_id = $1 AND client_msg_id = $2"#,
+        )
+        .bind(session_id)
+        .bind(client_msg_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| RuntimeError::Internal("idempotent pending queue item vanished".into()))?;
+        row_to_pending_queue_item(&row)
+    }
+
+    pub async fn update_pending_message(
+        &self,
+        session_id: &str,
+        queue_id: &str,
+        content: &str,
+    ) -> RuntimeResult<PendingQueueItem> {
+        if content.trim().is_empty() {
+            return Err(RuntimeError::InvalidRequest(
+                "pending queue content must not be empty".into(),
+            ));
+        }
+        let row = sqlx::query(
+            r#"UPDATE session_pending_queue
+               SET content = $3
+               WHERE session_id = $1 AND queue_id = $2
+               RETURNING queue_id, session_id, content, source, thread_id, attachment_ids, created_at"#,
+        )
+        .bind(session_id)
+        .bind(queue_id)
+        .bind(content)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| {
+            RuntimeError::InvalidRequest(format!(
+                "pending queue item `{queue_id}` was not found for session `{session_id}`"
+            ))
+        })?;
+        row_to_pending_queue_item(&row)
+    }
+
+    pub async fn get_pending_queue_item(
+        &self,
+        session_id: &str,
+        queue_id: &str,
+    ) -> RuntimeResult<Option<PendingQueueItem>> {
+        let row = sqlx::query(
+            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+               FROM session_pending_queue
+               WHERE session_id = $1 AND queue_id = $2"#,
+        )
+        .bind(session_id)
+        .bind(queue_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(row_to_pending_queue_item).transpose()
+    }
+
+    pub async fn delete_pending_message(
+        &self,
+        session_id: &str,
+        queue_id: &str,
+    ) -> RuntimeResult<bool> {
+        let deleted = sqlx::query_scalar::<_, String>(
+            r#"DELETE FROM session_pending_queue
+               WHERE session_id = $1 AND queue_id = $2
+               RETURNING queue_id"#,
+        )
+        .bind(session_id)
+        .bind(queue_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(deleted.is_some())
+    }
+
+    pub async fn remove_pending_items(
+        &self,
+        session_id: &str,
+        queue_ids: &[String],
+    ) -> RuntimeResult<u64> {
+        if queue_ids.is_empty() {
+            return Ok(0);
+        }
+        let deleted = sqlx::query(
+            r#"DELETE FROM session_pending_queue
+               WHERE session_id = $1 AND queue_id = ANY($2)"#,
+        )
+        .bind(session_id)
+        .bind(queue_ids)
+        .execute(&self.pool)
+        .await?;
+        Ok(deleted.rows_affected())
+    }
+
+    pub async fn remove_pending_comment_thread(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+    ) -> RuntimeResult<u64> {
+        let deleted = sqlx::query(
+            r#"DELETE FROM session_pending_queue
+               WHERE session_id = $1 AND thread_id = $2"#,
+        )
+        .bind(session_id)
+        .bind(thread_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(deleted.rows_affected())
     }
 
     pub async fn insert_context_message(
@@ -1092,6 +1291,22 @@ fn row_to_message(row: &PgRow) -> RuntimeResult<SessionMessage> {
     })
 }
 
+fn row_to_pending_queue_item(row: &PgRow) -> RuntimeResult<PendingQueueItem> {
+    let source_raw: String = row.try_get("source")?;
+    let attachment_ids: Value = row.try_get("attachment_ids")?;
+    Ok(PendingQueueItem {
+        queue_id: row.try_get("queue_id")?,
+        session_id: row.try_get("session_id")?,
+        content: row.try_get("content")?,
+        source: PendingQueueSource::parse(&source_raw).ok_or_else(|| {
+            RuntimeError::Internal(format!("invalid pending queue source `{source_raw}`"))
+        })?,
+        thread_id: row.try_get("thread_id")?,
+        attachment_ids: serde_json::from_value(attachment_ids).unwrap_or_default(),
+        created_at: row.try_get("created_at")?,
+    })
+}
+
 struct RunTraceAccumulator {
     summary: RunTraceSummary,
     started_at: Option<DateTime<Utc>>,
@@ -1497,7 +1712,8 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             | SessionEventKind::QuestionnaireAnswered { .. }
             | SessionEventKind::QuestionnaireDismissed { .. }
             | SessionEventKind::DocLinked { .. }
-            | SessionEventKind::SessionTitleUpdated { .. } => {}
+            | SessionEventKind::SessionTitleUpdated { .. }
+            | SessionEventKind::PendingQueueUpdated { .. } => {}
         }
     }
 

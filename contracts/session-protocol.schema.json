@@ -202,6 +202,56 @@
         "created_at"
       ]
     },
+    "PendingQueueItem": {
+      "description": "One message waiting for the session's active run to finish.",
+      "type": "object",
+      "properties": {
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "content": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "queue_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/PendingQueueSource"
+        },
+        "thread_id": {
+          "description": "Comment thread that produced this item, when `source` is `comment`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "queue_id",
+        "session_id",
+        "content",
+        "source",
+        "created_at"
+      ]
+    },
+    "PendingQueueSource": {
+      "description": "Why a message is waiting in the per-session queue.",
+      "type": "string",
+      "enum": [
+        "user",
+        "comment"
+      ]
+    },
     "QuestionAnswer": {
       "type": "object",
       "properties": {
@@ -630,6 +680,13 @@
               "type": "null"
             }
           ]
+        },
+        "pending_queue": {
+          "description": "Messages waiting for the current run to finish, in FIFO order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PendingQueueItem"
+          }
         },
         "resolved_questions": {
           "description": "Answered, skipped and dismissed question cards in creation order.",
@@ -1090,6 +1147,25 @@
           "required": [
             "event",
             "title"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "pending_queue_updated"
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PendingQueueItem"
+              }
+            }
+          },
+          "required": [
+            "event",
+            "items"
           ]
         }
       ],

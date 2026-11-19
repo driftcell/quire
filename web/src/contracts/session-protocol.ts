@@ -29,6 +29,10 @@ export type RunTraceSegment =
     };
 export type ActiveRunStatus = "idle" | "running" | "interrupted" | "failed" | "awaiting_input";
 export type MessageRole = "user" | "assistant" | "tool" | "system";
+/**
+ * Why a message is waiting in the per-session queue.
+ */
+export type PendingQueueSource = "user" | "comment";
 export type SessionStatus = "active" | "archived";
 /**
  * Common envelope for every Session-SSE frame.
@@ -153,6 +157,11 @@ export type SessionEvent1 =
   | {
       event: "session_title_updated";
       title: string;
+      [k: string]: unknown;
+    }
+  | {
+      event: "pending_queue_updated";
+      items: PendingQueueItem[];
       [k: string]: unknown;
     };
 
@@ -288,6 +297,10 @@ export interface SessionDetail {
    */
   pending_question?: PendingQuestion | null;
   /**
+   * Messages waiting for the current run to finish, in FIFO order.
+   */
+  pending_queue?: PendingQueueItem[];
+  /**
    * Answered, skipped and dismissed question cards in creation order.
    */
   resolved_questions?: ResolvedQuestion[];
@@ -313,6 +326,22 @@ export interface SessionMessage {
   role: MessageRole;
   run_id?: string | null;
   session_id: string;
+  [k: string]: unknown;
+}
+/**
+ * One message waiting for the session's active run to finish.
+ */
+export interface PendingQueueItem {
+  attachment_ids?: string[];
+  content: string;
+  created_at: string;
+  queue_id: string;
+  session_id: string;
+  source: PendingQueueSource;
+  /**
+   * Comment thread that produced this item, when `source` is `comment`.
+   */
+  thread_id?: string | null;
   [k: string]: unknown;
 }
 export interface ResolvedQuestion {

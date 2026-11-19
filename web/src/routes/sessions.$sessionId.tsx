@@ -17,12 +17,15 @@ import {
   PanelLeftIcon,
   PrinterIcon,
   ScrollTextIcon,
+  SquareIcon,
 } from "lucide-react";
 import { getDocument, listComments } from "@/api/quire";
 import {
   answerQuestion,
   compactSession,
   createSessionComment,
+  deleteSessionComment,
+  deleteSessionQueueItem,
   getSession,
   interruptSession,
   listSessionTraces,
@@ -30,6 +33,7 @@ import {
   replySessionComment,
   retrySession,
   updateSessionCommentStatus,
+  updateSessionQueueItem,
   uploadAttachment,
 } from "@/api/runtime";
 import { subscribeDocumentEvents, subscribeSessionEvents } from "@/api/sse";
@@ -63,6 +67,7 @@ import type {
 import type {
   ActiveRunStatus,
   ContextUsage,
+  PendingQueueItem,
   PendingQuestion,
   QuestionAnswer,
   SessionDetail,
@@ -81,6 +86,7 @@ import {
 } from "@/lib/liveTrace";
 import { loadPreferences, savePreferences } from "@/lib/preferences";
 import type { CommentRefPayload } from "@/lib/commentRefXml";
+import { parseCommentRefs } from "@/lib/commentRefXml";
 import { randomUuid } from "@/lib/uuid";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
@@ -190,6 +196,11 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const [pendingCommentRefs, setPendingCommentRefs] = useState<
     CommentRefPayload[]
   >([]);
+  const [composerPrefill, setComposerPrefill] = useState<{
+    key: string;
+    text: string;
+  } | null>(null);
+  const [queueBusyId, setQueueBusyId] = useState<string | null>(null);
   const [floatingComment, setFloatingComment] =
     useState<FloatingCommentAnchor | null>(null);
   const [mobileTab, setMobileTab] = useState<"report" | "chat" | "comments">(
@@ -204,6 +215,19 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     sessionQuery.data?.doc_id ??
     sessionQuery.data?.linked_doc_id ??
     null;
+  const pendingQueue = useMemo(
+    () => sessionQuery.data?.pending_queue ?? [],
+    [sessionQuery.data?.pending_queue],
+  );
+  const pendingThreadIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const item of pendingQueue) {
+      if (item.thread_id) {
+        ids.add(item.thread_id);
+      }
+    }
+    return ids;
+  }, [pendingQueue]);
 
   const effectiveRunStatus: ActiveRunStatus =
     liveRunStatus ?? sessionQuery.data?.active_run_status ?? "idle";
@@ -517,6 +541,15 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         void queryClient.invalidateQueries({
           queryKey: ["session", sessionId],
         });
+      } else if (ev.event === "pending_queue_updated") {
+        queryClient.setQueryData<SessionDetail>(
+          ["session", sessionId],
+          (current) =>
+            current ? { ...current, pending_queue: ev.items } : current,
+        );
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
       }
     };
 
@@ -731,10 +764,27 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         if (!current) {
           return current;
         }
+        if (response.queued && response.queue_item) {
+          const existingQueue = current.pending_queue ?? [];
+          if (
+            existingQueue.some(
+              (item) => item.queue_id === response.queue_item?.queue_id,
+            )
+          ) {
+            return current;
+          }
+          return {
+            ...current,
+            pending_queue: [...existingQueue, response.queue_item],
+          };
+        }
+        if (!response.message) {
+          return current;
+        }
         const existing = current.messages ?? [];
         if (
           existing.some(
-            (message) => message.message_id === response.message.message_id,
+            (message) => message.message_id === response.message?.message_id,
           )
         ) {
           return current;
@@ -828,33 +878,146 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [jumpToSection, showComments],
   );
 
-  const queueCommentRefs = useCallback(
-    (threads: CommentThread[]) => {
-      const refs = threads.map((thread): CommentRefPayload => {
-        const primary =
-          thread.messages.find((message) => message.author_type === "human") ??
-          thread.messages[0];
-        return {
-          thread_id: thread.thread_id,
-          block_id: thread.block_id,
-          status: thread.status,
-          quote: thread.quote?.exact,
-          comment:
-            primary?.body ?? thread.anchor_snapshot ?? "请根据此批注修订正文。",
-        };
-      });
-      setPendingCommentRefs((prev) => {
-        const byThread = new Map(
-          prev.map((ref) => [ref.thread_id, ref] as const),
-        );
-        for (const ref of refs) {
-          byThread.set(ref.thread_id, ref);
-        }
-        return Array.from(byThread.values());
-      });
-      showChat();
+  const removePendingQueueItemLocal = useCallback(
+    (queueId: string) => {
+      queryClient.setQueryData<SessionDetail>(
+        ["session", sessionId],
+        (current) =>
+          current
+            ? {
+                ...current,
+                pending_queue: (current.pending_queue ?? []).filter(
+                  (item) => item.queue_id !== queueId,
+                ),
+              }
+            : current,
+      );
     },
-    [showChat],
+    [queryClient, sessionId],
+  );
+
+  const handleUpdateQueueItem = useCallback(
+    async (queueId: string, content: string) => {
+      if (queueBusyId) return;
+      setQueueBusyId(queueId);
+      try {
+        const updated = await updateSessionQueueItem(
+          sessionId,
+          queueId,
+          content,
+        );
+        queryClient.setQueryData<SessionDetail>(
+          ["session", sessionId],
+          (current) =>
+            current
+              ? {
+                  ...current,
+                  pending_queue: (current.pending_queue ?? []).map((item) =>
+                    item.queue_id === queueId ? updated : item,
+                  ),
+                }
+              : current,
+        );
+      } finally {
+        setQueueBusyId(null);
+      }
+    },
+    [queryClient, queueBusyId, sessionId],
+  );
+
+  const handleRecallQueueItem = useCallback(
+    async (item: PendingQueueItem) => {
+      if (queueBusyId) return;
+      setQueueBusyId(item.queue_id);
+      try {
+        await deleteSessionQueueItem(sessionId, item.queue_id);
+        removePendingQueueItemLocal(item.queue_id);
+        const parsed = parseCommentRefs(item.content);
+        if (item.source === "comment") {
+          setPendingCommentRefs([]);
+          setComposerPrefill({
+            key: item.queue_id,
+            text:
+              parsed.refs
+                .map((ref) => ref.comment)
+                .filter(Boolean)
+                .join("\n\n") || parsed.body,
+          });
+        } else {
+          setPendingCommentRefs(parsed.refs);
+          setComposerPrefill({
+            key: item.queue_id,
+            text: parsed.refs.length > 0 ? parsed.body : item.content,
+          });
+        }
+        showChat();
+        if (item.source === "comment" && effectiveDocId) {
+          void queryClient.invalidateQueries({
+            queryKey: ["comments", effectiveDocId],
+          });
+        }
+      } finally {
+        setQueueBusyId(null);
+      }
+    },
+    [
+      effectiveDocId,
+      queryClient,
+      queueBusyId,
+      removePendingQueueItemLocal,
+      sessionId,
+      showChat,
+    ],
+  );
+
+  const handleDeletePending = useCallback(
+    async (queueId: string) => {
+      if (queueBusyId) return;
+      const item = pendingQueue.find(
+        (candidate) => candidate.queue_id === queueId,
+      );
+      setQueueBusyId(queueId);
+      try {
+        await deleteSessionQueueItem(sessionId, queueId);
+        removePendingQueueItemLocal(queueId);
+        if (item?.source === "comment" && effectiveDocId) {
+          void queryClient.invalidateQueries({
+            queryKey: ["comments", effectiveDocId],
+          });
+        }
+      } finally {
+        setQueueBusyId(null);
+      }
+    },
+    [
+      effectiveDocId,
+      pendingQueue,
+      queryClient,
+      queueBusyId,
+      removePendingQueueItemLocal,
+      sessionId,
+    ],
+  );
+
+  const handleDeleteComment = useCallback(
+    async (thread: CommentThread) => {
+      await deleteSessionComment(sessionId, thread.thread_id);
+      setPendingCommentRefs((prev) =>
+        prev.filter((ref) => ref.thread_id !== thread.thread_id),
+      );
+      setActiveCommentThreadId((current) =>
+        current === thread.thread_id ? null : current,
+      );
+      if (effectiveDocId) {
+        void queryClient.invalidateQueries({
+          queryKey: ["comments", effectiveDocId],
+        });
+      }
+      void queryClient.invalidateQueries({
+        queryKey: ["session", sessionId],
+      });
+    },
+    [effectiveDocId, queryClient, sessionId],
   );
 
   const openCommentsCount =
@@ -895,6 +1058,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               void handleAnswerQuestion(qId, answers, skipped);
             }}
             onJumpToSection={jumpToSectionFromChat}
+            pendingQueue={pendingQueue}
+            onEditPending={handleUpdateQueueItem}
+            onRecallPending={handleRecallQueueItem}
+            onDeletePending={handleDeletePending}
           />
         )}
       </div>
@@ -914,6 +1081,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             contextUsage={effectiveUsage}
             quotedSnippet={quotedForChat}
             pendingCommentRefs={pendingCommentRefs}
+            prefill={composerPrefill}
             onClearQuote={() => setQuotedForChat(null)}
             onRemoveCommentRef={(threadId) => {
               setPendingCommentRefs((prev) =>
@@ -922,12 +1090,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             }}
             onClearCommentRefs={() => setPendingCommentRefs([])}
             onSend={handleSend}
-            onInterrupt={async () => {
-              await interruptSession(sessionId);
-              void queryClient.invalidateQueries({
-                queryKey: ["session", sessionId],
-              });
-            }}
             onRetry={async () => {
               await retrySession(sessionId);
               void queryClient.invalidateQueries({
@@ -951,6 +1113,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       docId={effectiveDocId}
       threads={commentsQuery.data ?? []}
       activeThreadId={activeCommentThreadId}
+      pendingThreadIds={pendingThreadIds}
       onClose={
         isMobile ? undefined : () => updatePrefs({ rightSidebarOpen: false })
       }
@@ -979,7 +1142,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           );
         }
       }}
-      onAskAgent={(threads) => queueCommentRefs(threads)}
+      onDeleteThread={handleDeleteComment}
     />
   ) : null;
 
@@ -1124,9 +1287,29 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             {sessionQuery.data?.title ?? "加载中..."}
           </span>
           {effectiveRunStatus === "running" && (
-            <Badge variant="secondary" className="shrink-0 text-[11px]">
-              生成中
-            </Badge>
+            <>
+              <Badge variant="secondary" className="shrink-0 text-[11px]">
+                生成中
+              </Badge>
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                className="shrink-0 gap-1 px-1.5 text-destructive/85 hover:bg-destructive/10 hover:text-destructive"
+                aria-label="停止生成"
+                onClick={() => {
+                  void (async () => {
+                    await interruptSession(sessionId);
+                    void queryClient.invalidateQueries({
+                      queryKey: ["session", sessionId],
+                    });
+                  })();
+                }}
+              >
+                <SquareIcon className="size-3 fill-current" />
+                停止
+              </Button>
+            </>
           )}
         </div>
         <Tabs

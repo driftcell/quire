@@ -144,3 +144,48 @@ export function parseCommentRefs(content: string): ParsedCommentRefs {
     return fallback(content);
   }
 }
+
+/** Text shown in the pending-bubble editor for comment-ref content. */
+export function editableCommentRefText(content: string): string {
+  const parsed = parseCommentRefs(content);
+  if (parsed.refs.length > 0 && parsed.body.trim().length === 0) {
+    return parsed.refs.map((ref) => ref.comment).join("\n\n");
+  }
+  return parsed.body || content;
+}
+
+/**
+ * Rebuild a pending queue payload after inline editing while preserving XML
+ * structure. Comment-only payloads update `<comment>` bodies; payloads with a
+ * user instruction keep the refs and replace only the trailing text.
+ */
+export function updateCommentRefContent(
+  content: string,
+  editedText: string,
+): string {
+  const parsed = parseCommentRefs(content);
+  const text = editedText.trim();
+  if (parsed.refs.length === 0) {
+    return text;
+  }
+  if (parsed.body.trim().length > 0) {
+    return serializeCommentRefs(parsed.refs, text);
+  }
+  const parts = text
+    .split(/\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length <= 1) {
+    return serializeCommentRefs(
+      parsed.refs.map((ref) => ({ ...ref, comment: text })),
+      "",
+    );
+  }
+  return serializeCommentRefs(
+    parsed.refs.map((ref, index) => ({
+      ...ref,
+      comment: parts[index] ?? ref.comment,
+    })),
+    "",
+  );
+}

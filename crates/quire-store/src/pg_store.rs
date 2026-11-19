@@ -1172,6 +1172,30 @@ impl PgReportStore {
         Ok(thread)
     }
 
+    /// Delete a comment thread and its messages. Side-channel data never participates in revisions.
+    pub async fn delete_comment_thread(
+        &self,
+        doc_id: &DocId,
+        thread_id: &str,
+    ) -> Result<(), StoreError> {
+        let deleted = sqlx::query_scalar::<_, String>(
+            r#"DELETE FROM report_comment_threads
+               WHERE doc_id = $1 AND thread_id = $2
+               RETURNING thread_id"#,
+        )
+        .bind(doc_id.as_str())
+        .bind(thread_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if deleted.is_none() {
+            return Err(StoreError::CommentThreadNotFound {
+                doc_id: doc_id.clone(),
+                thread_id: thread_id.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Human-only status transition. Only `archived` and `open` are valid here.
     pub async fn update_comment_status(
         &self,

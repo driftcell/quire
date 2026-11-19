@@ -12,7 +12,7 @@ use std::{
     path::Path,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -31,10 +31,11 @@ use quire_runtime::{
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
     mcp_registry::{McpServerInput, McpServerPatch},
     preview::ChartPreviewRecord,
+    service::PostMessageOutcome,
 };
 use quire_session_protocol::{
-    ActiveRunStatus, ContextUsage, MessageRole, QuestionItem, QuestionOption, SendMessageRequest,
-    SessionEventKind,
+    ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
+    SendMessageRequest, SessionEventKind, SessionMessage,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -162,6 +163,17 @@ async fn wait_for_idle(store: &RuntimeStore, session_id: &str) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!("session {session_id} never became idle");
+}
+
+async fn wait_for_running(store: &RuntimeStore, session_id: &str) {
+    for _ in 0..200 {
+        let session = store.get_session_summary(session_id).await.unwrap();
+        if session.active_run_status == ActiveRunStatus::Running {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("session {session_id} never entered running");
 }
 
 async fn remove_branch(store: &RuntimeStore, name: &str) {
@@ -405,6 +417,41 @@ impl ModelStreamProvider for RecordingStreamProvider {
     }
 }
 
+#[derive(Clone)]
+struct GateStreamProvider {
+    released: Arc<AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl GateStreamProvider {
+    fn new() -> Self {
+        Self {
+            released: Arc::new(AtomicBool::new(false)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for GateStreamProvider {
+    async fn stream_turn(
+        &self,
+        _request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        while !self.released.load(Ordering::SeqCst) {
+            self.notify.notified().await;
+        }
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
+            ModelStreamEvent::TextDelta("gated reply".into()),
+        )])))
+    }
+}
+
 fn question_items() -> Vec<QuestionItem> {
     vec![QuestionItem {
         id: "scope".into(),
@@ -472,29 +519,32 @@ async fn client_message_id_is_idempotent_and_does_not_duplicate_runs() {
         content: "Draft an executive summary".into(),
         attachment_ids: Vec::new(),
     };
-    let (first, inserted_first, run_id) = service
+    let first = service
         .post_message(&session.session_id, &request)
         .await
         .unwrap();
-    assert!(inserted_first);
-    assert!(run_id.is_some());
+    let (first, run_id) = match first {
+        PostMessageOutcome::Started { message, run_id } => (message, run_id),
+        other => panic!("expected started message, got {other:?}"),
+    };
     wait_for_idle(&store, &session.session_id).await;
     let idle = service.session_detail(&session.session_id).await.unwrap();
     assert_eq!(idle.summary.context_usage.context_limit, 200_000);
-    let (second, inserted_second, run_id_second) = service
+    let second = service
         .post_message(&session.session_id, &request)
         .await
         .unwrap();
-    assert!(!inserted_second);
+    let second = match second {
+        PostMessageOutcome::Replayed { message } => message,
+        other => panic!("expected replayed message, got {other:?}"),
+    };
     assert_eq!(second.message_id, first.message_id);
-    assert!(run_id_second.is_none());
     let messages = store.list_messages(&session.session_id).await.unwrap();
     let user_messages: Vec<_> = messages
         .iter()
         .filter(|message| message.role == quire_session_protocol::MessageRole::User)
         .collect();
     assert_eq!(user_messages.len(), 1);
-    let run_id = run_id.expect("run id");
     let tool_call = service
         .record_tool_call(ToolCallRecord {
             session_id: session.session_id.clone(),
@@ -1767,7 +1817,7 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
     ];
     let (provider, requests) = RecordingStreamProvider::new(events);
     let service = service.with_model_stream_provider(Arc::new(provider));
-    let (_, _, run_id) = service
+    let started = service
         .post_message(
             &session.session_id,
             &SendMessageRequest {
@@ -1778,7 +1828,10 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
         )
         .await
         .unwrap();
-    let run_id = run_id.expect("run id");
+    let run_id = match started {
+        PostMessageOutcome::Started { run_id, .. } => run_id,
+        other => panic!("expected started message, got {other:?}"),
+    };
     wait_for_idle(&store, &session.session_id).await;
 
     let requests = requests.lock().await;
@@ -2450,6 +2503,14 @@ async fn mock_comment_patch() -> axum::Json<CommentThread> {
     axum::Json(proxy_comment_thread(CommentStatus::Archived))
 }
 
+async fn mock_comment_delete(
+    axum::extract::State(deleted): axum::extract::State<Arc<Mutex<Vec<String>>>>,
+    axum::extract::Path((doc_id, thread_id)): axum::extract::Path<(String, String)>,
+) -> axum::http::StatusCode {
+    deleted.lock().await.push(format!("{doc_id}:{thread_id}"));
+    axum::http::StatusCode::NO_CONTENT
+}
+
 #[tokio::test]
 async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
     let _guard = test_lock().lock().await;
@@ -2574,6 +2635,367 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
         "unbound session error must explain the missing report binding"
     );
     server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn running_session_queues_messages_and_drains_after_turn() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let gate = GateStreamProvider::new();
+    let service = service.with_model_stream_provider(Arc::new(gate.clone()));
+    service.boot().await.unwrap();
+    let session = service
+        .create_session(&unique("queue-session"), Some("runtime-doc"))
+        .await
+        .unwrap();
+
+    let first = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-first"),
+                content: "First turn".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(first, PostMessageOutcome::Started { .. }));
+    wait_for_running(&store, &session.session_id).await;
+
+    let second = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-second"),
+                content: "Second turn".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let second_item = match second {
+        PostMessageOutcome::Queued { item } => item,
+        other => panic!("expected queued message, got {other:?}"),
+    };
+    assert_eq!(second_item.source, PendingQueueSource::User);
+
+    let third = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-third"),
+                content: "Third turn".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let third_item = match third {
+        PostMessageOutcome::Queued { item } => item,
+        other => panic!("expected second queued message, got {other:?}"),
+    };
+    assert_eq!(
+        service
+            .list_pending_queue(&session.session_id)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let patched = service
+        .update_pending_message(
+            &session.session_id,
+            &second_item.queue_id,
+            "Edited second turn",
+        )
+        .await
+        .unwrap();
+    assert_eq!(patched.content, "Edited second turn");
+    assert!(
+        service
+            .delete_pending_message(&session.session_id, &third_item.queue_id)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        service
+            .list_pending_queue(&session.session_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+
+    gate.release();
+    let mut stable_idle = 0;
+    for _ in 0..300 {
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        if detail.pending_queue.is_empty()
+            && detail.summary.active_run_status == ActiveRunStatus::Idle
+        {
+            stable_idle += 1;
+            if stable_idle >= 5 {
+                break;
+            }
+        } else {
+            stable_idle = 0;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert!(detail.pending_queue.is_empty());
+    assert_eq!(detail.summary.active_run_status, ActiveRunStatus::Idle);
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    let user_contents: Vec<String> = messages
+        .iter()
+        .filter(|message| message.role == MessageRole::User)
+        .map(|message| message.content.clone())
+        .collect();
+    assert!(user_contents.iter().any(|content| content == "First turn"));
+    assert!(
+        user_contents
+            .iter()
+            .any(|content| content == "Edited second turn")
+    );
+    assert!(!user_contents.iter().any(|content| content == "Third turn"));
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn comment_creation_auto_triggers_a_turn() {
+    let _guard = test_lock().lock().await;
+    let upstream = axum::Router::new().route(
+        "/api/docs/{doc_id}/comments",
+        axum::routing::post(mock_comment_create),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let session = service
+        .create_session(&unique("comment-trigger"), Some("report-test"))
+        .await
+        .unwrap();
+    let app = quire_runtime::http::router(service);
+    let created = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/sessions/{}/comments", session.session_id))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"block_id": "b_proxy", "body": "Tighten this paragraph"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.status(), axum::http::StatusCode::OK);
+    wait_for_idle(&store, &session.session_id).await;
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    assert!(
+        messages.iter().any(|message| {
+            message.role == MessageRole::User
+                && message.content.contains("<quire_comment_ref")
+                && message.content.contains("ct_proxy")
+                && message.content.contains("tighten this paragraph")
+        }),
+        "comment creation must auto-submit an XML comment reference"
+    );
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn running_session_queues_comment_and_queue_delete_removes_thread() {
+    let _guard = test_lock().lock().await;
+    let deleted = Arc::new(Mutex::new(Vec::<String>::new()));
+    let upstream = axum::Router::new()
+        .route(
+            "/api/docs/{doc_id}/comments",
+            axum::routing::post(mock_comment_create),
+        )
+        .route(
+            "/api/docs/{doc_id}/comments/{thread_id}",
+            axum::routing::delete(mock_comment_delete),
+        )
+        .with_state(deleted.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let gate = GateStreamProvider::new();
+    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let service = service.with_model_stream_provider(Arc::new(gate.clone()));
+    let session = service
+        .create_session(&unique("comment-queue"), Some("report-test"))
+        .await
+        .unwrap();
+    let started = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("comment-queue-first"),
+                content: "Start the long turn".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(started, PostMessageOutcome::Started { .. }));
+    wait_for_running(&store, &session.session_id).await;
+
+    let app = quire_runtime::http::router(service.clone());
+    let created = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/sessions/{}/comments", session.session_id))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"block_id": "b_proxy", "body": "Tighten while busy"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(created.status(), axum::http::StatusCode::OK);
+
+    let queue = service
+        .list_pending_queue(&session.session_id)
+        .await
+        .unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].source, PendingQueueSource::Comment);
+    assert_eq!(queue[0].thread_id.as_deref(), Some("ct_proxy"));
+    let queue_id = queue[0].queue_id.clone();
+
+    let removed = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("DELETE")
+                .uri(format!(
+                    "/api/sessions/{}/queue/{}",
+                    session.session_id, queue_id
+                ))
+                .header("authorization", "Bearer runtime-test-token")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), axum::http::StatusCode::NO_CONTENT);
+    assert_eq!(
+        deleted.lock().await.as_slice(),
+        ["report-test:ct_proxy".to_string()]
+    );
+    assert!(
+        service
+            .list_pending_queue(&session.session_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    gate.release();
+    wait_for_idle(&store, &session.session_id).await;
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| message.content.contains("<quire_comment_ref")),
+        "deleting a queued comment must not leave an agent trigger behind"
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn consecutive_queued_comments_merge_into_one_message() {
+    let _guard = test_lock().lock().await;
+    let gate = GateStreamProvider::new();
+    let (service, store) = test_service().await;
+    let service = service.with_model_stream_provider(Arc::new(gate.clone()));
+    service.boot().await.unwrap();
+    let session = service
+        .create_session(&unique("comment-merge"), Some("report-test"))
+        .await
+        .unwrap();
+    let started = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("comment-merge-first"),
+                content: "Start the long turn".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(started, PostMessageOutcome::Started { .. }));
+    wait_for_running(&store, &session.session_id).await;
+
+    for (thread_id, comment) in [
+        ("ct_a", "First queued comment"),
+        ("ct_b", "Second queued comment"),
+    ] {
+        let content = format!(
+            "<quire_comment_ref thread_id=\"{thread_id}\" block_id=\"b_{thread_id}\" status=\"open\">\n  <comment>{comment}</comment>\n</quire_comment_ref>"
+        );
+        let outcome = service
+            .post_comment_message(&session.session_id, thread_id, &content)
+            .await
+            .unwrap();
+        let item = match outcome {
+            PostMessageOutcome::Queued { item } => item,
+            other => panic!("expected queued comment, got {other:?}"),
+        };
+        assert_eq!(item.source, PendingQueueSource::Comment);
+    }
+    assert_eq!(
+        service
+            .list_pending_queue(&session.session_id)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    gate.release();
+    for _ in 0..300 {
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        if detail.pending_queue.is_empty()
+            && detail.summary.active_run_status == ActiveRunStatus::Idle
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    let merged: Vec<&SessionMessage> = messages
+        .iter()
+        .filter(|message| {
+            message.role == MessageRole::User
+                && message.content.contains("ct_a")
+                && message.content.contains("ct_b")
+        })
+        .collect();
+    assert_eq!(merged.len(), 1, "consecutive comments must be merged");
+    assert!(merged[0].content.contains("First queued comment"));
+    assert!(merged[0].content.contains("Second queued comment"));
+    service.delete_session(&session.session_id).await.unwrap();
 }
 
 #[tokio::test]

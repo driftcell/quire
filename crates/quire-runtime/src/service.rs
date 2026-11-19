@@ -11,12 +11,14 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
 use quire_session_protocol::{
-    ContextUsage, MessageRole, PendingQuestion, QuestionAnswer, QuestionItem, RunTraceSummary,
-    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
-    SessionStatus, SessionSummary, ToolCallDetail,
+    ActiveRunStatus, ContextUsage, MessageRole, PendingQuestion, PendingQueueItem,
+    PendingQueueSource, QuestionAnswer, QuestionItem, RunTraceSummary, SendMessageRequest,
+    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
+    ToolCallDetail,
 };
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
+use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
@@ -122,6 +124,20 @@ pub struct SessionInspection {
     pub latest_run: Option<RunRecord>,
 }
 
+#[derive(Debug, Clone)]
+pub enum PostMessageOutcome {
+    Started {
+        message: SessionMessage,
+        run_id: String,
+    },
+    Replayed {
+        message: SessionMessage,
+    },
+    Queued {
+        item: PendingQueueItem,
+    },
+}
+
 #[derive(Clone)]
 pub struct RuntimeService {
     store: RuntimeStore,
@@ -131,6 +147,8 @@ pub struct RuntimeService {
     runs: RunRegistry,
     config: Arc<Config>,
     model_stream: Arc<dyn ModelStreamProvider>,
+    session_gates: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    queue_notify: Arc<Notify>,
 }
 
 impl RuntimeService {
@@ -149,6 +167,8 @@ impl RuntimeService {
             runs: RunRegistry::default(),
             config,
             model_stream: Arc::new(StubStreamProvider),
+            session_gates: Arc::new(Mutex::new(HashMap::new())),
+            queue_notify: Arc::new(Notify::new()),
         }
     }
 
@@ -195,8 +215,34 @@ impl RuntimeService {
         let _models = self.models.spawn_invalidation_listener();
         let _mcp = self.mcp.spawn_invalidation_listener();
         let _interrupt = spawn_interrupt_listener(self.store.bus().clone(), self.runs.clone());
+        let queue_service = self.clone();
+        let _queue = tokio::spawn(async move {
+            queue_service.pending_queue_loop().await;
+        });
         let recovered = self.store.recover_running_runs().await?;
         Ok(recovered)
+    }
+
+    async fn pending_queue_loop(self) {
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
+        loop {
+            tokio::select! {
+                _ = self.queue_notify.notified() => {}
+                _ = interval.tick() => {}
+            }
+            let sessions = match self.store.list_sessions_with_pending_queue().await {
+                Ok(sessions) => sessions,
+                Err(error) => {
+                    warn!(%error, "failed to list sessions with pending queues");
+                    continue;
+                }
+            };
+            for session_id in sessions {
+                if let Err(error) = self.drain_pending(&session_id).await {
+                    warn!(%error, %session_id, "failed to drain pending session queue");
+                }
+            }
+        }
     }
 
     pub async fn seed(&self) -> RuntimeResult<SeedReport> {
@@ -266,20 +312,95 @@ impl RuntimeService {
         self.store.delete_session(session_id).await
     }
 
+    async fn session_gate(&self, session_id: &str) -> Arc<Mutex<()>> {
+        let mut gates = self.session_gates.lock().await;
+        gates
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
     pub async fn post_message(
         &self,
         session_id: &str,
         request: &SendMessageRequest,
-    ) -> RuntimeResult<(SessionMessage, bool, Option<String>)> {
+    ) -> RuntimeResult<PostMessageOutcome> {
+        self.post_message_with_source(session_id, request, PendingQueueSource::User, None)
+            .await
+    }
+
+    /// Submit an auto-generated comment review message. Queued instances keep
+    /// their `Comment` source so consecutive comments can be merged and queue
+    /// deletion can remove the still-open server thread.
+    pub async fn post_comment_message(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+        content: &str,
+    ) -> RuntimeResult<PostMessageOutcome> {
+        let request = SendMessageRequest {
+            client_msg_id: format!("comment:{thread_id}"),
+            content: content.to_string(),
+            attachment_ids: Vec::new(),
+        };
+        self.post_message_with_source(
+            session_id,
+            &request,
+            PendingQueueSource::Comment,
+            Some(thread_id),
+        )
+        .await
+    }
+
+    async fn post_message_with_source(
+        &self,
+        session_id: &str,
+        request: &SendMessageRequest,
+        source: PendingQueueSource,
+        thread_id: Option<&str>,
+    ) -> RuntimeResult<PostMessageOutcome> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
         let session = self.store.get_session_summary(session_id).await?;
         if session.status == SessionStatus::Archived {
             return Err(RuntimeError::InvalidRequest(
                 "archived sessions cannot receive new messages".into(),
             ));
         }
+        if let Some(message) = self
+            .store
+            .find_message_by_client_id(session_id, &request.client_msg_id)
+            .await?
+        {
+            return Ok(PostMessageOutcome::Replayed { message });
+        }
+        let awaiting_input = session.active_run_status == ActiveRunStatus::AwaitingInput;
+        let active = !awaiting_input
+            && (session.active_run_status == ActiveRunStatus::Running
+                || self.store.latest_running_run(session_id).await?.is_some());
+        let queue_non_empty =
+            !awaiting_input && !self.store.list_pending_queue(session_id).await?.is_empty();
+        if active || queue_non_empty {
+            let item = self
+                .store
+                .enqueue_pending_message(
+                    session_id,
+                    &request.client_msg_id,
+                    &request.content,
+                    source,
+                    thread_id,
+                    &request.attachment_ids,
+                )
+                .await?;
+            self.emit_queue_update(session_id).await?;
+            if !active {
+                self.drain_pending_locked(session_id, true).await?;
+            }
+            return Ok(PostMessageOutcome::Queued { item });
+        }
         let (message, inserted) = self.store.insert_user_message(session_id, request).await?;
         if !inserted {
-            return Ok((message, false, None));
+            return Ok(PostMessageOutcome::Replayed { message });
         }
         let dismissed = self.store.dismiss_pending_questions(session_id).await?;
         for question in dismissed {
@@ -297,7 +418,208 @@ impl RuntimeService {
             .await?;
         }
         let run_id = self.spawn_turn(session_id, request.content.clone()).await?;
-        Ok((message, true, Some(run_id)))
+        Ok(PostMessageOutcome::Started { message, run_id })
+    }
+
+    pub async fn list_pending_queue(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<Vec<PendingQueueItem>> {
+        self.store.list_pending_queue(session_id).await
+    }
+
+    pub async fn update_pending_message(
+        &self,
+        session_id: &str,
+        queue_id: &str,
+        content: &str,
+    ) -> RuntimeResult<PendingQueueItem> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
+        let item = self
+            .store
+            .update_pending_message(session_id, queue_id, content)
+            .await?;
+        self.emit_queue_update(session_id).await?;
+        Ok(item)
+    }
+
+    pub async fn delete_pending_message(
+        &self,
+        session_id: &str,
+        queue_id: &str,
+    ) -> RuntimeResult<bool> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
+        let item = self
+            .store
+            .get_pending_queue_item(session_id, queue_id)
+            .await?;
+        let deleted = self
+            .store
+            .delete_pending_message(session_id, queue_id)
+            .await?;
+        if deleted {
+            if let Some(item) = item
+                && item.source == PendingQueueSource::Comment
+                && let Some(thread_id) = item.thread_id.as_deref()
+                && let Err(error) = self.delete_server_comment(session_id, thread_id).await
+            {
+                warn!(
+                    %error,
+                    %session_id,
+                    %thread_id,
+                    "failed to delete the comment linked to a removed queue item"
+                );
+            }
+            self.emit_queue_update(session_id).await?;
+        }
+        Ok(deleted)
+    }
+
+    pub async fn remove_pending_comment_threads(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+    ) -> RuntimeResult<u64> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
+        let removed = self
+            .store
+            .remove_pending_comment_thread(session_id, thread_id)
+            .await?;
+        if removed > 0 {
+            self.emit_queue_update(session_id).await?;
+        }
+        Ok(removed)
+    }
+
+    async fn delete_server_comment(&self, session_id: &str, thread_id: &str) -> RuntimeResult<()> {
+        let session = self.store.get_session_summary(session_id).await?;
+        let doc_id = session
+            .doc_id
+            .filter(|doc_id| !doc_id.trim().is_empty())
+            .or_else(|| {
+                session
+                    .linked_doc_id
+                    .filter(|doc_id| !doc_id.trim().is_empty())
+            })
+            .ok_or_else(|| {
+                RuntimeError::InvalidRequest(format!(
+                    "session `{session_id}` is not bound to a report"
+                ))
+            })?;
+        let token = self.config.quire_rw_token.expose_secret().trim();
+        if token.is_empty() {
+            return Err(RuntimeError::InvalidRequest(
+                "QUIRE_RW_TOKEN is not configured on quire-runtime".into(),
+            ));
+        }
+        let response = reqwest::Client::new()
+            .delete(format!(
+                "{}/api/docs/{}/comments/{}",
+                self.config.quire_base_url.trim_end_matches('/'),
+                doc_id,
+                thread_id
+            ))
+            .bearer_auth(token)
+            .header("x-session-id", session_id)
+            .header("x-actor", "reviewer")
+            .send()
+            .await?;
+        if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
+            return Err(RuntimeError::Internal(format!(
+                "quire-server comment delete failed with {}",
+                response.status()
+            )));
+        }
+        Ok(())
+    }
+
+    async fn emit_queue_update(&self, session_id: &str) -> RuntimeResult<()> {
+        let items = self.store.list_pending_queue(session_id).await?;
+        self.emit(
+            session_id,
+            "queue",
+            "system",
+            None,
+            SessionEventKind::PendingQueueUpdated { items },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn drain_pending_locked(
+        &self,
+        session_id: &str,
+        force: bool,
+    ) -> RuntimeResult<Option<String>> {
+        let session = self.store.get_session_summary(session_id).await?;
+        if !force && session.active_run_status != ActiveRunStatus::Idle {
+            return Ok(None);
+        }
+        if self.store.latest_running_run(session_id).await?.is_some() {
+            return Ok(None);
+        }
+        let items = self.store.list_pending_queue(session_id).await?;
+        let Some(first) = items.first() else {
+            return Ok(None);
+        };
+        let mut batch = vec![first.clone()];
+        if first.source == PendingQueueSource::Comment {
+            for item in items.iter().skip(1) {
+                if item.source != PendingQueueSource::Comment {
+                    break;
+                }
+                batch.push(item.clone());
+            }
+        }
+        let content = if batch.len() == 1 {
+            first.content.clone()
+        } else {
+            batch
+                .iter()
+                .map(|item| item.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        };
+        let mut attachment_ids = Vec::new();
+        for item in &batch {
+            for attachment_id in &item.attachment_ids {
+                if !attachment_ids.contains(attachment_id) {
+                    attachment_ids.push(attachment_id.clone());
+                }
+            }
+        }
+        let client_msg_id = format!("queue:{}", first.queue_id);
+        self.store
+            .insert_user_message(
+                session_id,
+                &SendMessageRequest {
+                    client_msg_id,
+                    content: content.clone(),
+                    attachment_ids,
+                },
+            )
+            .await?;
+        self.store
+            .remove_pending_items(
+                session_id,
+                &batch
+                    .iter()
+                    .map(|item| item.queue_id.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        self.emit_queue_update(session_id).await?;
+        let run_id = self.spawn_turn(session_id, content).await?;
+        Ok(Some(run_id))
+    }
+
+    async fn drain_pending(&self, session_id: &str) -> RuntimeResult<Option<String>> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
+        self.drain_pending_locked(session_id, false).await
     }
 
     /// Resolve a pending ask_user card and continue the interrupted reasoning immediately.
@@ -652,6 +974,11 @@ impl RuntimeService {
 
     async fn spawn_turn(&self, session_id: &str, content: String) -> RuntimeResult<String> {
         self.store.get_session_summary(session_id).await?;
+        if self.store.latest_running_run(session_id).await?.is_some() {
+            return Err(RuntimeError::InvalidRequest(format!(
+                "session `{session_id}` already has an active run; queue the message instead"
+            )));
+        }
         let run = self
             .store
             .create_run(session_id, None, "main", &self.config.default_model)
@@ -682,7 +1009,16 @@ impl RuntimeService {
         let result = self.execute_turn(session_id, run_id, content, &token).await;
         self.runs.remove(run_id).await;
         match result {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                if token.is_cancelled() {
+                    return Ok(());
+                }
+                let session = self.store.get_session_summary(session_id).await?;
+                if session.active_run_status != ActiveRunStatus::AwaitingInput {
+                    self.queue_notify.notify_waiters();
+                }
+                Ok(())
+            }
             Err(error) => {
                 if !token.is_cancelled() {
                     let _ = self

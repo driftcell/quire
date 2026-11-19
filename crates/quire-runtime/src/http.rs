@@ -16,8 +16,9 @@ use axum::{
 use futures::Stream;
 use quire_protocol::{CommentThread, TextQuoteSelector};
 use quire_session_protocol::{
-    AttachmentMeta, CreateSessionRequest, QuestionAnswer, RunTraceSummary, SendMessageRequest,
-    SessionDetail, SessionEvent, SessionEventKind, SessionSummary, ToolCallDetail,
+    AttachmentMeta, CreateSessionRequest, PendingQueueItem, QuestionAnswer, RunTraceSummary,
+    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionSummary,
+    ToolCallDetail,
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -43,7 +44,7 @@ use crate::{
         ProviderRecord,
     },
     preview::ChartPreviewRecord,
-    service::RuntimeService,
+    service::{PostMessageOutcome, RuntimeService},
 };
 
 pub fn router(service: RuntimeService) -> Router {
@@ -90,12 +91,17 @@ pub fn router(service: RuntimeService) -> Router {
             post(create_session_comment),
         )
         .route(
+            "/api/sessions/{session_id}/comments/{thread_id}",
+            axum::routing::delete(delete_session_comment).patch(update_session_comment_status),
+        )
+        .route(
             "/api/sessions/{session_id}/comments/{thread_id}/replies",
             post(reply_session_comment),
         )
+        .route("/api/sessions/{session_id}/queue", get(list_session_queue))
         .route(
-            "/api/sessions/{session_id}/comments/{thread_id}",
-            patch(update_session_comment_status),
+            "/api/sessions/{session_id}/queue/{queue_id}",
+            patch(update_session_queue_item).delete(delete_session_queue_item),
         )
         .route(
             "/api/sessions/{session_id}/questions/{question_id}/answer",
@@ -411,10 +417,14 @@ async fn delete_session(
 
 #[derive(Debug, Serialize)]
 struct PostMessageResponse {
-    message: quire_session_protocol::SessionMessage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<quire_session_protocol::SessionMessage>,
     inserted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     run_id: Option<String>,
+    queued: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    queue_item: Option<PendingQueueItem>,
 }
 
 async fn post_message(
@@ -422,12 +432,31 @@ async fn post_message(
     Path(session_id): Path<String>,
     Json(request): Json<SendMessageRequest>,
 ) -> RuntimeResult<Json<PostMessageResponse>> {
-    let (message, inserted, run_id) = service.post_message(&session_id, &request).await?;
-    Ok(Json(PostMessageResponse {
-        message,
-        inserted,
-        run_id,
-    }))
+    let outcome = service.post_message(&session_id, &request).await?;
+    let response = match outcome {
+        PostMessageOutcome::Started { message, run_id } => PostMessageResponse {
+            message: Some(message),
+            inserted: true,
+            run_id: Some(run_id),
+            queued: false,
+            queue_item: None,
+        },
+        PostMessageOutcome::Replayed { message } => PostMessageResponse {
+            message: Some(message),
+            inserted: false,
+            run_id: None,
+            queued: false,
+            queue_item: None,
+        },
+        PostMessageOutcome::Queued { item } => PostMessageResponse {
+            message: None,
+            inserted: true,
+            run_id: None,
+            queued: true,
+            queue_item: Some(item),
+        },
+    };
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -449,6 +478,12 @@ struct SessionCommentReplyRequest {
 #[serde(deny_unknown_fields)]
 struct SessionCommentStatusRequest {
     status: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SessionQueueUpdateRequest {
+    content: String,
 }
 
 #[derive(Debug)]
@@ -509,6 +544,13 @@ async fn create_session_comment(
         }),
     )
     .await?;
+    let content = comment_ref_message(&thread);
+    if let Err(error) = service
+        .post_comment_message(&session_id, &thread.thread_id, &content)
+        .await
+    {
+        tracing::warn!(%error, %session_id, thread_id = %thread.thread_id, "failed to auto-trigger comment review");
+    }
     Ok(Json(thread))
 }
 
@@ -558,6 +600,60 @@ async fn update_session_comment_status(
     Ok(Json(thread))
 }
 
+async fn delete_session_comment(
+    State(service): State<RuntimeService>,
+    Path((session_id, thread_id)): Path<(String, String)>,
+) -> RuntimeResult<StatusCode> {
+    let doc_id = session_comment_doc_id(&service, &session_id).await?;
+    service
+        .remove_pending_comment_threads(&session_id, &thread_id)
+        .await?;
+    forward_comment_delete(
+        &service,
+        &session_id,
+        &format!(
+            "/{}/comments/{}",
+            encode_path_segment(&doc_id),
+            encode_path_segment(&thread_id)
+        ),
+    )
+    .await
+    .map_err(|error| RuntimeError::Internal(error.message))?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn list_session_queue(
+    State(service): State<RuntimeService>,
+    Path(session_id): Path<String>,
+) -> RuntimeResult<Json<Vec<PendingQueueItem>>> {
+    service.list_pending_queue(&session_id).await.map(Json)
+}
+
+async fn update_session_queue_item(
+    State(service): State<RuntimeService>,
+    Path((session_id, queue_id)): Path<(String, String)>,
+    Json(request): Json<SessionQueueUpdateRequest>,
+) -> RuntimeResult<Json<PendingQueueItem>> {
+    service
+        .update_pending_message(&session_id, &queue_id, &request.content)
+        .await
+        .map(Json)
+}
+
+async fn delete_session_queue_item(
+    State(service): State<RuntimeService>,
+    Path((session_id, queue_id)): Path<(String, String)>,
+) -> RuntimeResult<StatusCode> {
+    if service
+        .delete_pending_message(&session_id, &queue_id)
+        .await?
+    {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(RuntimeError::PendingQueueItemNotFound(queue_id))
+    }
+}
+
 async fn session_comment_doc_id(
     service: &RuntimeService,
     session_id: &str,
@@ -576,6 +672,82 @@ async fn session_comment_doc_id(
                 "session `{session_id}` is not bound to a report; create or link a report before commenting"
             ))
         })
+}
+
+fn escape_xml(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn comment_ref_message(thread: &CommentThread) -> String {
+    let comment = thread
+        .messages
+        .first()
+        .map(|message| message.body.as_str())
+        .unwrap_or_default();
+    let mut content = format!(
+        "<quire_comment_ref thread_id=\"{}\" block_id=\"{}\" status=\"{}\">",
+        escape_xml(&thread.thread_id),
+        escape_xml(thread.block_id.as_str()),
+        escape_xml(thread.status.as_str()),
+    );
+    if let Some(quote) = &thread.quote {
+        content.push_str(&format!("\n  <quote>{}</quote>", escape_xml(&quote.exact)));
+    }
+    content.push_str(&format!(
+        "\n  <comment>{}</comment>\n</quire_comment_ref>",
+        escape_xml(comment)
+    ));
+    content
+}
+
+async fn forward_comment_delete(
+    service: &RuntimeService,
+    session_id: &str,
+    path: &str,
+) -> Result<(), CommentProxyError> {
+    let config = service.config();
+    let base_url = config.quire_base_url.trim_end_matches('/');
+    let token = config.quire_rw_token.expose_secret().trim();
+    if token.is_empty() {
+        return Err(comment_proxy_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "comment_proxy_not_configured",
+            "quire-runtime has no QUIRE_RW_TOKEN, so it cannot delete comments",
+            "Configure QUIRE_RW_TOKEN on quire-runtime.",
+        ));
+    }
+    let response = reqwest::Client::new()
+        .delete(format!("{base_url}/api/docs{path}"))
+        .bearer_auth(token)
+        .header("x-session-id", session_id)
+        .header("x-actor", "reviewer")
+        .send()
+        .await
+        .map_err(|error| {
+            comment_proxy_error(
+                StatusCode::BAD_GATEWAY,
+                "comment_proxy_unavailable",
+                &format!("failed to reach quire-server: {error}"),
+                "Verify QUIRE_BASE_URL and that quire-server is running.",
+            )
+        })?;
+    let status = response.status();
+    if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(());
+    }
+    let bytes = response.bytes().await.unwrap_or_default();
+    let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    Err(comment_proxy_error(
+        status,
+        "comment_proxy_rejected",
+        &upstream_error_message(&bytes),
+        "Inspect the comment thread and the bound report, then retry.",
+    ))
 }
 
 async fn forward_comment_request(

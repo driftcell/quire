@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::session::{QuestionAnswer, QuestionItem};
+use crate::session::{PendingQueueItem, QuestionAnswer, QuestionItem};
 
 /// Common envelope for every Session-SSE frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -126,6 +126,9 @@ pub enum SessionEventKind {
     SessionTitleUpdated {
         title: String,
     },
+    PendingQueueUpdated {
+        items: Vec<PendingQueueItem>,
+    },
 }
 
 impl SessionEventKind {
@@ -148,6 +151,7 @@ impl SessionEventKind {
             Self::QuestionnaireDismissed { .. } => "questionnaire_dismissed",
             Self::DocLinked { .. } => "doc_linked",
             Self::SessionTitleUpdated { .. } => "session_title_updated",
+            Self::PendingQueueUpdated { .. } => "pending_queue_updated",
         }
     }
 
@@ -283,6 +287,7 @@ mod tests {
             "questionnaire_answered",
             "questionnaire_dismissed",
             "doc_linked",
+            "pending_queue_updated",
         ] {
             assert!(rendered.contains(event), "missing {event} in schema");
         }

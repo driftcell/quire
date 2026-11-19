@@ -27,13 +27,14 @@ export interface CommentsPanelProps {
   docId: string;
   threads: CommentThread[];
   activeThreadId?: string | null;
+  pendingThreadIds?: ReadonlySet<string>;
   readOnly?: boolean;
   onClose?: () => void;
   onSelectThread?: (thread: CommentThread) => void;
   onSelectBlock?: (blockId: string) => void;
   onReply?: (threadId: string, body: string) => Promise<void>;
   onUpdateStatus?: (threadId: string, status: CommentStatus) => Promise<void>;
-  onAskAgent?: (threads: CommentThread[]) => void;
+  onDeleteThread?: (thread: CommentThread) => Promise<void>;
 }
 
 function summarizeBlock(block: Block): string {
@@ -82,13 +83,14 @@ export function CommentsPanel({
   docId,
   threads,
   activeThreadId,
+  pendingThreadIds,
   readOnly = false,
   onClose,
   onSelectThread,
   onSelectBlock,
   onReply,
   onUpdateStatus,
-  onAskAgent,
+  onDeleteThread,
 }: CommentsPanelProps) {
   const [filter, setFilter] = useState<CommentFilter>("open");
   const [busy, setBusy] = useState(false);
@@ -108,10 +110,6 @@ export function CommentsPanel({
         .length,
       archived: threads.filter((thread) => thread.status === "archived").length,
     }),
-    [threads],
-  );
-  const openThreads = useMemo(
-    () => threads.filter((thread) => thread.status === "open"),
     [threads],
   );
   const filtered = useMemo(() => {
@@ -219,20 +217,6 @@ export function CommentsPanel({
           </div>
         </div>
 
-        {!readOnly && openThreads.length > 0 && (
-          <div className="shrink-0 border-b px-3 py-2">
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              className="w-full justify-center gap-1.5"
-              onClick={() => onAskAgent?.(openThreads)}
-            >
-              AI 修订全部 ({openThreads.length})
-            </Button>
-          </div>
-        )}
-
         <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-3">
           {filtered.length === 0 ? (
             <div className="py-12 text-center text-xs text-muted-foreground">
@@ -294,6 +278,12 @@ export function CommentsPanel({
                     <span className="text-[11px] text-muted-foreground">
                       {statusLabel(thread.status)}
                     </span>
+                    {thread.status === "open" &&
+                      pendingThreadIds?.has(thread.thread_id) && (
+                        <span className="text-[10px] text-muted-foreground">
+                          排队中
+                        </span>
+                      )}
                     {thread.anchor_detached && (
                       <span className="text-[10px] text-muted-foreground/70">
                         位置已失效
@@ -432,17 +422,24 @@ export function CommentsPanel({
                         回复
                       </button>
                     )}
-                    {!readOnly && thread.status === "open" && onAskAgent && (
+                    {!readOnly && thread.status === "open" && onDeleteThread && (
                       <button
                         type="button"
-                        className="hover:text-foreground"
+                        className="hover:text-destructive"
                         disabled={busy}
                         onClick={(event) => {
                           event.stopPropagation();
-                          onAskAgent([thread]);
+                          void (async () => {
+                            setBusy(true);
+                            try {
+                              await onDeleteThread(thread);
+                            } finally {
+                              setBusy(false);
+                            }
+                          })();
                         }}
                       >
-                        AI 修订
+                        删除
                       </button>
                     )}
                     {!readOnly &&

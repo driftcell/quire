@@ -77,7 +77,7 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route(
             "/api/docs/{doc_id}/comments/{thread_id}",
-            patch(update_comment_status),
+            patch(update_comment_status).delete(delete_comment),
         )
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::rw_auth));
 
@@ -101,6 +101,7 @@ fn cors_layer(state: &AppState) -> CorsLayer {
             axum::http::Method::GET,
             axum::http::Method::POST,
             axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
             axum::http::Method::OPTIONS,
         ])
         .allow_headers(Any);
@@ -420,6 +421,18 @@ async fn update_comment_status(
         .await?;
     state.publish_comment_updated(&thread).await;
     Ok(Json(thread))
+}
+
+async fn delete_comment(
+    State(state): State<AppState>,
+    Path((doc_id, thread_id)): Path<(DocId, String)>,
+) -> Result<StatusCode, ApiError> {
+    state
+        .store
+        .delete_comment_thread(&doc_id, &thread_id)
+        .await?;
+    state.publish_comment_deleted(&doc_id, &thread_id).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Debug, Deserialize)]

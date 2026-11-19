@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  editableCommentRefText,
   parseCommentRefs,
   serializeCommentRefs,
+  updateCommentRefContent,
   type CommentRefPayload,
 } from "./commentRefXml";
 
@@ -117,5 +119,28 @@ describe("commentRefXml", () => {
     const parsed = parseCommentRefs(content);
     expect(parsed.refs).toEqual([]);
     expect(parsed.body).toBe(content);
+  });
+
+  test("edits comment-only payloads without dropping the XML structure", () => {
+    const original = serializeCommentRefs([ref({ comment: "旧批注" })], "");
+    expect(editableCommentRefText(original)).toBe("旧批注");
+    const updated = updateCommentRefContent(original, "新批注");
+    const parsed = parseCommentRefs(updated);
+    expect(parsed.refs).toHaveLength(1);
+    expect(parsed.refs[0]?.comment).toBe("新批注");
+    expect(parsed.refs[0]?.thread_id).toBe("ct_1");
+    expect(parsed.body).toBe("");
+  });
+
+  test("edits the trailing instruction while preserving refs", () => {
+    const original = serializeCommentRefs(
+      [ref({ quote: "原文" })],
+      "请修改这一段",
+    );
+    expect(editableCommentRefText(original)).toBe("请修改这一段");
+    const updated = updateCommentRefContent(original, "改成更简洁的表达");
+    const parsed = parseCommentRefs(updated);
+    expect(parsed.refs[0]?.comment).toBe("请补充同比口径。");
+    expect(parsed.body).toBe("改成更简洁的表达");
   });
 });
