@@ -1045,7 +1045,7 @@ impl RigModelCore {
             tools.push(DynamicTool::new(
                 ToolName::new("preview_report")
                     .map_err(|error| RuntimeError::Internal(error.to_string()))?,
-                "Render a visual preview of the Quire report (or a specific section/blocks/page) via controlled Playwright MCP and return a PNG screenshot plus active CSS and layout overflow diagnostics.",
+                "Render a preview of the Quire report via controlled Playwright MCP and return structured layout diagnostics plus a preview URL. The PNG is not included for text-only agent runs; ask the user to inspect the preview URL for visual issues.",
                 json!({
                     "type": "object",
                     "properties": {
@@ -1063,10 +1063,13 @@ impl RigModelCore {
                 move |arguments| {
                     let cfg = cfg.clone();
                     Box::pin(async move {
-                        let input: crate::preview::PreviewReportInput =
+                        let mut input: crate::preview::PreviewReportInput =
                             serde_json::from_value(arguments).map_err(|error| {
                                 ToolExecutionError::invalid_args(error.to_string())
                             })?;
+                        // The agent tool result is text-only; never embed a base64 PNG
+                        // in the model context. Visual clients use the admin MCP tool.
+                        input.include_image = false;
                         crate::preview::execute_preview_report(&cfg, input)
                             .await
                             .map(|res| ToolOutput::json(res.to_tool_json()))

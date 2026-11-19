@@ -123,6 +123,7 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
         sse_replay_limit: 500,
         preview_throttle_ms: 65,
         preview_base_url: "http://127.0.0.1:5173".into(),
+        preview_public_url: "http://localhost:5173".into(),
         playwright_mcp_url: None,
     });
     let service = RuntimeService::new(

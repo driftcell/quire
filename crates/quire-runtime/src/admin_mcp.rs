@@ -486,7 +486,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "preview_report",
-        description = "Render a Quire report preview via controlled Playwright MCP, returning an ImageContent screenshot plus active CSS and layout diagnostics."
+        description = "Render a Quire report preview via controlled Playwright MCP, returning an ImageContent screenshot plus structured layout diagnostics and the preview URL. Set include_image=false to skip the PNG."
     )]
     pub async fn preview_report(
         &self,

@@ -53,9 +53,17 @@ pub struct PreviewReportInput {
     /// Include active theme tokens, custom_css, and computed styles for key selectors.
     #[serde(default = "default_include_styles")]
     pub include_styles: bool,
+    /// Include the base64 PNG screenshot. Defaults to true for MCP visual clients;
+    /// the text-only agent tool forces this off.
+    #[serde(default = "default_include_image")]
+    pub include_image: bool,
 }
 
 fn default_include_styles() -> bool {
+    true
+}
+
+fn default_include_image() -> bool {
     true
 }
 
@@ -69,42 +77,60 @@ pub struct PreviewReportResult {
     pub layout_diagnostics: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub styles: Option<Value>,
-    pub image_mime_type: String,
-    pub image_base64: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_mime_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image_base64: Option<String>,
 }
 
 impl PreviewReportResult {
-    /// Build an MCP `CallToolResult` containing the PNG `ImageContent` plus a JSON summary.
+    /// Build an MCP `CallToolResult` with the PNG `ImageContent` when requested, plus a JSON summary.
     pub fn to_mcp_call_tool_result(&self) -> CallToolResult {
         let summary = json!({
             "doc_id": self.doc_id,
+            "preview_url": self.preview_url,
             "mode": self.mode,
             "revision": self.revision,
             "total_pages": self.total_pages,
             "layout_diagnostics": self.layout_diagnostics,
             "styles": self.styles,
         });
-        CallToolResult::success(vec![
-            ContentBlock::image(self.image_base64.clone(), self.image_mime_type.clone()),
-            ContentBlock::text(serde_json::to_string_pretty(&summary).unwrap_or_default()),
-        ])
+        let mut content = Vec::new();
+        if let (Some(data), Some(mime)) = (&self.image_base64, &self.image_mime_type) {
+            content.push(ContentBlock::image(data.clone(), mime.clone()));
+        }
+        content.push(ContentBlock::text(
+            serde_json::to_string_pretty(&summary).unwrap_or_default(),
+        ));
+        CallToolResult::success(content)
     }
 
-    /// Build a JSON payload for internal `DynamicTool` execution.
+    /// Build a JSON payload for internal `DynamicTool` execution. The screenshot is
+    /// omitted unless the caller explicitly requested it.
     pub fn to_tool_json(&self) -> Value {
-        json!({
+        let mut payload = json!({
             "doc_id": self.doc_id,
+            "preview_url": self.preview_url,
             "mode": self.mode,
             "revision": self.revision,
             "total_pages": self.total_pages,
             "layout_diagnostics": self.layout_diagnostics,
             "styles": self.styles,
-            "image_content": {
-                "type": "image",
-                "mimeType": self.image_mime_type,
-                "data": self.image_base64,
-            }
-        })
+            "image_included": self.image_base64.is_some(),
+        });
+        if let (Some(data), Some(mime)) = (&self.image_base64, &self.image_mime_type)
+            && let Some(object) = payload.as_object_mut()
+        {
+            object.insert(
+                "image_content".to_string(),
+                json!({
+                    "type": "image",
+                    "mimeType": mime,
+                    "data": data,
+                }),
+            );
+        }
+        payload
     }
 }
 
@@ -122,7 +148,30 @@ fn percent_encode(input: &str) -> String {
 }
 
 pub fn build_preview_url(config: &Config, input: &PreviewReportInput) -> String {
-    let base = config.preview_base_url.trim_end_matches('/');
+    build_preview_url_for_base(
+        &config.preview_base_url,
+        config.quire_ro_token.expose_secret(),
+        input,
+        true,
+    )
+}
+
+fn build_public_preview_url(config: &Config, input: &PreviewReportInput) -> String {
+    build_preview_url_for_base(
+        &config.preview_public_url,
+        config.quire_ro_token.expose_secret(),
+        input,
+        false,
+    )
+}
+
+fn build_preview_url_for_base(
+    base: &str,
+    ro_token: &str,
+    input: &PreviewReportInput,
+    include_ro_token: bool,
+) -> String {
+    let base = base.trim_end_matches('/');
     let mut query_parts = vec![format!(
         "mode={}",
         match input.mode {
@@ -156,11 +205,11 @@ pub fn build_preview_url(config: &Config, input: &PreviewReportInput) -> String 
         query_parts.push(format!("rev={rev}"));
     }
 
-    let ro_token = config.quire_ro_token.expose_secret().trim();
-    let hash = if ro_token.is_empty() {
-        String::new()
-    } else {
+    let ro_token = ro_token.trim();
+    let hash = if include_ro_token && !ro_token.is_empty() {
         format!("#ro_token={}", percent_encode(ro_token))
+    } else {
+        String::new()
     };
 
     format!(
@@ -253,6 +302,7 @@ pub async fn execute_preview_report(
         })?;
 
     let preview_url = build_preview_url(config, &input);
+    let public_preview_url = build_public_preview_url(config, &input);
     let client = McpHttpClient::new_optional(playwright_url, None, "preview", "quire-preview");
 
     client
@@ -352,18 +402,22 @@ pub async fn execute_preview_report(
         .await?;
     let inspected = extract_eval_json(&inspected_raw).unwrap_or_else(|| json!({}));
 
-    let screenshot_raw = client
-        .call_tool_raw(
-            "browser_take_screenshot",
-            json!({ "fullPage": true, "type": "png" }),
-        )
-        .await?;
-    let (image_base64, image_mime_type) =
-        extract_image_content(&screenshot_raw).ok_or_else(|| {
+    let (image_base64, image_mime_type) = if input.include_image {
+        let screenshot_raw = client
+            .call_tool_raw(
+                "browser_take_screenshot",
+                json!({ "fullPage": true, "type": "png" }),
+            )
+            .await?;
+        let (data, mime) = extract_image_content(&screenshot_raw).ok_or_else(|| {
             RuntimeError::Internal(
                 "Playwright MCP browser_take_screenshot did not return ImageContent".into(),
             )
         })?;
+        (Some(data), Some(mime))
+    } else {
+        (None, None)
+    };
 
     let revision = inspected
         .get("revision")
@@ -377,7 +431,7 @@ pub async fn execute_preview_report(
 
     Ok(PreviewReportResult {
         doc_id,
-        preview_url,
+        preview_url: public_preview_url,
         mode: input.mode,
         revision,
         total_pages,
@@ -418,6 +472,68 @@ mod tests {
         assert_eq!(
             parsed.as_ref().and_then(|value| value.get("error")),
             Some(&Value::Null)
+        );
+    }
+
+    fn preview_result(image: Option<(&str, &str)>) -> PreviewReportResult {
+        PreviewReportResult {
+            doc_id: "report-test".into(),
+            preview_url: "http://localhost:5173/docs/report-test/preview".into(),
+            mode: PreviewViewMode::Paged,
+            revision: 3,
+            total_pages: 2,
+            layout_diagnostics: json!({"overflow_count": 0, "overflow_elements": []}),
+            styles: None,
+            image_mime_type: image.map(|(_, mime)| mime.to_string()),
+            image_base64: image.map(|(data, _)| data.to_string()),
+        }
+    }
+
+    #[test]
+    fn public_preview_url_omits_the_ro_token() {
+        let input = PreviewReportInput {
+            doc_id: "report-test".into(),
+            mode: PreviewViewMode::Paged,
+            section_id: None,
+            block_ids: None,
+            page: None,
+            rev: None,
+            include_styles: false,
+            include_image: false,
+        };
+        let public = build_preview_url_for_base("http://localhost:5173", "secret", &input, false);
+        assert!(!public.contains("ro_token"));
+        let internal = build_preview_url_for_base("http://localhost:5173", "secret", &input, true);
+        assert!(internal.contains("ro_token=secret"));
+    }
+
+    #[test]
+    fn tool_json_omits_the_image_when_not_requested() {
+        let payload = preview_result(None).to_tool_json();
+        assert_eq!(
+            payload.get("image_included").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert!(payload.get("image_content").is_none());
+        assert_eq!(
+            payload.get("preview_url").and_then(Value::as_str),
+            Some("http://localhost:5173/docs/report-test/preview")
+        );
+    }
+
+    #[test]
+    fn tool_json_includes_the_image_when_requested() {
+        let payload = preview_result(Some(("cG5n", "image/png"))).to_tool_json();
+        assert_eq!(
+            payload.get("image_included").and_then(Value::as_bool),
+            Some(true)
+        );
+        assert_eq!(
+            payload
+                .get("image_content")
+                .and_then(|value| value.get("mimeType"))
+                .and_then(Value::as_str),
+            Some("image/png")
         );
     }
 }

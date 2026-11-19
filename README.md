@@ -89,6 +89,7 @@ frontend metadata.
 | `RUNTIME_SSE_REPLAY_LIMIT` | `500` | Maximum Session-SSE replay frames before `sync_required` |
 | `RUNTIME_PREVIEW_THROTTLE_MS` | `65` | Tool-argument preview throttle (clamped to 50–80 ms) |
 | `PREVIEW_BASE_URL` | `http://127.0.0.1:5173` | Frontend origin loaded by Playwright for `preview_report` |
+| `PREVIEW_PUBLIC_URL` | `http://localhost:5173` | Preview origin returned to the user |
 | `PLAYWRIGHT_MCP_URL` | — | Playwright MCP base URL; the runtime posts JSON-RPC to `<url>/mcp` |
 | `PLAYWRIGHT_MCP_PORT` | `8931` | Host port published by the compose `playwright` service |
 | `RUNTIME_MCP_ALLOWED_HOSTS` | loopback defaults | Comma-separated Host allowlist for `/admin/mcp` |
@@ -105,10 +106,16 @@ docker compose up -d playwright
 # .env
 # PLAYWRIGHT_MCP_URL=http://127.0.0.1:8931
 # PREVIEW_BASE_URL=http://host.docker.internal:5173
+# PREVIEW_PUBLIC_URL=http://localhost:5173
 ```
 
 Vite binds `0.0.0.0` in dev so `host.docker.internal:5173` resolves to the host.
 On Linux, `host.docker.internal` is provided by the compose `extra_hosts` entry.
+
+The agent-facing `preview_report` tool returns structured diagnostics and the
+preview URL only; the base64 PNG is omitted so text-only models do not receive
+an unreadable image. MCP visual clients can request the image with
+`include_image: true`.
 
 ## Agent workflow
 

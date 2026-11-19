@@ -27,6 +27,7 @@ pub struct Config {
     pub sse_replay_limit: usize,
     pub preview_throttle_ms: u64,
     pub preview_base_url: String,
+    pub preview_public_url: String,
     pub playwright_mcp_url: Option<String>,
 }
 
@@ -57,6 +58,7 @@ impl Debug for Config {
             .field("sse_replay_limit", &self.sse_replay_limit)
             .field("preview_throttle_ms", &self.preview_throttle_ms)
             .field("preview_base_url", &self.preview_base_url)
+            .field("preview_public_url", &self.preview_public_url)
             .field("playwright_mcp_url", &self.playwright_mcp_url)
             .finish()
     }
@@ -102,6 +104,8 @@ impl Config {
             .clamp(50, 80);
         let preview_base_url =
             env::var("PREVIEW_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:5173".into());
+        let preview_public_url =
+            env::var("PREVIEW_PUBLIC_URL").unwrap_or_else(|_| "http://localhost:5173".into());
         let playwright_mcp_url = env::var("PLAYWRIGHT_MCP_URL")
             .ok()
             .filter(|value| !value.trim().is_empty());
@@ -123,6 +127,7 @@ impl Config {
             sse_replay_limit,
             preview_throttle_ms,
             preview_base_url,
+            preview_public_url,
             playwright_mcp_url,
         }
     }
@@ -175,6 +180,7 @@ mod tests {
             sse_replay_limit: 500,
             preview_throttle_ms: 65,
             preview_base_url: "http://127.0.0.1:5173".into(),
+            preview_public_url: "http://localhost:5173".into(),
             playwright_mcp_url: None,
         };
         let rendered = format!("{config:?}");
