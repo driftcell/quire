@@ -26,7 +26,7 @@ wire protocols beyond the provider registry already owned by `quire-runtime`.
 
 ### Tables
 
-`migrations/0003_kb_branches.sql` adds:
+The consolidated `migrations/0001_init.sql` adds:
 
 - `kb_branches(name PK, description, status, base_version, head_version, created_at, updated_at)`.
   Status is constrained to `active`, `draft`, `archived`; a partial unique index allows one active
@@ -38,8 +38,8 @@ wire protocols beyond the provider registry already owned by `quire-runtime`.
   documents, agents and skills (skills include resources). Snapshots are immutable.
 - `agent_sessions.kb_branch`.
 
-`migrations/0004_kb_branch_conflicts.sql` adds `kb_branch_conflicts(branch PK, active_version,
-branch_head_version, created_at)`.
+The same migration adds `kb_branch_conflicts(branch PK, active_version, branch_head_version,
+created_at)`.
 
 ### Versioning and isolation
 

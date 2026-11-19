@@ -16,7 +16,7 @@ does not define MCP wire protocol fields, Quire report tool semantics, or agent 
 
 ### Storage
 
-`migrations/0006_mcp_registry.sql` adds:
+The consolidated `migrations/0001_init.sql` adds:
 
 - `mcp_servers(server_id PK, name, url, auth_token_ref, enabled, created_at, updated_at)`
 - `mcp_tools(server_id FK ON DELETE CASCADE, tool_name, description, input_schema, enabled,

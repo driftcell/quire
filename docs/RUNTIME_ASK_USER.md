@@ -35,7 +35,7 @@ SSE additions:
 
 ### Storage
 
-`migrations/0005_agent_questions.sql` adds `agent_questions`:
+The consolidated `migrations/0001_init.sql` adds `agent_questions`:
 
 - `question_id TEXT PRIMARY KEY`
 - `session_id` FK to `agent_sessions` with cascade delete
