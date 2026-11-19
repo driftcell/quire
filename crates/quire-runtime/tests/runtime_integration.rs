@@ -85,8 +85,21 @@ async fn mock_mcp_tools_list(axum::Json(body): axum::Json<Value>) -> axum::Json<
 
 fn database_url() -> String {
     let _ = dotenvy::dotenv();
-    std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://report:report@127.0.0.1:5432/report_core".into())
+    let url = std::env::var("TEST_DATABASE_URL")
+        .or_else(|_| std::env::var("DATABASE_URL"))
+        .unwrap_or_else(|_| "postgres://report:report@127.0.0.1:5432/report_core_test".into());
+    let database = url
+        .rsplit('/')
+        .next()
+        .unwrap_or_default()
+        .split('?')
+        .next()
+        .unwrap_or_default();
+    assert!(
+        !database.is_empty() && database != "report_core",
+        "refusing to run destructive runtime tests against `{database}`; set TEST_DATABASE_URL to a disposable database (for example .../report_core_test)"
+    );
+    url
 }
 
 fn redis_url() -> String {
@@ -2203,7 +2216,11 @@ async fn mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
     for server in service.mcp().list_servers().await.unwrap() {
-        service.mcp().delete_server(&server.server_id).await.unwrap();
+        service
+            .mcp()
+            .delete_server(&server.server_id)
+            .await
+            .unwrap();
     }
     let server_id = unique("mcp-registry");
     service
@@ -2269,7 +2286,11 @@ async fn mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache() {
         .iter()
         .map(|binding| binding.server_id.as_str())
         .collect();
-    assert_eq!(wildcard.len(), 1, "unexpected servers: {wildcard_server_ids:?}");
+    assert_eq!(
+        wildcard.len(),
+        1,
+        "unexpected servers: {wildcard_server_ids:?}"
+    );
     assert_eq!(wildcard[0].tool_names, vec!["safe_tool".to_string()]);
 
     service

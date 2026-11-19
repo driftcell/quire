@@ -53,10 +53,14 @@ for DB-free builds).
 ```bash
 just test-protocol   # pure protocol unit tests
 just test-store      # unit + live PostgreSQL/Redis integration tests
-just test            # workspace tests including the E2E multi-agent simulation
+just test            # workspace tests; recreates report_core_test from DATABASE_URL
 just clippy          # cargo clippy --workspace --all-targets -- -D warnings
 just e2e             # explicit end-to-end run
 ```
+
+`just test` derives a disposable `report_core_test` database from `DATABASE_URL`. Running the
+runtime integration tests directly with `cargo test` requires `TEST_DATABASE_URL`; they refuse to
+run against `report_core` because they mutate runtime state.
 
 The E2E test boots the real `quire-server` binary, starts two parallel MCP clients, observes SSE,
 merges an offline draft, self-heals a dangling citation, rolls back and validates `computed`

@@ -43,9 +43,15 @@ test-unit:
     cargo test -p quire-server --lib
     cargo test -p quire-runtime --lib
 
-# Full test suite; requires `just up` and `just migrate`.
+# Full test suite; creates a disposable database next to DATABASE_URL.
 test:
-    cargo test --workspace
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TEST_DATABASE_URL="${DATABASE_URL%/*}/report_core_test"
+    sqlx database drop --force --database-url "$TEST_DATABASE_URL" >/dev/null 2>&1 || true
+    sqlx database create --database-url "$TEST_DATABASE_URL"
+    sqlx migrate run --database-url "$TEST_DATABASE_URL" --source crates/quire-store/migrations
+    TEST_DATABASE_URL="$TEST_DATABASE_URL" cargo test --workspace
 
 test-protocol:
     cargo test -p quire-protocol
