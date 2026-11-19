@@ -65,7 +65,6 @@ async-trait = "0.1"
 base64 = "0.22"
 ring = "0.17"
 rig-core = { version = "0.46", features = ["reqwest"] }
-rig-agent = "0.46"
 rig-rmcp = "0.46"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 axum = { version = "0.8", features = ["macros"] }

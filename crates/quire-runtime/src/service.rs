@@ -15,10 +15,7 @@ use quire_session_protocol::{
     SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
     SessionStatus, SessionSummary, ToolCallDetail,
 };
-use rig_agent::extractor::ExtractorBuilder;
-use schemars::JsonSchema;
 use secrecy::SecretString;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -33,7 +30,7 @@ use crate::{
     mcp_client::RmcpClient,
     mcp_registry::McpRegistry,
     model_stream::{ModelStreamEvent, ModelStreamProvider, ModelTurnRequest, StubStreamProvider},
-    models::{ModelRegistry, ProviderProtocol},
+    models::ModelRegistry,
     prompt::{ContextMessage, ResumeContext, build_resume_context},
     store::{RunRecord, RuntimeStore},
 };
@@ -42,21 +39,6 @@ use crate::{
 pub struct LinkedDoc {
     pub doc_id: String,
     pub title: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-struct ExtractedSessionTitle {
-    /// Concise session title inferred from the first exchange.
-    title: String,
-}
-
-fn is_placeholder_session_title(title: &str) -> bool {
-    let title = title.trim();
-    title.is_empty()
-        || matches!(
-            title,
-            "新会话" | "新报告会话" | "未命名会话" | "Untitled" | "New session"
-        )
 }
 
 #[async_trait]
@@ -1106,103 +1088,6 @@ impl RuntimeService {
                 .await?;
         }
         self.store.finish_run(run_id, "completed", None).await?;
-        if let Ok(current) = self.store.get_session_summary(session_id).await
-            && is_placeholder_session_title(&current.title)
-        {
-            self.spawn_title_extraction(
-                session_id.to_string(),
-                run_id.to_string(),
-                model_route.clone(),
-                content.to_string(),
-                response.clone(),
-            );
-        }
-        Ok(())
-    }
-
-    fn spawn_title_extraction(
-        &self,
-        session_id: String,
-        run_id: String,
-        model_route: String,
-        user_message: String,
-        assistant_message: String,
-    ) {
-        let service = self.clone();
-        tokio::spawn(async move {
-            if let Err(error) = service
-                .extract_session_title(
-                    &session_id,
-                    &run_id,
-                    &model_route,
-                    &user_message,
-                    &assistant_message,
-                )
-                .await
-            {
-                warn!(
-                    %error,
-                    %session_id,
-                    "automatic session title extraction failed"
-                );
-            }
-        });
-    }
-
-    async fn extract_session_title(
-        &self,
-        session_id: &str,
-        run_id: &str,
-        model_route: &str,
-        user_message: &str,
-        assistant_message: &str,
-    ) -> RuntimeResult<()> {
-        let resolved = self.models.resolve(model_route).await?;
-        let max_tokens = if resolved.protocol == ProviderProtocol::Anthropic {
-            8192
-        } else {
-            resolved
-                .max_output_tokens
-                .and_then(|value| u64::try_from(value).ok())
-                .unwrap_or(4096)
-        };
-        let model = self.models.build_rig_model(model_route).await?;
-        let extractor = ExtractorBuilder::<ExtractedSessionTitle>::new(model)
-            .append_preamble(
-                "The title must be concise Chinese, at most 20 characters, without quotes or markdown.",
-            )
-            .additional_params(serde_json::json!({"thinking": {"type": "disabled"}}))
-            .max_tokens(max_tokens)
-            .retries(1)
-            .build();
-        let prompt = format!(
-            "First user message:\n{}\n\nAssistant reply:\n{}",
-            user_message.chars().take(4000).collect::<String>(),
-            assistant_message.chars().take(4000).collect::<String>()
-        );
-        let extracted = extractor
-            .extract(prompt)
-            .await
-            .map_err(|error| RuntimeError::Internal(format!("title extraction failed: {error}")))?;
-        let title: String = extracted.output.title.trim().chars().take(60).collect();
-        if title.is_empty() {
-            return Ok(());
-        }
-        let current = self.store.get_session_summary(session_id).await?;
-        if !is_placeholder_session_title(&current.title) {
-            return Ok(());
-        }
-        self.store
-            .update_session(session_id, Some(&title), None)
-            .await?;
-        self.emit(
-            session_id,
-            run_id,
-            "main",
-            None,
-            SessionEventKind::SessionTitleUpdated { title },
-        )
-        .await?;
         Ok(())
     }
 
