@@ -1154,6 +1154,22 @@
           "properties": {
             "event": {
               "type": "string",
+              "const": "user_message_added"
+            },
+            "message_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "message_id"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
               "const": "pending_queue_updated"
             },
             "items": {

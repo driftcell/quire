@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ArrowUpIcon,
   ArrowUpRightIcon,
   GitCompareArrowsIcon,
   MessageSquareIcon,
@@ -240,14 +241,15 @@ export function CommentsPanel({
               if (firstMessage) {
                 addressedMessages.push(firstMessage);
               }
-              const latest = latestAgentMessage ?? latestMessage;
-              if (
-                latest &&
-                !addressedMessages.some(
-                  (message) => message.message_id === latest.message_id,
-                )
-              ) {
-                addressedMessages.push(latest);
+              for (const message of [latestAgentMessage, latestMessage]) {
+                if (
+                  message &&
+                  !addressedMessages.some(
+                    (entry) => entry.message_id === message.message_id,
+                  )
+                ) {
+                  addressedMessages.push(message);
+                }
               }
               const messagesToShow =
                 thread.status === "addressed"
@@ -278,7 +280,7 @@ export function CommentsPanel({
                     <span className="text-[11px] text-muted-foreground">
                       {statusLabel(thread.status)}
                     </span>
-                    {thread.status === "open" &&
+                    {thread.status !== "archived" &&
                       pendingThreadIds?.has(thread.thread_id) && (
                         <span className="text-[10px] text-muted-foreground">
                           排队中
@@ -360,11 +362,11 @@ export function CommentsPanel({
                   {!readOnly &&
                     thread.status !== "archived" &&
                     replyThreadId === thread.thread_id && (
-                      <div className="flex items-end gap-1.5 pt-1">
+                      <div className="flex items-end gap-1.5 rounded-lg border border-input bg-background px-2 py-1.5 transition-colors focus-within:border-ring">
                         <Textarea
                           ref={replyInputRef}
                           rows={1}
-                          className="min-h-8 text-xs"
+                          className="min-h-7 resize-none border-0 bg-transparent px-0 py-0 text-xs shadow-none focus-visible:ring-0 dark:bg-transparent"
                           placeholder="回复..."
                           value={replyDraft}
                           onClick={(event) => event.stopPropagation()}
@@ -391,15 +393,17 @@ export function CommentsPanel({
                         />
                         <Button
                           type="button"
-                          size="xs"
-                          variant="outline"
+                          size="icon-xs"
+                          variant="ghost"
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                          aria-label="发送回复"
                           disabled={busy || !replyDraft.trim()}
                           onClick={(event) => {
                             event.stopPropagation();
                             void submitReply(thread.thread_id);
                           }}
                         >
-                          发送
+                          <ArrowUpIcon className="size-3.5" />
                         </Button>
                       </div>
                     )}

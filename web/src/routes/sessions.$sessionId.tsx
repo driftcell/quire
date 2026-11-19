@@ -17,7 +17,6 @@ import {
   PanelLeftIcon,
   PrinterIcon,
   ScrollTextIcon,
-  SquareIcon,
 } from "lucide-react";
 import { getDocument, listComments } from "@/api/quire";
 import {
@@ -190,6 +189,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const presenceTimersRef = useRef<Map<string, number>>(new Map());
 
   const [rightTab, setRightTab] = useState<"chat" | "comments">("chat");
+  const [sseGeneration, setSseGeneration] = useState(0);
   const [activeCommentThreadId, setActiveCommentThreadId] = useState<
     string | null
   >(null);
@@ -318,6 +318,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     if (!sessionQuery.isSuccess) return undefined;
 
     const handleEvent = (ev: SessionEvent) => {
+      if (ev.event !== "sync_required" && ev.seq > 0) {
+        afterSeqRef.current = Math.max(afterSeqRef.current, ev.seq);
+      }
       const isSubagentEvent =
         Boolean(ev.parent_run_id) ||
         (ev.agent_id !== "main" && ev.agent_id.length > 0);
@@ -330,10 +333,17 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           queryKey: ["session", sessionId],
         });
         void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      } else if (ev.event === "user_message_added") {
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
       } else if (ev.event === "turn_started") {
         setLiveRunStatus("running");
         setLiveMain(emptyLiveTrace("main"));
         setLiveSubagents([]);
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
       } else if (ev.event === "thinking_delta") {
         if (isSubagentEvent) {
           setLiveSubagents((prev) =>
@@ -538,9 +548,27 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           queryKey: ["session", sessionId],
         });
       } else if (ev.event === "sync_required") {
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
+        void (async () => {
+          try {
+            await queryClient.refetchQueries({
+              queryKey: ["session", sessionId],
+            });
+            const detail = queryClient.getQueryData<SessionDetail>([
+              "session",
+              sessionId,
+            ]);
+            if (detail && typeof detail.last_event_seq === "number") {
+              afterSeqRef.current = Math.max(
+                afterSeqRef.current,
+                detail.last_event_seq,
+              );
+            }
+          } catch {
+            // Reconnect anyway; the server replays from the current cursor.
+          } finally {
+            setSseGeneration((generation) => generation + 1);
+          }
+        })();
       } else if (ev.event === "pending_queue_updated") {
         queryClient.setQueryData<SessionDetail>(
           ["session", sessionId],
@@ -553,10 +581,17 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       }
     };
 
-    return subscribeSessionEvents(sessionId, afterSeqRef.current, {
+    return subscribeSessionEvents(sessionId, () => afterSeqRef.current, {
       onEvent: handleEvent,
     });
-  }, [sessionId, sessionQuery.isSuccess, queryClient, recordResolvedQuestion]);
+  }, [
+    sessionId,
+    sessionQuery.isSuccess,
+    queryClient,
+    recordResolvedQuestion,
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- bumping generation intentionally tears down and recreates the SSE stream
+    sseGeneration,
+  ]);
 
   const currentRevRef = useRef<number>(0);
   const currentRev = docQuery.data?.current_rev ?? 0;
@@ -1287,29 +1322,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             {sessionQuery.data?.title ?? "加载中..."}
           </span>
           {effectiveRunStatus === "running" && (
-            <>
-              <Badge variant="secondary" className="shrink-0 text-[11px]">
-                生成中
-              </Badge>
-              <Button
-                type="button"
-                size="xs"
-                variant="ghost"
-                className="shrink-0 gap-1 px-1.5 text-destructive/85 hover:bg-destructive/10 hover:text-destructive"
-                aria-label="停止生成"
-                onClick={() => {
-                  void (async () => {
-                    await interruptSession(sessionId);
-                    void queryClient.invalidateQueries({
-                      queryKey: ["session", sessionId],
-                    });
-                  })();
-                }}
-              >
-                <SquareIcon className="size-3 fill-current" />
-                停止
-              </Button>
-            </>
+            <Badge variant="secondary" className="shrink-0 text-[11px]">
+              生成中
+            </Badge>
           )}
         </div>
         <Tabs

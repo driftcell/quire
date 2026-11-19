@@ -507,6 +507,25 @@ impl RuntimeStore {
         row.as_ref().map(row_to_pending_queue_item).transpose()
     }
 
+    pub async fn pending_comment_item_for_thread(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+    ) -> RuntimeResult<Option<PendingQueueItem>> {
+        let row = sqlx::query(
+            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+               FROM session_pending_queue
+               WHERE session_id = $1 AND thread_id = $2 AND source = 'comment'
+               ORDER BY sequence DESC
+               LIMIT 1"#,
+        )
+        .bind(session_id)
+        .bind(thread_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.as_ref().map(row_to_pending_queue_item).transpose()
+    }
+
     pub async fn delete_pending_message(
         &self,
         session_id: &str,
@@ -1713,6 +1732,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             | SessionEventKind::QuestionnaireDismissed { .. }
             | SessionEventKind::DocLinked { .. }
             | SessionEventKind::SessionTitleUpdated { .. }
+            | SessionEventKind::UserMessageAdded { .. }
             | SessionEventKind::PendingQueueUpdated { .. } => {}
         }
     }

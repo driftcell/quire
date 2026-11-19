@@ -338,8 +338,35 @@ impl RuntimeService {
         thread_id: &str,
         content: &str,
     ) -> RuntimeResult<PostMessageOutcome> {
+        let client_msg_id = format!("comment:{thread_id}");
+        self.post_comment_message_with_id(session_id, thread_id, &client_msg_id, content)
+            .await
+    }
+
+    /// Re-submit an addressed comment thread after a human follow-up reply.
+    /// The reply message ID keeps retries idempotent while allowing one run per
+    /// new instruction.
+    pub async fn post_comment_reply_message(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+        reply_message_id: &str,
+        content: &str,
+    ) -> RuntimeResult<PostMessageOutcome> {
+        let client_msg_id = format!("comment:{thread_id}:{reply_message_id}");
+        self.post_comment_message_with_id(session_id, thread_id, &client_msg_id, content)
+            .await
+    }
+
+    async fn post_comment_message_with_id(
+        &self,
+        session_id: &str,
+        thread_id: &str,
+        client_msg_id: &str,
+        content: &str,
+    ) -> RuntimeResult<PostMessageOutcome> {
         let request = SendMessageRequest {
-            client_msg_id: format!("comment:{thread_id}"),
+            client_msg_id: client_msg_id.to_string(),
             content: content.to_string(),
             attachment_ids: Vec::new(),
         };
@@ -380,6 +407,23 @@ impl RuntimeService {
                 || self.store.latest_running_run(session_id).await?.is_some());
         let queue_non_empty =
             !awaiting_input && !self.store.list_pending_queue(session_id).await?.is_empty();
+        if source == PendingQueueSource::Comment
+            && let Some(thread_id) = thread_id
+            && let Some(existing) = self
+                .store
+                .pending_comment_item_for_thread(session_id, thread_id)
+                .await?
+        {
+            let item = self
+                .store
+                .update_pending_message(session_id, &existing.queue_id, &request.content)
+                .await?;
+            self.emit_queue_update(session_id).await?;
+            if !active && !awaiting_input {
+                self.drain_pending_locked(session_id, true).await?;
+            }
+            return Ok(PostMessageOutcome::Queued { item });
+        }
         if active || queue_non_empty {
             let item = self
                 .store
@@ -417,7 +461,10 @@ impl RuntimeService {
             )
             .await?;
         }
-        let run_id = self.spawn_turn(session_id, request.content.clone()).await?;
+        let message_id = message.message_id.clone();
+        let run_id = self
+            .spawn_turn_for_message(session_id, &message_id, request.content.clone())
+            .await?;
         Ok(PostMessageOutcome::Started { message, run_id })
     }
 
@@ -592,7 +639,8 @@ impl RuntimeService {
             }
         }
         let client_msg_id = format!("queue:{}", first.queue_id);
-        self.store
+        let (message, _) = self
+            .store
             .insert_user_message(
                 session_id,
                 &SendMessageRequest {
@@ -612,7 +660,9 @@ impl RuntimeService {
             )
             .await?;
         self.emit_queue_update(session_id).await?;
-        let run_id = self.spawn_turn(session_id, content).await?;
+        let run_id = self
+            .spawn_turn_for_message(session_id, &message.message_id, content)
+            .await?;
         Ok(Some(run_id))
     }
 
@@ -972,7 +1022,7 @@ impl RuntimeService {
         Ok((prompt.as_str().to_string(), version))
     }
 
-    async fn spawn_turn(&self, session_id: &str, content: String) -> RuntimeResult<String> {
+    async fn prepare_turn(&self, session_id: &str) -> RuntimeResult<(String, CancellationToken)> {
         self.store.get_session_summary(session_id).await?;
         if self.store.latest_running_run(session_id).await?.is_some() {
             return Err(RuntimeError::InvalidRequest(format!(
@@ -984,19 +1034,58 @@ impl RuntimeService {
             .create_run(session_id, None, "main", &self.config.default_model)
             .await?;
         let token = self.runs.register(&run.run_id).await;
+        Ok((run.run_id, token))
+    }
+
+    fn launch_turn(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        content: String,
+        token: CancellationToken,
+    ) {
         let service = self.clone();
-        let run_id = run.run_id.clone();
-        let message_content = content;
+        let run_id = run_id.to_string();
         let session_id = session_id.to_string();
         tokio::spawn(async move {
             if let Err(error) = service
-                .run_turn(&session_id, &run_id, &message_content, token)
+                .run_turn(&session_id, &run_id, &content, token)
                 .await
             {
                 warn!(%error, %session_id, run_id, "agent turn failed");
             }
         });
-        Ok(run.run_id)
+    }
+
+    async fn spawn_turn(&self, session_id: &str, content: String) -> RuntimeResult<String> {
+        let (run_id, token) = self.prepare_turn(session_id).await?;
+        self.launch_turn(session_id, &run_id, content, token);
+        Ok(run_id)
+    }
+
+    async fn spawn_turn_for_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        content: String,
+    ) -> RuntimeResult<String> {
+        let (run_id, token) = self.prepare_turn(session_id).await?;
+        if let Err(error) = self
+            .emit(
+                session_id,
+                &run_id,
+                "main",
+                None,
+                SessionEventKind::UserMessageAdded {
+                    message_id: message_id.to_string(),
+                },
+            )
+            .await
+        {
+            warn!(%error, %session_id, %run_id, "failed to broadcast user message");
+        }
+        self.launch_turn(session_id, &run_id, content, token);
+        Ok(run_id)
     }
 
     async fn run_turn(

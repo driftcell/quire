@@ -46,44 +46,77 @@ export interface SessionStreamHandlers {
   onError?: (error: Error) => void;
 }
 
+const SESSION_RECONNECT_DELAY_MS = 1000;
+
+function waitForReconnect(): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, SESSION_RECONNECT_DELAY_MS);
+  });
+}
+
 export function subscribeSessionEvents(
   sessionId: string,
-  afterSeq: number,
+  getAfterSeq: () => number,
   handlers: SessionStreamHandlers,
 ): () => void {
   const controller = new AbortController();
+  let closed = false;
   const { runtimeToken } = getAuthTokens();
 
-  void fetchEventSource(
-    `/api/sessions/${encodeURIComponent(sessionId)}/events?afterSeq=${afterSeq}`,
-    {
-      signal: controller.signal,
-      headers: {
-        ...bearerHeaders(runtimeToken),
-      },
-      openWhenHidden: true,
-      onmessage(msg) {
-        if (!msg.data) {
+  const connect = async () => {
+    for (;;) {
+      if (closed) {
+        return;
+      }
+      const afterSeq = getAfterSeq();
+      try {
+        await fetchEventSource(
+          `/api/sessions/${encodeURIComponent(sessionId)}/events?afterSeq=${afterSeq}`,
+          {
+            signal: controller.signal,
+            headers: {
+              ...bearerHeaders(runtimeToken),
+            },
+            openWhenHidden: true,
+            onmessage(msg) {
+              if (!msg.data) {
+                return;
+              }
+              try {
+                const parsed: unknown = JSON.parse(msg.data);
+                if (isSessionEvent(parsed)) {
+                  handlers.onEvent(parsed);
+                }
+              } catch {
+                // Ignore malformed keepalive/comment frames.
+              }
+            },
+            onerror(err) {
+              // Throw so the SDK does not retry the original afterSeq URL;
+              // this loop reconnects with the freshest cursor instead.
+              throw err;
+            },
+          },
+        );
+      } catch (err) {
+        if (closed || controller.signal.aborted) {
           return;
         }
-        try {
-          const parsed: unknown = JSON.parse(msg.data);
-          if (isSessionEvent(parsed)) {
-            handlers.onEvent(parsed);
-          }
-        } catch {
-          // Ignore malformed keepalive/comment frames.
-        }
-      },
-      onerror(err) {
         const error =
           err instanceof Error ? err : new Error("Session SSE error");
         handlers.onError?.(error);
-      },
-    },
-  );
+      }
+      if (closed) {
+        return;
+      }
+      await waitForReconnect();
+    }
+  };
+
+  void connect();
 
   return () => {
+    closed = true;
     controller.abort();
   };
 }

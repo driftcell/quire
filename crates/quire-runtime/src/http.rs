@@ -14,7 +14,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use futures::Stream;
-use quire_protocol::{CommentThread, TextQuoteSelector};
+use quire_protocol::{CommentStatus, CommentThread, TextQuoteSelector};
 use quire_session_protocol::{
     AttachmentMeta, CreateSessionRequest, PendingQueueItem, QuestionAnswer, RunTraceSummary,
     SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionSummary,
@@ -574,6 +574,22 @@ async fn reply_session_comment(
         serde_json::json!({ "body": request.body }),
     )
     .await?;
+    if thread.status != CommentStatus::Archived
+        && let Some(reply) = thread.messages.last()
+    {
+        let content = comment_ref_message_with_body(&thread, &reply.body);
+        if let Err(error) = service
+            .post_comment_reply_message(&session_id, &thread.thread_id, &reply.message_id, &content)
+            .await
+        {
+            tracing::warn!(
+                %error,
+                %session_id,
+                thread_id = %thread.thread_id,
+                "failed to auto-trigger agent for a comment follow-up"
+            );
+        }
+    }
     Ok(Json(thread))
 }
 
@@ -689,6 +705,10 @@ fn comment_ref_message(thread: &CommentThread) -> String {
         .first()
         .map(|message| message.body.as_str())
         .unwrap_or_default();
+    comment_ref_message_with_body(thread, comment)
+}
+
+fn comment_ref_message_with_body(thread: &CommentThread, comment: &str) -> String {
     let mut content = format!(
         "<quire_comment_ref thread_id=\"{}\" block_id=\"{}\" status=\"{}\">",
         escape_xml(&thread.thread_id),
@@ -1027,13 +1047,51 @@ fn event_stream(
                     if event.seq <= last_seq {
                         continue;
                     }
-                    if event.seq > last_seq + 1 {
-                        yield Ok(sse_event(&synthetic_sync(
-                            &session_id,
-                            last_seq,
-                            "live event gap detected",
-                        )));
-                        break;
+                    if event.seq > last_seq.saturating_add(1) {
+                        let gap = event.seq.saturating_sub(last_seq);
+                        let replay_window = u64::try_from(replay_limit).unwrap_or(u64::MAX);
+                        if gap > replay_window {
+                            yield Ok(sse_event(&synthetic_sync(
+                                &session_id,
+                                last_seq,
+                                "live event gap exceeded the replay window",
+                            )));
+                            break;
+                        }
+                        let limit = i64::try_from(gap).unwrap_or(i64::MAX);
+                        match store.list_events(&session_id, last_seq, limit).await {
+                            Ok(events) => {
+                                for missing in events {
+                                    if missing.seq <= last_seq {
+                                        continue;
+                                    }
+                                    if missing.seq > event.seq {
+                                        break;
+                                    }
+                                    last_seq = missing.seq;
+                                    yield Ok(sse_event(&missing));
+                                }
+                            }
+                            Err(error) => {
+                                yield Ok(sse_event(&synthetic_sync(
+                                    &session_id,
+                                    last_seq,
+                                    &format!("gap replay failed: {error}"),
+                                )));
+                                break;
+                            }
+                        }
+                        if event.seq <= last_seq {
+                            continue;
+                        }
+                        if event.seq > last_seq.saturating_add(1) {
+                            yield Ok(sse_event(&synthetic_sync(
+                                &session_id,
+                                last_seq,
+                                "live event gap could not be fully replayed",
+                            )));
+                            break;
+                        }
                     }
                     last_seq = event.seq;
                     yield Ok(sse_event(&event));

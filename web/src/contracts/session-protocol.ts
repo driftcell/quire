@@ -160,6 +160,11 @@ export type SessionEvent1 =
       [k: string]: unknown;
     }
   | {
+      event: "user_message_added";
+      message_id: string;
+      [k: string]: unknown;
+    }
+  | {
       event: "pending_queue_updated";
       items: PendingQueueItem[];
       [k: string]: unknown;

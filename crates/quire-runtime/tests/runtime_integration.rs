@@ -18,6 +18,7 @@ use std::{
 };
 
 use base64::Engine as _;
+use futures::StreamExt;
 use quire_protocol::{
     BlockId, ChartRequirements, CommentAuthorType, CommentMessage, CommentStatus, CommentThread,
     DocId, EchartsBlock, Revision,
@@ -35,7 +36,7 @@ use quire_runtime::{
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
-    SendMessageRequest, SessionEventKind, SessionMessage,
+    SendMessageRequest, SessionEvent, SessionEventKind, SessionMessage,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -47,6 +48,48 @@ fn test_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+fn take_sse_frame(buffer: &mut String) -> Option<String> {
+    let (index, delimiter) = if let Some(index) = buffer.find("\r\n\r\n") {
+        (index, 4)
+    } else {
+        (buffer.find("\n\n")?, 2)
+    };
+    let frame = buffer[..index].to_string();
+    buffer.drain(..index + delimiter);
+    Some(frame)
+}
+
+async fn next_sse_frame<S>(stream: &mut S, buffer: &mut String) -> Option<String>
+where
+    S: futures::Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Unpin,
+{
+    loop {
+        if let Some(frame) = take_sse_frame(buffer) {
+            return Some(frame);
+        }
+        let chunk = stream.next().await?;
+        let chunk = chunk.ok()?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+    }
+}
+
+async fn next_session_event<S>(stream: &mut S, buffer: &mut String) -> Option<SessionEvent>
+where
+    S: futures::Stream<Item = Result<axum::body::Bytes, reqwest::Error>> + Unpin,
+{
+    loop {
+        let frame = next_sse_frame(stream, buffer).await?;
+        let Some(data) = frame
+            .lines()
+            .find_map(|line| line.strip_prefix("data:").map(str::trim_start))
+        else {
+            continue;
+        };
+        if let Ok(event) = serde_json::from_str::<SessionEvent>(data) {
+            return Some(event);
+        }
+    }
+}
 fn unique(prefix: &str) -> String {
     format!(
         "{prefix}-{}-{}",
@@ -566,6 +609,47 @@ async fn client_message_id_is_idempotent_and_does_not_duplicate_runs() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_message_broadcasts_user_message_added_before_turn_started() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("message-event"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let outcome = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("message-event"),
+                content: "Broadcast this message".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let message = match outcome {
+        PostMessageOutcome::Started { message, .. } => message,
+        other => panic!("expected started message, got {other:?}"),
+    };
+    wait_for_idle(&store, &session.session_id).await;
+    let events = store
+        .list_events(&session.session_id, 0, 100)
+        .await
+        .unwrap();
+    let first = events.first().expect("user message event");
+    assert!(matches!(
+        &first.kind,
+        SessionEventKind::UserMessageAdded { message_id } if message_id == &message.message_id
+    ));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(&event.kind, SessionEventKind::TurnStarted))
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reconnect_replay_returns_events_after_the_requested_seq() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
@@ -602,6 +686,134 @@ async fn reconnect_replay_returns_events_after_the_requested_seq() {
         2
     );
     service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn event_stream_replays_a_small_gap_without_disconnecting() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("sse-gap"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    for index in 0..3 {
+        store
+            .append_event(
+                &session.session_id,
+                "run_gap",
+                "main",
+                None,
+                SessionEventKind::TextDelta {
+                    delta: format!("before-{index}"),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let app = quire_runtime::http::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "http://{address}/api/sessions/{}/events?afterSeq=3",
+            session.session_id
+        ))
+        .bearer_auth("runtime-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    store
+        .append_event(
+            &session.session_id,
+            "run_gap",
+            "main",
+            None,
+            SessionEventKind::TextDelta {
+                delta: "live-4".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let live_four = tokio::time::timeout(
+        Duration::from_secs(5),
+        next_session_event(&mut stream, &mut buffer),
+    )
+    .await
+    .unwrap()
+    .expect("live event 4");
+    assert_eq!(live_four.seq, 4);
+
+    for seq in 5..=6 {
+        let event = SessionEvent::new(
+            seq,
+            "run_gap",
+            "main",
+            None,
+            SessionEventKind::TextDelta {
+                delta: format!("missing-{seq}"),
+            },
+        );
+        let event_value = serde_json::to_value(&event).unwrap();
+        sqlx::query(
+            r#"INSERT INTO session_events
+               (session_id, seq, run_id, agent_id, parent_run_id, event_type, event, created_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+        )
+        .bind(&session.session_id)
+        .bind(i64::try_from(seq).unwrap())
+        .bind(&event.run_id)
+        .bind(&event.agent_id)
+        .bind(event.parent_run_id.as_deref())
+        .bind(event.event_name())
+        .bind(event_value)
+        .bind(event.timestamp)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    }
+    sqlx::query("UPDATE agent_sessions SET last_event_seq = 6 WHERE session_id = $1")
+        .bind(&session.session_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
+    store
+        .append_event(
+            &session.session_id,
+            "run_gap",
+            "main",
+            None,
+            SessionEventKind::TextDelta {
+                delta: "live-7".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let mut replayed = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(event) = next_session_event(&mut stream, &mut buffer).await {
+            assert_ne!(event.event_name(), "sync_required");
+            replayed.push(event.seq);
+            if event.seq >= 7 {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("stream must stay open and replay events 5-7");
+    assert_eq!(replayed, vec![5, 6, 7]);
+
+    service.delete_session(&session.session_id).await.unwrap();
+    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2499,6 +2711,35 @@ async fn mock_comment_reply() -> axum::Json<CommentThread> {
     axum::Json(proxy_comment_thread(CommentStatus::Addressed))
 }
 
+fn proxy_comment_reply_thread(status: CommentStatus, body: &str) -> CommentThread {
+    let mut thread = proxy_comment_thread(status);
+    let now = chrono::Utc::now();
+    thread.updated_at = now;
+    thread.messages.push(CommentMessage {
+        message_id: "cm_proxy_reply".into(),
+        thread_id: thread.thread_id.clone(),
+        author_type: CommentAuthorType::Human,
+        author: "reviewer".into(),
+        body: body.into(),
+        created_at: now,
+    });
+    thread
+}
+
+async fn mock_comment_reply_addressed() -> axum::Json<CommentThread> {
+    axum::Json(proxy_comment_reply_thread(
+        CommentStatus::Addressed,
+        "Use a different chart",
+    ))
+}
+
+async fn mock_comment_reply_open() -> axum::Json<CommentThread> {
+    axum::Json(proxy_comment_reply_thread(
+        CommentStatus::Open,
+        "More context while the agent is working",
+    ))
+}
+
 async fn mock_comment_patch() -> axum::Json<CommentThread> {
     axum::Json(proxy_comment_thread(CommentStatus::Archived))
 }
@@ -2813,6 +3054,113 @@ async fn comment_creation_auto_triggers_a_turn() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn addressed_comment_reply_auto_triggers_agent() {
+    let _guard = test_lock().lock().await;
+    let upstream = axum::Router::new().route(
+        "/api/docs/{doc_id}/comments/{thread_id}/replies",
+        axum::routing::post(mock_comment_reply_addressed),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let session = service
+        .create_session(&unique("comment-follow-up"), Some("report-test"))
+        .await
+        .unwrap();
+    let app = quire_runtime::http::router(service.clone());
+    let replied = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{}/comments/ct_proxy/replies",
+                    session.session_id
+                ))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"body": "Use a different chart"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replied.status(), axum::http::StatusCode::OK);
+    wait_for_idle(&store, &session.session_id).await;
+
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    assert!(
+        messages.iter().any(|message| {
+            message.role == MessageRole::User
+                && message.content.contains("<quire_comment_ref")
+                && message.content.contains("ct_proxy")
+                && message.content.contains("Use a different chart")
+        }),
+        "replying to an addressed comment must re-submit it to the agent"
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn open_comment_reply_also_triggers_agent() {
+    let _guard = test_lock().lock().await;
+    let upstream = axum::Router::new().route(
+        "/api/docs/{doc_id}/comments/{thread_id}/replies",
+        axum::routing::post(mock_comment_reply_open),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+
+    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let session = service
+        .create_session(&unique("comment-open-reply"), Some("report-test"))
+        .await
+        .unwrap();
+    let app = quire_runtime::http::router(service.clone());
+    let replied = app
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!(
+                    "/api/sessions/{}/comments/ct_proxy/replies",
+                    session.session_id
+                ))
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(
+                    json!({"body": "More context while the agent is working"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replied.status(), axum::http::StatusCode::OK);
+    wait_for_idle(&store, &session.session_id).await;
+
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    assert!(
+        messages.iter().any(|message| {
+            message.role == MessageRole::User
+                && message
+                    .content
+                    .contains("More context while the agent is working")
+                && message.content.contains("ct_proxy")
+        }),
+        "follow-up replies on open threads must also reach the agent"
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn running_session_queues_comment_and_queue_delete_removes_thread() {
     let _guard = test_lock().lock().await;
     let deleted = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -2995,6 +3343,78 @@ async fn consecutive_queued_comments_merge_into_one_message() {
     assert_eq!(merged.len(), 1, "consecutive comments must be merged");
     assert!(merged[0].content.contains("First queued comment"));
     assert!(merged[0].content.contains("Second queued comment"));
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn repeated_comment_follow_ups_update_the_pending_item() {
+    let _guard = test_lock().lock().await;
+    let gate = GateStreamProvider::new();
+    let (service, store) = test_service().await;
+    let service = service.with_model_stream_provider(Arc::new(gate.clone()));
+    service.boot().await.unwrap();
+    let session = service
+        .create_session(&unique("comment-follow-up-dedupe"), Some("report-test"))
+        .await
+        .unwrap();
+    let started = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("comment-follow-up-dedupe-first"),
+                content: "Start the long turn".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(started, PostMessageOutcome::Started { .. }));
+    wait_for_running(&store, &session.session_id).await;
+
+    let first = service
+        .post_comment_message(
+            &session.session_id,
+            "ct_same",
+            "<quire_comment_ref thread_id=\"ct_same\" block_id=\"b_same\"><comment>First note</comment></quire_comment_ref>",
+        )
+        .await
+        .unwrap();
+    let first_item = match first {
+        PostMessageOutcome::Queued { item } => item,
+        other => panic!("expected queued comment, got {other:?}"),
+    };
+    let second = service
+        .post_comment_reply_message(
+            &session.session_id,
+            "ct_same",
+            "msg_reply_two",
+            "<quire_comment_ref thread_id=\"ct_same\" block_id=\"b_same\"><comment>Latest note</comment></quire_comment_ref>",
+        )
+        .await
+        .unwrap();
+    let second_item = match second {
+        PostMessageOutcome::Queued { item } => item,
+        other => panic!("expected updated comment queue item, got {other:?}"),
+    };
+    assert_eq!(first_item.queue_id, second_item.queue_id);
+    let queue = service
+        .list_pending_queue(&session.session_id)
+        .await
+        .unwrap();
+    assert_eq!(queue.len(), 1, "a follow-up must update, not duplicate");
+    assert!(queue[0].content.contains("Latest note"));
+    assert!(!queue[0].content.contains("First note"));
+
+    gate.release();
+    for _ in 0..300 {
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        if detail.pending_queue.is_empty()
+            && detail.summary.active_run_status == ActiveRunStatus::Idle
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     service.delete_session(&session.session_id).await.unwrap();
 }
 

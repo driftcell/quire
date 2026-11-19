@@ -126,6 +126,9 @@ pub enum SessionEventKind {
     SessionTitleUpdated {
         title: String,
     },
+    UserMessageAdded {
+        message_id: String,
+    },
     PendingQueueUpdated {
         items: Vec<PendingQueueItem>,
     },
@@ -151,6 +154,7 @@ impl SessionEventKind {
             Self::QuestionnaireDismissed { .. } => "questionnaire_dismissed",
             Self::DocLinked { .. } => "doc_linked",
             Self::SessionTitleUpdated { .. } => "session_title_updated",
+            Self::UserMessageAdded { .. } => "user_message_added",
             Self::PendingQueueUpdated { .. } => "pending_queue_updated",
         }
     }
@@ -287,6 +291,8 @@ mod tests {
             "questionnaire_answered",
             "questionnaire_dismissed",
             "doc_linked",
+            "session_title_updated",
+            "user_message_added",
             "pending_queue_updated",
         ] {
             assert!(rendered.contains(event), "missing {event} in schema");
