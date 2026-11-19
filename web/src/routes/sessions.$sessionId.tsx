@@ -1222,6 +1222,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
               <TocOutline
                 placement="bottom"
+                docId={effectiveDocId ?? docQuery.data.document.doc_id}
+                toc={docQuery.data.document.toc}
+                isPaged={prefs.reportViewMode === "paged"}
                 nodes={docQuery.data.computed.toc_tree}
                 activeActorsBySection={activeActorsBySection}
                 comments={commentsQuery.data ?? []}
@@ -1251,7 +1254,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 rel="noreferrer"
                 aria-label="导出 PDF / 打印视图"
                 title="导出 PDF / 打印视图"
-                className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+                className={buttonVariants({
+                  variant: "ghost",
+                  size: "icon-sm",
+                })}
               >
                 <PrinterIcon className="size-4" />
               </Link>
@@ -1314,6 +1320,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             }}
             onOpenCommentThread={openCommentThread}
             onAskAgentWithQuote={handleAskAgentWithQuote}
+            onJumpToSection={jumpToSection}
           />
         </div>
       </div>

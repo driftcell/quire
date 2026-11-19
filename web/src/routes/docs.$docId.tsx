@@ -99,6 +99,9 @@ function DocumentPage() {
           )}
           {docQuery.data && (
             <TocOutline
+              docId={docId}
+              toc={docQuery.data.document.toc}
+              isPaged={prefs.reportViewMode === "paged"}
               nodes={docQuery.data.computed.toc_tree}
               activeActorsBySection={EMPTY_ACTORS}
               comments={commentsQuery.data ?? []}
@@ -188,6 +191,7 @@ function DocumentPage() {
               setCommentsOpen(true);
               jumpToSection(blockId);
             }}
+            onJumpToSection={jumpToSection}
           />
         )}
       </div>

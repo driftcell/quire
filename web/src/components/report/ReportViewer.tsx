@@ -24,6 +24,7 @@ import {
   SelectionQuoteToolbar,
   type SelectionQuoteAction,
 } from "@/components/report/SelectionQuoteToolbar";
+import { ReportTocSection } from "@/components/report/ReportTocSection";
 import { TableBlockView } from "@/components/report/TableBlockView";
 import {
   A4_CONTENT_HEIGHT_PX,
@@ -34,6 +35,7 @@ import {
   A4_PAGE_WIDTH_PX,
   A4_PADDING_X_PX,
   A4_PADDING_Y_PX,
+  buildBlockPageMap,
   paginateBlocks,
   type PageMeasurements,
   type PageSlice,
@@ -54,6 +56,12 @@ import {
   normalizePageChromeConfig,
   usePageChromeConfig,
 } from "@/lib/pageChrome";
+import {
+  normalizeReferencesTitle,
+  referencesEnabled,
+  referencesPageBreakBefore,
+  useTocConfig,
+} from "@/lib/tocConfig";
 import type { ReportViewMode } from "@/lib/preferences";
 
 export interface ReportViewerProps {
@@ -70,6 +78,7 @@ export interface ReportViewerProps {
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
   onOpenCommentThread?: (threadId: string, blockId: string) => void;
   onAskAgentWithQuote?: (blockId: string, exact: string) => void;
+  onJumpToSection?: (blockId: string) => void;
 }
 
 function toViewportRect(domRect: DOMRect): FloatingCommentAnchor["rect"] {
@@ -83,12 +92,16 @@ function toViewportRect(domRect: DOMRect): FloatingCommentAnchor["rect"] {
   };
 }
 
-function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
+function renderHeadingTag(
+  level: number,
+  domId: string | undefined,
+  content: ReactNode,
+) {
   switch (level) {
     case 1:
       return (
         <h1
-          id={`block-${blockId}`}
+          id={domId}
           className="mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-[var(--rpt-ink)]"
         >
           {content}
@@ -97,7 +110,7 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
     case 2:
       return (
         <h2
-          id={`block-${blockId}`}
+          id={domId}
           className="mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-[var(--rpt-ink)]"
         >
           {content}
@@ -106,7 +119,7 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
     case 3:
       return (
         <h3
-          id={`block-${blockId}`}
+          id={domId}
           className="mt-5 mb-2 text-[15px] font-semibold text-[var(--rpt-ink)]"
         >
           {content}
@@ -115,7 +128,7 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
     case 4:
       return (
         <h4
-          id={`block-${blockId}`}
+          id={domId}
           className="mt-4 mb-1.5 text-[14px] font-semibold text-[var(--rpt-ink)]"
         >
           {content}
@@ -124,7 +137,7 @@ function renderHeadingTag(level: number, blockId: string, content: ReactNode) {
     default:
       return (
         <h5
-          id={`block-${blockId}`}
+          id={domId}
           className="mt-3 mb-1 text-[13px] font-semibold text-[var(--rpt-ink)]"
         >
           {content}
@@ -340,6 +353,7 @@ function mixPreviewsIntoPages(
     pageNumber: number;
     items: PageSlice[];
     includeCover?: boolean;
+    includeToc?: boolean;
     includeBibliography?: boolean;
   }[],
   previews: EphemeralPreviewEvent[],
@@ -670,6 +684,7 @@ interface ReportBlockItemProps {
   bibliographyById: Map<string, BibliographyEntry>;
   commentCount: number;
   blockQuotes?: QuoteHighlight[];
+  measurementOnly?: boolean;
   onCitationClick: (sourceId: string) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
   onOpenCommentThread?: (threadId: string, blockId: string) => void;
@@ -684,12 +699,14 @@ const ReportBlockItem = memo(function ReportBlockItem({
   bibliographyById,
   commentCount,
   blockQuotes,
+  measurementOnly = false,
   onCitationClick,
   onOpenCommentForBlock,
   onOpenCommentThread,
 }: ReportBlockItemProps) {
   const { block } = slice;
   const framing = computed.block_framing[block.id];
+  const domId = measurementOnly ? undefined : `block-${block.id}`;
 
   const handleQuoteClick = useCallback(
     (highlight: QuoteHighlight, rect: DOMRect) => {
@@ -727,13 +744,13 @@ const ReportBlockItem = memo(function ReportBlockItem({
   if (block.type === "heading") {
     bodyNode = renderHeadingTag(
       block.level ?? 2,
-      block.id,
+      domId,
       renderInline(block.text),
     );
   } else if (block.type === "paragraph") {
     bodyNode = (
       <p
-        id={`block-${block.id}`}
+        id={domId}
         className="my-3 text-[14.5px] leading-[1.82] tracking-[0.01em] text-[var(--rpt-ink)]"
       >
         {renderInline(block.text)}
@@ -742,7 +759,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
   } else if (block.type === "quote") {
     bodyNode = (
       <blockquote
-        id={`block-${block.id}`}
+        id={domId}
         className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700"
       >
         {renderInline(block.text)}
@@ -759,7 +776,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
     const showCaption = Boolean(captionText || slice.continuation);
 
     bodyNode = (
-      <figure id={`block-${block.id}`} className="my-5 space-y-2">
+      <figure id={domId} className="my-5 space-y-2">
         {showCaption && (
           <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
             {captionText}
@@ -802,7 +819,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
       .filter((part): part is string => Boolean(part))
       .join("  ");
     bodyNode = (
-      <figure id={`block-${block.id}`} className="my-5 space-y-2">
+      <figure id={domId} className="my-5 space-y-2">
         <EchartsCanvas
           blockId={block.id}
           chart={block}
@@ -835,7 +852,7 @@ const ReportBlockItem = memo(function ReportBlockItem({
       .filter((part): part is string => Boolean(part))
       .join("  ");
     bodyNode = (
-      <figure id={`block-${block.id}`} className="my-5 space-y-2">
+      <figure id={domId} className="my-5 space-y-2">
         <CustomHtmlView block={block} />
         {captionText && (
           <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
@@ -900,8 +917,10 @@ export function ReportViewer({
   onOpenCommentForBlock,
   onOpenCommentThread,
   onAskAgentWithQuote,
+  onJumpToSection,
 }: ReportViewerProps) {
   const suppressChrome = printMode || previewMode;
+  const isPaged = viewMode === "paged" || printMode;
   const resolvedPageChrome = usePageChromeConfig(
     document.doc_id,
     document.theme.page_chrome,
@@ -914,20 +933,24 @@ export function ReportViewer({
     (hasPageHeader(effectivePageChrome) ? A4_HEADER_HEIGHT_PX : 0) -
     (hasPageFooter(effectivePageChrome) ? A4_FOOTER_HEIGHT_PX : 0);
   const showFooter = hasPageFooter(effectivePageChrome);
+  const resolvedToc = useTocConfig(document.doc_id, document.toc, isPaged);
+  const referencesTitle = normalizeReferencesTitle(document.references);
+  const showReferences =
+    referencesEnabled(document.references) && computed.bibliography.length > 0;
+  const referencesBreak = referencesPageBreakBefore(document.references);
   const rootRef = useRef<HTMLDivElement>(null);
   const measureRef = useRef<HTMLDivElement>(null);
   const [measurements, setMeasurements] = useState<PageMeasurements>({
     blockHeights: {},
     tableMeasurements: {},
     coverHeight: 0,
+    tocHeight: 0,
     bibliographyHeight: 0,
   });
   const [pageScale, setPageScale] = useState(1);
   const [quoteAction, setQuoteAction] = useState<SelectionQuoteAction | null>(
     null,
   );
-
-  const isPaged = viewMode === "paged" || printMode;
 
   useEffect(() => {
     if (!isPaged || suppressChrome) {
@@ -991,12 +1014,22 @@ export function ReportViewer({
         .map((block) => block.id)
         .join(
           ",",
-        )}:${computed.bibliography.length}:${document.cover.title ?? ""}`,
+        )}:${computed.bibliography.length}:${document.cover.title ?? ""}:${
+        resolvedToc.enabled ? 1 : 0
+      }:${resolvedToc.max_depth}:${resolvedToc.variant}:${resolvedToc.title}:${
+        computed.toc_tree.length
+      }:${referencesTitle}`,
     [
       document.blocks,
       document.revision,
       computed.bibliography.length,
+      computed.toc_tree.length,
       document.cover.title,
+      resolvedToc.enabled,
+      resolvedToc.max_depth,
+      resolvedToc.variant,
+      resolvedToc.title,
+      referencesTitle,
     ],
   );
 
@@ -1015,7 +1048,8 @@ export function ReportViewer({
       const blockHeights: Record<string, number> = {};
       const tableMeasurements: Record<string, TableMeasurement> = {};
 
-      const items = container.querySelectorAll<HTMLElement>("[data-measure-id]");
+      const items =
+        container.querySelectorAll<HTMLElement>("[data-measure-id]");
       for (const el of items) {
         const id = el.dataset.measureId;
         if (!id) continue;
@@ -1055,6 +1089,9 @@ export function ReportViewer({
       const coverEl = container.querySelector<HTMLElement>(
         '[data-measure-cover="true"]',
       );
+      const tocEl = container.querySelector<HTMLElement>(
+        '[data-measure-toc="true"]',
+      );
       const bibEl = container.querySelector<HTMLElement>(
         '[data-measure-bib="true"]',
       );
@@ -1063,6 +1100,7 @@ export function ReportViewer({
         blockHeights,
         tableMeasurements,
         coverHeight: coverEl ? coverEl.getBoundingClientRect().height : 0,
+        tocHeight: tocEl ? tocEl.getBoundingClientRect().height : 0,
         bibliographyHeight: bibEl ? bibEl.getBoundingClientRect().height : 0,
       });
     };
@@ -1337,16 +1375,15 @@ export function ReportViewer({
     );
   };
 
-  const renderBibliography = () => {
-    const references = document.references;
-    if (!references.enabled || computed.bibliography.length === 0) {
+  const renderBibliography = (measurementOnly = false) => {
+    if (!showReferences) {
       return null;
     }
     return (
       <section className="mt-10 border-t border-[var(--rpt-border)] pt-6">
         <h2 className="mb-4 flex items-center gap-2 text-base font-semibold text-[var(--rpt-ink)]">
           <BookOpenIcon className="size-4 text-[var(--rpt-accent)]" />
-          <span>{references.title || "参考资料"}</span>
+          <span>{referencesTitle}</span>
         </h2>
         <ol className="space-y-3.5 text-xs leading-relaxed">
           {computed.bibliography.map((entry) => {
@@ -1361,7 +1398,7 @@ export function ReportViewer({
             return (
               <li
                 key={entry.source_id}
-                id={`bib-${entry.source_id}`}
+                id={measurementOnly ? undefined : `bib-${entry.source_id}`}
                 className="flex scroll-mt-24 gap-3"
               >
                 <span className="mt-px shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
@@ -1421,8 +1458,18 @@ export function ReportViewer({
 
   const pages = useMemo(() => {
     if (!isPaged) return [];
-    return paginateBlocks(document.blocks, measurements, effectivePageHeight);
-  }, [isPaged, document.blocks, measurements, effectivePageHeight]);
+    return paginateBlocks(document.blocks, measurements, effectivePageHeight, {
+      referencesPageBreakBefore: referencesBreak,
+    });
+  }, [
+    isPaged,
+    document.blocks,
+    measurements,
+    effectivePageHeight,
+    referencesBreak,
+  ]);
+
+  const blockPageMap = useMemo(() => buildBlockPageMap(pages), [pages]);
 
   const pagedMixedItems = useMemo(() => {
     if (!isPaged) return [];
@@ -1455,6 +1502,29 @@ export function ReportViewer({
     const baseSlices: PageSlice[] = document.blocks.map((block) => ({ block }));
     return buildMixedItems(baseSlices, previewList, document.blocks);
   }, [isPaged, document.blocks, previewList]);
+
+  const handleTocJump = useCallback(
+    (blockId: string) => {
+      if (onJumpToSection) {
+        onJumpToSection(blockId);
+        return;
+      }
+      const el = window.document.getElementById(`block-${blockId}`);
+      el?.scrollIntoView({ behavior: "smooth", block: "start" });
+    },
+    [onJumpToSection],
+  );
+
+  const renderToc = (pageMap?: ReadonlyMap<string, number>) => (
+    <ReportTocSection
+      config={resolvedToc}
+      nodes={computed.toc_tree}
+      isPaged={isPaged}
+      pageMap={pageMap}
+      printMode={suppressChrome}
+      onJumpToSection={suppressChrome ? undefined : handleTocJump}
+    />
+  );
 
   return (
     <div
@@ -1497,6 +1567,7 @@ export function ReportViewer({
       {isPaged && (
         <div
           ref={measureRef}
+          data-measure-root="true"
           aria-hidden="true"
           style={{ width: `${A4_CONTENT_WIDTH_PX}px` }}
           className="report-root pointer-events-none absolute top-0 -left-[99999px] opacity-0 print:hidden"
@@ -1504,8 +1575,15 @@ export function ReportViewer({
           <div data-measure-cover="true" className="flow-root">
             {renderCover()}
           </div>
+          <div data-measure-toc="true" className="flow-root">
+            {renderToc(blockPageMap)}
+          </div>
           {document.blocks.map((block) => (
-            <div key={block.id} data-measure-id={block.id} className="flow-root">
+            <div
+              key={block.id}
+              data-measure-id={block.id}
+              className="flow-root"
+            >
               <ReportBlockItem
                 slice={{ block }}
                 isPaged
@@ -1515,12 +1593,13 @@ export function ReportViewer({
                 bibliographyById={bibliographyById}
                 commentCount={0}
                 blockQuotes={quotesByBlock.get(block.id)}
+                measurementOnly
                 onCitationClick={scrollToSource}
               />
             </div>
           ))}
           <div data-measure-bib="true" className="flow-root">
-            {renderBibliography()}
+            {renderBibliography(true)}
           </div>
         </div>
       )}
@@ -1528,6 +1607,7 @@ export function ReportViewer({
       {!isPaged ? (
         <article className="mx-auto w-full max-w-[760px] bg-white px-5 py-8 text-[var(--rpt-ink)] shadow-sm ring-1 ring-black/5 sm:px-10">
           {renderCover()}
+          {renderToc(blockPageMap)}
           {continuousItems.map((item) => (
             <div key={item.key}>
               {item.preview ? (
@@ -1570,6 +1650,12 @@ export function ReportViewer({
                 plain={suppressChrome}
               >
                 <section
+                  data-page-number={page.pageNumber}
+                  data-include-cover={page.includeCover ? "true" : undefined}
+                  data-include-toc={page.includeToc ? "true" : undefined}
+                  data-include-bibliography={
+                    page.includeBibliography ? "true" : undefined
+                  }
                   style={{
                     width: `${A4_PAGE_WIDTH_PX}px`,
                     height: `${A4_PAGE_HEIGHT_PX}px`,
@@ -1604,6 +1690,7 @@ export function ReportViewer({
                       )}
                     <div className="min-h-0 flex-1 overflow-visible print:overflow-hidden">
                       {page.includeCover && renderCover()}
+                      {page.includeToc && renderToc(blockPageMap)}
                       {(pagedMixedItems[pageIdx] ?? []).map((item) => (
                         <div key={item.key}>
                           {item.preview ? (
@@ -1619,7 +1706,9 @@ export function ReportViewer({
                               commentCount={
                                 openCountByBlock.get(item.slice.block.id) ?? 0
                               }
-                              blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                              blockQuotes={quotesByBlock.get(
+                                item.slice.block.id,
+                              )}
                               onCitationClick={scrollToSource}
                               onOpenCommentForBlock={onOpenCommentForBlock}
                               onOpenCommentThread={onOpenCommentThread}

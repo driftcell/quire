@@ -14,6 +14,7 @@ export interface A4Page {
   pageNumber: number;
   items: PageSlice[];
   includeCover?: boolean;
+  includeToc?: boolean;
   includeBibliography?: boolean;
 }
 
@@ -29,7 +30,13 @@ export interface PageMeasurements {
   blockHeights: Record<string, number>;
   tableMeasurements: Record<string, TableMeasurement>;
   coverHeight: number;
+  tocHeight: number;
   bibliographyHeight: number;
+}
+
+export interface PaginateOptions {
+  /** Protocol default is `true`; only an explicit `false` may share the last page. */
+  referencesPageBreakBefore?: boolean;
 }
 
 export const A4_PAGE_WIDTH_PX = 794;
@@ -67,36 +74,56 @@ function tableChromeHeight(
 /**
  * Bin-pack blocks into fixed A4 pages using real per-block and per-row DOM measurements.
  * - Page 1 deducts Cover height from available content height.
+ * - The inline TOC follows the cover, sharing the page when it fits and moving
+ *   to a clean page when it does not.
  * - ECharts and CustomHtml blocks are always atomic and never split across pages.
  * - Headings enforce keep-with-next when the following block doesn't fit.
  * - Oversized tables slice rows by measured row height while repeating <thead>,
  *   enforcing a minimum 2-row orphan guard at page bottoms.
- * - Bibliography moves to a clean trailing page if it doesn't fit on the last content page.
+ * - Bibliography starts a new page when `referencesPageBreakBefore` is true
+ *   (the protocol default) or when it does not fit on the last content page.
  */
 export function paginateBlocks(
   blocks: ReportBlock[],
   measurements: PageMeasurements,
   pageHeight: number = A4_CONTENT_HEIGHT_PX,
+  options: PaginateOptions = {},
 ): A4Page[] {
-  const { blockHeights, tableMeasurements, coverHeight, bibliographyHeight } =
-    measurements;
+  const {
+    blockHeights,
+    tableMeasurements,
+    coverHeight,
+    tocHeight,
+    bibliographyHeight,
+  } = measurements;
 
   const pages: A4Page[] = [];
   let currentItems: PageSlice[] = [];
+  let currentIncludeToc = false;
   let usedHeight =
     coverHeight > 0 ? Math.min(coverHeight, pageHeight * 0.75) : 0;
 
   const pushPage = () => {
-    if (currentItems.length > 0 || pages.length === 0) {
+    if (currentItems.length > 0 || currentIncludeToc || pages.length === 0) {
       pages.push({
         pageNumber: pages.length + 1,
         items: currentItems,
         includeCover: pages.length === 0 && coverHeight > 0,
+        includeToc: currentIncludeToc,
       });
       currentItems = [];
+      currentIncludeToc = false;
       usedHeight = 0;
     }
   };
+
+  if (tocHeight > 0) {
+    if (usedHeight > 0 && usedHeight + tocHeight > pageHeight) {
+      pushPage();
+    }
+    currentIncludeToc = true;
+    usedHeight += tocHeight;
+  }
 
   for (let i = 0; i < blocks.length; i += 1) {
     const block = blocks[i];
@@ -114,7 +141,7 @@ export function paginateBlocks(
         ? Math.min(140, blockHeights[nextBlock.id] ?? 80)
         : 0;
       if (
-        currentItems.length > 0 &&
+        (currentItems.length > 0 || currentIncludeToc) &&
         usedHeight + measured + nextHeight > pageHeight
       ) {
         pushPage();
@@ -125,7 +152,10 @@ export function paginateBlocks(
     }
 
     if (block.type !== "table" || usedHeight + measured <= pageHeight) {
-      if (currentItems.length > 0 && usedHeight + measured > pageHeight) {
+      if (
+        (currentItems.length > 0 || currentIncludeToc) &&
+        usedHeight + measured > pageHeight
+      ) {
         pushPage();
       }
       currentItems.push({ block });
@@ -136,7 +166,7 @@ export function paginateBlocks(
     // Oversized table: slice rows using real measured row heights.
     const rows = Array.isArray(block.rows) ? block.rows : [];
     if (rows.length === 0) {
-      if (currentItems.length > 0) {
+      if (currentItems.length > 0 || currentIncludeToc) {
         pushPage();
       }
       currentItems.push({ block });
@@ -173,7 +203,10 @@ export function paginateBlocks(
       const remainingRows = rows.length - cursor;
       const minRowsToKeepOnCurrentPage = Math.min(2, remainingRows);
 
-      if (count < minRowsToKeepOnCurrentPage && currentItems.length > 0) {
+      if (
+        count < minRowsToKeepOnCurrentPage &&
+        (currentItems.length > 0 || currentIncludeToc)
+      ) {
         pushPage();
         continue;
       }
@@ -225,20 +258,46 @@ export function paginateBlocks(
           }
           return sum + (blockHeights[slice.block.id] ?? 80);
         },
-        lastPage.includeCover ? Math.min(coverHeight, pageHeight * 0.75) : 0,
+        (lastPage.includeCover ? Math.min(coverHeight, pageHeight * 0.75) : 0) +
+          (lastPage.includeToc ? tocHeight : 0),
       );
 
-      if (lastPageUsed + bibliographyHeight <= pageHeight) {
-        lastPage.includeBibliography = true;
-      } else {
+      const hasContent =
+        lastPage.includeCover ||
+        lastPage.includeToc ||
+        lastPage.items.length > 0;
+      const mustBreak = options.referencesPageBreakBefore ?? true;
+
+      if (
+        hasContent &&
+        (mustBreak || lastPageUsed + bibliographyHeight > pageHeight)
+      ) {
         pages.push({
           pageNumber: pages.length + 1,
           items: [],
           includeBibliography: true,
         });
+      } else {
+        lastPage.includeBibliography = true;
       }
     }
   }
 
   return pages;
+}
+
+/**
+ * Map every block to the first page where it appears. Inline TOC page numbers
+ * must come from this packed result, not from heading order or revision data.
+ */
+export function buildBlockPageMap(pages: A4Page[]): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const page of pages) {
+    for (const slice of page.items) {
+      if (!map.has(slice.block.id)) {
+        map.set(slice.block.id, page.pageNumber);
+      }
+    }
+  }
+  return map;
 }
