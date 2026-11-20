@@ -1,100 +1,43 @@
-import {
-  startTransition,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { usePanelRef } from "react-resizable-panels";
-import {
-  BookOpenIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  MessageSquareQuoteIcon,
-  PanelLeftIcon,
-  PrinterIcon,
-  ScrollTextIcon,
-} from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
 import { getDocument, listComments } from "@/api/quire";
 import {
-  answerQuestion,
   compactSession,
   createSessionComment,
-  deleteSessionComment,
-  deleteSessionQueueItem,
   getSession,
   interruptSession,
   listSessionTraces,
-  postMessage,
-  replySessionComment,
   retrySession,
-  updateSessionCommentStatus,
-  updateSessionQueueItem,
-  uploadAttachment,
 } from "@/api/runtime";
-import { subscribeDocumentEvents, subscribeSessionEvents } from "@/api/sse";
-import {
-  PromptComposer,
-  type QuotedChatSnippet,
-} from "@/components/chat/PromptComposer";
-import { SessionStreamView } from "@/components/chat/SessionStreamView";
-import { CommentsPanel } from "@/components/report/CommentsDrawer";
+import type { QuotedChatSnippet } from "@/components/chat/PromptComposer";
+import { SessionChatPane } from "@/components/chat/SessionChatPane";
+import { SessionCommentsPane } from "@/components/report/SessionCommentsPane";
 import {
   FloatingCommentPopover,
   type FloatingCommentAnchor,
 } from "@/components/report/FloatingCommentPopover";
-import { PageChromeDialog } from "@/components/report/PageChromeDialog";
-import { ReportViewer } from "@/components/report/ReportViewer";
-import { TocOutline } from "@/components/report/TocOutline";
-import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { SessionReportPane } from "@/components/report/SessionReportPane";
+import { SessionRightPane } from "@/components/report/SessionRightPane";
 import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+  SessionWorkspaceLayout,
+  type SessionMobileTab,
+} from "@/components/report/SessionWorkspaceLayout";
 import { useSidebar } from "@/components/ui/sidebar";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type {
-  CommentThread,
-  EphemeralPreviewEvent,
-} from "@/contracts/report-protocol";
 import type {
   ActiveRunStatus,
   ContextUsage,
-  PendingQueueItem,
-  PendingQuestion,
-  QuestionAnswer,
-  SessionDetail,
-  SessionEvent,
 } from "@/contracts/session-protocol";
+import { useDocumentEventStream } from "@/hooks/useDocumentEventStream";
+import { useSessionEventStream } from "@/hooks/useSessionEventStream";
+import { useSessionMessageActions } from "@/hooks/useSessionMessageActions";
+import { useSessionQueueActions } from "@/hooks/useSessionQueueActions";
 import { useIsMobile } from "@/hooks/use-mobile";
-import {
-  appendSubagentSegment,
-  appendTextSegment,
-  appendThinkingSegment,
-  appendToolSegment,
-  emptyLiveTrace,
-  finishToolSegment,
-  type LiveAgentTrace,
-  type LiveSubagentRun,
-} from "@/lib/liveTrace";
-import { loadPreferences, savePreferences } from "@/lib/preferences";
-import type { CommentRefPayload } from "@/lib/commentRefXml";
-import { parseCommentRefs } from "@/lib/commentRefXml";
-import { randomUuid } from "@/lib/uuid";
+import { useWorkspacePreferences } from "@/hooks/useWorkspacePreferences";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   component: SessionWorkspaceRoute,
 });
-
-function matchesSubagent(sub: LiveSubagentRun, runId: string): boolean {
-  return sub.subagentRunId === runId;
-}
 
 function SessionWorkspaceRoute() {
   const { sessionId } = Route.useParams();
@@ -106,48 +49,13 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const isMobile = useIsMobile();
   const { open: leftSidebarOpen, toggleSidebar } = useSidebar();
 
-  const [prefs, setPrefs] = useState(() => loadPreferences());
-  const updatePrefs = useCallback((patch: Partial<typeof prefs>) => {
-    startTransition(() => {
-      setPrefs((prev) => {
-        const next = { ...prev, ...patch };
-        savePreferences(next);
-        return next;
-      });
-    });
-  }, []);
-
-  const [rightPanelAnimating, setRightPanelAnimating] = useState(false);
-  const rightPanelRef = usePanelRef();
-  const rightPanelWasOpenRef = useRef(prefs.rightSidebarOpen);
-
-  useEffect(() => {
-    if (!rightPanelAnimating) {
-      return undefined;
-    }
-    const timer = window.setTimeout(() => setRightPanelAnimating(false), 350);
-    return () => window.clearTimeout(timer);
-  }, [rightPanelAnimating]);
-
-  useEffect(() => {
-    const panel = rightPanelRef.current;
-    if (!panel) {
-      return;
-    }
-    if (prefs.rightSidebarOpen) {
-      if (!rightPanelWasOpenRef.current) {
-        panel.resize(`${prefs.rightPanelPct}%`);
-      }
-    } else if (rightPanelWasOpenRef.current) {
-      panel.collapse();
-    }
-    rightPanelWasOpenRef.current = prefs.rightSidebarOpen;
-  }, [prefs.rightSidebarOpen, prefs.rightPanelPct, rightPanelRef]);
-
-  const toggleRightSidebar = () => {
-    setRightPanelAnimating(true);
-    updatePrefs({ rightSidebarOpen: !prefs.rightSidebarOpen });
-  };
+  const {
+    prefs,
+    updatePrefs,
+    rightPanelAnimating,
+    rightPanelRef,
+    toggleRightSidebar,
+  } = useWorkspacePreferences();
 
   const sessionQuery = useQuery({
     queryKey: ["session", sessionId],
@@ -159,53 +67,31 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     queryFn: () => listSessionTraces(sessionId),
   });
 
-  const [liveDocId, setLiveDocId] = useState<string | null>(null);
-  const [liveRunStatus, setLiveRunStatus] = useState<ActiveRunStatus | null>(
-    null,
-  );
-  const [liveUsage, setLiveUsage] = useState<ContextUsage | null>(null);
-  const [liveMain, setLiveMain] = useState<LiveAgentTrace | null>(null);
-  const [liveSubagents, setLiveSubagents] = useState<LiveSubagentRun[]>([]);
-  const [livePendingQuestion, setLivePendingQuestion] =
-    useState<PendingQuestion | null>(null);
-  const [resolvedQuestions, setResolvedQuestions] = useState<
-    Array<{
-      question: PendingQuestion;
-      status: "answered" | "skipped" | "dismissed";
-      answers?: QuestionAnswer[];
-    }>
-  >([]);
-  const [isAnsweringQuestion, setIsAnsweringQuestion] = useState(false);
-
-  const [ephemeralPreviews, setEphemeralPreviews] = useState<
-    Map<string, EphemeralPreviewEvent>
-  >(() => new Map());
-  const previewTimersRef = useRef<Map<string, number>>(new Map());
-  const pendingClearedByRevRef = useRef<Map<number, string[]>>(new Map());
-
-  const [activeActorsBySection, setActiveActorsBySection] = useState<
-    Map<string, string[]>
-  >(() => new Map());
-  const presenceTimersRef = useRef<Map<string, number>>(new Map());
+  const {
+    liveDocId,
+    liveRunStatus,
+    liveUsage,
+    liveMain,
+    liveSubagents,
+    effectivePendingQuestion,
+    mergedResolvedQuestions,
+    recordResolvedQuestion,
+    clearLivePendingQuestion,
+  } = useSessionEventStream({
+    sessionId,
+    enabled: sessionQuery.isSuccess,
+    lastEventSeq: sessionQuery.data?.last_event_seq ?? 0,
+    serverPendingQuestion: sessionQuery.data?.pending_question ?? null,
+    serverResolvedQuestions: sessionQuery.data?.resolved_questions,
+  });
 
   const [rightTab, setRightTab] = useState<"chat" | "comments">("chat");
-  const [sseGeneration, setSseGeneration] = useState(0);
   const [activeCommentThreadId, setActiveCommentThreadId] = useState<
     string | null
   >(null);
-  const [pendingCommentRefs, setPendingCommentRefs] = useState<
-    CommentRefPayload[]
-  >([]);
-  const [composerPrefill, setComposerPrefill] = useState<{
-    key: string;
-    text: string;
-  } | null>(null);
-  const [queueBusyId, setQueueBusyId] = useState<string | null>(null);
   const [floatingComment, setFloatingComment] =
     useState<FloatingCommentAnchor | null>(null);
-  const [mobileTab, setMobileTab] = useState<"report" | "chat" | "comments">(
-    "report",
-  );
+  const [mobileTab, setMobileTab] = useState<SessionMobileTab>("report");
   const [quotedForChat, setQuotedForChat] = useState<QuotedChatSnippet | null>(
     null,
   );
@@ -231,60 +117,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const effectiveRunStatus: ActiveRunStatus =
     liveRunStatus ?? sessionQuery.data?.active_run_status ?? "idle";
-
   const effectiveUsage: ContextUsage | undefined =
     liveUsage ?? sessionQuery.data?.context_usage;
-
-  const effectivePendingQuestion: PendingQuestion | null =
-    livePendingQuestion ?? sessionQuery.data?.pending_question ?? null;
-  const effectivePendingQuestionRef = useRef<PendingQuestion | null>(
-    effectivePendingQuestion,
-  );
-  useEffect(() => {
-    effectivePendingQuestionRef.current = effectivePendingQuestion;
-  }, [effectivePendingQuestion]);
-
-  const recordResolvedQuestion = useCallback(
-    (
-      question: PendingQuestion,
-      status: "answered" | "skipped" | "dismissed",
-      answers?: QuestionAnswer[],
-    ) => {
-      setResolvedQuestions((prev) => {
-        const next = prev.filter(
-          (item) => item.question.question_id !== question.question_id,
-        );
-        next.push({ question, status, answers });
-        return next;
-      });
-    },
-    [],
-  );
-
-  const mergedResolvedQuestions = useMemo(() => {
-    const byId = new Map<
-      string,
-      {
-        question: PendingQuestion;
-        status: "answered" | "skipped" | "dismissed";
-        answers?: QuestionAnswer[];
-      }
-    >();
-    for (const item of sessionQuery.data?.resolved_questions ?? []) {
-      byId.set(item.question.question_id, {
-        question: item.question,
-        status:
-          item.status === "skipped" || item.status === "dismissed"
-            ? item.status
-            : "answered",
-        answers: item.answers,
-      });
-    }
-    for (const item of resolvedQuestions) {
-      byId.set(item.question.question_id, item);
-    }
-    return Array.from(byId.values());
-  }, [sessionQuery.data?.resolved_questions, resolvedQuestions]);
 
   const docQuery = useQuery({
     queryKey: ["doc", effectiveDocId],
@@ -308,561 +142,17 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     enabled: Boolean(effectiveDocId),
   });
 
-  const afterSeqRef = useRef<number>(0);
-  const lastEventSeq = sessionQuery.data?.last_event_seq ?? 0;
-  useEffect(() => {
-    afterSeqRef.current = lastEventSeq;
-  }, [lastEventSeq]);
-
-  useEffect(() => {
-    if (!sessionQuery.isSuccess) return undefined;
-
-    const handleEvent = (ev: SessionEvent) => {
-      if (ev.event !== "sync_required" && ev.seq > 0) {
-        afterSeqRef.current = Math.max(afterSeqRef.current, ev.seq);
-      }
-      const isSubagentEvent =
-        Boolean(ev.parent_run_id) ||
-        (ev.agent_id !== "main" && ev.agent_id.length > 0);
-
-      if (ev.event === "doc_linked") {
-        setLiveDocId(ev.doc_id);
-        void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      } else if (ev.event === "session_title_updated") {
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-        void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      } else if (ev.event === "user_message_added") {
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      } else if (ev.event === "turn_started") {
-        setLiveRunStatus("running");
-        setLiveMain(emptyLiveTrace("main"));
-        setLiveSubagents([]);
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      } else if (ev.event === "thinking_delta") {
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: appendThinkingSegment(sub.trace, ev.delta),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            appendThinkingSegment(prev ?? emptyLiveTrace("main"), ev.delta),
-          );
-        }
-      } else if (ev.event === "text_delta") {
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: appendTextSegment(sub.trace, ev.delta),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            appendTextSegment(prev ?? emptyLiveTrace("main"), ev.delta),
-          );
-        }
-      } else if (ev.event === "task_focus") {
-        const focus = {
-          title: ev.title,
-          detail: ev.detail ?? undefined,
-          sectionId: ev.section_id ?? undefined,
-        };
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? { ...sub, trace: { ...sub.trace, taskFocus: focus } }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) => ({
-            ...(prev ?? emptyLiveTrace("main")),
-            taskFocus: focus,
-          }));
-        }
-      } else if (ev.event === "tool_call_started") {
-        const toolItem = {
-          toolCallId: ev.tool_call_id,
-          toolName: ev.tool_name,
-          status: "running" as const,
-          inputPreview: ev.input_preview,
-          truncated: ev.truncated,
-        };
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: appendToolSegment(sub.trace, toolItem),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            appendToolSegment(prev ?? emptyLiveTrace("main"), toolItem),
-          );
-        }
-      } else if (ev.event === "tool_call_finished") {
-        const nextStatus: "completed" | "failed" =
-          ev.status === "failed" || ev.status === "error"
-            ? "failed"
-            : "completed";
-        const patch = {
-          status: nextStatus,
-          outputPreview: ev.output_preview,
-          durationMs: ev.duration_ms,
-        };
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: finishToolSegment(sub.trace, ev.tool_call_id, patch),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            prev ? finishToolSegment(prev, ev.tool_call_id, patch) : prev,
-          );
-        }
-      } else if (ev.event === "subagent_started") {
-        setLiveMain((prev) =>
-          prev ? appendSubagentSegment(prev, ev.subagent_run_id) : prev,
-        );
-        setLiveSubagents((prev) => [
-          ...prev,
-          {
-            subagentRunId: ev.subagent_run_id,
-            agentName: ev.agent_name,
-            displayName: ev.display_name ?? undefined,
-            task: ev.task,
-            sectionId: ev.section_id ?? undefined,
-            status: "running",
-            trace: emptyLiveTrace(ev.agent_name),
-          },
-        ]);
-      } else if (ev.event === "subagent_finished") {
-        setLiveSubagents((prev) =>
-          prev.map((sub) =>
-            sub.subagentRunId === ev.subagent_run_id
-              ? {
-                  ...sub,
-                  status: ev.status === "failed" ? "failed" : "completed",
-                  summary: ev.summary,
-                  trace: { ...sub.trace, isStreaming: false },
-                }
-              : sub,
-          ),
-        );
-      } else if (ev.event === "context_usage") {
-        setLiveUsage({
-          input_tokens: ev.input_tokens,
-          output_tokens: ev.output_tokens,
-          cached_tokens: ev.cached_tokens,
-          context_used: ev.context_used,
-          context_limit: ev.context_limit,
-        });
-      } else if (ev.event === "questionnaire_requested") {
-        setLiveRunStatus("awaiting_input");
-        setLivePendingQuestion({
-          question_id: ev.question_id,
-          run_id: ev.run_id,
-          tool_call_id: ev.tool_call_id,
-          questions: ev.questions,
-          created_at: ev.timestamp,
-        });
-      } else if (ev.event === "questionnaire_answered") {
-        const target = effectivePendingQuestionRef.current;
-        if (target && target.question_id === ev.question_id) {
-          recordResolvedQuestion(
-            target,
-            ev.skipped_all ? "skipped" : "answered",
-            ev.answers,
-          );
-        }
-        setLivePendingQuestion((curr) =>
-          curr?.question_id === ev.question_id ? null : curr,
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["session-traces", sessionId],
-        });
-      } else if (ev.event === "questionnaire_dismissed") {
-        const target = effectivePendingQuestionRef.current;
-        if (target && target.question_id === ev.question_id) {
-          recordResolvedQuestion(target, "dismissed");
-        }
-        setLivePendingQuestion((curr) =>
-          curr?.question_id === ev.question_id ? null : curr,
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["session-traces", sessionId],
-        });
-      } else if (ev.event === "turn_finished") {
-        setLiveRunStatus("idle");
-        void (async () => {
-          await Promise.all([
-            queryClient.refetchQueries({
-              queryKey: ["session", sessionId],
-            }),
-            queryClient.refetchQueries({
-              queryKey: ["session-traces", sessionId],
-            }),
-          ]);
-          setLiveMain(null);
-          setLiveSubagents([]);
-        })();
-        void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      } else if (ev.event === "turn_failed") {
-        setLiveRunStatus(ev.recoverable ? "interrupted" : "failed");
-        setLiveMain((prev) => (prev ? { ...prev, isStreaming: false } : null));
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      } else if (ev.event === "sync_required") {
-        void (async () => {
-          try {
-            await queryClient.refetchQueries({
-              queryKey: ["session", sessionId],
-            });
-            const detail = queryClient.getQueryData<SessionDetail>([
-              "session",
-              sessionId,
-            ]);
-            if (detail && typeof detail.last_event_seq === "number") {
-              afterSeqRef.current = Math.max(
-                afterSeqRef.current,
-                detail.last_event_seq,
-              );
-            }
-          } catch {
-            // Reconnect anyway; the server replays from the current cursor.
-          } finally {
-            setSseGeneration((generation) => generation + 1);
-          }
-        })();
-      } else if (ev.event === "pending_queue_updated") {
-        queryClient.setQueryData<SessionDetail>(
-          ["session", sessionId],
-          (current) =>
-            current ? { ...current, pending_queue: ev.items } : current,
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      }
-    };
-
-    return subscribeSessionEvents(sessionId, () => afterSeqRef.current, {
-      onEvent: handleEvent,
-    });
-  }, [
-    sessionId,
-    sessionQuery.isSuccess,
-    queryClient,
-    recordResolvedQuestion,
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- bumping generation intentionally tears down and recreates the SSE stream
-    sseGeneration,
-  ]);
-
-  const currentRevRef = useRef<number>(0);
-  const currentRev = docQuery.data?.current_rev ?? 0;
-  useEffect(() => {
-    currentRevRef.current = currentRev;
-    if (pendingClearedByRevRef.current.size === 0) return;
-    const toClear: string[] = [];
-    for (const [rev, ids] of pendingClearedByRevRef.current.entries()) {
-      if (rev <= currentRev) {
-        toClear.push(...ids);
-        pendingClearedByRevRef.current.delete(rev);
-      }
-    }
-    if (toClear.length > 0) {
-      setEphemeralPreviews((prev) => {
-        const next = new Map(prev);
-        for (const id of toClear) {
-          next.delete(id);
-          const timer = previewTimersRef.current.get(id);
-          if (timer !== undefined) {
-            window.clearTimeout(timer);
-            previewTimersRef.current.delete(id);
-          }
-        }
-        return next;
-      });
-    }
-  }, [currentRev]);
-
-  useEffect(() => {
-    if (!effectiveDocId || !docQuery.isSuccess) return undefined;
-    const timers = previewTimersRef.current;
-    const presenceTimers = presenceTimersRef.current;
-
-    const clearPreviewIds = (ids: string[]) => {
-      if (ids.length === 0) return;
-      setEphemeralPreviews((prev) => {
-        const next = new Map(prev);
-        for (const id of ids) {
-          next.delete(id);
-          const timer = timers.get(id);
-          if (timer !== undefined) {
-            window.clearTimeout(timer);
-            timers.delete(id);
-          }
-        }
-        return next;
-      });
-    };
-
-    const removeActor = (actor: string) => {
-      setActiveActorsBySection((prev) => {
-        let changed = false;
-        const next = new Map<string, string[]>();
-        for (const [sec, actors] of prev.entries()) {
-          const filtered = actors.filter((a) => a !== actor);
-          if (filtered.length !== actors.length) {
-            changed = true;
-          }
-          if (filtered.length > 0) {
-            next.set(sec, filtered);
-          }
-        }
-        return changed ? next : prev;
-      });
-    };
-
-    const unsub = subscribeDocumentEvents(
-      effectiveDocId,
-      currentRevRef.current,
-      {
-        onRevision(delta) {
-          if (
-            delta.cleared_preview_ids &&
-            delta.cleared_preview_ids.length > 0
-          ) {
-            if (currentRevRef.current >= delta.revision) {
-              clearPreviewIds(delta.cleared_preview_ids);
-            } else {
-              const prevList =
-                pendingClearedByRevRef.current.get(delta.revision) ?? [];
-              pendingClearedByRevRef.current.set(delta.revision, [
-                ...prevList,
-                ...delta.cleared_preview_ids,
-              ]);
-            }
-          }
-          void queryClient.invalidateQueries({
-            queryKey: ["doc", effectiveDocId],
-          });
-        },
-        onEphemeralPreview(preview) {
-          setEphemeralPreviews((prev) => {
-            const existing = prev.get(preview.preview_id);
-            if (
-              existing?.seq !== undefined &&
-              existing.seq !== null &&
-              preview.seq !== undefined &&
-              preview.seq !== null &&
-              preview.seq < existing.seq
-            ) {
-              return prev;
-            }
-            const next = new Map(prev);
-            if (preview.status === "streaming") {
-              next.set(preview.preview_id, preview);
-            } else {
-              next.delete(preview.preview_id);
-            }
-            return next;
-          });
-
-          const oldTimer = timers.get(preview.preview_id);
-          if (oldTimer !== undefined) {
-            window.clearTimeout(oldTimer);
-          }
-          const ttl = preview.ttl_ms ?? 15_000;
-          const timerId = window.setTimeout(() => {
-            clearPreviewIds([preview.preview_id]);
-          }, ttl);
-          timers.set(preview.preview_id, timerId);
-        },
-        onEphemeralClear(clear) {
-          clearPreviewIds(clear.preview_ids);
-        },
-        onAgentPresence(presence) {
-          const prevTimer = presenceTimers.get(presence.actor);
-          if (prevTimer !== undefined) {
-            window.clearTimeout(prevTimer);
-            presenceTimers.delete(presence.actor);
-          }
-          if (presence.status === "idle" || !presence.section_id) {
-            removeActor(presence.actor);
-            return;
-          }
-          const sectionId = presence.section_id;
-          setActiveActorsBySection((prev) => {
-            const next = new Map<string, string[]>();
-            for (const [sec, actors] of prev.entries()) {
-              const filtered = actors.filter((a) => a !== presence.actor);
-              if (filtered.length > 0) {
-                next.set(sec, filtered);
-              }
-            }
-            const curr = next.get(sectionId) ?? [];
-            next.set(sectionId, [...curr, presence.actor]);
-            return next;
-          });
-          const timerId = window.setTimeout(() => {
-            removeActor(presence.actor);
-            presenceTimers.delete(presence.actor);
-          }, 10_000);
-          presenceTimers.set(presence.actor, timerId);
-        },
-        onCommentUpdated() {
-          void queryClient.invalidateQueries({
-            queryKey: ["comments", effectiveDocId],
-          });
-        },
-        onSyncRequired() {
-          void queryClient.invalidateQueries({
-            queryKey: ["doc", effectiveDocId],
-          });
-        },
-      },
-    );
-
-    return () => {
-      unsub();
-      for (const timer of timers.values()) {
-        window.clearTimeout(timer);
-      }
-      timers.clear();
-      for (const timer of presenceTimers.values()) {
-        window.clearTimeout(timer);
-      }
-      presenceTimers.clear();
-    };
-  }, [effectiveDocId, docQuery.isSuccess, queryClient]);
+  const { ephemeralPreviews, activeActorsBySection } = useDocumentEventStream({
+    docId: effectiveDocId,
+    enabled: docQuery.isSuccess,
+    currentRev: docQuery.data?.current_rev ?? 0,
+  });
 
   const blockCount = docQuery.data?.document.blocks.length ?? 0;
   const hasReportData = useMemo(() => {
     if (!effectiveDocId) return false;
     return blockCount > 0 || ephemeralPreviews.size > 0;
   }, [effectiveDocId, blockCount, ephemeralPreviews.size]);
-
-  const handleSend = async (text: string, files: File[]) => {
-    const content = text || `请处理已上传的 ${files.length} 个附件。`;
-    const attachmentIds: string[] = [];
-    for (const file of files) {
-      const uploaded = await uploadAttachment(sessionId, file);
-      attachmentIds.push(uploaded.attachment_id);
-    }
-    const response = await postMessage(sessionId, {
-      client_msg_id: `msg_${randomUuid()}`,
-      content,
-      attachment_ids: attachmentIds,
-    });
-    // Insert the persisted row under its stable server ID. A temporary
-    // optimistic row would change keys when the real row arrives and lose the
-    // turn anchor; refetching the whole session here causes the same jump.
-    queryClient.setQueryData<SessionDetail>(
-      ["session", sessionId],
-      (current) => {
-        if (!current) {
-          return current;
-        }
-        if (response.queued && response.queue_item) {
-          const existingQueue = current.pending_queue ?? [];
-          if (
-            existingQueue.some(
-              (item) => item.queue_id === response.queue_item?.queue_id,
-            )
-          ) {
-            return current;
-          }
-          return {
-            ...current,
-            pending_queue: [...existingQueue, response.queue_item],
-          };
-        }
-        if (!response.message) {
-          return current;
-        }
-        const existing = current.messages ?? [];
-        if (
-          existing.some(
-            (message) => message.message_id === response.message?.message_id,
-          )
-        ) {
-          return current;
-        }
-        return {
-          ...current,
-          messages: [...existing, response.message],
-        };
-      },
-    );
-    if (effectivePendingQuestion) {
-      recordResolvedQuestion(effectivePendingQuestion, "dismissed");
-    }
-    setLivePendingQuestion(null);
-  };
-
-  const handleAnswerQuestion = async (
-    questionId: string,
-    answers: QuestionAnswer[],
-    skipped: boolean,
-  ) => {
-    setIsAnsweringQuestion(true);
-    try {
-      await answerQuestion(sessionId, questionId, { answers, skipped });
-      if (
-        effectivePendingQuestion &&
-        effectivePendingQuestion.question_id === questionId
-      ) {
-        recordResolvedQuestion(
-          effectivePendingQuestion,
-          skipped ? "skipped" : "answered",
-          answers,
-        );
-      }
-      setLivePendingQuestion(null);
-      void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-      void queryClient.invalidateQueries({
-        queryKey: ["session-traces", sessionId],
-      });
-    } finally {
-      setIsAnsweringQuestion(false);
-    }
-  };
 
   const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);
@@ -904,6 +194,28 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   }, [isMobile, prefs.rightSidebarOpen, updatePrefs]);
 
+  const { isAnsweringQuestion, handleSend, handleAnswerQuestion } =
+    useSessionMessageActions({
+      sessionId,
+      effectivePendingQuestion,
+      recordResolvedQuestion,
+      clearLivePendingQuestion,
+    });
+
+  const {
+    pendingCommentRefs,
+    setPendingCommentRefs,
+    composerPrefill,
+    handleUpdateQueueItem,
+    handleRecallQueueItem,
+    handleDeletePending,
+  } = useSessionQueueActions({
+    sessionId,
+    effectiveDocId,
+    pendingQueue,
+    showChat,
+  });
+
   const handleAskAgentWithQuote = useCallback(
     (blockId: string, exact: string) => {
       setQuotedForChat({ blockId, exact });
@@ -921,599 +233,169 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [jumpToSection, showComments],
   );
 
-  const removePendingQueueItemLocal = useCallback(
-    (queueId: string) => {
-      queryClient.setQueryData<SessionDetail>(
-        ["session", sessionId],
-        (current) =>
-          current
-            ? {
-                ...current,
-                pending_queue: (current.pending_queue ?? []).filter(
-                  (item) => item.queue_id !== queueId,
-                ),
-              }
-            : current,
-      );
-    },
-    [queryClient, sessionId],
-  );
-
-  const handleUpdateQueueItem = useCallback(
-    async (queueId: string, content: string) => {
-      if (queueBusyId) return;
-      setQueueBusyId(queueId);
-      try {
-        const updated = await updateSessionQueueItem(
-          sessionId,
-          queueId,
-          content,
-        );
-        queryClient.setQueryData<SessionDetail>(
-          ["session", sessionId],
-          (current) =>
-            current
-              ? {
-                  ...current,
-                  pending_queue: (current.pending_queue ?? []).map((item) =>
-                    item.queue_id === queueId ? updated : item,
-                  ),
-                }
-              : current,
-        );
-      } finally {
-        setQueueBusyId(null);
-      }
-    },
-    [queryClient, queueBusyId, sessionId],
-  );
-
-  const handleRecallQueueItem = useCallback(
-    async (item: PendingQueueItem) => {
-      if (queueBusyId) return;
-      setQueueBusyId(item.queue_id);
-      try {
-        await deleteSessionQueueItem(sessionId, item.queue_id);
-        removePendingQueueItemLocal(item.queue_id);
-        const parsed = parseCommentRefs(item.content);
-        if (item.source === "comment") {
-          setPendingCommentRefs([]);
-          setComposerPrefill({
-            key: item.queue_id,
-            text:
-              parsed.refs
-                .map((ref) => ref.comment)
-                .filter(Boolean)
-                .join("\n\n") || parsed.body,
-          });
-        } else {
-          setPendingCommentRefs(parsed.refs);
-          setComposerPrefill({
-            key: item.queue_id,
-            text: parsed.refs.length > 0 ? parsed.body : item.content,
-          });
-        }
-        showChat();
-        if (item.source === "comment" && effectiveDocId) {
-          void queryClient.invalidateQueries({
-            queryKey: ["comments", effectiveDocId],
-          });
-        }
-      } finally {
-        setQueueBusyId(null);
-      }
-    },
-    [
-      effectiveDocId,
-      queryClient,
-      queueBusyId,
-      removePendingQueueItemLocal,
-      sessionId,
-      showChat,
-    ],
-  );
-
-  const handleDeletePending = useCallback(
-    async (queueId: string) => {
-      if (queueBusyId) return;
-      const item = pendingQueue.find(
-        (candidate) => candidate.queue_id === queueId,
-      );
-      setQueueBusyId(queueId);
-      try {
-        await deleteSessionQueueItem(sessionId, queueId);
-        removePendingQueueItemLocal(queueId);
-        if (item?.source === "comment" && effectiveDocId) {
-          void queryClient.invalidateQueries({
-            queryKey: ["comments", effectiveDocId],
-          });
-        }
-      } finally {
-        setQueueBusyId(null);
-      }
-    },
-    [
-      effectiveDocId,
-      pendingQueue,
-      queryClient,
-      queueBusyId,
-      removePendingQueueItemLocal,
-      sessionId,
-    ],
-  );
-
-  const handleDeleteComment = useCallback(
-    async (thread: CommentThread) => {
-      await deleteSessionComment(sessionId, thread.thread_id);
-      setPendingCommentRefs((prev) =>
-        prev.filter((ref) => ref.thread_id !== thread.thread_id),
-      );
-      setActiveCommentThreadId((current) =>
-        current === thread.thread_id ? null : current,
-      );
-      if (effectiveDocId) {
-        void queryClient.invalidateQueries({
-          queryKey: ["comments", effectiveDocId],
-        });
-      }
-      void queryClient.invalidateQueries({
-        queryKey: ["session", sessionId],
-      });
-    },
-    [effectiveDocId, queryClient, sessionId],
-  );
-
   const openCommentsCount =
     commentsQuery.data?.filter((c) => c.status !== "archived").length ?? 0;
 
-  const chatPane = (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
-      <div className="min-h-0 flex-1">
-        {sessionQuery.isLoading ? (
-          <div className="h-full overflow-y-auto px-4">
-            <div className="mx-auto max-w-3xl space-y-4 py-6">
-              <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
-              <Skeleton className="h-24 w-5/6 rounded-2xl" />
-              <Skeleton className="h-16 w-3/4 rounded-2xl" />
-            </div>
-          </div>
-        ) : (
-          <SessionStreamView
-            sessionId={sessionId}
-            messages={sessionQuery.data?.messages ?? []}
-            contentClassName={
-              hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"
-            }
-            onInterrupt={async () => {
-              await interruptSession(sessionId);
-              void queryClient.invalidateQueries({
-                queryKey: ["session", sessionId],
-              });
-            }}
-            attachments={sessionQuery.data?.attachments ?? []}
-            traces={tracesQuery.data ?? []}
-            liveMain={liveMain}
-            liveSubagents={liveSubagents}
-            pendingQuestion={effectivePendingQuestion}
-            resolvedQuestions={mergedResolvedQuestions}
-            isAnsweringQuestion={isAnsweringQuestion}
-            onAnswerQuestion={(qId, answers, skipped) => {
-              void handleAnswerQuestion(qId, answers, skipped);
-            }}
-            onJumpToSection={jumpToSectionFromChat}
-            pendingQueue={pendingQueue}
-            onEditPending={handleUpdateQueueItem}
-            onRecallPending={handleRecallQueueItem}
-            onDeletePending={handleDeletePending}
-          />
-        )}
-      </div>
-
-      <div
-        className={
-          hasReportData
-            ? "shrink-0 bg-background/95 px-3 pt-1 pb-3"
-            : "shrink-0 bg-background/95 px-4 pt-1 pb-5"
-        }
-      >
-        <div
-          className={hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"}
-        >
-          <PromptComposer
-            runStatus={effectiveRunStatus}
-            contextUsage={effectiveUsage}
-            quotedSnippet={quotedForChat}
-            pendingCommentRefs={pendingCommentRefs}
-            prefill={composerPrefill}
-            onClearQuote={() => setQuotedForChat(null)}
-            onRemoveCommentRef={(threadId) => {
-              setPendingCommentRefs((prev) =>
-                prev.filter((ref) => ref.thread_id !== threadId),
-              );
-            }}
-            onClearCommentRefs={() => setPendingCommentRefs([])}
-            onSend={handleSend}
-            onRetry={async () => {
-              await retrySession(sessionId);
-              void queryClient.invalidateQueries({
-                queryKey: ["session", sessionId],
-              });
-            }}
-            onCompact={async () => {
-              await compactSession(sessionId);
-              void queryClient.invalidateQueries({
-                queryKey: ["session", sessionId],
-              });
-            }}
-          />
-        </div>
-      </div>
-    </div>
+  const handleChatPanelResize = useCallback(
+    (pct: number) => {
+      if (pct <= 1 && prefs.rightSidebarOpen) {
+        updatePrefs({ rightSidebarOpen: false });
+        return;
+      }
+      if (prefs.rightSidebarOpen && pct >= 20 && pct <= 60) {
+        updatePrefs({ rightPanelPct: Math.round(pct) });
+      }
+    },
+    [prefs.rightSidebarOpen, updatePrefs],
   );
 
-  const commentsPanel = effectiveDocId ? (
-    <CommentsPanel
+  const chatPane = (
+    <SessionChatPane
+      sessionId={sessionId}
+      isLoading={sessionQuery.isLoading}
+      messages={sessionQuery.data?.messages ?? []}
+      attachments={sessionQuery.data?.attachments ?? []}
+      traces={tracesQuery.data ?? []}
+      hasReportData={hasReportData}
+      liveMain={liveMain}
+      liveSubagents={liveSubagents}
+      pendingQuestion={effectivePendingQuestion}
+      resolvedQuestions={mergedResolvedQuestions}
+      isAnsweringQuestion={isAnsweringQuestion}
+      onAnswerQuestion={(qId, answers, skipped) => {
+        void handleAnswerQuestion(qId, answers, skipped);
+      }}
+      onJumpToSection={jumpToSectionFromChat}
+      pendingQueue={pendingQueue}
+      onEditPending={handleUpdateQueueItem}
+      onRecallPending={handleRecallQueueItem}
+      onDeletePending={handleDeletePending}
+      onInterrupt={async () => {
+        await interruptSession(sessionId);
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
+      }}
+      runStatus={effectiveRunStatus}
+      contextUsage={effectiveUsage}
+      quotedSnippet={quotedForChat}
+      pendingCommentRefs={pendingCommentRefs}
+      prefill={composerPrefill}
+      onClearQuote={() => setQuotedForChat(null)}
+      onRemoveCommentRef={(threadId) => {
+        setPendingCommentRefs((prev) =>
+          prev.filter((ref) => ref.thread_id !== threadId),
+        );
+      }}
+      onClearCommentRefs={() => setPendingCommentRefs([])}
+      onSend={handleSend}
+      onRetry={async () => {
+        await retrySession(sessionId);
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
+      }}
+      onCompact={async () => {
+        await compactSession(sessionId);
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
+      }}
+    />
+  );
+
+  const commentsPane = effectiveDocId ? (
+    <SessionCommentsPane
+      sessionId={sessionId}
       docId={effectiveDocId}
       threads={commentsQuery.data ?? []}
       activeThreadId={activeCommentThreadId}
       pendingThreadIds={pendingThreadIds}
-      onClose={
-        isMobile ? undefined : () => updatePrefs({ rightSidebarOpen: false })
-      }
+      isMobile={isMobile}
+      onClose={() => updatePrefs({ rightSidebarOpen: false })}
       onSelectThread={(thread) => {
         setActiveCommentThreadId(thread.thread_id);
         jumpToSection(thread.block_id);
       }}
       onSelectBlock={jumpToSection}
-      onReply={async (threadId, body) => {
-        await replySessionComment(sessionId, threadId, { body });
-        void queryClient.invalidateQueries({
-          queryKey: ["comments", effectiveDocId],
-        });
+      onArchived={(threadId) => {
+        setPendingCommentRefs((prev) =>
+          prev.filter((ref) => ref.thread_id !== threadId),
+        );
+        setActiveCommentThreadId((current) =>
+          current === threadId ? null : current,
+        );
       }}
-      onUpdateStatus={async (threadId, status) => {
-        await updateSessionCommentStatus(sessionId, threadId, status);
-        void queryClient.invalidateQueries({
-          queryKey: ["comments", effectiveDocId],
-        });
-        if (status === "archived") {
-          setPendingCommentRefs((prev) =>
-            prev.filter((ref) => ref.thread_id !== threadId),
-          );
-          setActiveCommentThreadId((current) =>
-            current === threadId ? null : current,
-          );
-        }
+      onDeleted={(thread) => {
+        setPendingCommentRefs((prev) =>
+          prev.filter((ref) => ref.thread_id !== thread.thread_id),
+        );
+        setActiveCommentThreadId((current) =>
+          current === thread.thread_id ? null : current,
+        );
       }}
-      onDeleteThread={handleDeleteComment}
     />
   ) : null;
 
   const reportPane =
     docQuery.data && effectiveDocId ? (
-      <div
-        className={
-          isMobile
-            ? "@container relative flex h-full min-w-0 flex-col overflow-hidden bg-background"
-            : "@container relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
-        }
-      >
-        {!isMobile && (
-          <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b bg-background/95 px-3">
-            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
-              <span className="truncate text-sm font-medium">
-                {docQuery.data.document.cover.title || effectiveDocId}
-              </span>
-              <Badge
-                variant="outline"
-                className="hidden shrink-0 text-[11px] tabular-nums @min-[420px]:inline-flex"
-              >
-                版本 {docQuery.data.current_rev}
-              </Badge>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-1">
-              {prefs.reportViewMode === "paged" && effectiveDocId && (
-                <PageChromeDialog
-                  docId={effectiveDocId}
-                  themePageChrome={docQuery.data?.document.theme.page_chrome}
-                />
-              )}
-
-              <TocOutline
-                placement="bottom"
-                docId={effectiveDocId ?? docQuery.data.document.doc_id}
-                toc={docQuery.data.document.toc}
-                isPaged={prefs.reportViewMode === "paged"}
-                nodes={docQuery.data.computed.toc_tree}
-                activeActorsBySection={activeActorsBySection}
-                comments={commentsQuery.data ?? []}
-                onJumpToSection={jumpToSection}
-              />
-
-              <Button
-                type="button"
-                size="icon-sm"
-                variant="ghost"
-                aria-label="批注列表"
-                className="relative"
-                onClick={showComments}
-              >
-                <MessageSquareQuoteIcon className="size-4" />
-                {openCommentsCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
-                    {openCommentsCount}
-                  </span>
-                )}
-              </Button>
-
-              <Link
-                to="/docs/$docId/print"
-                params={{ docId: effectiveDocId }}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="导出 PDF / 打印视图"
-                title="导出 PDF / 打印视图"
-                className={buttonVariants({
-                  variant: "ghost",
-                  size: "icon-sm",
-                })}
-              >
-                <PrinterIcon className="size-4" />
-              </Link>
-
-              <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
-                <Button
-                  type="button"
-                  size="xs"
-                  variant={
-                    prefs.reportViewMode === "continuous" ? "default" : "ghost"
-                  }
-                  onClick={() => updatePrefs({ reportViewMode: "continuous" })}
-                >
-                  <ScrollTextIcon className="size-3.5 @min-[560px]:mr-1" />
-                  <span className="hidden @min-[560px]:inline">连续</span>
-                </Button>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant={
-                    prefs.reportViewMode === "paged" ? "default" : "ghost"
-                  }
-                  onClick={() => updatePrefs({ reportViewMode: "paged" })}
-                >
-                  <BookOpenIcon className="size-3.5 @min-[560px]:mr-1" />
-                  <span className="hidden @min-[560px]:inline">分页</span>
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {!isMobile && (
-          <button
-            type="button"
-            title={prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
-            aria-label={
-              prefs.rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"
-            }
-            onClick={toggleRightSidebar}
-            className="focus-visible:ring-ring absolute top-1/2 right-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-          >
-            {prefs.rightSidebarOpen ? (
-              <ChevronRightIcon className="size-3.5" />
-            ) : (
-              <ChevronLeftIcon className="size-3.5" />
-            )}
-          </button>
-        )}
-
-        <div className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <ReportViewer
-            document={docQuery.data.document}
-            computed={docQuery.data.computed}
-            viewMode={prefs.reportViewMode}
-            ephemeralPreviews={ephemeralPreviews}
-            comments={commentsQuery.data}
-            onOpenCommentForBlock={(anchor) => {
-              setFloatingComment(anchor);
-            }}
-            onOpenCommentThread={openCommentThread}
-            onAskAgentWithQuote={handleAskAgentWithQuote}
-            onJumpToSection={jumpToSection}
-          />
-        </div>
-      </div>
+      <SessionReportPane
+        docId={effectiveDocId}
+        document={docQuery.data.document}
+        computed={docQuery.data.computed}
+        currentRev={docQuery.data.current_rev}
+        viewMode={prefs.reportViewMode}
+        ephemeralPreviews={ephemeralPreviews}
+        comments={commentsQuery.data ?? []}
+        activeActorsBySection={activeActorsBySection}
+        openCommentsCount={openCommentsCount}
+        isMobile={isMobile}
+        rightSidebarOpen={prefs.rightSidebarOpen}
+        onToggleRightSidebar={toggleRightSidebar}
+        onViewModeChange={(mode) => updatePrefs({ reportViewMode: mode })}
+        onJumpToSection={jumpToSection}
+        onShowComments={showComments}
+        onOpenCommentForBlock={(anchor) => {
+          setFloatingComment(anchor);
+        }}
+        onOpenCommentThread={openCommentThread}
+        onAskAgentWithQuote={handleAskAgentWithQuote}
+      />
     ) : null;
 
   const rightPane = (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs">
-      <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium">
-            {sessionQuery.data?.title ?? "加载中..."}
-          </span>
-          {effectiveRunStatus === "running" && (
-            <Badge variant="secondary" className="shrink-0 text-[11px]">
-              生成中
-            </Badge>
-          )}
-        </div>
-        <Tabs
-          value={rightTab}
-          onValueChange={(value) => {
-            if (value === "chat" || value === "comments") {
-              setRightTab(value);
-            }
-          }}
-          className="shrink-0"
-        >
-          <TabsList className="grid grid-cols-2">
-            <TabsTrigger value="chat" className="text-xs">
-              对话
-            </TabsTrigger>
-            <TabsTrigger value="comments" className="text-xs">
-              批注 ({openCommentsCount})
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-      </div>
-      <div className="min-h-0 flex-1">
-        {rightTab === "chat" ? chatPane : commentsPanel}
-      </div>
-    </div>
+    <SessionRightPane
+      title={sessionQuery.data?.title ?? "加载中..."}
+      runStatus={effectiveRunStatus}
+      openCommentsCount={openCommentsCount}
+      activeTab={rightTab}
+      onTabChange={setRightTab}
+      chatPane={chatPane}
+      commentsPane={commentsPane}
+    />
   );
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden">
-      {(!hasReportData || isMobile) && (
-        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b bg-background px-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <Button
-              type="button"
-              size="icon-sm"
-              variant="ghost"
-              aria-label="切换左侧会话栏"
-              onClick={toggleSidebar}
-            >
-              <PanelLeftIcon className="size-4" />
-            </Button>
-            <span className="truncate text-sm font-medium">
-              {sessionQuery.data?.title ?? "加载中..."}
-            </span>
-            {effectiveRunStatus === "running" && (
-              <Badge variant="secondary" className="text-[11px]">
-                生成中
-              </Badge>
-            )}
-          </div>
-        </header>
-      )}
-
-      <div
-        className={
-          hasReportData && !isMobile
-            ? "relative min-h-0 min-w-0 flex-1 overflow-hidden p-2"
-            : "relative min-h-0 min-w-0 flex-1 overflow-hidden"
-        }
-      >
-        {!isMobile && (
-          <button
-            type="button"
-            title={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            aria-label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            onClick={toggleSidebar}
-            className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-          >
-            {leftSidebarOpen ? (
-              <ChevronLeftIcon className="size-3.5" />
-            ) : (
-              <ChevronRightIcon className="size-3.5" />
-            )}
-          </button>
-        )}
-        {!hasReportData ? (
-          chatPane
-        ) : isMobile ? (
-          <Tabs
-            value={mobileTab}
-            onValueChange={(v) => {
-              if (v === "report" || v === "chat" || v === "comments") {
-                setMobileTab(v);
-              }
-            }}
-            className="flex h-full flex-col"
-          >
-            <div className="border-b bg-background px-3 py-1.5">
-              <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="report">报告</TabsTrigger>
-                <TabsTrigger value="chat">对话</TabsTrigger>
-                <TabsTrigger value="comments">批注</TabsTrigger>
-              </TabsList>
-            </div>
-            <TabsContent
-              value="report"
-              className="min-h-0 flex-1 overflow-hidden"
-            >
-              {reportPane}
-            </TabsContent>
-            <TabsContent
-              value="chat"
-              className="min-h-0 flex-1 overflow-hidden"
-            >
-              {chatPane}
-            </TabsContent>
-            <TabsContent
-              value="comments"
-              className="min-h-0 flex-1 overflow-hidden"
-            >
-              {commentsPanel}
-            </TabsContent>
-          </Tabs>
-        ) : (
-          <ResizablePanelGroup
-            orientation="horizontal"
-            className={`h-full min-w-0 ${
-              rightPanelAnimating
-                ? "[&_[data-panel]]:transition-[flex-grow] [&_[data-panel]]:duration-300 [&_[data-panel]]:ease-out"
-                : ""
-            }`}
-            onLayoutChanged={(layout, meta) => {
-              if (!meta.isUserInteraction) {
-                return;
-              }
-              const pct = layout["chat-panel"];
-              if (pct === undefined) {
-                return;
-              }
-              if (pct <= 1 && prefs.rightSidebarOpen) {
-                updatePrefs({ rightSidebarOpen: false });
-                return;
-              }
-              if (prefs.rightSidebarOpen && pct >= 20 && pct <= 60) {
-                updatePrefs({ rightPanelPct: Math.round(pct) });
-              }
-            }}
-          >
-            <ResizablePanel
-              id="report-panel"
-              defaultSize={`${
-                prefs.rightSidebarOpen ? 100 - prefs.rightPanelPct : 100
-              }%`}
-              minSize="35%"
-              className="min-w-0"
-            >
-              {reportPane}
-            </ResizablePanel>
-            <ResizableHandle
-              disabled={!prefs.rightSidebarOpen}
-              className={`bg-transparent after:hidden transition-[width] duration-300 ease-out ${
-                prefs.rightSidebarOpen ? "w-1.5" : "w-0"
-              }`}
-            />
-            <ResizablePanel
-              id="chat-panel"
-              panelRef={rightPanelRef}
-              collapsible
-              collapsedSize="0%"
-              defaultSize={
-                prefs.rightSidebarOpen ? `${prefs.rightPanelPct}%` : "0%"
-              }
-              minSize="22%"
-              maxSize="55%"
-              className="min-w-0 overflow-hidden"
-            >
-              <div
-                className="h-full min-w-0"
-                inert={!prefs.rightSidebarOpen}
-                aria-hidden={!prefs.rightSidebarOpen}
-              >
-                {rightPane}
-              </div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        )}
-      </div>
+    <>
+      <SessionWorkspaceLayout
+        isMobile={isMobile}
+        hasReportData={hasReportData}
+        sessionTitle={sessionQuery.data?.title ?? "加载中..."}
+        runStatus={effectiveRunStatus}
+        leftSidebarOpen={leftSidebarOpen}
+        toggleSidebar={toggleSidebar}
+        rightSidebarOpen={prefs.rightSidebarOpen}
+        rightPanelPct={prefs.rightPanelPct}
+        rightPanelAnimating={rightPanelAnimating}
+        rightPanelRef={rightPanelRef}
+        onChatPanelResize={handleChatPanelResize}
+        reportPane={reportPane}
+        chatPane={chatPane}
+        rightPane={rightPane}
+        commentsPane={commentsPane}
+        mobileTab={mobileTab}
+        onMobileTabChange={setMobileTab}
+      />
 
       {effectiveDocId && (
         <FloatingCommentPopover
@@ -1542,6 +424,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           }}
         />
       )}
-    </div>
+    </>
   );
 }

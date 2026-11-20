@@ -1,18 +1,11 @@
 import { startTransition, useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import {
-  BookOpenIcon,
-  MessageSquareQuoteIcon,
-  PanelLeftIcon,
-  PrinterIcon,
-  ScrollTextIcon,
-} from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
+import { PanelLeftIcon } from "lucide-react";
 import { getDocument, listComments } from "@/api/quire";
 import { CommentsPanel } from "@/components/report/CommentsDrawer";
+import { ReportPaneToolbar } from "@/components/report/ReportPaneToolbar";
 import { ReportViewer } from "@/components/report/ReportViewer";
-import { PageChromeDialog } from "@/components/report/PageChromeDialog";
-import { TocOutline } from "@/components/report/TocOutline";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSidebar } from "@/components/ui/sidebar";
@@ -74,8 +67,39 @@ function DocumentPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b px-3">
-        <div className="flex items-center gap-2">
+      {docQuery.data ? (
+        <ReportPaneToolbar
+          className="h-12"
+          docId={docId}
+          title={docQuery.data.document.cover.title || docId}
+          revision={docQuery.data.current_rev}
+          toc={docQuery.data.document.toc}
+          tocNodes={docQuery.data.computed.toc_tree}
+          comments={commentsQuery.data ?? []}
+          activeActorsBySection={EMPTY_ACTORS}
+          viewMode={prefs.reportViewMode}
+          onViewModeChange={setViewMode}
+          onJumpToSection={jumpToSection}
+          onShowComments={() => {
+            setActiveCommentThreadId(null);
+            setCommentsOpen(true);
+          }}
+          openCommentsCount={openCommentsCount}
+          themePageChrome={docQuery.data.document.theme.page_chrome}
+          leading={
+            <Button
+              type="button"
+              size="icon-sm"
+              variant="ghost"
+              aria-label="切换左侧栏"
+              onClick={toggleSidebar}
+            >
+              <PanelLeftIcon className="size-4" />
+            </Button>
+          }
+        />
+      ) : (
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
           <Button
             type="button"
             size="icon-sm"
@@ -85,86 +109,9 @@ function DocumentPage() {
           >
             <PanelLeftIcon className="size-4" />
           </Button>
-          <span className="truncate text-sm font-medium">
-            {docQuery.data?.document.cover.title || docId}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-1.5">
-          {prefs.reportViewMode === "paged" && docQuery.data && (
-            <PageChromeDialog
-              docId={docId}
-              themePageChrome={docQuery.data.document.theme.page_chrome}
-            />
-          )}
-          {docQuery.data && (
-            <TocOutline
-              docId={docId}
-              toc={docQuery.data.document.toc}
-              isPaged={prefs.reportViewMode === "paged"}
-              nodes={docQuery.data.computed.toc_tree}
-              activeActorsBySection={EMPTY_ACTORS}
-              comments={commentsQuery.data ?? []}
-              onJumpToSection={jumpToSection}
-            />
-          )}
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label="批注列表"
-            className="relative"
-            onClick={() => {
-              setActiveCommentThreadId(null);
-              setCommentsOpen(true);
-            }}
-          >
-            <MessageSquareQuoteIcon className="size-4" />
-            {openCommentsCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
-                {openCommentsCount}
-              </span>
-            )}
-          </Button>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            aria-label="打印视图"
-            nativeButton={false}
-            render={
-              <Link
-                to="/docs/$docId/print"
-                params={{ docId }}
-                target="_blank"
-              />
-            }
-          >
-            <PrinterIcon className="size-4" />
-          </Button>
-          <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
-            <Button
-              type="button"
-              size="xs"
-              variant={
-                prefs.reportViewMode === "continuous" ? "default" : "ghost"
-              }
-              onClick={() => setViewMode("continuous")}
-            >
-              <ScrollTextIcon className="mr-1 size-3.5" />
-              连续
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant={prefs.reportViewMode === "paged" ? "default" : "ghost"}
-              onClick={() => setViewMode("paged")}
-            >
-              <BookOpenIcon className="mr-1 size-3.5" />
-              分页
-            </Button>
-          </div>
-        </div>
-      </header>
+          <span className="truncate text-sm font-medium">{docId}</span>
+        </header>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20">
         {docQuery.isLoading && (
