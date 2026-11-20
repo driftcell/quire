@@ -3,11 +3,17 @@ async (page) => {
   const env = globalThis.process?.env ?? {};
   const web = env.E2E_WEB_URL || "http://localhost:5173";
   const runtime = env.E2E_RUNTIME_URL || "http://127.0.0.1:8081";
+  const consoleErrors = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
 
   const now = new Date().toISOString();
   const runningId = "e2e-trace-running";
   const finishedId = "e2e-trace-finished";
   const statusId = "e2e-trace-status";
+  const smoothId = "e2e-trace-smooth";
 
   const detail = (sessionId, overrides = {}) => ({
     session_id: sessionId,
@@ -249,8 +255,7 @@ async (page) => {
     ),
   ];
 
-  const statusEvents = [
-    event(1, "run-status", "main", { event: "turn_started" }),
+  const statusEvents = [    event(1, "run-status", "main", { event: "turn_started" }),
     event(2, "run-status", "main", {
       event: "thinking_delta",
       delta: "检查报告工具结果。",
@@ -285,6 +290,42 @@ async (page) => {
       duration_ms: 140,
       truncated: false,
     }),
+  ];
+
+  const smoothTextChunks = [
+    "流式输出",
+    "平滑验证：",
+    "即使网络",
+    "以 50–150ms",
+    "的抖动分段",
+    "到达，正文也",
+    "应保持稳定",
+    "柔和的阅读流速。",
+    "最终全文必须完整。",
+  ];
+  const smoothText = smoothTextChunks.join("");
+  const smoothThinking = Array.from(
+    { length: 24 },
+    (_, index) =>
+      `思考步骤 ${index + 1}：检查上下文、工具结果与中英文混排的节奏。`,
+  ).join("\n");
+  const smoothEvents = [
+    event(1, "run-smooth", "main", { event: "turn_started" }),
+    ...Array.from({ length: 12 }, (_, index) =>
+      event(index + 2, "run-smooth", "main", {
+        event: "thinking_delta",
+        delta: `${smoothThinking.slice(
+          Math.floor((smoothThinking.length / 12) * index),
+          Math.floor((smoothThinking.length / 12) * (index + 1)),
+        )}\n`,
+      }),
+    ),
+    ...smoothTextChunks.map((delta, index) =>
+      event(20 + index, "run-smooth", "main", {
+        event: "text_delta",
+        delta,
+      }),
+    ),
   ];
 
   let releaseFinish;
@@ -409,6 +450,12 @@ async (page) => {
       detail: detail(statusId),
       traces: [],
       batches: [statusEvents],
+      sseCount: 0,
+    },
+    [smoothId]: {
+      detail: detail(smoothId),
+      traces: [],
+      batches: [smoothEvents],
       sseCount: 0,
     },
   };
@@ -724,6 +771,65 @@ async (page) => {
     completedIcons,
     failedIcons,
     greenCheckCount: 0,
+  };
+
+  await page.goto(`${web}/sessions/${smoothId}`);
+  await page.locator("[data-activity-trigger]").first().waitFor({
+    state: "visible",
+    timeout: 15000,
+  });
+  await page.waitForFunction(
+    (text) => document.body.innerText.includes(text),
+    smoothText,
+    { timeout: 15000 },
+  );
+  const thinkingTrigger = page
+    .locator(
+      '[data-slot="thinking-trace"] [data-slot="trace-collapsible-trigger"]',
+    )
+    .first();
+  await thinkingTrigger.waitFor({ state: "visible", timeout: 8000 });
+  await thinkingTrigger.click();
+  await page.waitForFunction(
+    () => {
+      const viewport = document.querySelector(
+        '[data-slot="thinking-trace"] [data-slot="message-scroller-viewport"]',
+      );
+      return viewport ? viewport.scrollHeight > viewport.clientHeight : false;
+    },
+    undefined,
+    { timeout: 15000 },
+  );
+  await page.waitForTimeout(180);
+  const smoothMetrics = await page.evaluate(() => {
+    const viewport = document.querySelector(
+      '[data-slot="thinking-trace"] [data-slot="message-scroller-viewport"]',
+    );
+    return {
+      animatedSpans: document.querySelectorAll("[data-sd-animate]").length,
+      atBottom:
+        viewport !== null &&
+        viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - 8,
+    };
+  });
+  assert(
+    smoothMetrics.animatedSpans > 0,
+    "Streamdown char animation spans were not rendered",
+  );
+  assert(
+    smoothMetrics.atBottom,
+    "MessageScroller did not stick to the bottom during thinking deltas",
+  );
+  assert(
+    consoleErrors.length === 0,
+    `browser console/page errors: ${consoleErrors.join(" | ")}`,
+  );
+
+  results.smooth = {
+    textComplete: true,
+    animatedSpans: smoothMetrics.animatedSpans,
+    autoScrolled: smoothMetrics.atBottom,
+    consoleErrors: 0,
   };
 
   return {

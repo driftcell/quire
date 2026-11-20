@@ -1,12 +1,9 @@
 import { Fragment, memo, useState, type ReactNode } from "react";
 import { ListTreeIcon, LoaderCircleIcon } from "lucide-react";
-import { Streamdown } from "streamdown";
 import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
+import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import { SubagentTrace } from "@/components/chat/SubagentTrace";
-import {
-  CHAT_PROSE,
-  STREAMDOWN_CONTROLS,
-} from "@/components/chat/chatMarkdown";
+import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
 import {
@@ -128,14 +125,12 @@ function ActivitySegment({
             }
             if (item.kind === "text") {
               return (
-                <div key={item.key} className={`${CHAT_PROSE} text-sm`}>
-                  <Streamdown
-                    mode={item.isStreaming ? "streaming" : "static"}
-                    controls={STREAMDOWN_CONTROLS}
-                  >
-                    {item.text}
-                  </Streamdown>
-                </div>
+                <SmoothStreamdown
+                  key={item.key}
+                  text={item.text}
+                  isStreaming={item.isStreaming}
+                  className={`${CHAT_PROSE} text-sm`}
+                />
               );
             }
             return (
@@ -183,14 +178,12 @@ export const RenderSegments = memo(function RenderSegments({
       {segments.map((segment) => {
         if (segment.kind === "text") {
           return (
-            <div key={segment.key} className={`${CHAT_PROSE} pt-1`}>
-              <Streamdown
-                mode={segment.isStreaming ? "streaming" : "static"}
-                controls={STREAMDOWN_CONTROLS}
-              >
-                {segment.text}
-              </Streamdown>
-            </div>
+            <SmoothStreamdown
+              key={segment.key}
+              text={segment.text}
+              isStreaming={segment.isStreaming}
+              className={`${CHAT_PROSE} pt-1`}
+            />
           );
         }
         return (

@@ -1,3 +1,4 @@
+import { useSmoothStreamText } from "@/hooks/useSmoothStreamText";
 import type { EphemeralPreviewEvent } from "@/contracts/report-protocol";
 
 function headingPreviewClass(level: number | null | undefined): string {
@@ -21,6 +22,7 @@ export function EphemeralPreviewCard({
   preview: EphemeralPreviewEvent;
 }) {
   const { block } = preview;
+  const { text: smoothedText } = useSmoothStreamText(block.text ?? "", true);
   const cursor = (
     <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-[var(--rpt-accent,#1E3A5F)]/70 align-text-bottom" />
   );
@@ -33,21 +35,21 @@ export function EphemeralPreviewCard({
       <div
         className={`font-[family-name:var(--rpt-font-heading)] text-[var(--rpt-ink,#1F2937)] ${headingPreviewClass(block.level)}`}
       >
-        {block.text || ""}
+        {smoothedText}
         {cursor}
       </div>
     );
   } else if (block.block_type === "quote") {
     body = (
       <blockquote className="m-0 whitespace-pre-wrap bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700">
-        {block.text || ""}
+        {smoothedText}
         {cursor}
       </blockquote>
     );
   } else if (block.block_type === "table") {
     body = block.text ? (
       <p className={paragraphClass}>
-        {block.text}
+        {smoothedText}
         {cursor}
       </p>
     ) : (
@@ -82,7 +84,7 @@ export function EphemeralPreviewCard({
   } else if (block.text) {
     body = (
       <p className={paragraphClass}>
-        {block.text}
+        {smoothedText}
         {cursor}
       </p>
     );

@@ -17,6 +17,7 @@ import {
   TraceLine,
   TraceTitle,
 } from "@/components/ui/trace";
+import { useSmoothStreamText } from "@/hooks/useSmoothStreamText";
 
 export interface ThinkingTraceProps {
   content: string;
@@ -48,6 +49,7 @@ export function ThinkingTrace({
 }: ThinkingTraceProps) {
   const [open, setOpen] = useState<boolean | undefined>(defaultOpen);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const { text: smoothedContent } = useSmoothStreamText(content, isStreaming);
 
   const hasContent = content.trim().length > 0;
   const expanded = open ?? (isStreaming || isActive);
@@ -115,7 +117,7 @@ export function ThinkingTrace({
                 <MessageScrollerContent className="gap-0">
                   <MessageScrollerItem messageId="thinking-content">
                     <div className="whitespace-pre-wrap break-words">
-                      {content}
+                      {smoothedContent}
                     </div>
                   </MessageScrollerItem>
                 </MessageScrollerContent>

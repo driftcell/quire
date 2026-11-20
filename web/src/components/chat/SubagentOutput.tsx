@@ -1,8 +1,5 @@
-import { Streamdown } from "streamdown";
-import {
-  CHAT_PROSE,
-  STREAMDOWN_CONTROLS,
-} from "@/components/chat/chatMarkdown";
+import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
+import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 
 export function SubagentOutput({
   text,
@@ -12,16 +9,12 @@ export function SubagentOutput({
   streaming: boolean;
 }) {
   return (
-    <div
-      data-slot="subagent-output"
-      className={`${CHAT_PROSE} text-xs text-muted-foreground`}
-    >
-      <Streamdown
-        mode={streaming ? "streaming" : "static"}
-        controls={STREAMDOWN_CONTROLS}
-      >
-        {text}
-      </Streamdown>
+    <div data-slot="subagent-output">
+      <SmoothStreamdown
+        text={text}
+        isStreaming={streaming}
+        className={`${CHAT_PROSE} text-xs text-muted-foreground`}
+      />
     </div>
   );
 }

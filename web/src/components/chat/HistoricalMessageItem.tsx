@@ -188,7 +188,12 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
         )}
         {!hasTextSegment && (
           <MessageContent className={CHAT_PROSE}>
-            <Streamdown controls={STREAMDOWN_CONTROLS}>
+            <Streamdown
+              mode="static"
+              isAnimating={false}
+              animated={false}
+              controls={STREAMDOWN_CONTROLS}
+            >
               {msg.content}
             </Streamdown>
           </MessageContent>
