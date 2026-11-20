@@ -488,6 +488,142 @@ async fn document_lint_config_and_block_ignores_persist() {
 }
 
 #[tokio::test]
+async fn cross_block_comments_persist_anchor_range_and_survive_partial_deletion() {
+    let store = test_store().await;
+    let doc_id = unique("it-cross-comment");
+    let doc = document(
+        &doc_id,
+        None,
+        vec![
+            Block::heading(as_block_id("ch1"), 2, "Chapter One"),
+            paragraph("start", "Start paragraph selected text"),
+            Block::table(
+                as_block_id("bridge-table"),
+                TableBlock {
+                    title: Some("Bridge table".into()),
+                    numbering: None,
+                    note: None,
+                    columns: vec![quire_protocol::ColumnNode::leaf("a", "A")],
+                    rows: vec![std::collections::BTreeMap::from([(
+                        "a".to_string(),
+                        quire_protocol::CellValue::text("cell"),
+                    )])],
+                    summary_rows: vec![],
+                },
+            ),
+            paragraph("end", "End paragraph selected text"),
+        ],
+    );
+    store.create_document(&doc, "lead", None).await.unwrap();
+    let typed_doc_id = as_doc_id(&doc_id);
+
+    let thread = store
+        .create_comment_thread(
+            &typed_doc_id,
+            NewCommentThread {
+                block_id: as_block_id("start"),
+                end_block_id: Some(as_block_id("end")),
+                anchor_blocks: vec![
+                    as_block_id("start"),
+                    as_block_id("bridge-table"),
+                    as_block_id("end"),
+                ],
+                author_type: CommentAuthorType::Human,
+                author: "reviewer".into(),
+                body: "Please align this range.".into(),
+                quote: Some(TextQuoteSelector {
+                    exact: "selected text".into(),
+                    prefix: Some("Start paragraph ".into()),
+                    suffix: None,
+                }),
+                end_quote: Some(TextQuoteSelector {
+                    exact: "selected text".into(),
+                    prefix: Some("End paragraph ".into()),
+                    suffix: None,
+                }),
+                anchor_snapshot: Some(
+                    "Start paragraph selected text … [表格: Bridge table] … End paragraph selected text"
+                        .into(),
+                ),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(thread.end_block_id, Some(as_block_id("end")));
+    assert_eq!(
+        thread.anchor_blocks,
+        vec![
+            as_block_id("start"),
+            as_block_id("bridge-table"),
+            as_block_id("end")
+        ]
+    );
+    assert_eq!(
+        thread.end_quote.as_ref().map(|quote| quote.exact.as_str()),
+        Some("selected text")
+    );
+    assert!(
+        thread
+            .anchor_snapshot
+            .as_deref()
+            .is_some_and(|snapshot| snapshot.contains("[表格: Bridge table]"))
+    );
+
+    let by_middle = store
+        .list_comment_threads(&typed_doc_id, None, Some(&as_block_id("bridge-table")))
+        .await
+        .unwrap();
+    assert_eq!(by_middle.len(), 1);
+    assert_eq!(by_middle[0].thread_id, thread.thread_id);
+
+    store
+        .apply_operations(
+            &typed_doc_id,
+            as_revision(1),
+            "writer",
+            "delete start and table anchors",
+            &[PatchOp::DeleteBlocks {
+                block_ids: vec![as_block_id("start"), as_block_id("bridge-table")],
+            }],
+        )
+        .await
+        .unwrap();
+    let partial = store
+        .list_comment_threads(&typed_doc_id, None, None)
+        .await
+        .unwrap();
+    let partial_thread = partial
+        .iter()
+        .find(|candidate| candidate.thread_id == thread.thread_id)
+        .expect("cross-block thread");
+    assert!(!partial_thread.anchor_detached);
+
+    store
+        .apply_operations(
+            &typed_doc_id,
+            as_revision(2),
+            "writer",
+            "delete final anchor",
+            &[PatchOp::DeleteBlocks {
+                block_ids: vec![as_block_id("end")],
+            }],
+        )
+        .await
+        .unwrap();
+    let detached = store
+        .list_comment_threads(&typed_doc_id, None, None)
+        .await
+        .unwrap();
+    let detached_thread = detached
+        .iter()
+        .find(|candidate| candidate.thread_id == thread.thread_id)
+        .expect("detached thread");
+    assert!(detached_thread.anchor_detached);
+
+    cleanup(&store, &doc_id).await;
+}
+
+#[tokio::test]
 async fn inline_sources_are_remapped_and_committed_with_the_batch() {
     let store = test_store().await;
     let doc_id = unique("it-inline-sources");
@@ -781,6 +917,8 @@ async fn comments_survive_block_deletion_without_touching_revisions() {
             &typed_doc_id,
             NewCommentThread {
                 block_id: as_block_id("target"),
+                end_block_id: None,
+                anchor_blocks: Vec::new(),
                 author_type: CommentAuthorType::Human,
                 author: "reviewer".into(),
                 body: "Please tighten this paragraph.".into(),
@@ -789,6 +927,8 @@ async fn comments_survive_block_deletion_without_touching_revisions() {
                     prefix: Some("Target paragraph that ".into()),
                     suffix: None,
                 }),
+                end_quote: None,
+                anchor_snapshot: None,
             },
         )
         .await

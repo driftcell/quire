@@ -1,12 +1,9 @@
-import { memo, useCallback, type ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import { MessageSquareIcon } from "lucide-react";
 import { CustomHtmlView } from "@/components/report/CustomHtmlView";
 import { EchartsCanvas } from "@/components/report/EchartsCanvas";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
-import {
-  InlineMarkdown,
-  type QuoteHighlight,
-} from "@/components/report/InlineMarkdown";
+import { InlineMarkdown } from "@/components/report/InlineMarkdown";
 import { TableBlockView } from "@/components/report/TableBlockView";
 import {
   A4_CONTENT_WIDTH_PX,
@@ -176,11 +173,10 @@ export interface ReportBlockItemProps {
   computed: ComputedDocumentMeta;
   bibliographyById: Map<string, BibliographyEntry>;
   commentCount: number;
-  blockQuotes?: QuoteHighlight[];
+  commentOutline?: boolean;
   measurementOnly?: boolean;
   onCitationClick: (sourceId: string) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
-  onOpenCommentThread?: (threadId: string, blockId: string) => void;
 }
 
 export const ReportBlockItem = memo(function ReportBlockItem({
@@ -191,35 +187,14 @@ export const ReportBlockItem = memo(function ReportBlockItem({
   computed,
   bibliographyById,
   commentCount,
-  blockQuotes,
+  commentOutline = false,
   measurementOnly = false,
   onCitationClick,
   onOpenCommentForBlock,
-  onOpenCommentThread,
 }: ReportBlockItemProps) {
   const { block } = slice;
   const framing = computed.block_framing[block.id];
   const domId = measurementOnly ? undefined : `block-${block.id}`;
-
-  const handleQuoteClick = useCallback(
-    (highlight: QuoteHighlight, rect: DOMRect) => {
-      if (onOpenCommentThread) {
-        onOpenCommentThread(highlight.threadId, block.id);
-        return;
-      }
-      if (!onOpenCommentForBlock) return;
-      onOpenCommentForBlock({
-        blockId: block.id,
-        quote: highlight.quote,
-        rect: toViewportRect(rect),
-      });
-    },
-    [block.id, onOpenCommentForBlock, onOpenCommentThread],
-  );
-  const quoteHandler =
-    !printMode && (onOpenCommentForBlock || onOpenCommentThread)
-      ? handleQuoteClick
-      : undefined;
 
   const renderInline = (text: string) => (
     <InlineMarkdown
@@ -228,8 +203,6 @@ export const ReportBlockItem = memo(function ReportBlockItem({
       bibliographyById={bibliographyById}
       printMode={printMode}
       onCitationClick={onCitationClick}
-      highlightQuotes={blockQuotes}
-      onQuoteClick={quoteHandler}
     />
   );
 
@@ -368,7 +341,10 @@ export const ReportBlockItem = memo(function ReportBlockItem({
   return (
     <div
       data-block-id={block.id}
-      className="group/block relative rounded-lg transition-colors hover:bg-black/[0.015]"
+      data-block-kind={block.type}
+      className={`group/block relative rounded-lg transition-colors hover:bg-black/[0.015] ${
+        commentOutline ? "quire-comment-scope" : ""
+      }`}
     >
       {!printMode && onOpenCommentForBlock && (
         <button

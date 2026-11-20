@@ -99,10 +99,18 @@ pub struct SourceUpsert {
 #[derive(Debug, Clone)]
 pub struct NewCommentThread {
     pub block_id: BlockId,
+    /// Ending block for a cross-block selection.
+    pub end_block_id: Option<BlockId>,
+    /// Every selected block in document order. Empty falls back to the start/end blocks.
+    pub anchor_blocks: Vec<BlockId>,
     pub author_type: CommentAuthorType,
     pub author: String,
     pub body: String,
     pub quote: Option<TextQuoteSelector>,
+    /// End-block selector for cross-block selections.
+    pub end_quote: Option<TextQuoteSelector>,
+    /// Optional frontend-authored snapshot containing media placeholders.
+    pub anchor_snapshot: Option<String>,
 }
 
 /// Input for appending one reply to an existing comment thread.

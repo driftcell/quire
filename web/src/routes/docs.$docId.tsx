@@ -123,11 +123,7 @@ function DocumentPage() {
             computed={docQuery.data.computed}
             viewMode={prefs.reportViewMode}
             comments={commentsQuery.data}
-            onOpenCommentThread={(threadId, blockId) => {
-              setActiveCommentThreadId(threadId);
-              setCommentsOpen(true);
-              jumpToSection(blockId);
-            }}
+            activeThreadId={activeCommentThreadId}
             onJumpToSection={jumpToSection}
           />
         )}

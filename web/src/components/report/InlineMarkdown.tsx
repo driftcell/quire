@@ -6,13 +6,7 @@ import {
 import type {
   BibliographyEntry,
   CitationMapEntry,
-  TextQuoteSelector,
 } from "@/contracts/report-protocol";
-
-export interface QuoteHighlight {
-  threadId: string;
-  quote: TextQuoteSelector;
-}
 
 export interface InlineMarkdownProps {
   text: string;
@@ -20,8 +14,6 @@ export interface InlineMarkdownProps {
   bibliographyById?: Map<string, BibliographyEntry>;
   printMode?: boolean;
   onCitationClick?: (sourceId: string) => void;
-  highlightQuotes?: QuoteHighlight[];
-  onQuoteClick?: (highlight: QuoteHighlight, rect: DOMRect) => void;
 }
 
 const TOKEN_RE =
@@ -125,81 +117,12 @@ function CitationGroup({
   return <CitationHoverCard refs={refs} label={label} onLocate={locate} />;
 }
 
-function renderHighlightedSegment(
-  segment: string,
-  quotes: QuoteHighlight[] | undefined,
-  onQuoteClick:
-    ((highlight: QuoteHighlight, rect: DOMRect) => void) | undefined,
-  keyPrefix: string,
-): ReactNode {
-  if (!quotes || quotes.length === 0 || segment.length === 0) {
-    return segment;
-  }
-
-  let bestIdx = -1;
-  let bestNeedle = "";
-  let bestHighlight: QuoteHighlight | null = null;
-
-  for (const highlight of quotes) {
-    const needle = highlight.quote.exact.trim();
-    if (!needle) continue;
-    const idx = segment.indexOf(needle);
-    if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) {
-      bestIdx = idx;
-      bestNeedle = needle;
-      bestHighlight = highlight;
-    }
-  }
-
-  if (bestIdx === -1 || !bestHighlight) {
-    return segment;
-  }
-
-  const before = segment.slice(0, bestIdx);
-  const match = segment.slice(bestIdx, bestIdx + bestNeedle.length);
-  const after = segment.slice(bestIdx + bestNeedle.length);
-  const matchedHighlight = bestHighlight;
-
-  return (
-    <>
-      {before}
-      {onQuoteClick ? (
-        <button
-          key={`${keyPrefix}-q`}
-          type="button"
-          title="点击查看或回复此划词批注"
-          onClick={(event) => {
-            event.stopPropagation();
-            onQuoteClick(
-              matchedHighlight,
-              event.currentTarget.getBoundingClientRect(),
-            );
-          }}
-          className="inline cursor-pointer rounded-xs bg-amber-500/[0.06] px-0.5 text-left font-inherit underline decoration-amber-500/60 decoration-dashed underline-offset-4 transition-colors hover:bg-amber-500/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        >
-          {match}
-        </button>
-      ) : (
-        <mark
-          key={`${keyPrefix}-mark`}
-          className="rounded-xs bg-amber-500/[0.06] px-0.5 text-inherit underline decoration-amber-500/60 decoration-dashed underline-offset-4"
-        >
-          {match}
-        </mark>
-      )}
-      {renderHighlightedSegment(after, quotes, onQuoteClick, `${keyPrefix}-r`)}
-    </>
-  );
-}
-
 export const InlineMarkdown = memo(function InlineMarkdown({
   text,
   citationMap,
   bibliographyById,
   printMode = false,
   onCitationClick,
-  highlightQuotes,
-  onQuoteClick,
 }: InlineMarkdownProps) {
   const nodes: ReactNode[] = [];
   let lastIndex = 0;
@@ -210,16 +133,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({
   while (match !== null) {
     if (match.index > lastIndex) {
       const plain = text.slice(lastIndex, match.index);
-      nodes.push(
-        <span key={`txt-${key++}`}>
-          {renderHighlightedSegment(
-            plain,
-            highlightQuotes,
-            onQuoteClick,
-            `seg-${key}`,
-          )}
-        </span>,
-      );
+      nodes.push(<span key={`txt-${key++}`}>{plain}</span>);
     }
 
     const citationGroup = match[2];
@@ -250,27 +164,9 @@ export const InlineMarkdown = memo(function InlineMarkdown({
         </code>,
       );
     } else if (boldText !== undefined) {
-      nodes.push(
-        <strong key={`b-${key++}`}>
-          {renderHighlightedSegment(
-            boldText,
-            highlightQuotes,
-            onQuoteClick,
-            `b-${key}`,
-          )}
-        </strong>,
-      );
+      nodes.push(<strong key={`b-${key++}`}>{boldText}</strong>);
     } else if (italicText !== undefined) {
-      nodes.push(
-        <em key={`i-${key++}`}>
-          {renderHighlightedSegment(
-            italicText,
-            highlightQuotes,
-            onQuoteClick,
-            `i-${key}`,
-          )}
-        </em>,
-      );
+      nodes.push(<em key={`i-${key++}`}>{italicText}</em>);
     } else if (linkLabel !== undefined && linkHref !== undefined) {
       const safeHref =
         linkHref.startsWith("http://") ||
@@ -307,16 +203,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({
 
   if (lastIndex < text.length) {
     const tail = text.slice(lastIndex);
-    nodes.push(
-      <span key={`txt-${key++}`}>
-        {renderHighlightedSegment(
-          tail,
-          highlightQuotes,
-          onQuoteClick,
-          `tail-${key}`,
-        )}
-      </span>,
-    );
+    nodes.push(<span key={`txt-${key++}`}>{tail}</span>);
   }
 
   return <>{nodes}</>;

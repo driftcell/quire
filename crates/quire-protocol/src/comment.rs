@@ -101,24 +101,35 @@ pub struct CommentMessage {
     pub created_at: DateTime<Utc>,
 }
 
-/// A side-channel review thread anchored to a block.
+/// A side-channel review thread anchored to one or more blocks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CommentThread {
     pub thread_id: String,
     pub doc_id: DocId,
+    /// Starting block. Kept as the canonical section/order anchor.
     pub block_id: BlockId,
+    /// Ending block for a cross-block selection. `None` for a single-block anchor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_block_id: Option<BlockId>,
+    /// Every selected block in document order, including intermediate tables, images and charts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchor_blocks: Vec<BlockId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section_id: Option<BlockId>,
     /// Truncated visible text captured when the thread was created.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anchor_snapshot: Option<String>,
+    /// Start-block text snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quote: Option<TextQuoteSelector>,
+    /// End-block text snapshot for cross-block selections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_quote: Option<TextQuoteSelector>,
     pub status: CommentStatus,
     pub created_rev: Revision,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub addressed_rev: Option<Revision>,
-    /// True when `block_id` no longer exists in the current document.
+    /// True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.
     pub anchor_detached: bool,
     pub messages: Vec<CommentMessage>,
     pub created_at: DateTime<Utc>,
@@ -147,11 +158,22 @@ mod tests {
             thread_id: "th_1".into(),
             doc_id: doc_id("report_1"),
             block_id: block_id("ch1_summary"),
+            end_block_id: Some(block_id("ch1_chart")),
+            anchor_blocks: vec![
+                block_id("ch1_summary"),
+                block_id("ch1_table"),
+                block_id("ch1_chart"),
+            ],
             section_id: Some(block_id("ch1")),
-            anchor_snapshot: Some("Revenue grew 18%".into()),
+            anchor_snapshot: Some("Revenue grew 18% … [图表: Margin]".into()),
             quote: Some(TextQuoteSelector {
                 exact: "18%".into(),
                 prefix: Some("grew ".into()),
+                suffix: None,
+            }),
+            end_quote: Some(TextQuoteSelector {
+                exact: "margin".into(),
+                prefix: None,
                 suffix: None,
             }),
             status: CommentStatus::Open,

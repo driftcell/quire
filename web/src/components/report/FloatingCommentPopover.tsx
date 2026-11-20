@@ -18,7 +18,11 @@ import type { TextQuoteSelector } from "@/contracts/report-protocol";
 
 export interface FloatingCommentAnchor {
   blockId: string;
+  endBlockId?: string;
+  blockIds?: string[];
   quote?: TextQuoteSelector;
+  endQuote?: TextQuoteSelector;
+  anchorSnapshot?: string;
   /** Viewport coordinates of the trigger element or selection rect. */
   rect: {
     top: number;
@@ -35,9 +39,8 @@ export interface FloatingCommentPopoverProps {
   existingCount?: number;
   onClose: () => void;
   onAddComment: (
-    blockId: string,
+    anchor: FloatingCommentAnchor,
     body: string,
-    quote?: TextQuoteSelector,
   ) => Promise<void>;
 }
 
@@ -113,7 +116,7 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
     void (async () => {
       setBusy(true);
       try {
-        await onAddComment(anchor.blockId, trimmed, anchor.quote);
+        await onAddComment(anchor, trimmed);
         setNewBody("");
         onClose();
       } finally {
@@ -151,7 +154,7 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
         <div className="space-y-3 p-3.5 text-xs">
           {anchor.quote && (
             <p className="line-clamp-2 border-l-2 border-border pl-2 text-[11px] text-muted-foreground">
-              {anchor.quote.exact}
+              {anchor.anchorSnapshot ?? anchor.quote.exact}
             </p>
           )}
           {existingCount > 0 && (

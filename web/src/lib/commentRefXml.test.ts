@@ -64,6 +64,51 @@ describe("commentRefXml", () => {
     expect(parsed.body).toBe("一起处理");
   });
 
+  test("round-trips cross-block ranges and end quotes", () => {
+    const payload = serializeCommentRefs(
+      [
+        ref({
+          block_id: "sec1",
+          end_block_id: "chart1",
+          anchor_blocks: ["sec1", "table1", "chart1"],
+          quote: "营收增长",
+          end_quote: "趋势回落",
+          anchor_snapshot: "营收增长 … [表格: 指标] … [图表: 趋势]",
+        }),
+      ],
+      "请对照整段修改",
+    );
+    expect(payload).toContain('end_block_id="chart1"');
+    expect(payload).toContain('anchor_blocks="sec1,table1,chart1"');
+    expect(payload).toContain("<end_quote>趋势回落</end_quote>");
+    expect(payload).toContain(
+      "<anchor_snapshot>营收增长 … [表格: 指标] … [图表: 趋势]</anchor_snapshot>",
+    );
+    const parsed = parseCommentRefs(payload);
+    expect(parsed.refs[0]).toMatchObject({
+      block_id: "sec1",
+      end_block_id: "chart1",
+      anchor_blocks: ["sec1", "table1", "chart1"],
+      quote: "营收增长",
+      end_quote: "趋势回落",
+      anchor_snapshot: "营收增长 … [表格: 指标] … [图表: 趋势]",
+    });
+    expect(parsed.body).toBe("请对照整段修改");
+  });
+
+  test("parses legacy single-block references without new fields", () => {
+    const parsed = parseCommentRefs(
+      '<quire_comment_ref thread_id="ct_old" block_id="sec1" status="open"><quote>旧文</quote><comment>旧批注</comment></quire_comment_ref>',
+    );
+    expect(parsed.refs[0]).toEqual({
+      thread_id: "ct_old",
+      block_id: "sec1",
+      status: "open",
+      quote: "旧文",
+      comment: "旧批注",
+    });
+  });
+
   test("omits the quote element when no quote is provided", () => {
     const parsed = parseCommentRefs(
       serializeCommentRefs([ref({ quote: undefined })], ""),

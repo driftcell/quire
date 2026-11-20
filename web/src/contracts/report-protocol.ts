@@ -453,24 +453,50 @@ export interface CommentMessage {
 export interface CommentThread {
   addressed_rev?: Revision | null;
   /**
-   * True when `block_id` no longer exists in the current document.
+   * Every selected block in document order, including intermediate tables, images and charts.
+   */
+  anchor_blocks?: BlockId[];
+  /**
+   * True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.
    */
   anchor_detached: boolean;
   /**
    * Truncated visible text captured when the thread was created.
    */
   anchor_snapshot?: string | null;
-  block_id: BlockId;
+  /**
+   * Validated identifier.
+   */
+  block_id: string;
   created_at: string;
   created_rev: Revision;
   doc_id: DocId;
+  /**
+   * Ending block for a cross-block selection. `None` for a single-block anchor.
+   */
+  end_block_id?: BlockId | null;
+  /**
+   * End-block text snapshot for cross-block selections.
+   */
+  end_quote?: TextQuoteSelector | null;
   messages: CommentMessage1[];
+  /**
+   * Start-block text snapshot.
+   */
   quote?: TextQuoteSelector | null;
   section_id?: BlockId | null;
   status: CommentStatus;
   thread_id: string;
   updated_at: string;
   [k: string]: unknown;
+}
+/**
+ * Text-selection anchor that avoids brittle character offsets.
+ */
+export interface TextQuoteSelector {
+  exact: string;
+  prefix?: string | null;
+  suffix?: string | null;
 }
 /**
  * One message in a review thread.
@@ -483,14 +509,6 @@ export interface CommentMessage1 {
   message_id: string;
   thread_id: string;
   [k: string]: unknown;
-}
-/**
- * Text-selection anchor that avoids brittle character offsets.
- */
-export interface TextQuoteSelector {
-  exact: string;
-  prefix?: string | null;
-  suffix?: string | null;
 }
 /**
  * SSE `comment_updated` payload for live review-thread changes.

@@ -1,8 +1,12 @@
 export interface CommentRefPayload {
   thread_id: string;
   block_id: string;
+  end_block_id?: string;
+  anchor_blocks?: string[];
   status: string;
   quote?: string;
+  end_quote?: string;
+  anchor_snapshot?: string;
   comment: string;
 }
 
@@ -15,6 +19,8 @@ const BLOCK_SOURCE = String.raw`<quire_comment_ref\b([^>]*)>([\s\S]*?)<\/quire_c
 const ATTRIBUTE_RE = /([A-Za-z_][\w-]*)\s*=\s*"([^"]*)"/g;
 const COMMENT_RE = /<comment>([\s\S]*?)<\/comment>/;
 const QUOTE_RE = /<quote>([\s\S]*?)<\/quote>/;
+const END_QUOTE_RE = /<end_quote>([\s\S]*?)<\/end_quote>/;
+const SNAPSHOT_RE = /<anchor_snapshot>([\s\S]*?)<\/anchor_snapshot>/;
 
 function escapeXml(value: string): string {
   return value
@@ -64,12 +70,31 @@ export function serializeCommentRefs(
   userText: string,
 ): string {
   const blocks = refs.map((ref) => {
-    const lines = [
-      `<quire_comment_ref thread_id="${escapeXml(ref.thread_id)}" block_id="${escapeXml(ref.block_id)}" status="${escapeXml(ref.status)}">`,
+    const attributes = [
+      `thread_id="${escapeXml(ref.thread_id)}"`,
+      `block_id="${escapeXml(ref.block_id)}"`,
+      `status="${escapeXml(ref.status)}"`,
     ];
+    if (ref.end_block_id) {
+      attributes.push(`end_block_id="${escapeXml(ref.end_block_id)}"`);
+    }
+    if (ref.anchor_blocks && ref.anchor_blocks.length > 1) {
+      attributes.push(
+        `anchor_blocks="${escapeXml(ref.anchor_blocks.join(","))}"`,
+      );
+    }
+    const lines = [`<quire_comment_ref ${attributes.join(" ")}>`];
     const quote = ref.quote?.trim();
     if (quote) {
       lines.push(`  <quote>${escapeXml(quote)}</quote>`);
+    }
+    const endQuote = ref.end_quote?.trim();
+    if (endQuote) {
+      lines.push(`  <end_quote>${escapeXml(endQuote)}</end_quote>`);
+    }
+    const snapshot = ref.anchor_snapshot?.trim();
+    if (snapshot) {
+      lines.push(`  <anchor_snapshot>${escapeXml(snapshot)}</anchor_snapshot>`);
     }
     lines.push(`  <comment>${escapeXml(ref.comment)}</comment>`);
     lines.push("</quire_comment_ref>");
@@ -119,15 +144,45 @@ export function parseCommentRefs(content: string): ParsedCommentRefs {
           return fallback(content);
         }
       }
+      if (inner.includes("<end_quote>")) {
+        const endQuoteMatch = END_QUOTE_RE.exec(inner);
+        if (!endQuoteMatch) {
+          return fallback(content);
+        }
+      }
+      if (inner.includes("<anchor_snapshot>")) {
+        const snapshotMatch = SNAPSHOT_RE.exec(inner);
+        if (!snapshotMatch) {
+          return fallback(content);
+        }
+      }
       const quoteMatch = QUOTE_RE.exec(inner);
       const quote = quoteMatch
         ? unescapeXml(quoteMatch[1] ?? "").trim()
         : undefined;
+      const endQuoteMatch = END_QUOTE_RE.exec(inner);
+      const endQuote = endQuoteMatch
+        ? unescapeXml(endQuoteMatch[1] ?? "").trim()
+        : undefined;
+      const snapshotMatch = SNAPSHOT_RE.exec(inner);
+      const anchorSnapshot = snapshotMatch
+        ? unescapeXml(snapshotMatch[1] ?? "").trim()
+        : undefined;
+      const anchorBlocks = attributes
+        .get("anchor_blocks")
+        ?.split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+      const endBlockId = attributes.get("end_block_id")?.trim();
       refs.push({
         thread_id: threadId,
         block_id: blockId,
+        ...(endBlockId ? { end_block_id: endBlockId } : {}),
+        ...(anchorBlocks && anchorBlocks.length > 0 ? { anchor_blocks: anchorBlocks } : {}),
         status: attributes.get("status")?.trim() || "open",
         ...(quote ? { quote } : {}),
+        ...(endQuote ? { end_quote: endQuote } : {}),
+        ...(anchorSnapshot ? { anchor_snapshot: anchorSnapshot } : {}),
         comment,
       });
     }

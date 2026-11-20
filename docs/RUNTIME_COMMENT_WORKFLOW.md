@@ -3,17 +3,18 @@
 ## Metadata
 
 - **Status:** Settled
-- **Owner Crates:** `quire-runtime`, `web`
-- **Related Notes:** `../notes/runtime_comment_review_workflow.md`
+- **Owner Crates:** `quire-protocol`, `quire-store`, `quire-server`, `quire-runtime`, `web`
+- **Related Notes:** `../notes/runtime_comment_review_workflow.md`, `../notes/cross_block_annotation_ranges.md`
 
 ## 1. Scope & Non-Goals
 
 This document governs the session-workspace comment workflow: browser-to-runtime write proxying,
-XML comment references in user messages, non-modal review UI, AI handoff and addressed/archived
-transitions.
+cross-block text/media selection, XML comment references in user messages, non-modal review UI, AI
+handoff and addressed/archived transitions.
 
-It does not change the canonical `CommentThread` protocol, the database tables, comment numbering or
-the revision model. Comments remain revision-free side-channel data on `quire-server`.
+Comments remain revision-free side-channel data on `quire-server`. The canonical `CommentThread`
+now carries multi-block anchors (`end_block_id`, ordered `anchor_blocks`) and optional start/end
+quotes; this metadata never participates in Smart CAS or revision numbering.
 
 ## 2. Canonical Design & Contract
 
@@ -46,17 +47,36 @@ The browser API is split by capability:
 The standalone `/docs/{docId}` route remains read-only. It lists comments in a non-modal read-only
 panel and never renders create/reply/archive controls.
 
+### Cross-block anchors and detached detection
+
+`CommentThread` keeps `block_id` as the starting/section anchor and adds:
+
+- `end_block_id?: BlockId` for the final selected block.
+- `anchor_blocks: Vec<BlockId>` in document order, including intermediate tables, images and charts.
+- `end_quote?: TextQuoteSelector` for the end-block text fragment.
+- `anchor_snapshot` may be a frontend-authored summary containing `[表格: …]`, `[图表: …]` or
+  `[图片…]` placeholders.
+
+Migration `0003_cross_block_comments.sql` adds `end_block_id` and `anchor_blocks`; migration
+`0004_comment_end_quote.sql` adds `end_quote`. `anchor_detached` is true only when `block_id`,
+`end_block_id` and every entry in `anchor_blocks` no longer exist. A block-ID filter matches any
+anchor in the range, not just the start block.
+
 ### XML comment reference protocol
 
 Messages that hand comments to the agent start with one or more blocks:
 
 ```xml
-<quire_comment_ref thread_id="ct_..." block_id="sec2_p3" status="open">
+<quire_comment_ref thread_id="ct_..." block_id="sec2_p3" end_block_id="chart_1"
+                   anchor_blocks="sec2_p3,tbl_1,chart_1" status="open">
   <quote>selected source text (optional)</quote>
+  <end_quote>selected end text (optional)</end_quote>
+  <anchor_snapshot>selected source text … [表格: Metrics] … End text</anchor_snapshot>
   <comment>review comment body</comment>
 </quire_comment_ref>
 ```
 
+Single-block references omit the optional attributes/elements and remain fully supported.
 `serializeCommentRefs(refs, userText)` escapes `&`, `<`, `>`, `"` and `'`, places all reference
 blocks first, and appends the user instruction below. `parseCommentRefs(content)` extracts every
 valid block, unescapes text, and returns the remaining body. If any block is malformed (missing
@@ -92,13 +112,26 @@ When a thread is `addressed`, the card shows the latest agent reply and a `确�
 human action archives a thread; agents move threads to addressed through `reply_comment` with
 `mark_addressed=true`.
 
-### Report highlights and activation
+### Report highlights and cross-block activation
 
-`ReportViewer` builds quote highlights from all non-archived, non-detached threads that carry a
-`TextQuoteSelector`. The highlight is a soft amber underline/background. Clicking it opens the
-comment tab and activates the matching card; clicking a card scrolls the report to its `block_id`.
-The floating popover now only creates a comment at a selected quote or block anchor and closes after
-submission.
+Selection capture runs inside `ReportViewer` and collects every visible `[data-block-id]` in document
+order between the start and end blocks. A `Range` slice per boundary block produces exact text with
+prefix/suffix context; intermediate tables, images and ECharts blocks contribute stable placeholders
+to `anchor_snapshot`. Empty text selections still work when the intersecting blocks contain media.
+
+Text highlights use the CSS Custom Highlight API (`CSS.highlights` + `::highlight()`):
+
+- `quire-comment` for existing non-archived threads.
+- `quire-comment-active` for the pending selection or the selected comment card.
+
+No `<mark>` or wrapper elements are inserted into report content, so table colgroups and image
+rendering are untouched. Non-text blocks receive a pseudo-element outline (`.quire-comment-scope`)
+that does not affect layout. Browsers without CSS Highlights fall back to the same block-level
+outline. Clicking a comment card scrolls to the starting block and activates both endpoint highlight
+ranges plus the covered media outlines.
+
+Images and chart canvases use `user-select: none` in report CSS and inside custom-HTML shadow roots,
+preventing the native blue selection film while preserving text selection around media.
 
 ### Agent loop
 
@@ -111,8 +144,12 @@ with a change summary. Agents never archive threads; humans confirm archive in t
 - The browser never receives or stores `QUIRE_RW_TOKEN`.
 - Unbound sessions return a clear `400` instead of writing to an arbitrary document.
 - Upstream proxy errors never include the runtime token.
-- Valid XML references round-trip through serialize/parse, including `<>&"'`; malformed XML degrades
-  to plain text without throwing.
+- Valid XML references round-trip through serialize/parse, including `<>&"'`, multi-block
+  attributes, end quotes and snapshots; malformed XML degrades to plain text without throwing.
+- Cross-block `anchor_blocks` are stored in document order; partial anchor survival keeps
+  `anchor_detached=false` until every anchor is deleted.
+- Text highlighting never mutates report DOM; tables and media keep their rendered structure.
+- Media nodes remain `user-select: none`; text selection is still available around them.
 - Live-sent and replayed messages use the same parser and card rendering.
 - The comment panel is non-modal; the A4 report remains in the DOM while it is open.
 - Only addressed threads expose `确认归档`; only humans archive.

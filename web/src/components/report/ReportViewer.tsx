@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EphemeralPreviewCard } from "@/components/report/EphemeralPreviewCard";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
-import type { QuoteHighlight } from "@/components/report/InlineMarkdown";
 import {
   buildMixedItems,
   type MixedRenderItem,
@@ -12,6 +11,10 @@ import { ReportCover } from "@/components/report/ReportCover";
 import { ReportPage } from "@/components/report/ReportPage";
 import { ReportTocSection } from "@/components/report/ReportTocSection";
 import { SelectionQuoteToolbar } from "@/components/report/SelectionQuoteToolbar";
+import {
+  commentThreadBlockIds,
+  type ReportSelectionDescriptor,
+} from "@/components/report/reportSelection";
 import { flashHighlightElement } from "@/components/report/reportDom";
 import {
   A4_CONTENT_HEIGHT_PX,
@@ -23,6 +26,7 @@ import {
   type PageSlice,
 } from "@/components/report/pagination";
 import { usePageScale } from "@/components/report/usePageScale";
+import { useReportHighlights } from "@/components/report/useReportHighlights";
 import { useReportMeasurements } from "@/components/report/useReportMeasurements";
 import { useTextSelectionQuote } from "@/components/report/useTextSelectionQuote";
 import type {
@@ -53,14 +57,14 @@ export interface ReportViewerProps {
   viewMode: ReportViewMode;
   ephemeralPreviews?: Map<string, EphemeralPreviewEvent>;
   comments?: CommentThread[];
+  activeThreadId?: string | null;
   printMode?: boolean;
   previewMode?: boolean;
   pageChrome?: PageChromeConfig;
   pageFilter?: number;
   onPagesReady?: (totalPages: number) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
-  onOpenCommentThread?: (threadId: string, blockId: string) => void;
-  onAskAgentWithQuote?: (blockId: string, exact: string) => void;
+  onAskAgentWithQuote?: (selection: ReportSelectionDescriptor) => void;
   onJumpToSection?: (blockId: string) => void;
 }
 
@@ -70,13 +74,13 @@ export function ReportViewer({
   viewMode,
   ephemeralPreviews,
   comments = [],
+  activeThreadId,
   printMode = false,
   previewMode = false,
   pageChrome,
   pageFilter,
   onPagesReady,
   onOpenCommentForBlock,
-  onOpenCommentThread,
   onAskAgentWithQuote,
   onJumpToSection,
 }: ReportViewerProps) {
@@ -104,28 +108,95 @@ export function ReportViewer({
   );
   const rootRef = useRef<HTMLDivElement>(null);
   const pageScale = usePageScale(rootRef, isPaged, suppressChrome);
+  const [activeSelection, setActiveSelection] =
+    useState<ReportSelectionDescriptor | null>(null);
+  const pendingSelection = activeSelection;
 
   const { quoteAction, setQuoteAction } = useTextSelectionQuote({
     enabled: !suppressChrome,
+    containerRef: rootRef,
     onOpenCommentForBlock,
     onAskAgentWithQuote,
   });
 
-  const { openCountByBlock, quotesByBlock } = useMemo(() => {
+  const { supported: highlightSupported } = useReportHighlights({
+    containerRef: rootRef,
+    comments,
+    activeThreadId,
+    pendingSelection,
+  });
+
+  const nonTextBlockIds = useMemo(
+    () =>
+      new Set(
+        document.blocks
+          .filter((block) =>
+            ["table", "echarts", "custom_html"].includes(block.type),
+          )
+          .map((block) => block.id),
+      ),
+    [document.blocks],
+  );
+
+  const { openCountByBlock, commentOutlineIds } = useMemo(() => {
     const counts = new Map<string, number>();
-    const quotes = new Map<string, QuoteHighlight[]>();
+    const outlines = new Set<string>();
+    const addOutline = (blockId: string, includeText: boolean) => {
+      if (includeText || nonTextBlockIds.has(blockId)) {
+        outlines.add(blockId);
+      }
+    };
     for (const thread of comments) {
-      if (thread.status !== "archived" && !thread.anchor_detached) {
-        counts.set(thread.block_id, (counts.get(thread.block_id) ?? 0) + 1);
-        if (thread.quote) {
-          const list = quotes.get(thread.block_id) ?? [];
-          list.push({ threadId: thread.thread_id, quote: thread.quote });
-          quotes.set(thread.block_id, list);
-        }
+      if (thread.status === "archived" || thread.anchor_detached) {
+        continue;
+      }
+      const blockIds = commentThreadBlockIds(thread);
+      for (const blockId of blockIds) {
+        counts.set(blockId, (counts.get(blockId) ?? 0) + 1);
+        addOutline(blockId, !highlightSupported);
       }
     }
-    return { openCountByBlock: counts, quotesByBlock: quotes };
-  }, [comments]);
+    const active = comments.find(
+      (thread) => thread.thread_id === activeThreadId,
+    );
+    if (active) {
+      const blockIds = commentThreadBlockIds(active);
+      for (const blockId of blockIds) {
+        addOutline(blockId, !highlightSupported);
+      }
+    }
+    for (const blockId of pendingSelection?.blockIds ?? []) {
+      addOutline(blockId, !highlightSupported);
+    }
+    return { openCountByBlock: counts, commentOutlineIds: outlines };
+  }, [
+    activeThreadId,
+    comments,
+    highlightSupported,
+    nonTextBlockIds,
+    pendingSelection,
+  ]);
+
+  useEffect(() => {
+    if (!activeThreadId) {
+      return;
+    }
+    const thread = comments.find(
+      (candidate) => candidate.thread_id === activeThreadId,
+    );
+    if (!thread) {
+      return;
+    }
+    const blockIds = commentThreadBlockIds(thread);
+    for (const blockId of blockIds) {
+      const element = rootRef.current?.querySelector<HTMLElement>(
+        `[data-block-id="${blockId}"]`,
+      );
+      if (element) {
+        flashHighlightElement(element);
+      }
+    }
+  }, [activeThreadId, comments]);
 
   const previewList = useMemo(
     () =>
@@ -319,9 +390,21 @@ export function ReportViewer({
             onComment={
               onOpenCommentForBlock
                 ? (action) => {
+                    setActiveSelection({
+                      blockId: action.blockId,
+                      endBlockId: action.endBlockId,
+                      blockIds: action.blockIds,
+                      quote: action.quote,
+                      endQuote: action.endQuote,
+                      anchorSnapshot: action.anchorSnapshot,
+                    });
                     onOpenCommentForBlock({
                       blockId: action.blockId,
+                      endBlockId: action.endBlockId,
+                      blockIds: action.blockIds,
                       quote: action.quote,
+                      endQuote: action.endQuote,
+                      anchorSnapshot: action.anchorSnapshot,
                       rect: action.viewportRect,
                     });
                     setQuoteAction(null);
@@ -331,14 +414,25 @@ export function ReportViewer({
             }
             onAskAgent={
               onAskAgentWithQuote
-                ? (blockId, exact) => {
-                    onAskAgentWithQuote(blockId, exact);
+                ? (action) => {
+                    setActiveSelection({
+                      blockId: action.blockId,
+                      endBlockId: action.endBlockId,
+                      blockIds: action.blockIds,
+                      quote: action.quote,
+                      endQuote: action.endQuote,
+                      anchorSnapshot: action.anchorSnapshot,
+                    });
+                    onAskAgentWithQuote(action);
                     setQuoteAction(null);
                     window.getSelection()?.removeAllRanges();
                   }
                 : undefined
             }
-            onDismiss={() => setQuoteAction(null)}
+            onDismiss={() => {
+              setQuoteAction(null);
+              setActiveSelection(null);
+            }}
           />
         )}
 
@@ -370,7 +464,6 @@ export function ReportViewer({
                 computed={computed}
                 bibliographyById={bibliographyById}
                 commentCount={0}
-                blockQuotes={quotesByBlock.get(block.id)}
                 measurementOnly
                 onCitationClick={scrollToSource}
               />
@@ -399,10 +492,9 @@ export function ReportViewer({
                   computed={computed}
                   bibliographyById={bibliographyById}
                   commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
-                  blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                  commentOutline={commentOutlineIds.has(item.slice.block.id)}
                   onCitationClick={scrollToSource}
                   onOpenCommentForBlock={onOpenCommentForBlock}
-                  onOpenCommentThread={onOpenCommentThread}
                 />
               )}
             </div>
@@ -436,13 +528,12 @@ export function ReportViewer({
               computed={computed}
               bibliographyById={bibliographyById}
               openCountByBlock={openCountByBlock}
-              quotesByBlock={quotesByBlock}
+              commentOutlineIds={commentOutlineIds}
               showChartTools={!suppressChrome}
               printMode={suppressChrome}
               coverFullPage={isCustomFullPageCover}
               onCitationClick={scrollToSource}
               onOpenCommentForBlock={onOpenCommentForBlock}
-              onOpenCommentThread={onOpenCommentThread}
             />
           ))}
         </div>

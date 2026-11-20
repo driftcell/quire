@@ -472,9 +472,17 @@ async fn post_message(
 #[serde(deny_unknown_fields)]
 struct SessionCommentCreateRequest {
     block_id: String,
+    #[serde(default)]
+    end_block_id: Option<String>,
+    #[serde(default)]
+    anchor_blocks: Vec<String>,
     body: String,
     #[serde(default)]
     quote: Option<TextQuoteSelector>,
+    #[serde(default)]
+    end_quote: Option<TextQuoteSelector>,
+    #[serde(default)]
+    anchor_snapshot: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -548,8 +556,12 @@ async fn create_session_comment(
         &format!("/{}/comments", encode_path_segment(&doc_id)),
         serde_json::json!({
             "block_id": request.block_id,
+            "end_block_id": request.end_block_id,
+            "anchor_blocks": request.anchor_blocks,
             "body": request.body,
             "quote": request.quote,
+            "end_quote": request.end_quote,
+            "anchor_snapshot": request.anchor_snapshot,
         }),
     )
     .await?;
@@ -719,13 +731,41 @@ fn comment_ref_message(thread: &CommentThread) -> String {
 
 fn comment_ref_message_with_body(thread: &CommentThread, comment: &str) -> String {
     let mut content = format!(
-        "<quire_comment_ref thread_id=\"{}\" block_id=\"{}\" status=\"{}\">",
+        "<quire_comment_ref thread_id=\"{}\" block_id=\"{}\" status=\"{}\"",
         escape_xml(&thread.thread_id),
         escape_xml(thread.block_id.as_str()),
         escape_xml(thread.status.as_str()),
     );
+    if let Some(end_block_id) = &thread.end_block_id {
+        content.push_str(&format!(
+            " end_block_id=\"{}\"",
+            escape_xml(end_block_id.as_str())
+        ));
+    }
+    if thread.anchor_blocks.len() > 1 {
+        let anchors = thread
+            .anchor_blocks
+            .iter()
+            .map(|block_id| escape_xml(block_id.as_str()))
+            .collect::<Vec<_>>()
+            .join(",");
+        content.push_str(&format!(" anchor_blocks=\"{anchors}\""));
+    }
+    content.push('>');
     if let Some(quote) = &thread.quote {
         content.push_str(&format!("\n  <quote>{}</quote>", escape_xml(&quote.exact)));
+    }
+    if let Some(end_quote) = &thread.end_quote {
+        content.push_str(&format!(
+            "\n  <end_quote>{}</end_quote>",
+            escape_xml(&end_quote.exact)
+        ));
+    }
+    if let Some(snapshot) = &thread.anchor_snapshot {
+        content.push_str(&format!(
+            "\n  <anchor_snapshot>{}</anchor_snapshot>",
+            escape_xml(snapshot)
+        ));
     }
     content.push_str(&format!(
         "\n  <comment>{}</comment>\n</quire_comment_ref>",

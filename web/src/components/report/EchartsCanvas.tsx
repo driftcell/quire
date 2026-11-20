@@ -380,7 +380,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
           ref={containerRef}
           data-chart-canvas="true"
           style={{ height: `${effectiveHeight}px` }}
-          className="w-full"
+          className="w-full select-none"
         />
       )}
 

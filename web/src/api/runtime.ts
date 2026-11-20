@@ -426,8 +426,12 @@ export function createSessionComment(
   sessionId: string,
   payload: {
     block_id: string;
+    end_block_id?: string;
+    anchor_blocks?: string[];
+    anchor_snapshot?: string;
     body: string;
     quote?: TextQuoteSelector;
+    end_quote?: TextQuoteSelector;
   },
 ): Promise<CommentThread> {
   return runtimeFetch(

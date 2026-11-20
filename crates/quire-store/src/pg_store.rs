@@ -52,9 +52,12 @@ struct CommentThreadRow {
     doc_id: String,
     thread_id: String,
     block_id: String,
+    end_block_id: Option<String>,
+    anchor_blocks: Value,
     section_id: Option<String>,
     anchor_snapshot: Option<String>,
     quote: Option<Value>,
+    end_quote: Option<Value>,
     status: String,
     created_rev: i64,
     addressed_rev: Option<i64>,
@@ -929,6 +932,9 @@ impl PgReportStore {
         if let Some(quote) = &request.quote {
             quote.validate().map_err(StoreError::InvalidRequest)?;
         }
+        if let Some(end_quote) = &request.end_quote {
+            end_quote.validate().map_err(StoreError::InvalidRequest)?;
+        }
         let mut tx = self.pool.begin().await?;
         let loaded = load_document_in_tx(&mut tx, doc_id.as_str()).await?;
         let document = loaded.document;
@@ -940,6 +946,17 @@ impl PgReportStore {
                 doc_id: doc_id.clone(),
                 block_id: request.block_id.clone(),
             })?;
+        if let Some(end_block_id) = &request.end_block_id
+            && !document
+                .blocks
+                .iter()
+                .any(|block| &block.id == end_block_id)
+        {
+            return Err(StoreError::CommentTargetNotFound {
+                doc_id: doc_id.clone(),
+                block_id: end_block_id.clone(),
+            });
+        }
         let block =
             document
                 .blocks
@@ -949,12 +966,30 @@ impl PgReportStore {
                     block_id: request.block_id.clone(),
                 })?;
         let section_id = comment_section_for_index(&document, index);
-        let anchor_snapshot = comment_anchor_snapshot(block);
+        let anchor_snapshot = request
+            .anchor_snapshot
+            .as_deref()
+            .map(str::trim)
+            .filter(|snapshot| !snapshot.is_empty())
+            .map(str::to_string)
+            .or_else(|| comment_anchor_snapshot(block));
+        let anchor_blocks = normalize_anchor_blocks(
+            &document,
+            &request.block_id,
+            request.end_block_id.as_ref(),
+            &request.anchor_blocks,
+        );
         let quote = request
             .quote
             .as_ref()
             .map(serde_json::to_value)
             .transpose()?;
+        let end_quote = request
+            .end_quote
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
+        let anchor_blocks_json = serde_json::to_value(&anchor_blocks)?;
         let now = Utc::now();
         let thread_id = short_id("th");
         let message_id = short_id("msg");
@@ -962,15 +997,19 @@ impl PgReportStore {
 
         sqlx::query!(
             r#"INSERT INTO report_comment_threads
-               (doc_id, thread_id, block_id, section_id, anchor_snapshot, quote, status,
-                created_rev, addressed_rev, created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $9)"#,
+               (doc_id, thread_id, block_id, end_block_id, anchor_blocks, section_id,
+                anchor_snapshot, quote, end_quote, status, created_rev, addressed_rev,
+                created_at, updated_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $12)"#,
             doc_id.as_str(),
             &thread_id,
             request.block_id.as_str(),
+            request.end_block_id.as_ref().map(BlockId::as_str),
+            anchor_blocks_json,
             section_id.as_ref().map(BlockId::as_str),
             anchor_snapshot.as_deref(),
             quote,
+            end_quote,
             status.as_str(),
             document.revision.get(),
             now,
@@ -997,9 +1036,12 @@ impl PgReportStore {
             thread_id: thread_id.clone(),
             doc_id: doc_id.clone(),
             block_id: request.block_id,
+            end_block_id: request.end_block_id,
+            anchor_blocks,
             section_id,
             anchor_snapshot,
             quote: request.quote,
+            end_quote: request.end_quote,
             status,
             created_rev: document.revision,
             addressed_rev: None,
@@ -1025,17 +1067,25 @@ impl PgReportStore {
         block_id: Option<&BlockId>,
     ) -> Result<Vec<CommentThread>, StoreError> {
         let rows = sqlx::query!(
-            r#"SELECT t.doc_id, t.thread_id, t.block_id, t.section_id, t.anchor_snapshot,
-                      t.quote, t.status, t.created_rev, t.addressed_rev, t.created_at,
-                      t.updated_at,
+            r#"SELECT t.doc_id, t.thread_id, t.block_id, t.end_block_id, t.anchor_blocks,
+                      t.section_id, t.anchor_snapshot, t.quote, t.end_quote, t.status,
+                      t.created_rev, t.addressed_rev, t.created_at, t.updated_at,
                       (NOT EXISTS (
                           SELECT 1 FROM report_blocks b
-                          WHERE b.doc_id = t.doc_id AND b.block_id = t.block_id
+                          WHERE b.doc_id = t.doc_id
+                            AND (b.block_id = t.block_id
+                                 OR b.block_id = t.end_block_id
+                                 OR b.block_id IN (
+                                     SELECT jsonb_array_elements_text(t.anchor_blocks)
+                                 ))
                       )) AS "anchor_detached!"
                FROM report_comment_threads t
                WHERE t.doc_id = $1
                  AND ($2::text IS NULL OR t.status = $2)
-                 AND ($3::text IS NULL OR t.block_id = $3)
+                 AND ($3::text IS NULL
+                      OR t.block_id = $3
+                      OR t.end_block_id = $3
+                      OR t.anchor_blocks ? $3)
                ORDER BY t.updated_at DESC, t.thread_id ASC"#,
             doc_id.as_str(),
             status.map(CommentStatus::as_str),
@@ -1073,9 +1123,12 @@ impl PgReportStore {
                     doc_id: row.doc_id,
                     thread_id: row.thread_id,
                     block_id: row.block_id,
+                    end_block_id: row.end_block_id,
+                    anchor_blocks: row.anchor_blocks,
                     section_id: row.section_id,
                     anchor_snapshot: row.anchor_snapshot,
                     quote: row.quote,
+                    end_quote: row.end_quote,
                     status: row.status,
                     created_rev: row.created_rev,
                     addressed_rev: row.addressed_rev,
@@ -1249,12 +1302,17 @@ impl PgReportStore {
         thread_id: &str,
     ) -> Result<CommentThread, StoreError> {
         let row = sqlx::query!(
-            r#"SELECT t.doc_id, t.thread_id, t.block_id, t.section_id, t.anchor_snapshot,
-                      t.quote, t.status, t.created_rev, t.addressed_rev, t.created_at,
-                      t.updated_at,
+            r#"SELECT t.doc_id, t.thread_id, t.block_id, t.end_block_id, t.anchor_blocks,
+                      t.section_id, t.anchor_snapshot, t.quote, t.end_quote, t.status,
+                      t.created_rev, t.addressed_rev, t.created_at, t.updated_at,
                       (NOT EXISTS (
                           SELECT 1 FROM report_blocks b
-                          WHERE b.doc_id = t.doc_id AND b.block_id = t.block_id
+                          WHERE b.doc_id = t.doc_id
+                            AND (b.block_id = t.block_id
+                                 OR b.block_id = t.end_block_id
+                                 OR b.block_id IN (
+                                     SELECT jsonb_array_elements_text(t.anchor_blocks)
+                                 ))
                       )) AS "anchor_detached!"
                FROM report_comment_threads t
                WHERE t.doc_id = $1 AND t.thread_id = $2"#,
@@ -1294,9 +1352,12 @@ impl PgReportStore {
             doc_id: row.doc_id,
             thread_id: row.thread_id,
             block_id: row.block_id,
+            end_block_id: row.end_block_id,
+            anchor_blocks: row.anchor_blocks,
             section_id: row.section_id,
             anchor_snapshot: row.anchor_snapshot,
             quote: row.quote,
+            end_quote: row.end_quote,
             status: row.status,
             created_rev: row.created_rev,
             addressed_rev: row.addressed_rev,
@@ -1420,11 +1481,17 @@ impl CommentThreadRow {
             thread_id: self.thread_id,
             doc_id: DocId::parse(self.doc_id)?,
             block_id: BlockId::parse(self.block_id)?,
+            end_block_id: self.end_block_id.map(BlockId::parse).transpose()?,
+            anchor_blocks: parse_json(self.anchor_blocks, "report_comment_threads.anchor_blocks")?,
             section_id: self.section_id.map(BlockId::parse).transpose()?,
             anchor_snapshot: self.anchor_snapshot,
             quote: self
                 .quote
                 .map(|value| parse_json(value, "report_comment_threads.quote"))
+                .transpose()?,
+            end_quote: self
+                .end_quote
+                .map(|value| parse_json(value, "report_comment_threads.end_quote"))
                 .transpose()?,
             status: CommentStatus::parse(&self.status).ok_or_else(|| {
                 StoreError::Internal(format!(
@@ -1477,6 +1544,26 @@ fn comment_section_for_index(document: &ReportDocument, index: usize) -> Option<
         .rev()
         .find(|candidate| matches!(candidate.body, BlockKind::Heading { .. }))
         .map(|heading| heading.id.clone())
+}
+
+/// Ensure the start/end blocks are included and return every surviving anchor in document order.
+fn normalize_anchor_blocks(
+    document: &ReportDocument,
+    start: &BlockId,
+    end: Option<&BlockId>,
+    requested: &[BlockId],
+) -> Vec<BlockId> {
+    let mut selected: HashSet<&BlockId> = requested.iter().collect();
+    selected.insert(start);
+    if let Some(end) = end {
+        selected.insert(end);
+    }
+    document
+        .blocks
+        .iter()
+        .filter(|block| selected.contains(&block.id))
+        .map(|block| block.id.clone())
+        .collect()
 }
 
 fn comment_anchor_snapshot(block: &Block) -> Option<String> {

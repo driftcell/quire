@@ -42,6 +42,7 @@ import {
   serializeCommentRefs,
   type CommentRefPayload,
 } from "@/lib/commentRefXml";
+import { selectionRangeLabel } from "@/components/report/reportSelection";
 
 export interface PendingAttachment {
   localId: string;
@@ -52,6 +53,8 @@ export interface PendingAttachment {
 
 export interface QuotedChatSnippet {
   blockId: string;
+  endBlockId?: string;
+  blockIds?: string[];
   exact: string;
 }
 
@@ -181,8 +184,15 @@ export function PromptComposer({
     setSendError(null);
     const currentText = trimmed;
     const currentFiles = files;
+    const quoteRange = quotedSnippet
+      ? selectionRangeLabel(quotedSnippet)
+      : "";
+    const coveredBlocks =
+      quotedSnippet?.blockIds && quotedSnippet.blockIds.length > 1
+        ? `；覆盖块: ${quotedSnippet.blockIds.join(", ")}`
+        : "";
     const baseText = quotedSnippet
-      ? `> 引用（#${quotedSnippet.blockId}）：${quotedSnippet.exact}\n\n${currentText}`
+      ? `> 引用（${quoteRange}${coveredBlocks}）：${quotedSnippet.exact}\n\n${currentText}`
       : currentText;
     const payloadText =
       currentRefs.length > 0
@@ -280,7 +290,7 @@ export function PromptComposer({
             <QuoteIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <div className="text-[10px] font-medium text-muted-foreground">
-                引用报告块 #{quotedSnippet.blockId}
+                引用报告块 {selectionRangeLabel(quotedSnippet)}
               </div>
               <div className="line-clamp-2 text-muted-foreground">
                 “{quotedSnippet.exact}”

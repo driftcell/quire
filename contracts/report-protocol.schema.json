@@ -999,7 +999,7 @@
       ]
     },
     "CommentThread": {
-      "description": "A side-channel review thread anchored to a block.",
+      "description": "A side-channel review thread anchored to one or more blocks.",
       "type": "object",
       "properties": {
         "addressed_rev": {
@@ -1012,8 +1012,15 @@
             }
           ]
         },
+        "anchor_blocks": {
+          "description": "Every selected block in document order, including intermediate tables, images and charts.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
         "anchor_detached": {
-          "description": "True when `block_id` no longer exists in the current document.",
+          "description": "True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.",
           "type": "boolean"
         },
         "anchor_snapshot": {
@@ -1024,6 +1031,7 @@
           ]
         },
         "block_id": {
+          "description": "Starting block. Kept as the canonical section/order anchor.",
           "$ref": "#/$defs/BlockId"
         },
         "created_at": {
@@ -1036,6 +1044,28 @@
         "doc_id": {
           "$ref": "#/$defs/DocId"
         },
+        "end_block_id": {
+          "description": "Ending block for a cross-block selection. `None` for a single-block anchor.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BlockId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "end_quote": {
+          "description": "End-block text snapshot for cross-block selections.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextQuoteSelector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "messages": {
           "type": "array",
           "items": {
@@ -1043,6 +1073,7 @@
           }
         },
         "quote": {
+          "description": "Start-block text snapshot.",
           "anyOf": [
             {
               "$ref": "#/$defs/TextQuoteSelector"

@@ -51,6 +51,58 @@
   font-family: var(--rpt-font-heading);
 }
 
+/* Media must never receive the browser's native blue selection film. */
+.report-root img,
+.report-root canvas,
+.report-root video,
+.report-root svg[data-chart-canvas] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+::highlight(quire-comment) {
+  background-color: oklch(0.9 0.08 85 / 0.55);
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: oklch(0.72 0.16 70 / 0.8);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+::highlight(quire-comment-active) {
+  background-color: oklch(0.88 0.12 80 / 0.72);
+  color: inherit;
+  text-decoration-line: underline;
+  text-decoration-style: solid;
+  text-decoration-color: oklch(0.67 0.17 65 / 0.95);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+/* Non-text scope outline uses a pseudo-element so table/image layout never shifts. */
+.quire-comment-scope {
+  position: relative;
+  border-radius: 0.5rem;
+  background-color: oklch(0.97 0.04 85 / 0.55);
+  box-shadow: 0 0 0 1px oklch(0.78 0.14 75 / 0.55);
+  transition:
+    background-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.quire-comment-scope::before {
+  position: absolute;
+  top: 0.25rem;
+  bottom: 0.25rem;
+  left: -0.45rem;
+  width: 2px;
+  border-radius: 999px;
+  background: oklch(0.72 0.16 70 / 0.7);
+  content: "";
+  pointer-events: none;
+}
+
 @media print {
   @page {
     size: A4 portrait;

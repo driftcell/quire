@@ -311,9 +311,17 @@ struct CommentListQuery {
 #[serde(deny_unknown_fields)]
 struct CreateCommentRequest {
     block_id: String,
+    #[serde(default)]
+    end_block_id: Option<String>,
+    #[serde(default)]
+    anchor_blocks: Vec<String>,
     body: String,
     #[serde(default)]
     quote: Option<TextQuoteSelector>,
+    #[serde(default)]
+    end_quote: Option<TextQuoteSelector>,
+    #[serde(default)]
+    anchor_snapshot: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -363,8 +371,19 @@ async fn create_comment(
     Json(request): Json<CreateCommentRequest>,
 ) -> Result<Json<CommentThread>, ApiError> {
     let block_id = BlockId::parse(request.block_id)?;
+    let end_block_id = request.end_block_id.map(BlockId::parse).transpose()?;
+    let anchor_blocks = request
+        .anchor_blocks
+        .into_iter()
+        .map(BlockId::parse)
+        .collect::<Result<Vec<_>, _>>()?;
     if let Some(quote) = &request.quote {
         quote
+            .validate()
+            .map_err(|reason| ApiError(StoreError::InvalidRequest(reason)))?;
+    }
+    if let Some(end_quote) = &request.end_quote {
+        end_quote
             .validate()
             .map_err(|reason| ApiError(StoreError::InvalidRequest(reason)))?;
     }
@@ -374,10 +393,14 @@ async fn create_comment(
             &doc_id,
             NewCommentThread {
                 block_id,
+                end_block_id,
+                anchor_blocks,
                 author_type: CommentAuthorType::Human,
                 author: context.actor,
                 body: request.body,
                 quote: request.quote,
+                end_quote: request.end_quote,
+                anchor_snapshot: request.anchor_snapshot,
             },
         )
         .await?;

@@ -11,25 +11,14 @@ import {
   type VirtualElement,
 } from "@floating-ui/react";
 import { MessageSquarePlusIcon, SparklesIcon } from "lucide-react";
-import type { TextQuoteSelector } from "@/contracts/report-protocol";
+import type { SelectionQuoteAction } from "@/components/report/reportSelection";
 
-export interface SelectionQuoteAction {
-  blockId: string;
-  quote: TextQuoteSelector;
-  viewportRect: {
-    top: number;
-    left: number;
-    bottom: number;
-    right: number;
-    width: number;
-    height: number;
-  };
-}
+export type { SelectionQuoteAction } from "@/components/report/reportSelection";
 
 export interface SelectionQuoteToolbarProps {
   action: SelectionQuoteAction;
   onComment?: (action: SelectionQuoteAction) => void;
-  onAskAgent?: (blockId: string, exact: string) => void;
+  onAskAgent?: (action: SelectionQuoteAction) => void;
   onDismiss: () => void;
 }
 
@@ -108,7 +97,7 @@ export function SelectionQuoteToolbar({
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onAskAgent(action.blockId, action.quote.exact)}
+            onClick={() => onAskAgent(action)}
             className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
           >
             <SparklesIcon className="size-3.5" />

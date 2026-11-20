@@ -18,6 +18,7 @@ import {
   type FloatingCommentAnchor,
 } from "@/components/report/FloatingCommentPopover";
 import { SessionReportPane } from "@/components/report/SessionReportPane";
+import type { ReportSelectionDescriptor } from "@/components/report/reportSelection";
 import { SessionRightPane } from "@/components/report/SessionRightPane";
 import {
   SessionWorkspaceLayout,
@@ -214,20 +215,16 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   });
 
   const handleAskAgentWithQuote = useCallback(
-    (blockId: string, exact: string) => {
-      setQuotedForChat({ blockId, exact });
+    (selection: ReportSelectionDescriptor) => {
+      setQuotedForChat({
+        blockId: selection.blockId,
+        endBlockId: selection.endBlockId,
+        blockIds: selection.blockIds,
+        exact: selection.anchorSnapshot,
+      });
       showChat();
     },
     [showChat],
-  );
-
-  const openCommentThread = useCallback(
-    (threadId: string, blockId: string) => {
-      setActiveCommentThreadId(threadId);
-      showComments();
-      jumpToSection(blockId);
-    },
-    [jumpToSection, showComments],
   );
 
   const openCommentsCount =
@@ -344,6 +341,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         viewMode={prefs.reportViewMode}
         ephemeralPreviews={ephemeralPreviews}
         comments={commentsQuery.data ?? []}
+        activeThreadId={activeCommentThreadId}
         activeActorsBySection={activeActorsBySection}
         openCommentsCount={openCommentsCount}
         isMobile={isMobile}
@@ -355,7 +353,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         onOpenCommentForBlock={(anchor) => {
           setFloatingComment(anchor);
         }}
-        onOpenCommentThread={openCommentThread}
         onAskAgentWithQuote={handleAskAgentWithQuote}
       />
     ) : null;
@@ -407,11 +404,15 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
               : 0
           }
           onClose={() => setFloatingComment(null)}
-          onAddComment={async (blockId, body, quote) => {
+          onAddComment={async (anchor, body) => {
             const thread = await createSessionComment(sessionId, {
-              block_id: blockId,
+              block_id: anchor.blockId,
+              end_block_id: anchor.endBlockId,
+              anchor_blocks: anchor.blockIds,
+              anchor_snapshot: anchor.anchorSnapshot,
               body,
-              quote,
+              quote: anchor.quote,
+              end_quote: anchor.endQuote,
             });
             void queryClient.invalidateQueries({
               queryKey: ["comments", effectiveDocId],

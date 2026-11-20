@@ -10,7 +10,6 @@ import {
 } from "@/components/report/pagination";
 import type { MixedRenderItem } from "@/components/report/ephemeralPreviewMix";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
-import type { QuoteHighlight } from "@/components/report/InlineMarkdown";
 import { formatPageTemplate, type ResolvedPageChrome } from "@/lib/pageChrome";
 import type {
   BibliographyEntry,
@@ -35,14 +34,13 @@ export interface ReportPageProps {
   computed: ComputedDocumentMeta;
   bibliographyById: Map<string, BibliographyEntry>;
   openCountByBlock: Map<string, number>;
-  quotesByBlock: Map<string, QuoteHighlight[]>;
+  commentOutlineIds: ReadonlySet<string>;
   showChartTools: boolean;
   printMode: boolean;
   /** Custom-HTML covers occupy the whole first page with no header/footer. */
   coverFullPage?: boolean;
   onCitationClick: (sourceId: string) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
-  onOpenCommentThread?: (threadId: string, blockId: string) => void;
 }
 
 export function ReportPage({
@@ -62,13 +60,12 @@ export function ReportPage({
   computed,
   bibliographyById,
   openCountByBlock,
-  quotesByBlock,
+  commentOutlineIds,
   showChartTools,
   printMode,
   coverFullPage = false,
   onCitationClick,
   onOpenCommentForBlock,
-  onOpenCommentThread,
 }: ReportPageProps) {
   const pageContext = {
     page: page.pageNumber,
@@ -136,10 +133,9 @@ export function ReportPage({
                   computed={computed}
                   bibliographyById={bibliographyById}
                   commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
-                  blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                  commentOutline={commentOutlineIds.has(item.slice.block.id)}
                   onCitationClick={onCitationClick}
                   onOpenCommentForBlock={onOpenCommentForBlock}
-                  onOpenCommentThread={onOpenCommentThread}
                 />
               </div>
             ))}

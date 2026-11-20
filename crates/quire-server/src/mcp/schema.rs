@@ -667,11 +667,23 @@ pub struct AddCommentParams {
     pub doc_id: String,
     /// Existing block the review thread is anchored to.
     pub block_id: String,
+    /// Ending block for a cross-block selection.
+    #[serde(default)]
+    pub end_block_id: Option<String>,
+    /// Every selected block in document order.
+    #[serde(default)]
+    pub anchor_blocks: Vec<String>,
     /// Review comment body.
     pub body: String,
-    /// Optional text-selection quote for highlighting.
+    /// Optional start-block text-selection quote for highlighting.
     #[serde(default)]
     pub quote: Option<TextQuoteSelector>,
+    /// Optional end-block text-selection quote for cross-block highlighting.
+    #[serde(default)]
+    pub end_quote: Option<TextQuoteSelector>,
+    /// Optional frontend-authored snapshot containing media placeholders.
+    #[serde(default)]
+    pub anchor_snapshot: Option<String>,
 }
 
 /// Output for `add_comment`. Thread fields are flattened for compact receipts.

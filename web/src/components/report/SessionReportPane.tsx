@@ -2,6 +2,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import { ReportPaneToolbar } from "@/components/report/ReportPaneToolbar";
 import { ReportViewer } from "@/components/report/ReportViewer";
+import type { ReportSelectionDescriptor } from "@/components/report/reportSelection";
 import type {
   CommentThread,
   ComputedDocumentMeta,
@@ -18,6 +19,7 @@ export interface SessionReportPaneProps {
   viewMode: ReportViewMode;
   ephemeralPreviews: Map<string, EphemeralPreviewEvent>;
   comments: CommentThread[];
+  activeThreadId?: string | null;
   activeActorsBySection: Map<string, string[]>;
   openCommentsCount: number;
   isMobile: boolean;
@@ -27,8 +29,7 @@ export interface SessionReportPaneProps {
   onJumpToSection: (blockId: string) => void;
   onShowComments: () => void;
   onOpenCommentForBlock: (anchor: FloatingCommentAnchor) => void;
-  onOpenCommentThread: (threadId: string, blockId: string) => void;
-  onAskAgentWithQuote: (blockId: string, exact: string) => void;
+  onAskAgentWithQuote: (selection: ReportSelectionDescriptor) => void;
 }
 
 export function SessionReportPane({
@@ -39,6 +40,7 @@ export function SessionReportPane({
   viewMode,
   ephemeralPreviews,
   comments,
+  activeThreadId,
   activeActorsBySection,
   openCommentsCount,
   isMobile,
@@ -48,7 +50,6 @@ export function SessionReportPane({
   onJumpToSection,
   onShowComments,
   onOpenCommentForBlock,
-  onOpenCommentThread,
   onAskAgentWithQuote,
 }: SessionReportPaneProps) {
   return (
@@ -102,8 +103,8 @@ export function SessionReportPane({
           viewMode={viewMode}
           ephemeralPreviews={ephemeralPreviews}
           comments={comments}
+          activeThreadId={activeThreadId}
           onOpenCommentForBlock={onOpenCommentForBlock}
-          onOpenCommentThread={onOpenCommentThread}
           onAskAgentWithQuote={onAskAgentWithQuote}
           onJumpToSection={onJumpToSection}
         />

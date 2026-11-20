@@ -24,9 +24,19 @@ export function CustomHtmlView({ block }: CustomHtmlViewProps) {
       style.textContent = css;
       shadow.appendChild(style);
     }
+    const mediaGuard = document.createElement("style");
+    mediaGuard.textContent =
+      "img, canvas, video, svg { -webkit-user-select: none; user-select: none; }";
+    shadow.appendChild(mediaGuard);
     const wrapper = document.createElement("div");
     wrapper.className = "quire-custom-html";
     wrapper.innerHTML = html;
+    for (const media of wrapper.querySelectorAll("img, canvas, video, svg")) {
+      if (media instanceof HTMLElement || media instanceof SVGElement) {
+        media.style.setProperty("user-select", "none");
+        media.style.setProperty("-webkit-user-select", "none");
+      }
+    }
     shadow.appendChild(wrapper);
   }, [html, css]);
 

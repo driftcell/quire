@@ -1655,6 +1655,45 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             .as_str()
             .is_some_and(|snapshot| snapshot.contains("Revenue grew 18%"))
     );
+    let cross_comment_response = http
+        .post(format!("{base}/api/docs/{doc_id}/comments"))
+        .header("x-actor", "human-reviewer")
+        .json(&json!({
+            "block_id": "ch1_summary",
+            "end_block_id": "ch1_chart",
+            "anchor_blocks": ["ch1_summary", "ch1_financials", "ch1_chart"],
+            "body": "Please align this cross-block range.",
+            "quote": {
+                "exact": "Revenue grew 18%",
+                "prefix": "Enterprise ",
+                "suffix": " year over year"
+            },
+            "end_quote": {
+                "exact": "Revenue and margin",
+                "prefix": null,
+                "suffix": null
+            },
+            "anchor_snapshot": "Revenue grew 18% … [表格: Revenue by segment] … [图表: Revenue and margin]"
+        }))
+        .send()
+        .await?;
+    assert!(
+        cross_comment_response.status().is_success(),
+        "cross-block comment failed: {}",
+        cross_comment_response.status()
+    );
+    let cross_comment = cross_comment_response.json::<Value>().await?;
+    assert_eq!(cross_comment["end_block_id"], "ch1_chart");
+    assert_eq!(
+        cross_comment["anchor_blocks"],
+        json!(["ch1_summary", "ch1_financials", "ch1_chart"])
+    );
+    assert_eq!(cross_comment["end_quote"]["exact"], "Revenue and margin");
+    assert!(
+        cross_comment["anchor_snapshot"]
+            .as_str()
+            .is_some_and(|snapshot| snapshot.contains("[图表: Revenue and margin]"))
+    );
     let after_comment = http
         .get(format!("{base}/api/docs/{doc_id}"))
         .send()
