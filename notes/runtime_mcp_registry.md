@@ -37,3 +37,8 @@ Tool assembly is the intersection of enabled server, enabled tool and agent allo
 `<server_id>:*`, plain tool names and explicit `<server_id>:<tool>` patterns. The accepted cost is
 that stale tools removed upstream remain listed until a future cleanup action, though they cannot be
 called because actual `/mcp` discovery still filters the registry selection.
+
+Follow-up (2026-11-20): allow-list matching was unified on `tool_pattern_matches`, adding prefix,
+suffix and multi-segment wildcards (`subjectcloud_*`, `*_detail`, `server_a:shuangyou_*`) across the
+registry, Rig MCP client and built-in tool loop. Missing-tool warnings now expand wildcards against
+the assembled tool map instead of looking up the pattern literally.

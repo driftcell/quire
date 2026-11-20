@@ -14,6 +14,12 @@ allowed_tools:
   - describe_task
   - load_skill
   - read_skill_resource
+  - panorama_report_indicator_info
+  - panorama_report_query
+  - shuangyou_profile
+  - shuangyou_industry_source
+  - subjectcloud_overview
+  - subjectcloud_result
 enabled: true
 ---
 

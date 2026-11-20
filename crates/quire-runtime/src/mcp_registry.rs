@@ -485,14 +485,59 @@ impl McpRegistry {
     }
 }
 
+/// Match one allow-list pattern against a tool name.
+///
+/// Patterns are trimmed; an empty pattern never matches. A pattern without `*`
+/// is an exact match. A pattern with `*` supports prefix (`subjectcloud_*`),
+/// suffix (`*_detail`) and multi-segment wildcards. Scoped MCP patterns are
+/// matched by the caller against `server_id:tool_name`.
+pub(crate) fn tool_pattern_matches(pattern: &str, candidate: &str) -> bool {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return false;
+    }
+    if pattern == "*" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return pattern == candidate;
+    }
+
+    let mut segments = pattern.split('*').peekable();
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    let Some(mut remaining) = candidate.strip_prefix(first) else {
+        return false;
+    };
+    while let Some(segment) = segments.next() {
+        if segments.peek().is_none() {
+            return remaining.ends_with(segment);
+        }
+        if segment.is_empty() {
+            continue;
+        }
+        let Some(index) = remaining.find(segment) else {
+            return false;
+        };
+        let Some(rest) = remaining.get(index.saturating_add(segment.len())..) else {
+            return false;
+        };
+        remaining = rest;
+    }
+    true
+}
+
 /// Match an agent allow-list entry against a server-scoped tool.
 pub fn agent_allows_mcp_tool(allowed_tools: &[String], server_id: &str, tool_name: &str) -> bool {
+    let scoped = format!("{server_id}:{tool_name}");
     allowed_tools.iter().any(|pattern| {
         let pattern = pattern.trim();
-        pattern == "*"
-            || pattern == tool_name
-            || pattern == format!("{server_id}:{tool_name}")
-            || pattern == format!("{server_id}:*")
+        if pattern.contains(':') {
+            tool_pattern_matches(pattern, &scoped)
+        } else {
+            tool_pattern_matches(pattern, tool_name)
+        }
     })
 }
 
@@ -587,6 +632,92 @@ mod tests {
             &["*".to_string()],
             "server-a",
             "write"
+        ));
+    }
+
+    #[test]
+    fn tool_patterns_support_prefix_suffix_and_multi_segment_wildcards() {
+        assert!(tool_pattern_matches(
+            "subjectcloud_*",
+            "subjectcloud_detail"
+        ));
+        assert!(tool_pattern_matches(
+            "shuangyou_intel_*",
+            "shuangyou_intel_list"
+        ));
+        assert!(!tool_pattern_matches(
+            "shuangyou_intel_*",
+            "shuangyou_profile"
+        ));
+        assert!(!tool_pattern_matches(
+            "subjectcloud_*",
+            "panorama_report_query"
+        ));
+        assert!(tool_pattern_matches(
+            "*_detail",
+            "subjectcloud_talent_detail"
+        ));
+        assert!(tool_pattern_matches("*_detail", "shuangyou_intel_detail"));
+        assert!(tool_pattern_matches("*_detail", "subjectcloud_detail"));
+        assert!(!tool_pattern_matches("*_detail", "subjectcloud_overview"));
+        assert!(tool_pattern_matches(
+            "panorama_report_*_query",
+            "panorama_report_batch_query"
+        ));
+        assert!(tool_pattern_matches("a*b*c", "axbyc"));
+        assert!(!tool_pattern_matches("a*b*c", "axby"));
+        assert!(tool_pattern_matches(" exact ", "exact"));
+        assert!(!tool_pattern_matches("", "exact"));
+        assert!(!tool_pattern_matches("   ", "exact"));
+        assert!(tool_pattern_matches("*", "anything"));
+    }
+
+    #[test]
+    fn scoped_wildcards_never_cross_server_boundaries() {
+        let allowed = vec!["server_a:shuangyou_*".to_string()];
+        assert!(agent_allows_mcp_tool(
+            &allowed,
+            "server_a",
+            "shuangyou_profile"
+        ));
+        assert!(agent_allows_mcp_tool(
+            &allowed,
+            "server_a",
+            "shuangyou_industry_source"
+        ));
+        assert!(!agent_allows_mcp_tool(
+            &allowed,
+            "server_b",
+            "shuangyou_profile"
+        ));
+        assert!(!agent_allows_mcp_tool(
+            &allowed,
+            "server_a",
+            "panorama_report_query"
+        ));
+
+        let all_on_server = vec!["server_a:*".to_string()];
+        assert!(agent_allows_mcp_tool(
+            &all_on_server,
+            "server_a",
+            "subjectcloud_result"
+        ));
+        assert!(!agent_allows_mcp_tool(
+            &all_on_server,
+            "server_b",
+            "subjectcloud_result"
+        ));
+
+        let bare_prefix = vec!["subjectcloud_*".to_string()];
+        assert!(agent_allows_mcp_tool(
+            &bare_prefix,
+            "any-server",
+            "subjectcloud_overview"
+        ));
+        assert!(!agent_allows_mcp_tool(
+            &bare_prefix,
+            "any-server",
+            "shuangyou_profile"
         ));
     }
 

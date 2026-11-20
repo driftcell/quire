@@ -13,6 +13,16 @@ allowed_tools:
   - describe_task
   - load_skill
   - read_skill_resource
+  - panorama_report_indicator_info
+  - panorama_report_drill
+  - shuangyou_industry_source
+  - shuangyou_intel_*
+  - shuangyou_planning_*
+  - subjectcloud_detail
+  - subjectcloud_result
+  - subjectcloud_talent_search
+  - subjectcloud_talent_batch
+  - subjectcloud_talent_detail
 enabled: true
 ---
 

@@ -3022,6 +3022,31 @@ async fn mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache() {
     );
     assert_eq!(wildcard[0].tool_names, vec!["safe_tool".to_string()]);
 
+    let prefix_wildcard = service
+        .mcp()
+        .tools_for_agent(&["safe_*".to_string()])
+        .await
+        .unwrap();
+    assert_eq!(prefix_wildcard[0].tool_names, vec!["safe_tool".to_string()]);
+
+    let scoped_wildcard = format!("{server_id}:safe_*");
+    let scoped = service
+        .mcp()
+        .tools_for_agent(&[scoped_wildcard])
+        .await
+        .unwrap();
+    assert_eq!(scoped[0].tool_names, vec!["safe_tool".to_string()]);
+
+    let wrong_server = service
+        .mcp()
+        .tools_for_agent(&["other-server:safe_*".to_string()])
+        .await
+        .unwrap();
+    assert!(
+        wrong_server.is_empty(),
+        "scoped wildcards must not cross server boundaries"
+    );
+
     service
         .mcp()
         .set_tool_enabled(&server_id, "danger_tool", true)

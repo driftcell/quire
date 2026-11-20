@@ -12,6 +12,9 @@ allowed_tools:
   - upsert_sources
   - lint_document
   - describe_task
+  - panorama_report_*
+  - shuangyou_*
+  - subjectcloud_*
 enabled: true
 ---
 

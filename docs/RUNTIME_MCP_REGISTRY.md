@@ -55,15 +55,20 @@ selects a server only when:
 
 - the server is enabled;
 - the tool is globally enabled;
-- the agent allow-list matches, supporting:
+- the agent allow-list matches through the single `tool_pattern_matches` implementation shared by
+  the registry, the Rig MCP client and the built-in tool loop:
   - `"*"` for every tool on every server;
+  - a plain tool name or `"<server_id>:<tool_name>"` for an exact match;
   - `"<server_id>:*"` for every tool on one server;
-  - a plain tool name;
-  - `"<server_id>:<tool_name>"` for an explicit server/tool pair.
+  - prefix, suffix and multi-segment wildcards such as `subjectcloud_*`, `*_detail` and
+    `panorama_report_*_query`. A pattern containing `:` is matched against
+    `server_id:tool_name`; otherwise it is matched against the bare tool name.
 
 Selected names are then used to build one `McpHttpClient` per server and listed through actual MCP
 `tools/list`, so tools removed upstream are not callable even if a stale registry row remains.
-Built-in runtime tools take precedence over remote tools with the same name.
+Built-in runtime tools take precedence over remote tools with the same name. Missing-tool warnings
+expand wildcard patterns against the assembled tool map, so valid `subjectcloud_*`-style entries
+never emit false alarms.
 
 ### REST
 
@@ -95,9 +100,19 @@ raw auth token reference.
 - Seeding is idempotent and never re-enables an administrator-disabled `quire-report`.
 - Sync preserves existing tool enable switches; new tools are enabled.
 - A globally disabled tool is filtered even when present in `agent_definition.allowed_tools`.
+- Allow-list matching is identical across the registry, MCP client and built-in tool loop; scoped
+  wildcards never cross server boundaries.
+- Valid wildcard patterns do not produce missing-tool warnings.
 - Re-enabling a tool restores it on the next run.
 - Auth token refs are encrypted/masked in HTTP and Admin MCP receipts.
 - Server/tool mutations publish cache invalidation.
+
+Unit coverage in `crates/quire-runtime/src/mcp_registry.rs` and `rig_agent.rs`:
+
+- `tool_patterns_support_prefix_suffix_and_multi_segment_wildcards`
+- `scoped_wildcards_never_cross_server_boundaries`
+- `wildcard_allow_list_supports_prefix_suffix_and_multi_segment_patterns`
+- `warn_missing_allowed_tools_expands_wildcards_instead_of_literal_lookup`
 
 Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
 

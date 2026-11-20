@@ -44,7 +44,7 @@ use crate::{
     error::{RuntimeError, RuntimeResult},
     kb::KbService,
     mcp_client::RmcpClient,
-    mcp_registry::McpRegistry,
+    mcp_registry::{McpRegistry, tool_pattern_matches},
     model_stream::{ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest},
     models::{ModelRegistry, ProviderProtocol},
     prompt::ContextMessage,
@@ -67,36 +67,63 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "sandbox_write_file",
 ];
 
-/// Match an agent allow-list entry against a tool name. `*` matches every tool.
+/// Return configured patterns that match no assembled tool.
+///
+/// Wildcards are expanded against the final tool map rather than looked up as
+/// literal names. A scoped pattern such as `server_a:subjectcloud_*` is checked
+/// against the tool-name portion because assembled MCP tools keep bare names.
+fn missing_allowed_tool_patterns(
+    allowed_tools: &[String],
+    tool_map: &BTreeMap<String, DynamicTool>,
+) -> Vec<String> {
+    let mut missing = Vec::new();
+    for pattern in allowed_tools {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let effective = trimmed
+            .split_once(':')
+            .map(|(_, tool_name)| tool_name)
+            .unwrap_or(trimmed)
+            .trim();
+        if effective.is_empty() || effective == "*" {
+            continue;
+        }
+        let available = if effective.contains('*') {
+            tool_map
+                .keys()
+                .any(|name| tool_pattern_matches(effective, name))
+        } else {
+            tool_map.contains_key(effective)
+        };
+        if !available {
+            missing.push(trimmed.to_string());
+        }
+    }
+    missing
+}
+
 fn warn_missing_allowed_tools(
     agent_id: &str,
     allowed_tools: &[String],
     tool_map: &BTreeMap<String, DynamicTool>,
-) {
-    for pattern in allowed_tools {
-        let trimmed = pattern.trim();
-        if trimmed.is_empty() || trimmed == "*" || trimmed.ends_with(":*") {
-            continue;
-        }
-        let tool_name = trimmed
-            .split_once(':')
-            .map(|(_, name)| name)
-            .unwrap_or(trimmed);
-        if !tool_map.contains_key(tool_name) {
-            warn!(
-                agent_id = %agent_id,
-                allowed_tool = %trimmed,
-                "configured allowed_tool does not exist or is unavailable; skipping without blocking workflow"
-            );
-        }
+) -> Vec<String> {
+    let missing = missing_allowed_tool_patterns(allowed_tools, tool_map);
+    for pattern in &missing {
+        warn!(
+            agent_id = %agent_id,
+            allowed_tool = %pattern,
+            "configured allowed_tool does not exist or is unavailable; skipping without blocking workflow"
+        );
     }
+    missing
 }
 
 fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
-    allowed_tools.iter().any(|pattern| {
-        let pattern = pattern.trim();
-        pattern == "*" || pattern == tool_name
-    })
+    allowed_tools
+        .iter()
+        .any(|pattern| tool_pattern_matches(pattern, tool_name))
 }
 
 /// Throttle for streamed tool-argument preview frames.
@@ -2223,6 +2250,15 @@ mod tests {
     use rig_core::message::ToolFunction;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn test_tool(name: &str) -> DynamicTool {
+        DynamicTool::new(
+            ToolName::new(name).unwrap(),
+            "test tool",
+            json!({}),
+            move |_args| Box::pin(async move { Ok(ToolOutput::text("ok")) }),
+        )
+    }
+
     async fn execute_invalid_arguments_call(raw: &str) -> (MessageToolResult, Value, usize) {
         let calls = Arc::new(AtomicUsize::new(0));
         let tool_calls = Arc::clone(&calls);
@@ -2351,6 +2387,65 @@ mod tests {
         assert!(allow_list_matches(&allowed, "lint_document"));
         assert!(!allow_list_matches(&allowed, "ask_user"));
         assert!(!allow_list_matches(&[], "spawn_subagents"));
+    }
+
+    #[test]
+    fn wildcard_allow_list_supports_prefix_suffix_and_multi_segment_patterns() {
+        let allowed = vec![
+            "subjectcloud_*".to_string(),
+            "shuangyou_intel_*".to_string(),
+            "*_detail".to_string(),
+            "panorama_report_*_query".to_string(),
+        ];
+        assert!(allow_list_matches(&allowed, "subjectcloud_overview"));
+        assert!(allow_list_matches(&allowed, "shuangyou_intel_list"));
+        assert!(allow_list_matches(&allowed, "subjectcloud_talent_detail"));
+        assert!(allow_list_matches(&allowed, "panorama_report_batch_query"));
+        assert!(!allow_list_matches(&allowed, "shuangyou_profile"));
+        assert!(!allow_list_matches(&allowed, "panorama_report_trend"));
+    }
+
+    #[test]
+    fn warn_missing_allowed_tools_expands_wildcards_instead_of_literal_lookup() {
+        let tool_map = BTreeMap::from([
+            (
+                "subjectcloud_detail".to_string(),
+                test_tool("subjectcloud_detail"),
+            ),
+            (
+                "subjectcloud_overview".to_string(),
+                test_tool("subjectcloud_overview"),
+            ),
+            (
+                "shuangyou_profile".to_string(),
+                test_tool("shuangyou_profile"),
+            ),
+        ]);
+
+        let valid = vec![
+            "subjectcloud_*".to_string(),
+            "server_a:subjectcloud_*".to_string(),
+            "subjectcloud_detail".to_string(),
+            "*".to_string(),
+        ];
+        assert!(
+            warn_missing_allowed_tools("agent", &valid, &tool_map).is_empty(),
+            "valid wildcards must not be reported as missing tools"
+        );
+
+        let missing = warn_missing_allowed_tools(
+            "agent",
+            &[
+                "panorama_report_*".to_string(),
+                "shuangyou_intel_*".to_string(),
+            ],
+            &tool_map,
+        );
+        assert_eq!(
+            missing,
+            vec!["panorama_report_*", "shuangyou_intel_*"],
+            "only patterns with no matching assembled tool should warn"
+        );
     }
 
     #[test]

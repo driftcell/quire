@@ -17,6 +17,7 @@ use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
 
 use crate::error::{RuntimeError, RuntimeResult};
+use crate::mcp_registry::tool_pattern_matches;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct McpToolDescriptor {
@@ -77,7 +78,11 @@ impl RmcpClient {
     pub fn dynamic_tools(&self, allowed_tools: &[String]) -> RuntimeResult<Vec<DynamicTool>> {
         self.tools
             .iter()
-            .filter(|tool| allowed_tools.iter().any(|name| name == tool.name()))
+            .filter(|tool| {
+                allowed_tools
+                    .iter()
+                    .any(|pattern| tool_pattern_matches(pattern, tool.name()))
+            })
             .cloned()
             .map(|tool| {
                 DynamicTool::try_from(tool)
