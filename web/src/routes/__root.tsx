@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createRootRoute,
@@ -9,7 +8,7 @@ import {
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { loadPreferences, savePreferences } from "@/lib/preferences";
+import { updatePreferences, useUiPreferences } from "@/lib/preferences";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,14 +30,10 @@ function RootLayout() {
   });
   const isPrintRoute = pathname.endsWith("/print");
 
-  const [prefs, setPrefs] = useState(() => loadPreferences());
+  const prefs = useUiPreferences();
 
   const handleLeftOpenChange = (open: boolean) => {
-    setPrefs((prev) => {
-      const next = { ...prev, leftSidebarOpen: open };
-      savePreferences(next);
-      return next;
-    });
+    updatePreferences({ leftSidebarOpen: open });
   };
 
   if (isPrintRoute) {

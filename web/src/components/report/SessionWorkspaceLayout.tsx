@@ -183,9 +183,11 @@ export function SessionWorkspaceLayout({
             </ResizablePanel>
             <ResizableHandle
               disabled={!rightSidebarOpen}
-              className={`bg-transparent after:hidden transition-[width] duration-300 ease-out ${
-                rightSidebarOpen ? "w-1.5" : "w-0"
-              }`}
+              className={`bg-transparent after:hidden ${
+                rightPanelAnimating
+                  ? "transition-[width] duration-300 ease-out"
+                  : ""
+              } ${rightSidebarOpen ? "w-1.5" : "w-0"}`}
             />
             <ResizablePanel
               id="chat-panel"

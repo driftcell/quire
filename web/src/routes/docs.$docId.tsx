@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useState } from "react";
+import { useCallback, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { PanelLeftIcon } from "lucide-react";
@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSidebar } from "@/components/ui/sidebar";
 import {
-  loadPreferences,
-  savePreferences,
+  updatePreferences,
+  useUiPreferences,
   type ReportViewMode,
 } from "@/lib/preferences";
 
@@ -25,7 +25,7 @@ const EMPTY_ACTORS = new Map<string, string[]>();
 function DocumentPage() {
   const { docId } = Route.useParams();
   const { toggleSidebar } = useSidebar();
-  const [prefs, setPrefs] = useState(() => loadPreferences());
+  const prefs = useUiPreferences();
   const [commentsOpen, setCommentsOpen] = useState(false);
   const [activeCommentThreadId, setActiveCommentThreadId] = useState<
     string | null
@@ -42,13 +42,7 @@ function DocumentPage() {
   });
 
   const setViewMode = (mode: ReportViewMode) => {
-    startTransition(() => {
-      setPrefs((prev) => {
-        const next = { ...prev, reportViewMode: mode };
-        savePreferences(next);
-        return next;
-      });
-    });
+    updatePreferences({ reportViewMode: mode });
   };
 
   const jumpToSection = useCallback((sectionId: string) => {

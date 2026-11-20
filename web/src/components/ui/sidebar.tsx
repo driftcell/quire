@@ -25,8 +25,6 @@ import {
 } from "@/components/ui/tooltip";
 import { PanelLeftIcon } from "lucide-react";
 
-const SIDEBAR_COOKIE_NAME = "sidebar_state";
-const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
 const SIDEBAR_WIDTH = "16rem";
 const SIDEBAR_WIDTH_MOBILE = "18rem";
 const SIDEBAR_WIDTH_ICON = "3rem";
@@ -68,6 +66,27 @@ function SidebarProvider({
 }) {
   const isMobile = useIsMobile();
   const [openMobile, setOpenMobile] = React.useState(false);
+  const [isAnimating, setIsAnimating] = React.useState(false);
+  const animationTimerRef = React.useRef<number | null>(null);
+
+  const startAnimation = React.useCallback(() => {
+    setIsAnimating(true);
+    if (animationTimerRef.current !== null) {
+      window.clearTimeout(animationTimerRef.current);
+    }
+    animationTimerRef.current = window.setTimeout(() => {
+      animationTimerRef.current = null;
+      setIsAnimating(false);
+    }, 250);
+  }, []);
+
+  React.useEffect(() => {
+    return () => {
+      if (animationTimerRef.current !== null) {
+        window.clearTimeout(animationTimerRef.current);
+      }
+    };
+  }, []);
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
@@ -76,16 +95,14 @@ function SidebarProvider({
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
       const openState = typeof value === "function" ? value(open) : value;
+      startAnimation();
       if (setOpenProp) {
         setOpenProp(openState);
       } else {
         _setOpen(openState);
       }
-
-      // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
     },
-    [setOpenProp, open],
+    [setOpenProp, open, startAnimation],
   );
 
   // Helper to toggle the sidebar.
@@ -130,6 +147,7 @@ function SidebarProvider({
     <SidebarContext.Provider value={contextValue}>
       <div
         data-slot="sidebar-wrapper"
+        data-sidebar-animating={isAnimating ? "true" : "false"}
         style={
           {
             "--sidebar-width": SIDEBAR_WIDTH,
@@ -218,7 +236,8 @@ function Sidebar({
       <div
         data-slot="sidebar-gap"
         className={cn(
-          "relative w-(--sidebar-width) bg-transparent transition-[width] duration-200 ease-linear",
+          "relative w-(--sidebar-width) bg-transparent",
+          "group-data-[sidebar-animating=true]/sidebar-wrapper:transition-[width] group-data-[sidebar-animating=true]/sidebar-wrapper:duration-200 group-data-[sidebar-animating=true]/sidebar-wrapper:ease-linear",
           "group-data-[collapsible=offcanvas]:w-0",
           "group-data-[side=right]:rotate-180",
           variant === "floating" || variant === "inset"
@@ -230,7 +249,7 @@ function Sidebar({
         data-slot="sidebar-container"
         data-side={side}
         className={cn(
-          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) transition-[left,right,width] duration-200 ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
+          "fixed inset-y-0 z-10 hidden h-svh w-(--sidebar-width) group-data-[sidebar-animating=true]/sidebar-wrapper:transition-[left,right,width] group-data-[sidebar-animating=true]/sidebar-wrapper:duration-200 group-data-[sidebar-animating=true]/sidebar-wrapper:ease-linear data-[side=left]:left-0 data-[side=left]:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)] data-[side=right]:right-0 data-[side=right]:group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)] md:flex",
           // Adjust the padding for floating and inset variants.
           variant === "floating" || variant === "inset"
             ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)+(--spacing(4))+2px)]"

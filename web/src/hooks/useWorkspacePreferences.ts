@@ -1,23 +1,15 @@
-import {
-  startTransition,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePanelRef } from "react-resizable-panels";
-import { loadPreferences, savePreferences } from "@/lib/preferences";
+import {
+  updatePreferences,
+  useUiPreferences,
+  type UiPreferences,
+} from "@/lib/preferences";
 
 export function useWorkspacePreferences() {
-  const [prefs, setPrefs] = useState(() => loadPreferences());
-  const updatePrefs = useCallback((patch: Partial<typeof prefs>) => {
-    startTransition(() => {
-      setPrefs((prev) => {
-        const next = { ...prev, ...patch };
-        savePreferences(next);
-        return next;
-      });
-    });
+  const prefs = useUiPreferences();
+  const updatePrefs = useCallback((patch: Partial<UiPreferences>) => {
+    updatePreferences(patch);
   }, []);
 
   const [rightPanelAnimating, setRightPanelAnimating] = useState(false);
