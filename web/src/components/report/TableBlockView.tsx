@@ -1,5 +1,6 @@
-import { memo, useMemo } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { computeTableColumnWidths } from "@/components/report/tableSizing";
+import { A4_CONTENT_WIDTH_PX } from "@/components/report/pagination";
 import type {
   Align,
   CellValue,
@@ -58,8 +59,11 @@ export const TableBlockView = memo(function TableBlockView({
   rowStart = 0,
   rowEnd,
   includeSummary = true,
-  containerWidthPx = 682,
+  containerWidthPx,
 }: TableBlockViewProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [measuredWidthPx, setMeasuredWidthPx] = useState<number>();
+  const [computedFontFamily, setComputedFontFamily] = useState<string>();
   const leafCols = layout?.leaf_columns ?? [];
   const headerRows = layout?.header_rows ?? [];
   const allRows = Array.isArray(table.rows) ? table.rows : [];
@@ -69,12 +73,48 @@ export const TableBlockView = memo(function TableBlockView({
       ? table.summary_rows
       : [];
 
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) {
+      return undefined;
+    }
+    const family = window.getComputedStyle(el).fontFamily;
+    setComputedFontFamily((prev) => (prev === family ? prev : family));
+
+    if (containerWidthPx !== undefined) {
+      return undefined;
+    }
+
+    const updateWidth = () => {
+      const next = el.clientWidth;
+      if (next > 0) {
+        setMeasuredWidthPx((prev) => (prev === next ? prev : next));
+      }
+    };
+    updateWidth();
+
+    if (typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const observer = new ResizeObserver(updateWidth);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [containerWidthPx]);
+
+  const effectiveWidthPx =
+    containerWidthPx ?? measuredWidthPx ?? A4_CONTENT_WIDTH_PX;
+
   const sizing = useMemo(() => {
     if (!layout || leafCols.length === 0) {
       return { columnCssWidths: [] };
     }
-    return computeTableColumnWidths(table, layout, containerWidthPx);
-  }, [table, layout, leafCols.length, containerWidthPx]);
+    return computeTableColumnWidths(
+      table,
+      layout,
+      effectiveWidthPx,
+      computedFontFamily,
+    );
+  }, [table, layout, leafCols.length, effectiveWidthPx, computedFontFamily]);
 
   if (leafCols.length === 0) {
     return (
@@ -85,7 +125,7 @@ export const TableBlockView = memo(function TableBlockView({
   }
 
   return (
-    <div className="w-full overflow-x-auto">
+    <div ref={containerRef} className="w-full overflow-x-auto">
       <table
         style={
           sizing.minTableWidthPx

@@ -282,7 +282,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
           rowStart={slice.rowStart}
           rowEnd={slice.rowEnd}
           includeSummary={slice.includeSummary}
-          containerWidthPx={isPaged ? A4_CONTENT_WIDTH_PX : 700}
+          containerWidthPx={isPaged ? A4_CONTENT_WIDTH_PX : undefined}
         />
         {slice.continuation &&
           slice.rowStart !== undefined &&

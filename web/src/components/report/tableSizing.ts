@@ -159,15 +159,20 @@ export function computeTableColumnWidths(
   table: TableBlock,
   layout: TableLayout,
   containerWidthPx: number = 682,
+  fontFamily?: string,
 ): TableSizingResult {
   const leafCols = layout.leaf_columns;
   if (leafCols.length === 0) {
     return { columnCssWidths: [] };
   }
 
-  const availablePx = Math.max(320, containerWidthPx);
-  const headerFont = "600 14px ui-sans-serif, system-ui, sans-serif";
-  const bodyFont = "400 14px ui-sans-serif, system-ui, sans-serif";
+  const availablePx = Math.max(240, containerWidthPx);
+  const resolvedFamily =
+    fontFamily && fontFamily.trim().length > 0
+      ? fontFamily.trim()
+      : "ui-sans-serif, system-ui, sans-serif";
+  const headerFont = `600 13px ${resolvedFamily}`;
+  const bodyFont = `400 13px ${resolvedFamily}`;
 
   const allRows = [
     ...(Array.isArray(table.rows) ? table.rows : []),
