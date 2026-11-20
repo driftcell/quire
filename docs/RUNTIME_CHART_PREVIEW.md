@@ -73,6 +73,20 @@ space when a legend is visible, preventing legend/X-axis label overlap. After ea
 measures the ZRender display list and nudges a single Cartesian grid horizontally so long Y-axis
 labels, axis names and legends stay visually centered, while preserving the plot-area width.
 
+#### Built-in maps
+
+`EchartsCanvas` collects map names from `requirements.required_maps`, `geo.map` and `series[*].map`.
+`web/src/lib/echartsMaps.ts` lazily imports `web/src/assets/maps/china.json` or `world.json`, checks
+`echarts.getMap(name)`, and registers only missing maps. Concurrent callers share one load promise per
+map and ECharts registry, so `registerMap` runs once. The map JSON is emitted as separate Vite async
+chunks; the report canvas chunk contains only loader code and never the GeoJSON.
+
+Supported names are case-insensitive and normalize to `china` / `world`. Unknown names such as
+`guangdong` remain in the amber extra-registration hint. The China asset is the GeoJSON.cn 1.6.3
+province collection with the full South China Sea inset/line and Hainan geometry extending below 17°N;
+the world asset is the ECharts 4.9.0 world GeoJSON. Source and attribution details live in
+`web/src/assets/maps/README.md`.
+
 ### Agent tools
 
 `preview_echarts` has two modes:
@@ -102,6 +116,10 @@ An expired preview returns an actionable error that tells the agent to call `pre
 - Public preview URLs never contain the read-only token.
 - The first `preview_echarts` call contains the full option; later calls contain only a patch.
 - `commit_chart` cannot receive an ECharts option by construction.
+- Built-in map GeoJSON loads only through dynamic `import()`; the main and `EchartsCanvas` chunks
+  contain none of the China/world feature data.
+- `china.json` retains all 34 province-level features plus the South China Sea line, with Hainan
+  geometry extending below 17°N.
 - `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings` and
   `cargo test --workspace` pass.
 - `just schema` regenerates `contracts/report-protocol.schema.json`; `web` regenerates its TypeScript

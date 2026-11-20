@@ -13,6 +13,11 @@ import type {
   ChartRequirements,
 } from "@/contracts/report-protocol";
 import { centerReportChartGrid } from "@/components/report/echartsGridCenter";
+import {
+  ensureEchartsMaps,
+  extractRequiredMaps,
+  isSupportedBuiltinMap,
+} from "@/lib/echartsMaps";
 import { errorMessage } from "@/lib/errors";
 import type { EchartsBlock } from "@/lib/document";
 
@@ -236,6 +241,10 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       : "图表数据";
 
   const effectiveOption = useMemo(() => buildEffectiveOption(chart), [chart]);
+  const requiredMaps = useMemo(
+    () => extractRequiredMaps(effectiveOption, requirements),
+    [effectiveOption, requirements],
+  );
 
   useEffect(() => {
     onRenderError?.(runtimeError);
@@ -249,6 +258,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
 
     let resizeTimer = 0;
     let disposed = false;
+    let renderGeneration = 0;
 
     const applyOption = (instance: echarts.ECharts) => {
       instance.setOption(effectiveOption as echarts.EChartsOption, {
@@ -258,38 +268,54 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       centerReportChartGrid(instance);
     };
 
-    const mountOrUpdate = () => {
+    const mountOrUpdate = async () => {
       if (disposed) return;
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         return;
       }
 
+      const generation = ++renderGeneration;
       if (!instanceRef.current) {
         instanceRef.current = echarts.init(el, undefined, {
           renderer,
           devicePixelRatio: window.devicePixelRatio || 2,
         });
       }
+      const instance = instanceRef.current;
+      if (!instance) return;
 
       try {
         setRuntimeError(null);
-        applyOption(instanceRef.current);
+        if (requiredMaps.length > 0) {
+          await ensureEchartsMaps(echarts, requiredMaps);
+          if (
+            disposed ||
+            generation !== renderGeneration ||
+            instance.isDisposed()
+          ) {
+            return;
+          }
+        }
+        applyOption(instance);
       } catch (err) {
+        if (disposed || generation !== renderGeneration) {
+          return;
+        }
         setRuntimeError(
           err instanceof Error ? err.message : "ECharts 渲染失败",
         );
       }
     };
 
-    mountOrUpdate();
+    void mountOrUpdate();
 
     const resized = () => {
       resizeTimer = 0;
       if (disposed) return;
       const instance = instanceRef.current;
       if (!instance) {
-        mountOrUpdate();
+        void mountOrUpdate();
         return;
       }
       instance.resize({ animation: { duration: 0 } });
@@ -319,7 +345,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       observer.disconnect();
       window.removeEventListener("resize", scheduleResize);
     };
-  }, [effectiveOption, renderer]);
+  }, [effectiveOption, renderer, requiredMaps]);
 
   useEffect(() => {
     return () => {
@@ -330,7 +356,9 @@ export const EchartsCanvas = memo(function EchartsCanvas({
     };
   }, [renderer]);
 
-  const missingMaps = requirements?.required_maps ?? [];
+  const missingMaps = requiredMaps.filter(
+    (name) => !isSupportedBuiltinMap(name),
+  );
   const missingExts = requirements?.required_extensions ?? [];
 
   return (
