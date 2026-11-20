@@ -1,3 +1,4 @@
+import type { HeadingPageBreak } from "@/lib/pageChrome";
 import type { ReportBlock } from "@/lib/document";
 
 export interface PageSlice {
@@ -37,6 +38,10 @@ export interface PageMeasurements {
 export interface PaginateOptions {
   /** Protocol default is `true`; only an explicit `false` may share the last page. */
   referencesPageBreakBefore?: boolean;
+  /** Give a custom-HTML cover its own first page in paged/print mode. */
+  coverFullPage?: boolean;
+  /** Automatic page break before level-1 and/or level-2 headings. */
+  headingPageBreak?: HeadingPageBreak;
 }
 
 export const A4_PAGE_WIDTH_PX = 794;
@@ -97,11 +102,24 @@ export function paginateBlocks(
     bibliographyHeight,
   } = measurements;
 
+  const fullPageCover = options.coverFullPage ?? false;
+  const headingPageBreak = options.headingPageBreak ?? "none";
+
   const pages: A4Page[] = [];
   let currentItems: PageSlice[] = [];
   let currentIncludeToc = false;
-  let usedHeight =
-    coverHeight > 0 ? Math.min(coverHeight, pageHeight * 0.75) : 0;
+  let usedHeight = 0;
+
+  if (coverHeight > 0 && fullPageCover) {
+    pages.push({
+      pageNumber: 1,
+      items: [],
+      includeCover: true,
+      includeToc: false,
+    });
+  } else if (coverHeight > 0) {
+    usedHeight = Math.min(coverHeight, pageHeight * 0.75);
+  }
 
   const pushPage = () => {
     if (currentItems.length > 0 || currentIncludeToc || pages.length === 0) {
@@ -129,7 +147,16 @@ export function paginateBlocks(
     const block = blocks[i];
     if (!block) continue;
 
-    if (block.style?.page_break_before && currentItems.length > 0) {
+    const autoHeadingBreak =
+      block.type === "heading" &&
+      ((headingPageBreak === "h1" && block.level === 1) ||
+        (headingPageBreak === "h1_and_h2" &&
+          block.level !== undefined &&
+          block.level <= 2));
+    if (
+      (block.style?.page_break_before || autoHeadingBreak) &&
+      (currentItems.length > 0 || currentIncludeToc)
+    ) {
       pushPage();
     }
 

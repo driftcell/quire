@@ -38,6 +38,8 @@ export interface ReportPageProps {
   quotesByBlock: Map<string, QuoteHighlight[]>;
   showChartTools: boolean;
   printMode: boolean;
+  /** Custom-HTML covers occupy the whole first page with no header/footer. */
+  coverFullPage?: boolean;
   onCitationClick: (sourceId: string) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
   onOpenCommentThread?: (threadId: string, blockId: string) => void;
@@ -63,6 +65,7 @@ export function ReportPage({
   quotesByBlock,
   showChartTools,
   printMode,
+  coverFullPage = false,
   onCitationClick,
   onOpenCommentForBlock,
   onOpenCommentThread,
@@ -76,6 +79,7 @@ export function ReportPage({
     kicker: document.cover.meta?.kicker ?? "",
     authors: (document.cover.authors ?? []).join("、"),
   };
+  const fullPageCover = Boolean(coverFullPage && page.includeCover);
 
   return (
     <ScaledPage scale={plain ? 1 : pageScale} plain={plain}>
@@ -86,6 +90,7 @@ export function ReportPage({
         data-include-bibliography={
           page.includeBibliography ? "true" : undefined
         }
+        data-full-page-cover={fullPageCover ? "true" : undefined}
         style={{
           width: `${A4_PAGE_WIDTH_PX}px`,
           height: `${A4_PAGE_HEIGHT_PX}px`,
@@ -95,8 +100,12 @@ export function ReportPage({
       >
         <div className="flex min-h-0 flex-1 flex-col overflow-visible print:overflow-hidden">
           {showHeader &&
+            !fullPageCover &&
             (pageIdx > 0 || !pageChrome.hide_header_on_first_page) && (
-              <div className="mb-3 grid shrink-0 grid-cols-3 items-center gap-2 border-b border-[var(--rpt-border)] pb-1 text-[10px] tracking-[0.06em] text-[var(--rpt-muted)]">
+              <div
+                className="mb-3 grid shrink-0 grid-cols-3 items-center gap-2 border-b border-[var(--rpt-border)] pb-1 text-[10px] tracking-[0.06em] text-[var(--rpt-muted)]"
+                data-page-header="true"
+              >
                 <div className="truncate text-left">
                   {formatPageTemplate(pageChrome.header.left, pageContext)}
                 </div>
@@ -108,7 +117,13 @@ export function ReportPage({
                 </div>
               </div>
             )}
-          <div className="min-h-0 flex-1 overflow-visible print:overflow-hidden">
+          <div
+            className={
+              fullPageCover
+                ? "flex h-full min-h-0 flex-1 flex-col justify-center overflow-visible print:overflow-hidden"
+                : "min-h-0 flex-1 overflow-visible print:overflow-hidden"
+            }
+          >
             {cover}
             {toc}
             {items.map((item) => (
@@ -132,8 +147,12 @@ export function ReportPage({
           </div>
         </div>
         {showFooter &&
+          !fullPageCover &&
           (pageIdx > 0 || !pageChrome.hide_footer_on_first_page) && (
-            <footer className="mt-4 grid shrink-0 grid-cols-3 items-center gap-2 border-t border-[var(--rpt-border)] pt-2 text-[11px] text-[var(--rpt-muted)]">
+            <footer
+              className="mt-4 grid shrink-0 grid-cols-3 items-center gap-2 border-t border-[var(--rpt-border)] pt-2 text-[11px] text-[var(--rpt-muted)]"
+              data-page-footer="true"
+            >
               <span className="truncate text-left">
                 {formatPageTemplate(pageChrome.footer.left, pageContext)}
               </span>

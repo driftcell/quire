@@ -10,6 +10,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { PageChromeConfig } from "@/contracts/report-protocol";
 import {
   PAGE_CHROME_PRESETS,
@@ -65,12 +66,13 @@ export function PageChromeDialog({
   };
 
   const applyPreset = (preset: ResolvedPageChrome) => {
-    setDraft({
+    setDraft((prev) => ({
       header: { ...preset.header },
       footer: { ...preset.footer },
       hide_header_on_first_page: preset.hide_header_on_first_page,
       hide_footer_on_first_page: preset.hide_footer_on_first_page,
-    });
+      heading_page_break: prev.heading_page_break,
+    }));
   };
 
   const updateSlot = (group: SlotGroup, slot: SlotKey, value: string) => {
@@ -163,6 +165,57 @@ export function PageChromeDialog({
                 {placeholder}
               </button>
             ))}
+          </div>
+        </div>
+
+        <div className="space-y-2 rounded-lg border p-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-0.5">
+              <div className="text-xs font-semibold">章节自动换页</div>
+              <p className="text-[11px] text-muted-foreground">
+                标题已在页首时不会重复换页，避免产生空白页。
+              </p>
+            </div>
+            <ToggleGroup
+              multiple={false}
+              value={[draft.heading_page_break]}
+              onValueChange={(values) => {
+                const next = values[0];
+                if (next === "none" || next === "h1" || next === "h1_and_h2") {
+                  setDraft((prev) => ({
+                    ...prev,
+                    heading_page_break: next,
+                  }));
+                }
+              }}
+              spacing={0}
+              className="rounded-md border bg-muted/40 p-0.5"
+            >
+              <ToggleGroupItem
+                value="none"
+                size="sm"
+                aria-label="章节自动换页：不强制"
+                className="h-6 min-w-0 rounded-sm px-2 py-0.5 text-[11px] aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
+              >
+                不强制
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="h1"
+                size="sm"
+                aria-label="章节自动换页：一级标题"
+                className="h-6 min-w-0 rounded-sm px-2 py-0.5 text-[11px] aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
+              >
+                一级标题
+              </ToggleGroupItem>
+              <ToggleGroupItem
+                value="h1_and_h2"
+                size="sm"
+                aria-label="章节自动换页：一、二级标题"
+                className="h-6 min-w-0 rounded-sm px-2 py-0.5 text-[11px] aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
+              >
+                一、二级标题
+              </ToggleGroupItem>
+            </ToggleGroup>
           </div>
         </div>
 

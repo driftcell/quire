@@ -65,9 +65,9 @@ pub use markdown::{
     project_section,
 };
 pub use model::{
-    COVER_VARIANTS, CitationStyle, CoverConfig, PageChromeConfig, PageChromeSlots,
-    ReferencesConfig, ReportDocument, SourceEntry, TOC_VARIANTS, ThemeConfig, ThemeSummary,
-    TocConfig, is_safe_css_token_value, is_valid_css_token_name,
+    COVER_VARIANTS, CitationStyle, CoverConfig, HeadingPageBreak, PageChromeConfig,
+    PageChromeSlots, ReferencesConfig, ReportDocument, SourceEntry, TOC_VARIANTS, ThemeConfig,
+    ThemeSummary, TocConfig, is_safe_css_token_value, is_valid_css_token_name,
 };
 pub use ops::{
     BlockPatch, BlockStylePatch, CellUpdate, IdAssignment, PatchError, PatchOp, PatchOutcome,

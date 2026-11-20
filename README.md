@@ -187,7 +187,7 @@ for transient drafts.
 | `set_cover` | partial cover update |
 | `configure_toc` | enable/title/depth/variant |
 | `configure_references` | bibliography style/page break + orphan sources |
-| `configure_page_chrome` | A4 header/footer slots, placeholders and first-page visibility |
+| `configure_page_chrome` | A4 header/footer slots, first-page visibility and automatic heading page breaks (`none` / `h1` / `h1_and_h2`) |
 | `update_style_and_css` | presets, tokens, validated scoped CSS |
 | `lint_document` | zero-browser static validation |
 | `list_comments` | side-channel review threads with anchors + `anchor_detached` |

@@ -1,20 +1,71 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import type { CoverConfig } from "@/contracts/report-protocol";
 
+const BLOCKED_COVER_TAGS = "script, iframe, object, embed";
+const URL_ATTRIBUTES = new Set([
+  "href",
+  "src",
+  "xlink:href",
+  "action",
+  "formaction",
+]);
+
+/**
+ * Strip executable markup from agent-authored cover HTML before it reaches
+ * `innerHTML`. Script-capable elements, inline event handlers and
+ * `javascript:` URLs are removed; ordinary layout markup is preserved.
+ */
+export function sanitizeCoverHtml(raw: string): string {
+  const doc = new DOMParser().parseFromString(raw, "text/html");
+  for (const element of Array.from(doc.querySelectorAll(BLOCKED_COVER_TAGS))) {
+    element.remove();
+  }
+  for (const element of Array.from(doc.body.querySelectorAll("*"))) {
+    for (const attribute of Array.from(element.attributes)) {
+      const name = attribute.name.toLowerCase();
+      if (name.startsWith("on")) {
+        element.removeAttribute(attribute.name);
+        continue;
+      }
+      if (!URL_ATTRIBUTES.has(name)) {
+        continue;
+      }
+      const value = Array.from(attribute.value)
+        .filter((char) => {
+          const code = char.charCodeAt(0);
+          return code > 0x20 && code !== 0x7f;
+        })
+        .join("")
+        .toLowerCase();
+      if (value.startsWith("javascript:") || value.startsWith("vbscript:")) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  }
+  return doc.body.innerHTML;
+}
+
 function CoverCustomHtml({ html }: { html: string }) {
+  const sanitized = useMemo(() => sanitizeCoverHtml(html), [html]);
   const setHost = useCallback(
     (node: HTMLDivElement | null) => {
       if (node) {
-        node.innerHTML = html;
+        node.innerHTML = sanitized;
       }
     },
-    [html],
+    [sanitized],
   );
 
   return <div ref={setHost} className="report-custom-cover-html" />;
 }
 
-export function ReportCover({ cover }: { cover: CoverConfig }) {
+export function ReportCover({
+  cover,
+  isPaged = false,
+}: {
+  cover: CoverConfig;
+  isPaged?: boolean;
+}) {
   if (!cover.enabled) {
     return null;
   }
@@ -31,7 +82,14 @@ export function ReportCover({ cover }: { cover: CoverConfig }) {
       html = html.replaceAll(`{{${key}}}`, value);
     }
     return (
-      <div className="mb-10">
+      <div
+        data-report-cover="custom"
+        className={
+          isPaged
+            ? "report-cover-custom w-full"
+            : "report-cover-custom mb-10 border-b border-[var(--rpt-border)] pb-8"
+        }
+      >
         <CoverCustomHtml html={html} />
       </div>
     );

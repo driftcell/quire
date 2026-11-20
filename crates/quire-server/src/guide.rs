@@ -265,7 +265,9 @@ PAGE CHROME
 - Slots: header/footer each have `left`, `center`, `right`. Omit a slot object to keep its current value.
 - Placeholders: `{page}`, `{total}`, `{title}`, `{subtitle}`, `{date}`, `{kicker}`, `{authors}`.
 - First-page visibility: `hide_header_on_first_page` defaults true; `hide_footer_on_first_page` defaults false.
+- Automatic heading page breaks: `heading_page_break="none"` (default, natural flow), `"h1"` (each level-1 heading starts a new page) or `"h1_and_h2"` (level-1 and level-2 headings start new pages). It never emits a blank page when the heading is already at the top of a fresh page.
 - The frontend also exposes a visual editor for human reviewers; MCP values are the document defaults.
+- A `cover.custom_html` cover always occupies its own first page in paged/print mode (header and footer hidden, content vertically centered); in continuous mode it keeps its natural height with a separator below.
 
 THEME TOKENS
 {

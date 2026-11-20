@@ -1647,6 +1647,15 @@
         "received_at"
       ]
     },
+    "HeadingPageBreak": {
+      "description": "Automatic page-break policy for document headings.",
+      "type": "string",
+      "enum": [
+        "none",
+        "h1",
+        "h1_and_h2"
+      ]
+    },
     "IdAssignment": {
       "description": "Mapping produced when an empty or colliding block ID was auto-assigned.",
       "type": "object",
@@ -1853,6 +1862,10 @@
             "left": "",
             "right": ""
           }
+        },
+        "heading_page_break": {
+          "$ref": "#/$defs/HeadingPageBreak",
+          "default": "none"
         },
         "hide_footer_on_first_page": {
           "type": "boolean",

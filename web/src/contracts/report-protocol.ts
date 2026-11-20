@@ -887,6 +887,10 @@ export interface ThemeConfig {
 export interface PageChromeConfig {
   footer?: PageChromeSlots;
   header?: PageChromeSlots1;
+  /**
+   * Automatic page-break policy for document headings.
+   */
+  heading_page_break?: "none" | "h1" | "h1_and_h2";
   hide_footer_on_first_page?: boolean;
   hide_header_on_first_page?: boolean;
   [k: string]: unknown;

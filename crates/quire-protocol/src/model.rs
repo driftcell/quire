@@ -126,6 +126,16 @@ pub struct PageChromeSlots {
     pub right: String,
 }
 
+/// Automatic page-break policy for document headings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadingPageBreak {
+    #[default]
+    None,
+    H1,
+    H1AndH2,
+}
+
 /// A4 paged header/footer configuration stored under `theme.page_chrome`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PageChromeConfig {
@@ -137,6 +147,8 @@ pub struct PageChromeConfig {
     pub hide_header_on_first_page: bool,
     #[serde(default)]
     pub hide_footer_on_first_page: bool,
+    #[serde(default)]
+    pub heading_page_break: HeadingPageBreak,
 }
 
 /// Theme configuration. Tokens are CSS custom properties applied to `.report-root`.
@@ -457,9 +469,31 @@ mod tests {
         let config: PageChromeConfig = serde_json::from_value(value).expect("page chrome config");
         assert!(config.hide_header_on_first_page);
         assert!(!config.hide_footer_on_first_page);
+        assert_eq!(config.heading_page_break, HeadingPageBreak::None);
         assert_eq!(config.header.left, "{kicker}");
         let serialized = serde_json::to_value(&config).expect("serialize page chrome");
         assert_eq!(serialized["footer"]["center"], "{page}/{total}");
+        assert_eq!(serialized["heading_page_break"], "none");
         assert!(ThemeConfig::default().page_chrome.is_none());
+    }
+
+    #[test]
+    fn heading_page_break_defaults_and_roundtrips() {
+        assert_eq!(HeadingPageBreak::default(), HeadingPageBreak::None);
+        assert_eq!(
+            serde_json::to_value(HeadingPageBreak::H1).expect("serialize h1"),
+            serde_json::json!("h1")
+        );
+        assert_eq!(
+            serde_json::to_value(HeadingPageBreak::H1AndH2).expect("serialize h1_and_h2"),
+            serde_json::json!("h1_and_h2")
+        );
+        let config: PageChromeConfig =
+            serde_json::from_value(serde_json::json!({"heading_page_break": "h1_and_h2"}))
+                .expect("page chrome config");
+        assert_eq!(config.heading_page_break, HeadingPageBreak::H1AndH2);
+        let defaulted: PageChromeConfig =
+            serde_json::from_value(serde_json::json!({})).expect("default page chrome");
+        assert_eq!(defaulted.heading_page_break, HeadingPageBreak::None);
     }
 }

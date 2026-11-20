@@ -99,6 +99,9 @@ export function ReportViewer({
   const referencesBreak = referencesPageBreakBefore(document.references);
   const showReferences =
     referencesEnabled(document.references) && computed.bibliography.length > 0;
+  const isCustomFullPageCover = Boolean(
+    document.cover.enabled && document.cover.custom_html,
+  );
   const rootRef = useRef<HTMLDivElement>(null);
   const pageScale = usePageScale(rootRef, isPaged, suppressChrome);
 
@@ -220,6 +223,8 @@ export function ReportViewer({
     if (!isPaged) return [];
     return paginateBlocks(document.blocks, measurements, effectivePageHeight, {
       referencesPageBreakBefore: referencesBreak,
+      coverFullPage: isCustomFullPageCover,
+      headingPageBreak: effectivePageChrome.heading_page_break,
     });
   }, [
     isPaged,
@@ -227,6 +232,8 @@ export function ReportViewer({
     measurements,
     effectivePageHeight,
     referencesBreak,
+    isCustomFullPageCover,
+    effectivePageChrome.heading_page_break,
   ]);
 
   const blockPageMap = useMemo(() => buildBlockPageMap(pages), [pages]);
@@ -344,7 +351,7 @@ export function ReportViewer({
           className="report-root pointer-events-none absolute top-0 -left-[99999px] opacity-0 print:hidden"
         >
           <div data-measure-cover="true" className="flow-root">
-            <ReportCover cover={document.cover} />
+            <ReportCover cover={document.cover} isPaged />
           </div>
           <div data-measure-toc="true" className="flow-root">
             {renderToc(blockPageMap)}
@@ -377,7 +384,7 @@ export function ReportViewer({
 
       {!isPaged ? (
         <article className="mx-auto w-full max-w-[760px] bg-white px-5 py-8 text-[var(--rpt-ink)] shadow-sm ring-1 ring-black/5 sm:px-10">
-          <ReportCover cover={document.cover} />
+          <ReportCover cover={document.cover} isPaged={false} />
           {renderToc(blockPageMap)}
           {continuousItems.map((item: MixedRenderItem) => (
             <div key={item.key}>
@@ -419,7 +426,7 @@ export function ReportViewer({
               items={pagedItems[pageIdx] ?? []}
               cover={
                 page.includeCover ? (
-                  <ReportCover cover={document.cover} />
+                  <ReportCover cover={document.cover} isPaged />
                 ) : null
               }
               toc={page.includeToc ? renderToc(blockPageMap) : null}
@@ -432,6 +439,7 @@ export function ReportViewer({
               quotesByBlock={quotesByBlock}
               showChartTools={!suppressChrome}
               printMode={suppressChrome}
+              coverFullPage={isCustomFullPageCover}
               onCitationClick={scrollToSource}
               onOpenCommentForBlock={onOpenCommentForBlock}
               onOpenCommentThread={onOpenCommentThread}

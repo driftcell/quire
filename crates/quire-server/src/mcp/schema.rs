@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, CitationStyle, CommentStatus, CommentThread, CoverConfig, Diagnostic, IdAssignment,
-    LintSummary, PageChromeConfig, PageChromeSlots, PatchOp, ReferencesConfig, SourceEntry,
-    SourceId, TextQuoteSelector, ThemeSummary, TocConfig,
+    Block, CitationStyle, CommentStatus, CommentThread, CoverConfig, Diagnostic, HeadingPageBreak,
+    IdAssignment, LintSummary, PageChromeConfig, PageChromeSlots, PatchOp, ReferencesConfig,
+    SourceEntry, SourceId, TextQuoteSelector, ThemeSummary, TocConfig,
 };
 use quire_store::ReportSummary;
 use schemars::JsonSchema;
@@ -540,6 +540,10 @@ pub struct ConfigurePageChromeParams {
     /// Hide the footer on the first page. Omit to keep the current setting.
     #[serde(default)]
     pub hide_footer_on_first_page: Option<bool>,
+    /// Automatic page break before headings: `none`, `h1` or `h1_and_h2`.
+    /// Omit to keep the current setting.
+    #[serde(default)]
+    pub heading_page_break: Option<HeadingPageBreak>,
     /// Optional expected revision for optimistic concurrency.
     #[serde(default)]
     pub base_revision: Option<u64>,

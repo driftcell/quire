@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import type { PageChromeConfig } from "@/contracts/report-protocol";
 import { isRecord } from "@/lib/guards";
 
+export type HeadingPageBreak = NonNullable<
+  PageChromeConfig["heading_page_break"]
+>;
+
 export interface PageChromeSlotsValue {
   [key: string]: unknown;
   left: string;
@@ -14,6 +18,7 @@ export interface ResolvedPageChrome {
   footer: PageChromeSlotsValue;
   hide_header_on_first_page: boolean;
   hide_footer_on_first_page: boolean;
+  heading_page_break: HeadingPageBreak;
 }
 
 export interface PageChromePreset {
@@ -46,7 +51,12 @@ function cloneChrome(config: ResolvedPageChrome): ResolvedPageChrome {
     footer: { ...config.footer },
     hide_header_on_first_page: config.hide_header_on_first_page,
     hide_footer_on_first_page: config.hide_footer_on_first_page,
+    heading_page_break: config.heading_page_break,
   };
+}
+
+function readHeadingPageBreak(value: unknown): HeadingPageBreak {
+  return value === "h1" || value === "h1_and_h2" ? value : "none";
 }
 
 const CLASSIC: ResolvedPageChrome = {
@@ -58,6 +68,7 @@ const CLASSIC: ResolvedPageChrome = {
   },
   hide_header_on_first_page: true,
   hide_footer_on_first_page: false,
+  heading_page_break: "none",
 };
 
 const CENTERED: ResolvedPageChrome = {
@@ -69,6 +80,7 @@ const CENTERED: ResolvedPageChrome = {
   },
   hide_header_on_first_page: true,
   hide_footer_on_first_page: false,
+  heading_page_break: "none",
 };
 
 const OFFICIAL: ResolvedPageChrome = {
@@ -84,6 +96,7 @@ const OFFICIAL: ResolvedPageChrome = {
   },
   hide_header_on_first_page: true,
   hide_footer_on_first_page: false,
+  heading_page_break: "none",
 };
 
 export const PAGE_CHROME_PRESETS: PageChromePreset[] = [
@@ -114,6 +127,7 @@ export function normalizePageChromeConfig(
     footer: readSlots(config.footer),
     hide_header_on_first_page: config.hide_header_on_first_page ?? true,
     hide_footer_on_first_page: config.hide_footer_on_first_page ?? false,
+    heading_page_break: readHeadingPageBreak(config.heading_page_break),
   };
 }
 
@@ -142,6 +156,7 @@ function loadLocalPageChrome(docId: string): ResolvedPageChrome | null {
         typeof parsed.hide_footer_on_first_page === "boolean"
           ? parsed.hide_footer_on_first_page
           : false,
+      heading_page_break: readHeadingPageBreak(parsed.heading_page_break),
     });
   } catch {
     return null;

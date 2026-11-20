@@ -871,7 +871,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_page_chrome",
-        description = "Configure A4 paged header and footer slots (left/center/right) with template placeholders ({page}, {total}, {title}, {subtitle}, {date}, {kicker}, {authors}) and first-page visibility."
+        description = "Configure A4 paged header/footer slots (left/center/right) with template placeholders ({page}, {total}, {title}, {subtitle}, {date}, {kicker}, {authors}), first-page visibility and automatic heading page breaks (none/h1/h1_and_h2)."
     )]
     pub async fn configure_page_chrome(
         &self,
@@ -907,7 +907,7 @@ impl QuireMcpServer {
             .await?;
         let page_chrome = updated.theme.page_chrome.clone().unwrap_or_default();
         let _next_hint = format!(
-            "Page chrome committed at revision {}. Slots support {{page}}, {{total}}, {{title}}, {{subtitle}}, {{date}}, {{kicker}} and {{authors}}.",
+            "Page chrome committed at revision {}. Slots support {{page}}, {{total}}, {{title}}, {{subtitle}}, {{date}}, {{kicker}} and {{authors}}; heading_page_break accepts none, h1 or h1_and_h2.",
             result.new_revision
         );
         Ok(Json(ConfigurePageChromeReceipt {
@@ -2066,6 +2066,9 @@ fn merge_page_chrome(
     if let Some(hide) = request.hide_footer_on_first_page {
         chrome.hide_footer_on_first_page = hide;
     }
+    if let Some(heading_page_break) = request.heading_page_break {
+        chrome.heading_page_break = heading_page_break;
+    }
     chrome
 }
 
@@ -2106,6 +2109,7 @@ mod tests {
             },
             hide_header_on_first_page: true,
             hide_footer_on_first_page: false,
+            heading_page_break: quire_protocol::HeadingPageBreak::H1,
         };
         let request = ConfigurePageChromeParams {
             doc_id: "doc".into(),
@@ -2117,6 +2121,7 @@ mod tests {
             }),
             hide_header_on_first_page: Some(false),
             hide_footer_on_first_page: None,
+            heading_page_break: None,
             base_revision: None,
         };
         let merged = merge_page_chrome(Some(&current), &request);
@@ -2124,5 +2129,19 @@ mod tests {
         assert_eq!(merged.footer.center, "— {page} / {total} —");
         assert!(!merged.hide_header_on_first_page);
         assert!(!merged.hide_footer_on_first_page);
+        assert_eq!(
+            merged.heading_page_break,
+            quire_protocol::HeadingPageBreak::H1
+        );
+
+        let request = ConfigurePageChromeParams {
+            heading_page_break: Some(quire_protocol::HeadingPageBreak::H1AndH2),
+            ..request
+        };
+        let merged = merge_page_chrome(Some(&current), &request);
+        assert_eq!(
+            merged.heading_page_break,
+            quire_protocol::HeadingPageBreak::H1AndH2
+        );
     }
 }
