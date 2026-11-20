@@ -93,6 +93,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   >(null);
   const [floatingComment, setFloatingComment] =
     useState<FloatingCommentAnchor | null>(null);
+  const [activeReportSelection, setActiveReportSelection] =
+    useState<ReportSelectionDescriptor | null>(null);
   const [mobileTab, setMobileTab] = useState<SessionMobileTab>("report");
   const [quotedForChat, setQuotedForChat] = useState<QuotedChatSnippet | null>(
     null,
@@ -277,7 +279,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       quotedSnippet={quotedForChat}
       pendingCommentRefs={pendingCommentRefs}
       prefill={composerPrefill}
-      onClearQuote={() => setQuotedForChat(null)}
+      onClearQuote={() => {
+        setQuotedForChat(null);
+        setActiveReportSelection(null);
+      }}
       onRemoveCommentRef={(threadId) => {
         setPendingCommentRefs((prev) =>
           prev.filter((ref) => ref.thread_id !== threadId),
@@ -354,6 +359,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
           setFloatingComment(anchor);
         }}
         onAskAgentWithQuote={handleAskAgentWithQuote}
+        activeSelection={activeReportSelection}
+        onActiveSelectionChange={setActiveReportSelection}
       />
     ) : null;
 
@@ -403,7 +410,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
                 ).length
               : 0
           }
-          onClose={() => setFloatingComment(null)}
+          onClose={() => {
+            setFloatingComment(null);
+            setActiveReportSelection(null);
+          }}
           onAddComment={async (anchor, body) => {
             const thread = await createSessionComment(sessionId, {
               block_id: anchor.blockId,

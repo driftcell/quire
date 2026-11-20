@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { EphemeralPreviewCard } from "@/components/report/EphemeralPreviewCard";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import {
@@ -66,6 +66,10 @@ export interface ReportViewerProps {
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
   onAskAgentWithQuote?: (selection: ReportSelectionDescriptor) => void;
   onJumpToSection?: (blockId: string) => void;
+  activeSelection?: ReportSelectionDescriptor | null;
+  onActiveSelectionChange?: (
+    selection: ReportSelectionDescriptor | null,
+  ) => void;
 }
 
 export function ReportViewer({
@@ -83,6 +87,8 @@ export function ReportViewer({
   onOpenCommentForBlock,
   onAskAgentWithQuote,
   onJumpToSection,
+  activeSelection = null,
+  onActiveSelectionChange,
 }: ReportViewerProps) {
   const suppressChrome = printMode || previewMode;
   const isPaged = viewMode === "paged" || printMode;
@@ -108,8 +114,6 @@ export function ReportViewer({
   );
   const rootRef = useRef<HTMLDivElement>(null);
   const pageScale = usePageScale(rootRef, isPaged, suppressChrome);
-  const [activeSelection, setActiveSelection] =
-    useState<ReportSelectionDescriptor | null>(null);
   const pendingSelection = activeSelection;
 
   const { quoteAction, setQuoteAction } = useTextSelectionQuote({
@@ -390,21 +394,17 @@ export function ReportViewer({
             onComment={
               onOpenCommentForBlock
                 ? (action) => {
-                    setActiveSelection({
+                    const selection: ReportSelectionDescriptor = {
                       blockId: action.blockId,
                       endBlockId: action.endBlockId,
                       blockIds: action.blockIds,
                       quote: action.quote,
                       endQuote: action.endQuote,
                       anchorSnapshot: action.anchorSnapshot,
-                    });
+                    };
+                    onActiveSelectionChange?.(selection);
                     onOpenCommentForBlock({
-                      blockId: action.blockId,
-                      endBlockId: action.endBlockId,
-                      blockIds: action.blockIds,
-                      quote: action.quote,
-                      endQuote: action.endQuote,
-                      anchorSnapshot: action.anchorSnapshot,
+                      ...selection,
                       rect: action.viewportRect,
                     });
                     setQuoteAction(null);
@@ -415,14 +415,15 @@ export function ReportViewer({
             onAskAgent={
               onAskAgentWithQuote
                 ? (action) => {
-                    setActiveSelection({
+                    const selection: ReportSelectionDescriptor = {
                       blockId: action.blockId,
                       endBlockId: action.endBlockId,
                       blockIds: action.blockIds,
                       quote: action.quote,
                       endQuote: action.endQuote,
                       anchorSnapshot: action.anchorSnapshot,
-                    });
+                    };
+                    onActiveSelectionChange?.(selection);
                     onAskAgentWithQuote(action);
                     setQuoteAction(null);
                     window.getSelection()?.removeAllRanges();
@@ -431,7 +432,7 @@ export function ReportViewer({
             }
             onDismiss={() => {
               setQuoteAction(null);
-              setActiveSelection(null);
+              onActiveSelectionChange?.(null);
             }}
           />
         )}

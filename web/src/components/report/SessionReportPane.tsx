@@ -30,6 +30,10 @@ export interface SessionReportPaneProps {
   onShowComments: () => void;
   onOpenCommentForBlock: (anchor: FloatingCommentAnchor) => void;
   onAskAgentWithQuote: (selection: ReportSelectionDescriptor) => void;
+  activeSelection?: ReportSelectionDescriptor | null;
+  onActiveSelectionChange?: (
+    selection: ReportSelectionDescriptor | null,
+  ) => void;
 }
 
 export function SessionReportPane({
@@ -51,6 +55,8 @@ export function SessionReportPane({
   onShowComments,
   onOpenCommentForBlock,
   onAskAgentWithQuote,
+  activeSelection,
+  onActiveSelectionChange,
 }: SessionReportPaneProps) {
   return (
     <div
@@ -107,6 +113,8 @@ export function SessionReportPane({
           onOpenCommentForBlock={onOpenCommentForBlock}
           onAskAgentWithQuote={onAskAgentWithQuote}
           onJumpToSection={onJumpToSection}
+          activeSelection={activeSelection}
+          onActiveSelectionChange={onActiveSelectionChange}
         />
       </div>
     </div>

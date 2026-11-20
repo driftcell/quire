@@ -70,34 +70,29 @@
 }
 
 ::highlight(quire-comment) {
-  background-color: oklch(0.9 0.08 85 / 0.55);
   color: inherit;
   text-decoration-line: underline;
-  text-decoration-style: dashed;
-  text-decoration-color: oklch(0.72 0.16 70 / 0.8);
+  text-decoration-style: solid;
+  text-decoration-color: oklch(0.795 0.184 86.047 / 0.8);
   text-decoration-thickness: 1px;
+  text-decoration-skip-ink: none;
   text-underline-offset: 3px;
 }
 
 ::highlight(quire-comment-active) {
-  background-color: oklch(0.88 0.12 80 / 0.72);
   color: inherit;
   text-decoration-line: underline;
   text-decoration-style: solid;
-  text-decoration-color: oklch(0.67 0.17 65 / 0.95);
-  text-decoration-thickness: 1.5px;
+  text-decoration-color: oklch(0.795 0.184 86.047);
+  text-decoration-thickness: 2px;
+  text-decoration-skip-ink: none;
   text-underline-offset: 3px;
 }
 
-/* Non-text scope outline uses a pseudo-element so table/image layout never shifts. */
+/* Non-text blocks only get a left rule, never a marker-style background. */
 .quire-comment-scope {
   position: relative;
   border-radius: 0.5rem;
-  background-color: oklch(0.97 0.04 85 / 0.55);
-  box-shadow: 0 0 0 1px oklch(0.78 0.14 75 / 0.55);
-  transition:
-    background-color 220ms ease,
-    box-shadow 220ms ease;
 }
 
 .quire-comment-scope::before {
@@ -107,7 +102,7 @@
   left: -0.45rem;
   width: 2px;
   border-radius: 999px;
-  background: oklch(0.72 0.16 70 / 0.7);
+  background: oklch(0.795 0.184 86.047 / 0.9);
   content: "";
   pointer-events: none;
 }

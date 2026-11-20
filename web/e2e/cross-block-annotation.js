@@ -297,6 +297,27 @@ async (page) => {
     await clickToolbar("批注");
     const textCommentBox = page.getByPlaceholder("添加批注...");
     await textCommentBox.waitFor({ state: "visible", timeout: 8000 });
+    await page.waitForFunction(
+      () =>
+        (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) >
+        0,
+      null,
+      { timeout: 8000 },
+    );
+
+    await page.keyboard.press("Escape");
+    await textCommentBox.waitFor({ state: "detached", timeout: 8000 });
+    await page.waitForFunction(
+      () =>
+        (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) ===
+        0,
+      null,
+      { timeout: 8000 },
+    );
+
+    await selectRange("p_start", "p_adjacent");
+    await clickToolbar("批注");
+    await textCommentBox.waitFor({ state: "visible", timeout: 8000 });
     await textCommentBox.fill("请检查相邻段落衔接。");
     await page.waitForFunction(
       () =>
@@ -401,6 +422,40 @@ async (page) => {
     );
 
     await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-block-id="t_mid"]')
+          ?.classList.contains("quire-comment-scope") === true,
+      null,
+      { timeout: 8000 },
+    );
+    const nonTextScope = await page.evaluate(() => {
+      const element = document.querySelector('[data-block-id="t_mid"]');
+      if (!element) throw new Error("table block missing");
+      const style = window.getComputedStyle(element);
+      const rule = window.getComputedStyle(element, "::before");
+      return {
+        background: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        ruleWidth: rule.width,
+        ruleColor: rule.backgroundColor,
+      };
+    });
+    assert(
+      nonTextScope.background === "rgba(0, 0, 0, 0)" ||
+        nonTextScope.background === "transparent",
+      `non-text scope must not paint a background: ${nonTextScope.background}`,
+    );
+    assert(
+      nonTextScope.boxShadow === "none",
+      `non-text scope must not paint a box shadow: ${nonTextScope.boxShadow}`,
+    );
+    assert(
+      Number.parseFloat(nonTextScope.ruleWidth) >= 1,
+      `non-text scope must render a left rule: ${nonTextScope.ruleWidth}`,
+    );
+
+    await page.waitForFunction(
       () => {
         const registry = globalThis.CSS?.highlights;
         return (
@@ -439,11 +494,31 @@ async (page) => {
     });
     assert(startVisible, "comment jump must scroll to the start block");
 
+    await page.reload();
+    await page
+      .locator('[data-block-id="p_start"]')
+      .waitFor({ state: "visible", timeout: 20000 });
+
     await selectRange("p_start", "p_end");
     await clickToolbar("问问 Agent");
     await page
       .getByText(/引用报告块 #p_start…#p_end/)
       .waitFor({ state: "visible", timeout: 8000 });
+    await page.waitForFunction(
+      () =>
+        (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) >
+        0,
+      null,
+      { timeout: 8000 },
+    );
+    await page.getByRole("button", { name: "取消引用" }).click();
+    await page.waitForFunction(
+      () =>
+        (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) ===
+        0,
+      null,
+      { timeout: 8000 },
+    );
     assert(
       consoleErrors.length === 0,
       `browser console/page errors: ${consoleErrors.join(" | ")}`,
@@ -460,9 +535,12 @@ async (page) => {
         persistedEndBlock: thread.end_block_id,
         anchorBlocks: thread.anchor_blocks,
         mediaProtected: true,
+        nonTextOutlineOnly: true,
         highlightRestored: true,
         commentJump: true,
         askAgentRangeChip: true,
+        selectionClearedOnClose: true,
+        quoteClearedOnDismiss: true,
         consoleErrors: 0,
       },
     };
