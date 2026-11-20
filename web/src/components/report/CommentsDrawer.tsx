@@ -21,6 +21,8 @@ import type {
   CommentStatus,
   CommentThread,
 } from "@/contracts/report-protocol";
+import { toast } from "sonner";
+import { errorMessage } from "@/lib/errors";
 
 type CommentFilter = "open" | "addressed" | "archived";
 
@@ -170,6 +172,8 @@ export function CommentsPanel({
     setBusyThreadIds(new Set(busyThreadsRef.current));
     try {
       await task();
+    } catch (error) {
+      toast.error(errorMessage(error, "批注操作失败，请稍后重试"));
     } finally {
       busyThreadsRef.current.delete(threadId);
       setBusyThreadIds(new Set(busyThreadsRef.current));

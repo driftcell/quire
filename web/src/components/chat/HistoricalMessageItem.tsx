@@ -1,5 +1,6 @@
-import { memo, useState, type ReactNode } from "react";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { memo, type ReactNode } from "react";
+import { CopyIcon } from "lucide-react";
+import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
 import { MessageAttachments } from "@/components/chat/MessageAttachments";
@@ -65,15 +66,12 @@ async function copyText(text: string): Promise<void> {
 }
 
 function CopyMessageButton({ content }: { content: string }) {
-  const [copied, setCopied] = useState(false);
-
   const handleCopy = async () => {
     try {
       await copyText(content);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1600);
+      toast.success("已复制到剪贴板");
     } catch {
-      setCopied(false);
+      toast.error("复制失败，请手动选择文本");
     }
   };
 
@@ -85,7 +83,7 @@ function CopyMessageButton({ content }: { content: string }) {
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label={copied ? "已复制" : "拷贝回复"}
+            aria-label="拷贝回复"
             onClick={() => {
               void handleCopy();
             }}
@@ -93,13 +91,9 @@ function CopyMessageButton({ content }: { content: string }) {
           />
         }
       >
-        {copied ? (
-          <CheckIcon className="size-3.5 text-emerald-600" />
-        ) : (
-          <CopyIcon className="size-3.5" />
-        )}
+        <CopyIcon />
       </TooltipTrigger>
-      <TooltipContent>{copied ? "已复制" : "拷贝"}</TooltipContent>
+      <TooltipContent>拷贝</TooltipContent>
     </Tooltip>
   );
 }

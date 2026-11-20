@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import * as echarts from "echarts";
 import { DownloadIcon, TableIcon } from "lucide-react";
+import { toast } from "sonner";
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import type {
   ChartRequirements,
 } from "@/contracts/report-protocol";
 import { centerReportChartGrid } from "@/components/report/echartsGridCenter";
+import { errorMessage } from "@/lib/errors";
 import type { EchartsBlock } from "@/lib/document";
 
 export interface EchartsCanvasProps {
@@ -348,8 +350,14 @@ export const EchartsCanvas = memo(function EchartsCanvas({
               type="button"
               onClick={() => {
                 const first = chartTables[0];
-                if (first) {
+                if (!first) {
+                  return;
+                }
+                try {
                   downloadCsv(first, `${blockId}.csv`);
+                  toast.success("CSV 已开始下载");
+                } catch (error) {
+                  toast.error(errorMessage(error, "CSV 导出失败，请稍后重试"));
                 }
               }}
               className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-black/5"

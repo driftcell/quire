@@ -1,13 +1,14 @@
-import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon } from "lucide-react";
+import { toast } from "sonner";
 import { createSession, postMessage, uploadAttachment } from "@/api/runtime";
 import { PromptComposer } from "@/components/chat/PromptComposer";
 import { BrandSigil } from "@/components/layout/BrandSigil";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
+import { errorMessage } from "@/lib/errors";
 import { randomUuid } from "@/lib/uuid";
 
 export const Route = createFileRoute("/")({
@@ -36,10 +37,8 @@ function HomePage() {
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const { open: leftSidebarOpen, toggleSidebar } = useSidebar();
-  const [error, setError] = useState<string | null>(null);
 
   const startConversation = async (text: string, files: File[]) => {
-    setError(null);
     try {
       const session = await createSession({
         title: deriveSessionTitle(text),
@@ -60,7 +59,7 @@ function HomePage() {
         params: { sessionId: session.session_id },
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建会话失败");
+      toast.error(errorMessage(err, "创建会话失败"));
     }
   };
 
@@ -106,12 +105,6 @@ function HomePage() {
             <h1 className="sr-only">青塔 · 智能报告助手</h1>
             <p className="brand-tagline">青塔·智能报告助手</p>
           </div>
-
-          {error && (
-            <div className="mb-3 w-full max-w-2xl rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-              {error}
-            </div>
-          )}
 
           <div className="w-full max-w-2xl">
             <div className="suggestion-fade-x no-scrollbar mb-3 overflow-hidden motion-reduce:overflow-x-auto">

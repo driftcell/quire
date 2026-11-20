@@ -7,6 +7,7 @@ import {
 } from "@tanstack/react-router";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { updatePreferences, useUiPreferences } from "@/lib/preferences";
 
@@ -36,28 +37,25 @@ function RootLayout() {
     updatePreferences({ leftSidebarOpen: open });
   };
 
-  if (isPrintRoute) {
-    return (
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Outlet />
-        </TooltipProvider>
-      </QueryClientProvider>
-    );
-  }
+  const content = isPrintRoute ? (
+    <Outlet />
+  ) : (
+    <SidebarProvider
+      open={prefs.leftSidebarOpen}
+      onOpenChange={handleLeftOpenChange}
+    >
+      <AppSidebar />
+      <SidebarInset className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-muted/30">
+        <Outlet />
+      </SidebarInset>
+    </SidebarProvider>
+  );
 
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <SidebarProvider
-          open={prefs.leftSidebarOpen}
-          onOpenChange={handleLeftOpenChange}
-        >
-          <AppSidebar />
-          <SidebarInset className="flex h-svh min-w-0 flex-1 flex-col overflow-hidden bg-muted/30">
-            <Outlet />
-          </SidebarInset>
-        </SidebarProvider>
+        {content}
+        <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
   );

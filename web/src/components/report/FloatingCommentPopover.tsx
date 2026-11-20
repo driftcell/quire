@@ -1,20 +1,12 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import {
-  FloatingPortal,
-  autoUpdate,
-  flip,
-  offset,
-  shift,
-  useDismiss,
-  useFloating,
-  useInteractions,
-  useRole,
-  type VirtualElement,
-} from "@floating-ui/react";
+import { memo, useMemo, useRef, useState } from "react";
 import { XIcon } from "lucide-react";
+import { toast } from "sonner";
+import { toPopoverAnchor } from "@/components/report/reportDom";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTitle } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import type { TextQuoteSelector } from "@/contracts/report-protocol";
+import { errorMessage } from "@/lib/errors";
 
 export interface FloatingCommentAnchor {
   blockId: string;
@@ -38,10 +30,7 @@ export interface FloatingCommentPopoverProps {
   anchor: FloatingCommentAnchor | null;
   existingCount?: number;
   onClose: () => void;
-  onAddComment: (
-    anchor: FloatingCommentAnchor,
-    body: string,
-  ) => Promise<void>;
+  onAddComment: (anchor: FloatingCommentAnchor, body: string) => Promise<void>;
 }
 
 export const FloatingCommentPopover = memo(function FloatingCommentPopover({
@@ -54,57 +43,10 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const virtualReference = useMemo<VirtualElement | null>(() => {
-    if (!anchor) {
-      return null;
-    }
-    return {
-      getBoundingClientRect: () => ({
-        x: anchor.rect.left,
-        y: anchor.rect.top,
-        width: anchor.rect.width,
-        height: anchor.rect.height,
-        top: anchor.rect.top,
-        right: anchor.rect.right,
-        bottom: anchor.rect.bottom,
-        left: anchor.rect.left,
-      }),
-    };
-  }, [anchor]);
-
-  const {
-    refs: floatingRefs,
-    floatingStyles,
-    context,
-  } = useFloating({
-    open: anchor !== null,
-    onOpenChange: (open) => {
-      if (!open) {
-        onClose();
-      }
-    },
-    placement: "right-start",
-    whileElementsMounted: autoUpdate,
-    middleware: [
-      offset(10),
-      flip({ padding: 12 }),
-      shift({ padding: 12, crossAxis: true }),
-    ],
-  });
-  useEffect(() => {
-    floatingRefs.setPositionReference(virtualReference);
-  }, [floatingRefs, virtualReference]);
-  useEffect(() => {
-    if (anchor) {
-      inputRef.current?.focus();
-    }
-  }, [anchor]);
-  const dismiss = useDismiss(context, {
-    escapeKey: true,
-    outsidePress: true,
-  });
-  const role = useRole(context, { role: "dialog" });
-  const { getFloatingProps } = useInteractions([dismiss, role]);
+  const popoverAnchor = useMemo(
+    () => (anchor ? toPopoverAnchor(anchor.rect) : null),
+    [anchor],
+  );
 
   if (!anchor) {
     return null;
@@ -119,6 +61,8 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
         await onAddComment(anchor, trimmed);
         setNewBody("");
         onClose();
+      } catch (error) {
+        toast.error(errorMessage(error, "添加批注失败，请稍后重试"));
       } finally {
         setBusy(false);
       }
@@ -126,20 +70,25 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
   };
 
   return (
-    <FloatingPortal>
-      <div
-        ref={(node) => {
-          floatingRefs.setFloating(node);
-        }}
-        style={floatingStyles}
+    <Popover
+      open={anchor !== null}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
+    >
+      <PopoverContent
+        anchor={popoverAnchor}
+        side="right"
+        align="start"
+        sideOffset={10}
+        initialFocus={inputRef}
         aria-label="添加批注"
-        {...getFloatingProps({
-          className:
-            "bg-popover text-popover-foreground z-50 flex w-[300px] flex-col rounded-lg border p-0 shadow-lg print:hidden",
-        })}
+        className="w-[300px] gap-0 rounded-lg border bg-popover p-0 text-popover-foreground shadow-lg print:hidden"
       >
         <div className="flex items-center justify-between border-b px-3.5 py-2.5">
-          <span className="text-xs font-medium">添加批注</span>
+          <PopoverTitle className="text-xs font-medium">添加批注</PopoverTitle>
           <Button
             type="button"
             size="icon-xs"
@@ -147,11 +96,11 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
             aria-label="关闭批注浮窗"
             onClick={onClose}
           >
-            <XIcon className="size-3.5" />
+            <XIcon />
           </Button>
         </div>
 
-        <div className="space-y-3 p-3.5 text-xs">
+        <div className="flex flex-col gap-3 p-3.5 text-xs">
           {anchor.quote && (
             <p className="line-clamp-2 border-l-2 border-border pl-2 text-[11px] text-muted-foreground">
               {anchor.anchorSnapshot ?? anchor.quote.exact}
@@ -170,12 +119,6 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
             className="text-xs"
             onChange={(event) => setNewBody(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                event.currentTarget.blur();
-                onClose();
-                return;
-              }
               if (
                 event.key === "Enter" &&
                 !event.shiftKey &&
@@ -197,7 +140,7 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
             </Button>
           </div>
         </div>
-      </div>
-    </FloatingPortal>
+      </PopoverContent>
+    </Popover>
   );
 });

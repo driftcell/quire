@@ -32,3 +32,24 @@ export function toViewportRect(
     height: domRect.height,
   };
 }
+
+/**
+ * Base UI positions a popover against any Floating UI virtual element. Our
+ * selection and comment anchors already store viewport coordinates, so expose
+ * them through the minimal virtual-element contract instead of re-importing
+ * Floating UI middleware in each caller.
+ */
+export function toPopoverAnchor(rect: FloatingCommentAnchor["rect"]) {
+  return {
+    getBoundingClientRect: () => ({
+      x: rect.left,
+      y: rect.top,
+      width: rect.width,
+      height: rect.height,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      left: rect.left,
+    }),
+  };
+}

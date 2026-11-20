@@ -1,10 +1,12 @@
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { deleteSessionQueueItem, updateSessionQueueItem } from "@/api/runtime";
 import type {
   PendingQueueItem,
   SessionDetail,
 } from "@/contracts/session-protocol";
+import { errorMessage } from "@/lib/errors";
 import { parseCommentRefs, type CommentRefPayload } from "@/lib/commentRefXml";
 
 export interface UseSessionQueueActionsOptions {
@@ -42,6 +44,8 @@ export function useSessionQueueActions({
       setBusyQueueIds(new Set(busyQueueIdsRef.current));
       try {
         await task();
+      } catch (error) {
+        toast.error(errorMessage(error, "队列操作失败，请稍后重试"));
       } finally {
         busyQueueIdsRef.current.delete(queueId);
         setBusyQueueIds(new Set(busyQueueIdsRef.current));

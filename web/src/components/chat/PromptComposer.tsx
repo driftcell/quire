@@ -9,6 +9,7 @@ import {
   UploadCloudIcon,
   XIcon,
 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Attachment,
   AttachmentAction,
@@ -42,6 +43,7 @@ import {
   serializeCommentRefs,
   type CommentRefPayload,
 } from "@/lib/commentRefXml";
+import { errorMessage } from "@/lib/errors";
 import { selectionRangeLabel } from "@/components/report/reportSelection";
 
 export interface PendingAttachment {
@@ -139,7 +141,6 @@ export function PromptComposer({
   const [sending, setSending] = useState(false);
   const [compactingRequest, setCompactingRequest] = useState(false);
   const [dragging, setDragging] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -149,7 +150,6 @@ export function PromptComposer({
       // composer; there is no render-time equivalent for the focus handoff.
       // oxlint-disable-next-line react/set-state-in-effect -- draft refill is driven by an outside queue action
       setText(prefill.text);
-      setSendError(null);
       textareaRef.current?.focus();
     }
   }, [prefill]);
@@ -181,12 +181,9 @@ export function PromptComposer({
       return;
     }
     setSending(true);
-    setSendError(null);
     const currentText = trimmed;
     const currentFiles = files;
-    const quoteRange = quotedSnippet
-      ? selectionRangeLabel(quotedSnippet)
-      : "";
+    const quoteRange = quotedSnippet ? selectionRangeLabel(quotedSnippet) : "";
     const coveredBlocks =
       quotedSnippet?.blockIds && quotedSnippet.blockIds.length > 1
         ? `；覆盖块: ${quotedSnippet.blockIds.join(", ")}`
@@ -209,7 +206,7 @@ export function PromptComposer({
     } catch (err) {
       setText(currentText);
       setFiles(currentFiles);
-      setSendError(err instanceof Error ? err.message : "发送失败，请重试");
+      toast.error(errorMessage(err, "发送失败，请重试"));
     } finally {
       setSending(false);
     }
@@ -246,20 +243,6 @@ export function PromptComposer({
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-primary bg-primary/5 text-xs font-medium text-primary backdrop-blur-[1px]">
           <UploadCloudIcon className="size-4" />
           <span>松开以上传附件</span>
-        </div>
-      )}
-
-      {sendError && (
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
-          <span className="truncate">{sendError}</span>
-          <button
-            type="button"
-            aria-label="关闭错误提示"
-            onClick={() => setSendError(null)}
-            className="shrink-0 rounded p-0.5 hover:bg-destructive/15"
-          >
-            <XIcon className="size-3.5" />
-          </button>
         </div>
       )}
 
@@ -459,8 +442,13 @@ export function PromptComposer({
                               setCompactingRequest(true);
                               try {
                                 await onCompact();
-                              } catch {
-                                setSendError("上下文压缩失败，请稍后重试");
+                              } catch (err) {
+                                toast.error(
+                                  errorMessage(
+                                    err,
+                                    "上下文压缩失败，请稍后重试",
+                                  ),
+                                );
                               } finally {
                                 setCompactingRequest(false);
                               }

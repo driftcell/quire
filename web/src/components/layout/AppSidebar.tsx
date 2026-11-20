@@ -11,6 +11,7 @@ import {
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
+import { toast } from "sonner";
 import { deleteSession, listSessions, updateSession } from "@/api/runtime";
 import { ProductBrand } from "@/components/layout/ProductBrand";
 import { Button } from "@/components/ui/button";
@@ -45,6 +46,7 @@ import {
 } from "@/components/ui/sidebar";
 import type { SessionSummary } from "@/contracts/session-protocol";
 import { getAuthTokens, saveAuthTokens } from "@/lib/auth";
+import { errorMessage } from "@/lib/errors";
 import {
   groupSessionsForSidebar,
   type SessionGroup,
@@ -111,6 +113,9 @@ export function AppSidebar() {
         void navigate({ to: "/" });
       }
     },
+    onError: (error) => {
+      toast.error(errorMessage(error, "删除会话失败"));
+    },
     onSettled: () => {
       setDeletingSessionId(null);
     },
@@ -140,10 +145,13 @@ export function AppSidebar() {
       );
       return { previous };
     },
-    onError: (_error, _variables, context) => {
+    onError: (error, variables, context) => {
       if (context?.previous !== undefined) {
         queryClient.setQueryData(["sessions"], context.previous);
       }
+      toast.error(
+        errorMessage(error, variables.pinned ? "置顶会话失败" : "取消置顶失败"),
+      );
     },
     onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -425,6 +433,7 @@ export function AppSidebar() {
                   saveAuthTokens(tokens);
                   setTokenDialogOpen(false);
                   void queryClient.invalidateQueries();
+                  toast.success("Token 已保存");
                 }}
               >
                 保存并刷新

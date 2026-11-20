@@ -1,16 +1,8 @@
-import { useEffect, useMemo } from "react";
-import {
-  FloatingPortal,
-  autoUpdate,
-  flip,
-  offset,
-  shift,
-  useDismiss,
-  useFloating,
-  useInteractions,
-  type VirtualElement,
-} from "@floating-ui/react";
+import { useMemo } from "react";
 import { MessageSquarePlusIcon, SparklesIcon } from "lucide-react";
+import { toPopoverAnchor } from "@/components/report/reportDom";
+import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent } from "@/components/ui/popover";
 import type { SelectionQuoteAction } from "@/components/report/reportSelection";
 
 export type { SelectionQuoteAction } from "@/components/report/reportSelection";
@@ -28,83 +20,58 @@ export function SelectionQuoteToolbar({
   onAskAgent,
   onDismiss,
 }: SelectionQuoteToolbarProps) {
-  const virtualReference = useMemo<VirtualElement>(() => {
-    return {
-      getBoundingClientRect: () => ({
-        x: action.viewportRect.left,
-        y: action.viewportRect.top,
-        width: action.viewportRect.width,
-        height: action.viewportRect.height,
-        top: action.viewportRect.top,
-        right: action.viewportRect.right,
-        bottom: action.viewportRect.bottom,
-        left: action.viewportRect.left,
-      }),
-    };
-  }, [action.viewportRect]);
-
-  const {
-    refs: floatingRefs,
-    floatingStyles,
-    context,
-  } = useFloating({
-    open: true,
-    onOpenChange: (open) => {
-      if (!open) {
-        onDismiss();
-      }
-    },
-    placement: "top",
-    whileElementsMounted: autoUpdate,
-    middleware: [offset(8), flip({ padding: 8 }), shift({ padding: 8 })],
-  });
-  useEffect(() => {
-    floatingRefs.setPositionReference(virtualReference);
-  }, [floatingRefs, virtualReference]);
-
-  const dismiss = useDismiss(context, {
-    escapeKey: true,
-    outsidePress: true,
-  });
-  const { getFloatingProps } = useInteractions([dismiss]);
+  const anchor = useMemo(
+    () => toPopoverAnchor(action.viewportRect),
+    [action.viewportRect],
+  );
 
   return (
-    <FloatingPortal>
-      <div
-        ref={(node) => {
-          floatingRefs.setFloating(node);
-        }}
-        style={floatingStyles}
-        {...getFloatingProps({
-          role: "toolbar",
-          "aria-label": "选中文本操作",
-          className:
-            "z-40 inline-flex items-center gap-1 rounded-full border bg-background/95 p-1 shadow-md backdrop-blur print:hidden",
-        })}
+    <Popover
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onDismiss();
+        }
+      }}
+    >
+      <PopoverContent
+        anchor={anchor}
+        side="top"
+        align="center"
+        sideOffset={8}
+        initialFocus={false}
+        finalFocus={false}
+        role="toolbar"
+        aria-label="选中文本操作"
+        className="inline-flex w-auto flex-row items-center gap-1 rounded-full border bg-background/95 p-1 shadow-md backdrop-blur print:hidden"
       >
         {onComment && (
-          <button
+          <Button
             type="button"
+            size="xs"
+            variant="ghost"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => onComment(action)}
-            className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-500/10"
+            className="rounded-full px-2.5 text-amber-700 hover:bg-amber-500/10 hover:text-amber-800"
           >
-            <MessageSquarePlusIcon className="size-3.5" />
+            <MessageSquarePlusIcon data-icon="inline-start" />
             <span>批注</span>
-          </button>
+          </Button>
         )}
         {onAskAgent && (
-          <button
+          <Button
             type="button"
+            size="xs"
+            variant="ghost"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => onAskAgent(action)}
-            className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10"
+            className="rounded-full px-2.5 text-primary hover:bg-primary/10"
           >
-            <SparklesIcon className="size-3.5" />
+            <SparklesIcon data-icon="inline-start" />
             <span>问问 Agent</span>
-          </button>
+          </Button>
         )}
-      </div>
-    </FloatingPortal>
+      </PopoverContent>
+    </Popover>
   );
 }

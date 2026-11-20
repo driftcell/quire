@@ -6,9 +6,8 @@ async (page) => {
   const runtime = env.E2E_RUNTIME_URL || "http://127.0.0.1:8081";
   const rwToken = env.E2E_QUIRE_RW_TOKEN || "dev-rw-token-change-me";
   const roToken = env.E2E_QUIRE_RO_TOKEN || "dev-ro-token-change-me";
-  const runtimeToken =
-    env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
-  const docId = "e2e-cross-block-annotation";
+  const runtimeToken = env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
+  const docId = `e2e-cross-block-annotation-${Date.now()}`;
   const xSessionId = `e2e_cross_${Date.now()}`;
   const protocolVersion = "2025-11-25";
   const imageData =
@@ -38,7 +37,9 @@ async (page) => {
   const parseRpc = async (response) => {
     const text = await response.text();
     if (!text.trim()) return {};
-    if ((response.headers()["content-type"] || "").includes("text/event-stream")) {
+    if (
+      (response.headers()["content-type"] || "").includes("text/event-stream")
+    ) {
       let found = null;
       for (const line of text.split("\n")) {
         const data = line.startsWith("data:") ? line.slice(5).trim() : "";
@@ -136,9 +137,7 @@ async (page) => {
         const start = blocks.find(
           (element) => element.dataset.blockId === startId,
         );
-        const end = blocks.find(
-          (element) => element.dataset.blockId === endId,
-        );
+        const end = blocks.find((element) => element.dataset.blockId === endId);
         if (!start || !end) throw new Error("selection blocks missing");
         const textNode = (root, last) => {
           const walker = document.createTreeWalker(root, 4);
@@ -301,7 +300,8 @@ async (page) => {
     await textCommentBox.fill("请检查相邻段落衔接。");
     await page.waitForFunction(
       () =>
-        (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) > 0,
+        (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) >
+        0,
       null,
       { timeout: 8000 },
     );
@@ -349,14 +349,24 @@ async (page) => {
           : null,
         markCount: document.querySelectorAll("mark").length,
         tableMarkCount:
-          document.querySelector('[data-block-id="t_mid"]')?.querySelectorAll("mark")
-            .length ?? -1,
+          document
+            .querySelector('[data-block-id="t_mid"]')
+            ?.querySelectorAll("mark").length ?? -1,
       };
     });
-    assert(media.canvasUserSelect === "none", "ECharts canvas must be select-none");
+    assert(
+      media.canvasUserSelect === "none",
+      "ECharts canvas must be select-none",
+    );
     assert(media.imageUserSelect === "none", "image must be select-none");
-    assert(media.markCount === 0, "no DOM <mark> highlight injection is allowed");
-    assert(media.tableMarkCount === 0, "table must not contain injected <mark>");
+    assert(
+      media.markCount === 0,
+      "no DOM <mark> highlight injection is allowed",
+    );
+    assert(
+      media.tableMarkCount === 0,
+      "table must not contain injected <mark>",
+    );
 
     await selectRange("p_start", "p_end");
     await clickToolbar("批注");
@@ -415,7 +425,9 @@ async (page) => {
     await page.getByRole("tab", { name: /批注/ }).click();
     await page.locator(`#comment-thread-${thread.thread_id}`).click();
     await page.waitForFunction(
-      () => (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) > 0,
+      () =>
+        (globalThis.CSS?.highlights?.get("quire-comment-active")?.size ?? 0) >
+        0,
       null,
       { timeout: 8000 },
     );
@@ -463,4 +475,4 @@ async (page) => {
         .catch(() => undefined);
     }
   }
-}
+};
