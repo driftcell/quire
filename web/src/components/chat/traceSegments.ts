@@ -32,14 +32,7 @@ export type ExecutionActivity = {
   subagents: ExecutionSubagent[];
 };
 
-export type TextActivity = {
-  key: string;
-  kind: "text";
-  text: string;
-  isStreaming: boolean;
-};
-
-export type ActivityItem = ThinkingActivity | ExecutionActivity | TextActivity;
+export type ActivityItem = ThinkingActivity | ExecutionActivity;
 
 export type ActivityRenderSegment = {
   key: string;
@@ -245,16 +238,6 @@ export function buildHistoricalSegments(
   trace: RunTraceSummary,
 ): RenderSegment[] {
   const source = trace.segments ?? [];
-  // The trailing text run is the run's visible body. Everything before it is
-  // process: thinking, tool calls and any commentary the model emitted between
-  // them. Keeping that process in one group makes the text the only divider.
-  let tailStart = source.length;
-  while (tailStart > 0 && source[tailStart - 1]?.kind === "text") {
-    tailStart -= 1;
-  }
-  const head = source.slice(0, tailStart);
-  const tail = source.slice(tailStart);
-
   const segments: RenderSegment[] = [];
   const activity: ActivityItem[] = [];
   const flushActivity = (isFinal: boolean) => {
@@ -282,7 +265,8 @@ export function buildHistoricalSegments(
     });
     activity.length = 0;
   };
-  head.forEach((segment, index) => {
+
+  source.forEach((segment, index) => {
     if (segment.kind === "user_message") {
       flushActivity(false);
       segments.push({
@@ -291,6 +275,19 @@ export function buildHistoricalSegments(
         messageId: segment.message_id,
         content: segment.content,
         createdAt: segment.created_at,
+      });
+      return;
+    }
+    if (segment.kind === "text") {
+      if (!segment.text.trim()) {
+        return;
+      }
+      flushActivity(false);
+      segments.push({
+        key: `text-${index}`,
+        kind: "text",
+        text: segment.text,
+        isStreaming: false,
       });
       return;
     }
@@ -305,18 +302,6 @@ export function buildHistoricalSegments(
         isStreaming: false,
         isActive: false,
         durationMs: segment.duration_ms ?? undefined,
-      });
-      return;
-    }
-    if (segment.kind === "text") {
-      if (!segment.text.trim()) {
-        return;
-      }
-      activity.push({
-        key: `text-${index}`,
-        kind: "text",
-        text: segment.text,
-        isStreaming: false,
       });
       return;
     }
@@ -337,17 +322,6 @@ export function buildHistoricalSegments(
     });
   });
   flushActivity(true);
-  tail.forEach((segment, index) => {
-    if (segment.kind !== "text" || !segment.text.trim()) {
-      return;
-    }
-    segments.push({
-      key: `text-${tailStart + index}`,
-      kind: "text",
-      text: segment.text,
-      isStreaming: false,
-    });
-  });
   return segments;
 }
 
@@ -356,39 +330,26 @@ export function buildLiveSegments(
   subagents: LiveSubagentRun[],
 ): RenderSegment[] {
   const lastIndex = trace.segments.length - 1;
-  let tailStart = trace.segments.length;
-  while (tailStart > 0 && trace.segments[tailStart - 1]?.kind === "text") {
-    tailStart -= 1;
-  }
-  const head = trace.segments.slice(0, tailStart);
-  const tail = trace.segments.slice(tailStart);
-
   const segments: RenderSegment[] = [];
   const activity: ActivityItem[] = [];
   const flushActivity = (isFinal: boolean) => {
     if (activity.length === 0) {
       return;
     }
-    const summary = summarizeActivity(activity);
-    const hasStreamingThinking = activity.some(
-      (item) => item.kind === "thinking" && item.isActive,
-    );
     segments.push({
       key: `activity-${activity[0]?.key ?? segments.length}`,
       kind: "activity",
       items: [...activity],
-      // Only the latest live process work owns the unified header. A user
-      // message closes the previous activity and starts a fresh one after it.
-      isActive:
-        isFinal &&
-        (hasStreamingThinking ||
-          summary.runningSubagents > 0 ||
-          summary.runningTools > 0),
+      // The trailing activity stays active for the whole model-turn gap until
+      // a text/user boundary or turn completion closes it. The top live header
+      // owns the running state.
+      isActive: isFinal && trace.isStreaming,
       isLive: isFinal ? trace.isStreaming : false,
     });
     activity.length = 0;
   };
-  head.forEach((segment: LiveTraceSegment, index) => {
+
+  trace.segments.forEach((segment: LiveTraceSegment, index) => {
     if (segment.kind === "user_message") {
       flushActivity(false);
       segments.push({
@@ -397,6 +358,19 @@ export function buildLiveSegments(
         messageId: segment.messageId,
         content: segment.content,
         createdAt: segment.createdAt,
+      });
+      return;
+    }
+    if (segment.kind === "text") {
+      if (!segment.text.trim()) {
+        return;
+      }
+      flushActivity(false);
+      segments.push({
+        key: `text-${index}`,
+        kind: "text",
+        text: segment.text,
+        isStreaming: trace.isStreaming && index === lastIndex,
       });
       return;
     }
@@ -413,18 +387,6 @@ export function buildLiveSegments(
         isActive: trace.isStreaming && isLast,
         startedAtMs: segment.startedAtMs,
         durationMs: segment.durationMs,
-      });
-      return;
-    }
-    if (segment.kind === "text") {
-      if (!segment.text.trim()) {
-        return;
-      }
-      activity.push({
-        key: `text-${index}`,
-        kind: "text",
-        text: segment.text,
-        isStreaming: false,
       });
       return;
     }
@@ -447,16 +409,5 @@ export function buildLiveSegments(
     });
   });
   flushActivity(true);
-  tail.forEach((segment, index) => {
-    if (segment.kind !== "text" || !segment.text.trim()) {
-      return;
-    }
-    segments.push({
-      key: `text-${tailStart + index}`,
-      kind: "text",
-      text: segment.text,
-      isStreaming: trace.isStreaming,
-    });
-  });
   return segments;
 }

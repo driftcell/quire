@@ -53,11 +53,13 @@ function ActivitySegment({
   segment,
   questionSlots,
   showActiveDetails,
+  liveHeader,
 }: {
   sessionId: string;
   segment: ActivityRenderSegment;
   questionSlots?: Map<string, ReactNode>;
   showActiveDetails: boolean;
+  liveHeader?: ReactNode;
 }) {
   const hasQuestion = activityHasQuestion(segment.items, questionSlots);
   const summary = summarizeActivity(segment.items);
@@ -95,16 +97,6 @@ function ActivitySegment({
         />
       );
     }
-    if (item.kind === "text") {
-      return (
-        <SmoothStreamdown
-          key={item.key}
-          text={item.text}
-          isStreaming={item.isStreaming}
-          className={`${CHAT_PROSE} text-sm`}
-        />
-      );
-    }
     return (
       <Fragment key={item.key}>
         <ToolCallList
@@ -138,6 +130,7 @@ function ActivitySegment({
         data-active="true"
         data-expanded={showActiveDetails ? "true" : "false"}
       >
+        {liveHeader}
         {showActiveDetails && (
           <div
             data-slot="activity-details"
@@ -182,6 +175,8 @@ export const RenderSegments = memo(function RenderSegments({
   messageById,
   attachmentMap,
   showActiveDetails = true,
+  renderLiveHeader,
+  liveStreaming = false,
 }: {
   sessionId: string;
   segments: RenderSegment[];
@@ -190,47 +185,68 @@ export const RenderSegments = memo(function RenderSegments({
   messageById: ReadonlyMap<string, SessionMessage>;
   attachmentMap: Map<string, AttachmentMeta>;
   showActiveDetails?: boolean;
+  renderLiveHeader?: () => ReactNode;
+  liveStreaming?: boolean;
 }) {
+  const activeIndex = segments.findLastIndex(
+    (segment) => segment.kind === "activity" && segment.isActive,
+  );
+  const lastSegment = segments[segments.length - 1];
+  const headerIndex =
+    activeIndex === -1 && renderLiveHeader && liveStreaming
+      ? lastSegment?.kind === "text" && lastSegment.isStreaming
+        ? segments.length - 1
+        : segments.length
+      : -1;
+
   return (
     <div className="w-full space-y-1">
-      {segments.map((segment) => {
+      {segments.map((segment, index) => {
         if (segment.kind === "user") {
           const message = messageById.get(segment.messageId);
           return (
-            <div
-              key={segment.key}
-              data-inline-user-message-id={segment.messageId}
-            >
-              <UserMessageBubble
-                body={message?.content ?? segment.content}
-                commentRefs={message?.comment_refs ?? []}
-                attachmentIds={message?.attachment_ids ?? []}
-                attachmentMap={attachmentMap}
-                onJumpToSection={onJumpToSection}
-              />
-            </div>
+            <Fragment key={segment.key}>
+              {headerIndex === index && renderLiveHeader?.()}
+              <div data-inline-user-message-id={segment.messageId}>
+                <UserMessageBubble
+                  body={message?.content ?? segment.content}
+                  commentRefs={message?.comment_refs ?? []}
+                  attachmentIds={message?.attachment_ids ?? []}
+                  attachmentMap={attachmentMap}
+                  onJumpToSection={onJumpToSection}
+                />
+              </div>
+            </Fragment>
           );
         }
         if (segment.kind === "text") {
           return (
-            <SmoothStreamdown
-              key={segment.key}
-              text={segment.text}
-              isStreaming={segment.isStreaming}
-              className={`${CHAT_PROSE} pt-1`}
-            />
+            <Fragment key={segment.key}>
+              {headerIndex === index && renderLiveHeader?.()}
+              <SmoothStreamdown
+                text={segment.text}
+                isStreaming={segment.isStreaming}
+                className={`${CHAT_PROSE} pt-1`}
+              />
+            </Fragment>
           );
         }
         return (
-          <ActivitySegment
-            key={segment.key}
-            sessionId={sessionId}
-            segment={segment}
-            questionSlots={questionSlots}
-            showActiveDetails={showActiveDetails}
-          />
+          <Fragment key={segment.key}>
+            {headerIndex === index && renderLiveHeader?.()}
+            <ActivitySegment
+              sessionId={sessionId}
+              segment={segment}
+              questionSlots={questionSlots}
+              showActiveDetails={showActiveDetails}
+              liveHeader={
+                index === activeIndex ? renderLiveHeader?.() : undefined
+              }
+            />
+          </Fragment>
         );
       })}
+      {headerIndex === segments.length && renderLiveHeader?.()}
     </div>
   );
 });
@@ -313,6 +329,8 @@ export function LiveTraceSegments({
   messageById,
   attachmentMap,
   showActiveDetails = true,
+  renderLiveHeader,
+  liveStreaming = false,
 }: {
   sessionId: string;
   segments: RenderSegment[];
@@ -321,6 +339,8 @@ export function LiveTraceSegments({
   messageById: ReadonlyMap<string, SessionMessage>;
   attachmentMap: Map<string, AttachmentMeta>;
   showActiveDetails?: boolean;
+  renderLiveHeader?: () => ReactNode;
+  liveStreaming?: boolean;
 }) {
   return (
     <RenderSegments
@@ -331,6 +351,8 @@ export function LiveTraceSegments({
       messageById={messageById}
       attachmentMap={attachmentMap}
       showActiveDetails={showActiveDetails}
+      renderLiveHeader={renderLiveHeader}
+      liveStreaming={liveStreaming}
     />
   );
 }

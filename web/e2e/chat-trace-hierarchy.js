@@ -255,43 +255,26 @@ async (page) => {
     ),
   ];
 
-  const statusEvents = [
-    event(1, "run-status", "main", { event: "turn_started" }),
-    event(2, "run-status", "main", {
-      event: "thinking_delta",
-      delta: "检查报告工具结果。",
-    }),
-    event(3, "run-status", "main", {
-      event: "tool_call_started",
-      tool_call_id: "status-read",
-      tool_name: "read_blocks",
-      input_preview: "{}",
-      truncated: false,
-    }),
-    event(4, "run-status", "main", {
-      event: "tool_call_finished",
-      tool_call_id: "status-read",
-      status: "completed",
-      output_preview: '{"ok":true}',
-      duration_ms: 60,
-      truncated: false,
-    }),
-    event(5, "run-status", "main", {
-      event: "tool_call_started",
-      tool_call_id: "status-lint",
-      tool_name: "lint_document",
-      input_preview: "{}",
-      truncated: false,
-    }),
-    event(6, "run-status", "main", {
-      event: "tool_call_finished",
-      tool_call_id: "status-lint",
-      status: "failed",
-      output_preview: '{"errors":["missing reference"]}',
-      duration_ms: 140,
-      truncated: false,
-    }),
-  ];
+  const statusTrace = {
+    run_id: "run-status",
+    status: "completed",
+    duration_ms: 200,
+    segments: [
+      {
+        kind: "thinking",
+        text: "检查报告工具结果。",
+        duration_ms: 20,
+      },
+      {
+        kind: "execution",
+        tools: [
+          tool("status-read", "read_blocks", "completed", 60),
+          tool("status-lint", "lint_document", "failed", 140),
+        ],
+        subagents: [],
+      },
+    ],
+  };
 
   const smoothTextChunks = [
     "流式输出",
@@ -480,9 +463,21 @@ async (page) => {
       },
     },
     [statusId]: {
-      detail: detail(statusId),
-      traces: [],
-      batches: [statusEvents],
+      detail: detail(statusId, {
+        active_run_status: "idle",
+        messages: [
+          {
+            message_id: "status-assistant",
+            session_id: statusId,
+            role: "assistant",
+            content: "",
+            run_id: "run-status",
+            created_at: now,
+          },
+        ],
+      }),
+      traces: [statusTrace],
+      batches: [[]],
       sseCount: 0,
     },
     [smoothId]: {
@@ -578,6 +573,45 @@ async (page) => {
         throw new Error(message);
       });
 
+  const assertActiveHeader = async (label) => {
+    const headerCount = await page.locator('[data-live-header="true"]').count();
+    assert(
+      headerCount === 1,
+      `${label}: expected exactly one live header, got ${headerCount}`,
+    );
+    const activeActivity = page.locator(
+      '[data-slot="activity"][data-active="true"]',
+    );
+    const activeHeader = activeActivity.locator('[data-live-header="true"]');
+    assert(
+      (await activeHeader.count()) === 1,
+      `${label}: live header is not mounted inside the active activity`,
+    );
+    const headerState = await activeHeader.evaluate((element) => ({
+      firstChild: element.parentElement?.firstElementChild === element,
+      position: getComputedStyle(element).position,
+      top: getComputedStyle(element).top,
+    }));
+    assert(
+      headerState.firstChild,
+      `${label}: live header is not the first child of the active activity`,
+    );
+    assert(
+      headerState.position === "sticky" && headerState.top === "0px",
+      `${label}: live header is not sticky at the scroll container top: ${JSON.stringify(headerState)}`,
+    );
+    const completedHeaderCount = await page
+      .locator(
+        '[data-slot="activity"][data-active="false"] [data-live-header="true"]',
+      )
+      .count();
+    assert(
+      completedHeaderCount === 0,
+      `${label}: completed activity rendered ${completedHeaderCount} live headers`,
+    );
+    return headerCount;
+  };
+
   const results = {};
 
   await page.goto(`${web}/sessions/${runningId}`);
@@ -592,11 +626,7 @@ async (page) => {
   );
 
   const liveHeader = page.locator('[data-live-header="true"]');
-  const liveHeaderCount = await liveHeader.count();
-  assert(
-    liveHeaderCount === 1,
-    `expected exactly one live header, got ${liveHeaderCount}`,
-  );
+  const liveHeaderCount = await assertActiveHeader("running");
   const loaderHeaderCount = await liveHeader.locator(".animate-spin").count();
   assert(
     loaderHeaderCount === 0,
@@ -665,11 +695,6 @@ async (page) => {
     liveHeaderBox !== null && Math.round(liveHeaderBox.height) === 24,
     `live header height is not stable: ${JSON.stringify(liveHeaderBox)}`,
   );
-  await page.evaluate(() => {
-    document
-      .querySelector('[data-live-header="true"]')
-      ?.setAttribute("data-e2e-stable", "true");
-  });
 
   const runningActivity = page.locator(
     '[data-slot="activity"][data-active="true"]',
@@ -749,6 +774,8 @@ async (page) => {
     activeStopCount,
     stopNestedInTrigger,
     activeActivityTriggerCount,
+    headerOwnedByActive: true,
+    stickyHeader: true,
   };
 
   const runningToggle = page.locator("[data-live-header-toggle]").first();
@@ -780,12 +807,7 @@ async (page) => {
       .count()) === 1,
     "active execution details did not return after expanding",
   );
-  assert(
-    (await page
-      .locator('[data-live-header="true"][data-e2e-stable="true"]')
-      .count()) === 1,
-    "live header DOM node was replaced during the streaming lifecycle",
-  );
+  await assertActiveHeader("running after toggling details");
   assert(
     (await page.locator('[data-slot="stop-turn"]').count()) === 1,
     "stop button did not remain stable after detail toggling",
@@ -801,11 +823,7 @@ async (page) => {
     "true",
     "finished scenario did not start with expanded live details",
   );
-  const finishedLiveHeader = page.locator('[data-live-header="true"]');
-  assert(
-    (await finishedLiveHeader.count()) === 1,
-    "finished scenario did not render one live header",
-  );
+  await assertActiveHeader("finished initial");
   const initialToolsProgress = (
     await page.locator('[data-live-progress-tools="true"]').innerText()
   ).trim();
@@ -820,13 +838,6 @@ async (page) => {
     initialSubagentsProgress === "子代理 0/2",
     `unexpected initial subagent progress: ${initialSubagentsProgress}`,
   );
-  await page.evaluate(() => {
-    document
-      .querySelector('[data-live-header="true"]')
-      ?.setAttribute("data-e2e-stable", "true");
-  });
-  const initialHeaderBox = await finishedLiveHeader.boundingBox();
-  assert(initialHeaderBox !== null, "could not measure the live header");
 
   releaseMidRun();
   await page.waitForFunction(
@@ -856,12 +867,18 @@ async (page) => {
     midSubagentsProgress === "子代理 0/2",
     `subagent progress changed before completion: ${midSubagentsProgress}`,
   );
-  assert(
-    (await page
-      .locator('[data-live-header="true"][data-e2e-stable="true"]')
-      .count()) === 1,
-    "live header node was replaced when text and another tool arrived",
+  const intermediateTextNestedInActivity = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('[data-slot="activity"]')).some(
+      (element) =>
+        element.textContent?.includes("阶段性正文：已完成章节结构梳理。") ??
+        false,
+    ),
   );
+  assert(
+    !intermediateTextNestedInActivity,
+    "intermediate body text must render outside thinking/execution activities",
+  );
+  await assertActiveHeader("finished after intermediate text");
   assert(
     (await page.locator('[data-slot="stop-turn"]').count()) === 1,
     "stop button disappeared when text and another tool arrived",
@@ -870,13 +887,6 @@ async (page) => {
     (await page.locator('[data-live-header="true"] .animate-spin').count()) ===
       0,
     "live header rendered a duplicate spinner during the lifecycle",
-  );
-  const midHeaderBox = await finishedLiveHeader.boundingBox();
-  assert(
-    initialHeaderBox !== null &&
-      midHeaderBox !== null &&
-      Math.round(initialHeaderBox.height) === Math.round(midHeaderBox.height),
-    "live header height changed during the streaming lifecycle",
   );
   releaseFinish();
   await page.waitForFunction(
@@ -977,7 +987,9 @@ async (page) => {
     midToolsProgress,
     initialSubagentsProgress,
     midSubagentsProgress,
-    headerStable: true,
+    intermediateTextTopLevel: true,
+    headerOwnedByActive: true,
+    stickyHeader: true,
     liveHeaderRemoved: true,
   };
 
@@ -1075,6 +1087,16 @@ async (page) => {
       smoothStopCount === 1,
     `streaming body header mismatch: header=${smoothLiveHeaderCount} sparkles=${smoothSparklesCount} loader=${smoothLoaderCount} active=${smoothActiveCount} stop=${smoothStopCount}`,
   );
+  const smoothActivityTrigger = page.locator("[data-activity-trigger]").first();
+  await smoothActivityTrigger.waitFor({ state: "visible", timeout: 15000 });
+  if ((await smoothActivityTrigger.getAttribute("aria-expanded")) !== "true") {
+    await smoothActivityTrigger.click();
+    await waitForExpanded(
+      "[data-activity-trigger]",
+      "true",
+      "streaming activity did not expand before inspecting thinking",
+    );
+  }
   const thinkingTrigger = page
     .locator(
       '[data-slot="thinking-trace"] [data-slot="trace-collapsible-trigger"]',

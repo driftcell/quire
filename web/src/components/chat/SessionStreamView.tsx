@@ -40,6 +40,83 @@ import type {
 } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
+function LiveRunHeader({
+  title,
+  detail,
+  sectionId,
+  progress,
+  elapsedLabel,
+  detailsOpen,
+  onToggleDetails,
+  onJumpToSection,
+  onInterrupt,
+}: {
+  title: string;
+  detail?: string;
+  sectionId?: string;
+  progress: ReturnType<typeof summarizeLiveProgress>;
+  elapsedLabel: string;
+  detailsOpen: boolean;
+  onToggleDetails: () => void;
+  onJumpToSection?: (sectionId: string) => void;
+  onInterrupt?: () => Promise<void>;
+}) {
+  return (
+    <div
+      data-live-header="true"
+      className="sticky top-0 z-10 flex h-6 w-full items-center justify-between gap-1 bg-background/95 py-1 text-xs leading-5 text-muted-foreground backdrop-blur-xs"
+    >
+      <button
+        type="button"
+        data-live-header-toggle="true"
+        aria-expanded={detailsOpen}
+        title={detailsOpen ? "折叠执行过程" : "展开执行过程"}
+        onClick={onToggleDetails}
+        className="flex min-w-0 flex-1 items-center gap-2 text-left"
+      >
+        <span
+          data-live-header-icon="sparkles"
+          className="flex size-4 shrink-0 items-center justify-center"
+        >
+          <SparklesIcon className="size-3.5 text-primary" />
+        </span>
+        <span className="shimmer min-w-0 truncate font-medium">{title}</span>
+        {detail && (
+          <span className="min-w-0 truncate text-[11px] opacity-75">
+            — {detail}
+          </span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground/75">
+          {progress.toolCount > 0 && (
+            <span data-live-progress-tools="true">
+              {`工具 ${progress.completedToolCount}/${progress.toolCount}`}
+            </span>
+          )}
+          {progress.subagentCount > 0 && (
+            <span data-live-progress-subagents="true">
+              {`子代理 ${progress.completedSubagentCount}/${progress.subagentCount}`}
+            </span>
+          )}
+          <span data-live-elapsed="true">{elapsedLabel}</span>
+        </span>
+      </button>
+      {sectionId && onJumpToSection && (
+        <button
+          type="button"
+          data-live-header-jump="true"
+          aria-label="跳转到当前章节"
+          title="跳转到当前章节"
+          onClick={() => onJumpToSection(sectionId)}
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <CompassIcon className="size-3.5" aria-hidden="true" />
+        </button>
+      )}
+      {onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
+    </div>
+  );
+}
+
 function LiveRunSection({
   sessionId,
   trace,
@@ -78,70 +155,24 @@ function LiveRunSection({
 
   const progress = summarizeLiveProgress(trace, subagents);
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const renderLiveHeader = trace.isStreaming
+    ? () => (
+        <LiveRunHeader
+          title={trace.taskFocus?.title ?? "正在处理"}
+          detail={trace.taskFocus?.detail}
+          sectionId={trace.taskFocus?.sectionId}
+          progress={progress}
+          elapsedLabel={formatLiveElapsed(elapsed)}
+          detailsOpen={detailsOpen}
+          onToggleDetails={() => setDetailsOpen((open) => !open)}
+          onJumpToSection={onJumpToSection}
+          onInterrupt={onInterrupt}
+        />
+      )
+    : undefined;
 
   return (
     <>
-      {trace.isStreaming && (
-        <div
-          data-live-header="true"
-          className="flex h-6 w-full items-center justify-between gap-1 text-xs leading-5 text-muted-foreground"
-        >
-          <button
-            type="button"
-            data-live-header-toggle="true"
-            aria-expanded={detailsOpen}
-            title={detailsOpen ? "折叠执行过程" : "展开执行过程"}
-            onClick={() => setDetailsOpen((open) => !open)}
-            className="flex min-w-0 flex-1 items-center gap-2 text-left"
-          >
-            <span
-              data-live-header-icon="sparkles"
-              className="flex size-4 shrink-0 items-center justify-center"
-            >
-              <SparklesIcon className="size-3.5 text-primary" />
-            </span>
-            <span className="shimmer min-w-0 truncate font-medium">
-              {trace.taskFocus?.title ?? "正在处理"}
-            </span>
-            {trace.taskFocus?.detail && (
-              <span className="min-w-0 truncate text-[11px] opacity-75">
-                — {trace.taskFocus.detail}
-              </span>
-            )}
-            <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground/75">
-              {progress.toolCount > 0 && (
-                <span data-live-progress-tools="true">
-                  {`工具 ${progress.completedToolCount}/${progress.toolCount}`}
-                </span>
-              )}
-              {progress.subagentCount > 0 && (
-                <span data-live-progress-subagents="true">
-                  {`子代理 ${progress.completedSubagentCount}/${progress.subagentCount}`}
-                </span>
-              )}
-              <span data-live-elapsed="true">{formatLiveElapsed(elapsed)}</span>
-            </span>
-          </button>
-          {trace.taskFocus?.sectionId && onJumpToSection && (
-            <button
-              type="button"
-              data-live-header-jump="true"
-              aria-label="跳转到当前章节"
-              title="跳转到当前章节"
-              onClick={() => {
-                if (trace.taskFocus?.sectionId) {
-                  onJumpToSection(trace.taskFocus.sectionId);
-                }
-              }}
-              className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              <CompassIcon className="size-3.5" aria-hidden="true" />
-            </button>
-          )}
-          {onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
-        </div>
-      )}
-
       {!trace.isStreaming && trace.taskFocus && (
         <button
           type="button"
@@ -165,6 +196,8 @@ function LiveRunSection({
         messageById={messageById}
         attachmentMap={attachmentMap}
         showActiveDetails={detailsOpen}
+        renderLiveHeader={renderLiveHeader}
+        liveStreaming={trace.isStreaming}
       />
     </>
   );

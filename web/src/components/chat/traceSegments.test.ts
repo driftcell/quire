@@ -159,7 +159,7 @@ describe("buildHistoricalSegments", () => {
     }
     expect(activity.items).toHaveLength(2);
     expect(activity.isActive).toBe(false);
-    expect(activity.durationMs).toBe(60000);
+    expect(activity.durationMs).toBeUndefined();
     const thinking = activity.items[0];
     if (thinking?.kind !== "thinking") {
       throw new Error("expected thinking item");
@@ -263,6 +263,161 @@ describe("buildHistoricalSegments", () => {
   });
 });
 
+describe("strict text timeline boundaries", () => {
+  test("historical multi-round text splits activity and text into alternating segments", () => {
+    const trace: RunTraceSummary = {
+      run_id: "run-multi",
+      status: "completed",
+      segments: [
+        { kind: "thinking", text: "round one plan" },
+        {
+          kind: "execution",
+          tools: [
+            {
+              tool_call_id: "tool-1",
+              tool_name: "read_blocks",
+              status: "completed",
+              input_preview: "{}",
+            },
+          ],
+          subagents: [],
+        },
+        { kind: "text", text: "text one" },
+        { kind: "thinking", text: "round two plan" },
+        {
+          kind: "execution",
+          tools: [
+            {
+              tool_call_id: "tool-2",
+              tool_name: "read_blocks",
+              status: "completed",
+              input_preview: "{}",
+            },
+          ],
+          subagents: [],
+        },
+        { kind: "text", text: "text two" },
+      ],
+    };
+
+    const segments = buildHistoricalSegments(trace);
+    expect(segments.map((segment) => segment.kind)).toEqual([
+      "activity",
+      "text",
+      "activity",
+      "text",
+    ]);
+    const first = segmentAt(segments, 0);
+    const second = segmentAt(segments, 2);
+    if (first.kind !== "activity" || second.kind !== "activity") {
+      throw new Error("expected two activity segments");
+    }
+    expect(first.items).toHaveLength(2);
+    expect(second.items).toHaveLength(2);
+    expect(first.items.map((item) => item.kind)).toEqual([
+      "thinking",
+      "execution",
+    ]);
+    expect(second.items.map((item) => item.kind)).toEqual([
+      "thinking",
+      "execution",
+    ]);
+    expect(segmentAt(segments, 1)).toMatchObject({
+      kind: "text",
+      text: "text one",
+    });
+    expect(segmentAt(segments, 3)).toMatchObject({
+      kind: "text",
+      text: "text two",
+    });
+  });
+
+  test("live multi-round text stays top-level between active execution groups", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "main",
+      isStreaming: true,
+      segments: [
+        { kind: "thinking", text: "round one plan", durationMs: 100 },
+        {
+          kind: "execution",
+          tools: [tool("tool-1")],
+          subagentRunIds: [],
+        },
+        { kind: "text", text: "text one" },
+        { kind: "thinking", text: "round two plan", startedAtMs: 2000 },
+        {
+          kind: "execution",
+          tools: [tool("tool-2")],
+          subagentRunIds: [],
+        },
+        { kind: "text", text: "text two" },
+      ],
+    };
+
+    const segments = buildLiveSegments(trace, []);
+    expect(segments.map((segment) => segment.kind)).toEqual([
+      "activity",
+      "text",
+      "activity",
+      "text",
+    ]);
+    const first = segmentAt(segments, 0);
+    const second = segmentAt(segments, 2);
+    if (first.kind !== "activity" || second.kind !== "activity") {
+      throw new Error("expected two activity segments");
+    }
+    expect(first.items.map((item) => item.kind)).toEqual([
+      "thinking",
+      "execution",
+    ]);
+    expect(second.items.map((item) => item.kind)).toEqual([
+      "thinking",
+      "execution",
+    ]);
+    expect(first.isActive).toBe(false);
+    expect(second.isActive).toBe(false);
+    expect(segmentAt(segments, 1)).toMatchObject({
+      kind: "text",
+      text: "text one",
+      isStreaming: false,
+    });
+    expect(segmentAt(segments, 3)).toMatchObject({
+      kind: "text",
+      text: "text two",
+      isStreaming: true,
+    });
+  });
+
+  test("live trailing activity stays active while waiting for the next model round", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "main",
+      isStreaming: true,
+      segments: [
+        { kind: "thinking", text: "plan", durationMs: 1200 },
+        {
+          kind: "execution",
+          tools: [tool("tool-1")],
+          subagentRunIds: [],
+        },
+      ],
+    };
+
+    const segments = buildLiveSegments(trace, []);
+    expect(segments.map((segment) => segment.kind)).toEqual(["activity"]);
+    const activity = segmentAt(segments, 0);
+    if (activity.kind !== "activity") {
+      throw new Error("expected activity segment");
+    }
+    expect(activity.isActive).toBe(true);
+    expect(activity.isLive).toBe(true);
+    const execution = activity.items[1];
+    if (execution?.kind !== "execution") {
+      throw new Error("expected execution item");
+    }
+    expect(execution.tools[0]?.status).toBe("completed");
+  });
+});
+
 describe("buildLiveSegments", () => {
   test("resolves live subagents and marks the tail as streaming", () => {
     const liveTool = tool("call-1");
@@ -297,7 +452,8 @@ describe("buildLiveSegments", () => {
     if (activity.kind !== "activity") {
       throw new Error("expected activity segment");
     }
-    expect(activity.isActive).toBe(true);
+    expect(activity.isActive).toBe(false);
+    expect(activity.isLive).toBe(false);
     const thinking = activity.items[0];
     if (thinking?.kind !== "thinking") {
       throw new Error("expected thinking item");
