@@ -54,6 +54,7 @@ export function PendingUserBubble({
   index,
   count,
   attachmentMap,
+  isBusy = false,
   onJumpToSection,
   onEdit,
   onRecall,
@@ -63,6 +64,7 @@ export function PendingUserBubble({
   index: number;
   count: number;
   attachmentMap: Map<string, AttachmentMeta>;
+  isBusy?: boolean;
   onJumpToSection?: (sectionId: string) => void;
   onEdit?: (queueId: string, content: string) => Promise<void>;
   onRecall?: (item: PendingQueueItem) => Promise<void>;
@@ -72,6 +74,7 @@ export function PendingUserBubble({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const locked = isBusy || busy;
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -87,7 +90,7 @@ export function PendingUserBubble({
 
   const save = async () => {
     const trimmed = draft.trim();
-    if (!trimmed || !onEdit || busy) {
+    if (!trimmed || !onEdit || locked) {
       return;
     }
     setBusy(true);
@@ -103,7 +106,7 @@ export function PendingUserBubble({
   };
 
   const runAction = async (action?: () => Promise<void>) => {
-    if (!action || busy) return;
+    if (!action || locked) return;
     setBusy(true);
     try {
       await action();
@@ -113,9 +116,17 @@ export function PendingUserBubble({
   };
 
   return (
-    <MessageGroup className="gap-1">
+    <MessageGroup
+      className="gap-1"
+      data-queue-id={item.queue_id}
+      data-queue-busy={isBusy ? "true" : "false"}
+    >
       <Message align="end" className="items-end">
-        <div className="flex max-w-[85%] flex-col items-end">
+        <div
+          className={`flex max-w-[85%] flex-col items-end transition-opacity ${
+            isBusy ? "opacity-60" : ""
+          }`}
+        >
           {parsed.refs.length > 0 && (
             <div className="w-full">
               <UserCommentRefCards
@@ -133,7 +144,8 @@ export function PendingUserBubble({
               <Textarea
                 ref={inputRef}
                 rows={2}
-                className="min-h-10 text-sm"
+                disabled={locked}
+                className="min-h-10 text-sm disabled:opacity-60"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 onKeyDown={(event) => {
@@ -164,7 +176,7 @@ export function PendingUserBubble({
                 <button
                   type="button"
                   className="hover:text-foreground disabled:opacity-50"
-                  disabled={busy || !draft.trim()}
+                  disabled={locked || !draft.trim()}
                   onClick={() => void save()}
                 >
                   保存
@@ -188,7 +200,7 @@ export function PendingUserBubble({
                 type="button"
                 aria-label="编辑排队消息"
                 title="编辑"
-                disabled={busy}
+                disabled={locked}
                 className="rounded p-0.5 hover:bg-muted hover:text-foreground disabled:opacity-50"
                 onClick={startEditing}
               >
@@ -198,7 +210,7 @@ export function PendingUserBubble({
                 type="button"
                 aria-label="撤回到输入框"
                 title="撤回到输入框"
-                disabled={busy}
+                disabled={locked}
                 className="rounded p-0.5 hover:bg-muted hover:text-foreground disabled:opacity-50"
                 onClick={() => {
                   if (onRecall) void runAction(() => onRecall(item));
@@ -210,7 +222,7 @@ export function PendingUserBubble({
                 type="button"
                 aria-label="删除排队消息"
                 title="删除"
-                disabled={busy}
+                disabled={locked}
                 className="rounded p-0.5 hover:bg-muted hover:text-destructive disabled:opacity-50"
                 onClick={() => {
                   if (onDelete) void runAction(() => onDelete(item.queue_id));

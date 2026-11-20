@@ -206,6 +206,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     pendingCommentRefs,
     setPendingCommentRefs,
     composerPrefill,
+    busyQueueIds,
     handleUpdateQueueItem,
     handleRecallQueueItem,
     handleDeletePending,
@@ -267,6 +268,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       }}
       onJumpToSection={jumpToSectionFromChat}
       pendingQueue={pendingQueue}
+      busyQueueIds={busyQueueIds}
       onEditPending={handleUpdateQueueItem}
       onRecallPending={handleRecallQueueItem}
       onDeletePending={handleDeletePending}

@@ -47,6 +47,7 @@ export interface SessionStreamViewProps {
   ) => void;
   onJumpToSection?: (sectionId: string) => void;
   pendingQueue?: PendingQueueItem[];
+  busyQueueIds?: ReadonlySet<string>;
   onEditPending?: (queueId: string, content: string) => Promise<void>;
   onRecallPending?: (item: PendingQueueItem) => Promise<void>;
   onDeletePending?: (queueId: string) => Promise<void>;
@@ -67,6 +68,7 @@ export function SessionStreamView({
   onAnswerQuestion,
   onJumpToSection,
   pendingQueue = [],
+  busyQueueIds,
   onEditPending,
   onRecallPending,
   onDeletePending,
@@ -344,6 +346,7 @@ export function SessionStreamView({
                   index={index}
                   count={pendingQueue.length}
                   attachmentMap={attachmentMap}
+                  isBusy={busyQueueIds?.has(item.queue_id) ?? false}
                   onJumpToSection={onJumpToSection}
                   onEdit={onEditPending}
                   onRecall={onRecallPending}

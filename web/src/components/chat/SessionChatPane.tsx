@@ -37,6 +37,7 @@ export interface SessionChatPaneProps {
   ) => void;
   onJumpToSection: (sectionId: string) => void;
   pendingQueue: PendingQueueItem[];
+  busyQueueIds?: ReadonlySet<string>;
   onEditPending: (queueId: string, content: string) => Promise<void>;
   onRecallPending: (item: PendingQueueItem) => Promise<void>;
   onDeletePending: (queueId: string) => Promise<void>;
@@ -69,6 +70,7 @@ export function SessionChatPane({
   onAnswerQuestion,
   onJumpToSection,
   pendingQueue,
+  busyQueueIds,
   onEditPending,
   onRecallPending,
   onDeletePending,
@@ -114,6 +116,7 @@ export function SessionChatPane({
             onAnswerQuestion={onAnswerQuestion}
             onJumpToSection={onJumpToSection}
             pendingQueue={pendingQueue}
+            busyQueueIds={busyQueueIds}
             onEditPending={onEditPending}
             onRecallPending={onRecallPending}
             onDeletePending={onDeletePending}

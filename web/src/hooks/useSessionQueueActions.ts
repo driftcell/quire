@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { deleteSessionQueueItem, updateSessionQueueItem } from "@/api/runtime";
 import type {
@@ -28,7 +28,27 @@ export function useSessionQueueActions({
     key: string;
     text: string;
   } | null>(null);
-  const [queueBusyId, setQueueBusyId] = useState<string | null>(null);
+  const [busyQueueIds, setBusyQueueIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const busyQueueIdsRef = useRef<Set<string>>(new Set());
+
+  const runQueueAction = useCallback(
+    async (queueId: string, task: () => Promise<void>) => {
+      if (busyQueueIdsRef.current.has(queueId)) {
+        return;
+      }
+      busyQueueIdsRef.current.add(queueId);
+      setBusyQueueIds(new Set(busyQueueIdsRef.current));
+      try {
+        await task();
+      } finally {
+        busyQueueIdsRef.current.delete(queueId);
+        setBusyQueueIds(new Set(busyQueueIdsRef.current));
+      }
+    },
+    [],
+  );
 
   const removePendingQueueItemLocal = useCallback(
     (queueId: string) => {
@@ -50,9 +70,7 @@ export function useSessionQueueActions({
 
   const handleUpdateQueueItem = useCallback(
     async (queueId: string, content: string) => {
-      if (queueBusyId) return;
-      setQueueBusyId(queueId);
-      try {
+      await runQueueAction(queueId, async () => {
         const updated = await updateSessionQueueItem(
           sessionId,
           queueId,
@@ -70,18 +88,14 @@ export function useSessionQueueActions({
                 }
               : current,
         );
-      } finally {
-        setQueueBusyId(null);
-      }
+      });
     },
-    [queryClient, queueBusyId, sessionId],
+    [queryClient, runQueueAction, sessionId],
   );
 
   const handleRecallQueueItem = useCallback(
     async (item: PendingQueueItem) => {
-      if (queueBusyId) return;
-      setQueueBusyId(item.queue_id);
-      try {
+      await runQueueAction(item.queue_id, async () => {
         await deleteSessionQueueItem(sessionId, item.queue_id);
         removePendingQueueItemLocal(item.queue_id);
         const parsed = parseCommentRefs(item.content);
@@ -108,15 +122,13 @@ export function useSessionQueueActions({
             queryKey: ["comments", effectiveDocId],
           });
         }
-      } finally {
-        setQueueBusyId(null);
-      }
+      });
     },
     [
       effectiveDocId,
       queryClient,
-      queueBusyId,
       removePendingQueueItemLocal,
+      runQueueAction,
       sessionId,
       showChat,
     ],
@@ -124,12 +136,10 @@ export function useSessionQueueActions({
 
   const handleDeletePending = useCallback(
     async (queueId: string) => {
-      if (queueBusyId) return;
       const item = pendingQueue.find(
         (candidate) => candidate.queue_id === queueId,
       );
-      setQueueBusyId(queueId);
-      try {
+      await runQueueAction(queueId, async () => {
         await deleteSessionQueueItem(sessionId, queueId);
         removePendingQueueItemLocal(queueId);
         if (item?.source === "comment" && effectiveDocId) {
@@ -137,16 +147,14 @@ export function useSessionQueueActions({
             queryKey: ["comments", effectiveDocId],
           });
         }
-      } finally {
-        setQueueBusyId(null);
-      }
+      });
     },
     [
       effectiveDocId,
       pendingQueue,
       queryClient,
-      queueBusyId,
       removePendingQueueItemLocal,
+      runQueueAction,
       sessionId,
     ],
   );
@@ -155,6 +163,7 @@ export function useSessionQueueActions({
     pendingCommentRefs,
     setPendingCommentRefs,
     composerPrefill,
+    busyQueueIds,
     handleUpdateQueueItem,
     handleRecallQueueItem,
     handleDeletePending,
