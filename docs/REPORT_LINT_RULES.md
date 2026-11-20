@@ -146,10 +146,11 @@ Priority tiers are: errors, structural/chart/table/citation warnings, macro layo
 (`QR417`/`QR418`), prose warnings (`QR412`-`QR415`), then info. Diagnostics are grouped by
 `block_id` (or `document`), codes are deduplicated and tier-sorted, groups are ordered by tier,
 diagnostic count and block ID, and only the first five groups expand with a `(+N more block(s))`
-tail. A warning rule touching more than three blocks adds a `lint_document(select=[...])` suggestion.
+tail. A warning rule touching more than three blocks asks for the top five blocks to be fixed in one
+`apply_operations` batch before `lint_document` is re-run for the remainder.
 
 `apply_operations` now distinguishes three outcomes: blocking errors, inline warnings on edited
-blocks, and a clean batch. The warning branch asks for one `UpdateBlock` batch before continuing
+blocks, and a clean batch. The warning branch asks for one `apply_operations` batch before continuing
 instead of blindly advancing the revision. `lint_document` uses the same grouped projection for its
 error and warning hints. Individual rule hints follow a three-part shape: target field/block, minimal
 repair action, and an anti-cheat guardrail (no synonym replacement; no invented numbers or sources).

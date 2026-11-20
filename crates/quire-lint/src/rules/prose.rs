@@ -48,7 +48,6 @@ const EXTREME_JARGON_CLICHES: &[&str] = &[
     "颗粒度",
     "深度赋能",
     "组合拳",
-    "打法",
     "令人瞩目",
     "辉煌成就",
     "无比强劲",
@@ -70,6 +69,7 @@ const EMPTY_JARGON: &[&str] = &[
     "赋能",
     "抓手",
     "矩阵",
+    "打法",
     "闭环",
     "生态",
     "赛道",
@@ -305,7 +305,7 @@ fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
                 "block `{}` contains empty AI-slop phrases: {words}",
                 block.id
             ),
-            "In this Paragraph via UpdateBlock, delete the listed water phrases and rewrite the opening as a concrete metric/entity sentence with an effect size or rank; do not replace them with another synonym cliché.",
+            "In this Paragraph via apply_operations, delete the listed water phrases and rewrite the opening as a concrete metric/entity sentence with an effect size or rank; do not replace them with another synonym cliché. quote exact policy or source terms in \"\" if needed.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -335,7 +335,7 @@ fn check_low_evidence(document: &ReportDocument, engine: &mut Engine<'_>) {
                 "block `{}` has {length} prose characters but no number, year, metric or citation",
                 block.id
             ),
-            "In this Paragraph via UpdateBlock, add a real number or `[^source_id]` already retrieved by tools, or cut the unsupported prose; never invent figures or citations to satisfy the check.",
+            "In this Paragraph via apply_operations, add a real number or `[^source_id]` already retrieved by tools, or cut the unsupported prose; never invent figures or citations to satisfy the check.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -385,7 +385,7 @@ fn check_template_parallel(document: &ReportDocument, engine: &mut Engine<'_>) {
                 block.id,
                 reasons.join("；")
             ),
-            "In this Paragraph via UpdateBlock, remove the mechanical connectives/parallel list and state each claim with its metric, mechanism or source evidence; do not swap in another template or synonym shell.",
+            "In this Paragraph via apply_operations, remove the mechanical connectives/parallel list and state each claim with its metric, mechanism or source evidence; do not swap in another template or synonym shell.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -446,7 +446,7 @@ fn check_contrast_and_hedging(document: &ReportDocument, engine: &mut Engine<'_>
                 block.id,
                 parts.join("；")
             ),
-            "In this Paragraph via UpdateBlock, delete the defensive or contrast shell and state the core fact, causal mechanism or quantitative comparison directly; do not replace it with another hedge or 'not X but Y' paraphrase.",
+            "In this Paragraph via apply_operations, delete the defensive or contrast shell and state the core fact, causal mechanism or quantitative comparison directly; do not replace it with another hedge or 'not X but Y' paraphrase.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -532,7 +532,7 @@ fn check_wall_of_text(document: &ReportDocument, engine: &mut Engine<'_>) {
                             "paragraph `{}` is a {char_len}-char wall of text without line breaks or list structure",
                             block.id
                         ),
-                        "In this Paragraph via UpdateBlock, split it into 2-3 focused paragraphs or convert enumerations to a bullet list/Table; fix this together with QR412/QR413 in one UpdateBlock batch when they hit the same block.",
+                        "In this Paragraph via apply_operations, split it into 2-3 focused paragraphs or convert enumerations to a bullet list/Table; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
                         Some(block.id.clone()),
                         Some(format!("blocks[{index}].text")),
                     );
@@ -548,7 +548,7 @@ fn check_wall_of_text(document: &ReportDocument, engine: &mut Engine<'_>) {
                                 "paragraph `{}` concludes {prose_streak} consecutive prose-only blocks ({prose_chars} chars) with no visual or heading break",
                                 block.id
                             ),
-                            "In this prose run via UpdateBlock, break it up with a subheading, bullet list, Pull Quote, Table, or chart; fix this together with QR412/QR413 in one UpdateBlock batch when they hit the same block.",
+                            "In this prose run via apply_operations, break it up with a subheading, bullet list, Pull Quote, Table, or chart; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
                             Some(block.id.clone()),
                             Some(format!("blocks[{index}].text")),
                         );

@@ -112,13 +112,8 @@ pub(super) fn summarize_diagnostics_for_hint(diagnostics: &[Diagnostic]) -> Stri
         .map(|(code, _)| *code)
         .collect::<Vec<_>>();
     if !high_frequency.is_empty() {
-        let select = high_frequency
-            .iter()
-            .map(|code| format!("\"{code}\""))
-            .collect::<Vec<_>>()
-            .join(", ");
         summary.push_str(&format!(
-            " High-frequency warning(s): {}. Use lint_document(select=[{select}]) to inspect them one rule at a time.",
+            " High-frequency warning(s): {}. Fix the top 5 blocks above in one apply_operations batch first, then re-run lint_document for the remaining blocks.",
             high_frequency.join(", ")
         ));
     }
@@ -150,7 +145,7 @@ pub(super) fn apply_operations_next_hint(
         all.extend_from_slice(&warnings);
         let summary = summarize_diagnostics_for_hint(&all);
         return format!(
-            "Committed as revision {revision} with {} blocking error(s) (and {} warning(s)). Priority targets: {summary}. Fix all rules on each listed block in one UpdateBlock batch, then call lint_document and continue at expected_revision={revision}.",
+            "Committed as revision {revision} with {} blocking error(s) (and {} warning(s)). Priority targets: {summary}. Fix all rules on each listed block in one apply_operations batch, then call lint_document and continue at expected_revision={revision}.",
             blocking_errors.len(),
             warnings.len()
         );
@@ -158,7 +153,7 @@ pub(super) fn apply_operations_next_hint(
     if !warnings.is_empty() {
         let summary = summarize_diagnostics_for_hint(&warnings);
         return format!(
-            "Committed as revision {revision} with {} warning(s) on edited blocks: {summary}. Rewrite affected blocks in one UpdateBlock batch before moving on (or add suppressible codes to block.lint_ignore ONLY if intentionally required), then continue at expected_revision={revision}.",
+            "Committed as revision {revision} with {} warning(s) on edited blocks: {summary}. Rewrite affected blocks in one apply_operations batch before moving on (or add suppressible codes to block.lint_ignore ONLY if intentionally required), then continue at expected_revision={revision}.",
             warnings.len()
         );
     }
@@ -180,13 +175,13 @@ pub(super) fn lint_document_next_hint(report: &LintReport) -> String {
     let summary = summarize_diagnostics_for_hint(&report.diagnostics);
     if report.has_errors() {
         return format!(
-            "Found {} error(s) and {} warning(s). Priority targets: {summary}. Fix errors first, batching co-occurring warnings on the same block in one UpdateBlock call.",
+            "Found {} error(s) and {} warning(s). Priority targets: {summary}. Fix errors first, batching co-occurring warnings on the same block in one apply_operations call.",
             report.summary.errors, report.summary.warnings
         );
     }
     if report.summary.warnings > 0 {
         return format!(
-            "0 errors, {} warning(s), {} suppressed. Priority targets: {summary}. Fix structural/chart warnings before prose polish in one UpdateBlock batch per block; use block.lint_ignore only when a suppressible warning is genuinely intentional, or call read_as_markdown if ready.",
+            "0 errors, {} warning(s), {} suppressed. Priority targets: {summary}. Fix structural/chart warnings before prose polish in one apply_operations batch per block; use block.lint_ignore only when a suppressible warning is genuinely intentional, or call read_as_markdown if ready.",
             report.summary.warnings, report.summary.suppressed
         );
     }
@@ -286,8 +281,8 @@ mod tests {
     }
 
     #[test]
-    fn summary_suggests_select_for_high_frequency_warnings()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn summary_suggests_batching_high_frequency_warnings() -> Result<(), Box<dyn std::error::Error>>
+    {
         let mut diagnostics = Vec::new();
         for index in 1..=4 {
             let id = block_id(format!("b_{index}").as_str())?;
@@ -298,7 +293,13 @@ mod tests {
             summary.contains("High-frequency warning(s): QR412"),
             "{summary}"
         );
-        assert!(summary.contains("select=[\"QR412\"]"), "{summary}");
+        assert!(
+            summary.contains(
+                "Fix the top 5 blocks above in one apply_operations batch first, then re-run lint_document for the remaining blocks."
+            ),
+            "{summary}"
+        );
+        assert!(!summary.contains("select=["), "{summary}");
         Ok(())
     }
 

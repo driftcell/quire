@@ -430,7 +430,7 @@ fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>) {
                 "block `{}` states a numeric claim without an inline or block-level citation",
                 block.id
             ),
-            "In this Paragraph or block `sources` via UpdateBlock, attach a real `[^source_id]` or `source_ids` entry already retrieved by tools when the figure supports a factual claim, or remove the number; never invent a source or figure.",
+            "In this Paragraph or block `sources` via apply_operations, attach a real `[^source_id]` or `source_ids` entry already retrieved by tools when the figure supports a factual claim, or remove the number; never invent a source or figure.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );

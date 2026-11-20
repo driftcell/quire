@@ -860,6 +860,13 @@ fn qr412_detects_strong_ai_cliches() {
             "{}",
             diagnostic.hint
         );
+        assert!(
+            diagnostic
+                .hint
+                .contains("quote exact policy or source terms in \"\" if needed."),
+            "{}",
+            diagnostic.hint
+        );
     }
 }
 
@@ -905,6 +912,21 @@ fn qr412_counts_new_b_class_words_by_distinct_density() {
         .blocks
         .push(paragraph("transition-pair", "与此同时，总体平稳。"));
     assert!(has_code(&lint_document(&transition_pair), "QR412"));
+
+    let mut tactics_single = doc();
+    tactics_single
+        .blocks
+        .push(paragraph("tactics-single", "市场打法需要调整。"));
+    assert!(
+        !has_code(&lint_document(&tactics_single), "QR412"),
+        "single B-class word must remain below the density threshold"
+    );
+
+    let mut tactics_pair = doc();
+    tactics_pair
+        .blocks
+        .push(paragraph("tactics-pair", "市场打法与赋能协同。"));
+    assert!(has_code(&lint_document(&tactics_pair), "QR412"));
 }
 
 #[test]
@@ -1520,6 +1542,15 @@ fn qr418_flags_generic_and_counting_headings() {
     assert!(
         !has_code(&lint_document(&concrete), "QR418"),
         "a counting heading with a concrete colon suffix must be exempt"
+    );
+
+    let mut decimal = doc();
+    decimal
+        .blocks
+        .push(heading("decimal-percent", 2, "3.5% 增速背后的结构性因素"));
+    assert!(
+        !has_code(&lint_document(&decimal), "QR418"),
+        "a decimal percentage must not be treated as heading numbering"
     );
 }
 

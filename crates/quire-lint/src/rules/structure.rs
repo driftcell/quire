@@ -367,7 +367,7 @@ fn check_consecutive_visuals(document: &ReportDocument, engine: &mut Engine<'_>)
                             "block `{}` is the 3rd consecutive visual block without intervening analytical prose",
                             block.id
                         ),
-                        "Between these visual blocks via UpdateBlock, insert a concise analytical Paragraph or Quote that states the takeaway, comparison, or anomaly; fix this together with QR412/QR413 in one UpdateBlock batch when they hit the same block.",
+                        "Between these visual blocks via apply_operations (InsertAfter), insert a concise analytical Paragraph or Quote that states the takeaway, comparison, or anomaly; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
                         Some(block.id.clone()),
                         Some(format!("blocks[{index}]")),
                     );
@@ -469,7 +469,7 @@ fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
                 block.id,
                 text.trim()
             ),
-            "Rewrite this Heading via UpdateBlock as a conclusion-first title naming the specific subject, metric, or takeaway (e.g. '算力与政策双轮驱动 Q3 增速达 24%'); fix this together with QR412/QR413 in one UpdateBlock batch when they hit the same block.",
+            "Rewrite this Heading via apply_operations as a conclusion-first title naming the specific subject, metric, or takeaway (e.g. '算力与政策双轮驱动 Q3 增速达 24%'); fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -576,7 +576,20 @@ fn strip_dotted_number(text: &str) -> Option<&str> {
     if !has_dot || end == 0 {
         return None;
     }
-    text.get(end..)
+    let suffix = text.get(end..)?;
+    if suffix.is_empty() || suffix.starts_with('%') || suffix.starts_with('‰') {
+        return None;
+    }
+    let last = text
+        .get(..end)
+        .and_then(|prefix| prefix.chars().next_back());
+    if last != Some('.') {
+        let next = suffix.chars().next()?;
+        if !next.is_whitespace() && next.is_ascii() {
+            return None;
+        }
+    }
+    Some(suffix)
 }
 
 fn strip_chinese_number(text: &str) -> Option<&str> {
@@ -895,4 +908,18 @@ fn has_manual_number_prefix(title: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_dotted_number;
+
+    #[test]
+    fn dotted_number_prefix_stops_before_percentages() {
+        assert_eq!(strip_dotted_number("3.5% 增速"), None);
+        assert_eq!(strip_dotted_number("3.5‰ 增速"), None);
+        assert_eq!(strip_dotted_number("1.2 概述"), Some(" 概述"));
+        assert_eq!(strip_dotted_number("1.2概述"), Some("概述"));
+        assert_eq!(strip_dotted_number("1.2"), None);
+    }
 }
