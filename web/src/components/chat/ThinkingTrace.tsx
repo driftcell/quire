@@ -23,7 +23,6 @@ export interface ThinkingTraceProps {
   content: string;
   isStreaming: boolean;
   isActive?: boolean;
-  defaultOpen?: boolean;
   /** Server timestamp when this thinking segment started. */
   startedAtMs?: number;
   /** Server-settled duration for a completed thinking segment. */
@@ -43,11 +42,10 @@ export function ThinkingTrace({
   content,
   isStreaming,
   isActive = false,
-  defaultOpen,
   startedAtMs,
   durationMs,
 }: ThinkingTraceProps) {
-  const [open, setOpen] = useState<boolean | undefined>(defaultOpen);
+  const [open, setOpen] = useState<boolean | undefined>(undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const { text: smoothedContent } = useSmoothStreamText(content, isStreaming);
 

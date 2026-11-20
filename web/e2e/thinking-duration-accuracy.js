@@ -210,6 +210,15 @@ async (page) => {
   const liveThinkingText = (
     await page.locator('[data-slot="thinking-trace"]').first().innerText()
   ).replace(/\s+/g, " ");
+  const liveThinkingTrigger = page
+    .locator(
+      '[data-slot="thinking-trace"] [data-slot="trace-collapsible-trigger"]',
+    )
+    .first();
+  assert(
+    (await liveThinkingTrigger.getAttribute("aria-expanded")) === "true",
+    "streaming thinking should be expanded by default",
+  );
   const liveSeconds = secondsFromText(liveThinkingText);
   assert(
     liveSeconds !== null && liveSeconds >= 11,

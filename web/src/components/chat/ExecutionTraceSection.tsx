@@ -91,7 +91,6 @@ function ActivitySegment({
           content={item.text}
           isStreaming={item.isStreaming}
           isActive={item.isActive}
-          defaultOpen={false}
           startedAtMs={item.startedAtMs}
           durationMs={item.durationMs}
         />

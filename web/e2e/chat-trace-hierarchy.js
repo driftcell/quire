@@ -1111,6 +1111,10 @@ async (page) => {
     )
     .first();
   await thinkingTrigger.waitFor({ state: "visible", timeout: 8000 });
+  assert(
+    (await thinkingTrigger.getAttribute("aria-expanded")) === "false",
+    "settled thinking should auto-collapse",
+  );
   await thinkingTrigger.click();
   await page.waitForFunction(
     () => {
