@@ -17,8 +17,19 @@ use tracing::warn;
 
 use crate::{
     bus::RedisBus,
+    compaction::CompactionState,
     error::{RuntimeError, RuntimeResult},
 };
+
+pub struct CompactionWrite<'a> {
+    pub session_id: &'a str,
+    pub summary: &'a str,
+    pub up_to_message_id: &'a str,
+    pub marker_before_message_id: Option<&'a str>,
+    pub pinned_system_prompt: &'a str,
+    pub kb_version: u64,
+    pub context_usage: &'a quire_session_protocol::ContextUsage,
+}
 
 #[derive(Debug, Clone)]
 pub struct RunRecord {
@@ -124,7 +135,7 @@ impl RuntimeStore {
     pub async fn get_session_summary(&self, session_id: &str) -> RuntimeResult<SessionSummary> {
         let row = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
-                      active_run_status, last_event_seq, context_usage, created_at, updated_at
+                      active_run_status, last_event_seq, context_usage, compacted_at, created_at, updated_at
                FROM agent_sessions WHERE session_id = $1"#,
         )
         .bind(session_id)
@@ -158,7 +169,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Vec<SessionSummary>> {
         let rows = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
-                      active_run_status, last_event_seq, context_usage, created_at, updated_at
+                      active_run_status, last_event_seq, context_usage, compacted_at, created_at, updated_at
                FROM agent_sessions
                ORDER BY updated_at DESC, session_id ASC
                LIMIT $1 OFFSET $2"#,
@@ -240,6 +251,89 @@ impl RuntimeStore {
         if updated.rows_affected() == 0 {
             return Err(RuntimeError::SessionNotFound(session_id.to_string()));
         }
+        Ok(())
+    }
+
+    pub async fn compaction_state(&self, session_id: &str) -> RuntimeResult<CompactionState> {
+        let row = sqlx::query(
+            r#"SELECT compaction_summary, compacted_up_to_message_id, compacted_at
+               FROM agent_sessions WHERE session_id = $1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
+        Ok(CompactionState {
+            summary: row.try_get("compaction_summary")?,
+            up_to_message_id: row.try_get("compacted_up_to_message_id")?,
+            compacted_at: row.try_get("compacted_at")?,
+        })
+    }
+
+    /// Atomically advance the compaction anchor, persist the marker message and
+    /// switch the pinned prompt to the latest KB version. Queue items and
+    /// questions are intentionally untouched.
+    pub async fn apply_compaction(&self, write: &CompactionWrite<'_>) -> RuntimeResult<()> {
+        let mut tx = self.pool.begin().await?;
+        let status: Option<String> = sqlx::query_scalar(
+            "SELECT active_run_status FROM agent_sessions WHERE session_id = $1 FOR UPDATE",
+        )
+        .bind(write.session_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some(status) = status else {
+            return Err(RuntimeError::SessionNotFound(write.session_id.to_string()));
+        };
+        if status == ActiveRunStatus::Running.as_str() {
+            return Err(RuntimeError::CompactionConflict(
+                "session has an active run; wait for it to finish before compacting".into(),
+            ));
+        }
+
+        let usage = serde_json::to_value(write.context_usage)?;
+        sqlx::query(
+            r#"UPDATE agent_sessions
+               SET compaction_summary = $2,
+                   compacted_up_to_message_id = $3,
+                   compacted_at = NOW(),
+                   pinned_system_prompt = $4,
+                   synced_kb_version = $5,
+                   context_usage = $6,
+                   updated_at = NOW()
+               WHERE session_id = $1"#,
+        )
+        .bind(write.session_id)
+        .bind(write.summary)
+        .bind(write.up_to_message_id)
+        .bind(write.pinned_system_prompt)
+        .bind(i64::try_from(write.kb_version).unwrap_or(i64::MAX))
+        .bind(usage)
+        .execute(&mut *tx)
+        .await?;
+
+        let message_id = short_id("msg");
+        let client_msg_id = format!("compaction:{message_id}");
+        sqlx::query(
+            r#"INSERT INTO agent_messages
+               (message_id, session_id, client_msg_id, role, content, attachment_ids, run_id, created_at)
+               VALUES (
+                   $1, $2, $3, 'compaction', $4, '[]'::jsonb, NULL,
+                   COALESCE(
+                       (SELECT created_at - INTERVAL '1 microsecond'
+                        FROM agent_messages WHERE message_id = $5),
+                       NOW()
+                   )
+               )"#,
+        )
+        .bind(&message_id)
+        .bind(write.session_id)
+        .bind(client_msg_id)
+        .bind(write.summary)
+        .bind(write.marker_before_message_id)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
         Ok(())
     }
 
@@ -1290,6 +1384,7 @@ fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
         })?,
         last_event_seq: u64::try_from(last_seq).unwrap_or(0),
         context_usage: serde_json::from_value(usage_raw).unwrap_or_default(),
+        compacted_at: row.try_get("compacted_at")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })

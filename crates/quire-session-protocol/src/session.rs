@@ -69,6 +69,7 @@ pub enum MessageRole {
     Assistant,
     Tool,
     System,
+    Compaction,
 }
 
 impl MessageRole {
@@ -78,6 +79,7 @@ impl MessageRole {
             Self::Assistant => "assistant",
             Self::Tool => "tool",
             Self::System => "system",
+            Self::Compaction => "compaction",
         }
     }
 
@@ -87,6 +89,7 @@ impl MessageRole {
             "assistant" => Some(Self::Assistant),
             "tool" => Some(Self::Tool),
             "system" => Some(Self::System),
+            "compaction" => Some(Self::Compaction),
             _ => None,
         }
     }
@@ -305,6 +308,8 @@ pub struct SessionSummary {
     pub last_event_seq: u64,
     #[serde(default)]
     pub context_usage: ContextUsage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compacted_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -396,6 +401,7 @@ mod tests {
                     context_limit: 200_000,
                     ..ContextUsage::default()
                 },
+                compacted_at: None,
                 created_at: now,
                 updated_at: now,
             },

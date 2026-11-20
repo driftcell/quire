@@ -4,6 +4,7 @@
 
 pub mod admin_mcp;
 pub mod bus;
+pub mod compaction;
 pub mod config;
 pub mod control;
 pub mod delta;

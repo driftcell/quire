@@ -1076,6 +1076,7 @@ struct AgentExecution {
     agent_id: String,
     model_route: String,
     allowed_tools: Vec<String>,
+    disable_tools: bool,
     system_prompt: String,
     kb_branch: Option<String>,
     doc_id: Option<String>,
@@ -1160,7 +1161,9 @@ impl RigModelCore {
         } else {
             request.model_route.clone()
         };
-        let allowed_tools = if request.allowed_tools.is_empty() {
+        let allowed_tools = if request.disable_tools {
+            Vec::new()
+        } else if request.allowed_tools.is_empty() {
             agent.allowed_tools.clone()
         } else {
             request.allowed_tools.clone()
@@ -1170,6 +1173,7 @@ impl RigModelCore {
             agent_id: request.agent_id,
             model_route,
             allowed_tools,
+            disable_tools: request.disable_tools,
             system_prompt: request.system_prompt,
             kb_branch: branch,
             doc_id: request.doc_id,
@@ -1347,6 +1351,10 @@ impl RigModelCore {
                     _ => None,
                 })
                 .collect();
+            if execution.disable_tools {
+                final_text = text;
+                break;
+            }
             if calls.is_empty() {
                 final_text = text;
                 break;
@@ -1551,6 +1559,7 @@ impl RigModelCore {
                 agent_id: task.agent_name.clone(),
                 model_route: task.model.clone().unwrap_or(definition.model),
                 allowed_tools: definition.allowed_tools,
+                disable_tools: false,
                 system_prompt: definition.system_prompt,
                 kb_branch: parent.kb_branch.clone(),
                 doc_id: parent.doc_id.clone(),
@@ -1607,6 +1616,7 @@ fn context_message(message: &ContextMessage) -> Message {
         // Later system reminders are transient host guidance. Sending them as user content keeps
         // providers that only accept one leading system message happy.
         MessageRole::System => Message::user(message.content.clone()),
+        MessageRole::Compaction => Message::user(message.content.clone()),
         MessageRole::User | MessageRole::Tool => Message::user(message.content.clone()),
     }
 }
@@ -2237,6 +2247,7 @@ mod tests {
             agent_id: "main".into(),
             model_route: "stub/echo".into(),
             allowed_tools: vec!["probe".into()],
+            disable_tools: false,
             system_prompt: "test".into(),
             kb_branch: Some("main".into()),
             doc_id: None,
@@ -2478,6 +2489,7 @@ mod tests {
             agent_id: "main".into(),
             model_route: "stub/echo".into(),
             allowed_tools: vec!["ask_user".into()],
+            disable_tools: false,
             system_prompt: "test".into(),
             kb_branch: Some("main".into()),
             doc_id: Some("report".into()),

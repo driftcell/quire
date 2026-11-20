@@ -26,6 +26,22 @@ import type {
 } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
+function CompactionDivider({ summary }: { summary: string }) {
+  return (
+    <details
+      data-slot="compaction-divider"
+      className="group my-2 rounded-md border border-dashed border-border/70 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground"
+    >
+      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+        上下文已压缩
+      </summary>
+      <div className="mt-2 border-t pt-2 text-xs leading-5 whitespace-pre-wrap">
+        {summary}
+      </div>
+    </details>
+  );
+}
+
 export interface SessionStreamViewProps {
   sessionId: string;
   messages: SessionMessage[];
@@ -173,7 +189,10 @@ export function SessionStreamView({
   const visibleMessages = useMemo(() => {
     const persisted = messages.filter(
       (msg) =>
-        msg.role === "user" || msg.role === "assistant" || msg.role === "tool",
+        msg.role === "user" ||
+        msg.role === "assistant" ||
+        msg.role === "tool" ||
+        msg.role === "compaction",
     );
     const assistantRunIds = new Set(
       persisted
@@ -229,6 +248,16 @@ export function SessionStreamView({
               const trace = msg.run_id
                 ? traceByRunId.get(msg.run_id)
                 : undefined;
+              if (msg.role === "compaction") {
+                return (
+                  <MessageScrollerItem
+                    key={msg.message_id}
+                    messageId={msg.message_id}
+                  >
+                    <CompactionDivider summary={msg.content} />
+                  </MessageScrollerItem>
+                );
+              }
               if (msg.role === "tool") {
                 if (!trace) {
                   return null;

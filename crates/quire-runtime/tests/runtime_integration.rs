@@ -460,6 +460,20 @@ impl ModelStreamProvider for RecordingStreamProvider {
     }
 }
 
+struct FailingStreamProvider;
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for FailingStreamProvider {
+    async fn stream_turn(
+        &self,
+        _request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        Ok(Box::pin(futures::stream::iter(vec![Err(
+            RuntimeError::Internal("summary provider failed".into()),
+        )])))
+    }
+}
+
 #[derive(Clone)]
 struct GateStreamProvider {
     released: Arc<AtomicBool>,
@@ -493,6 +507,10 @@ impl ModelStreamProvider for GateStreamProvider {
             ModelStreamEvent::TextDelta("gated reply".into()),
         )])))
     }
+}
+
+fn compaction_summary_text() -> &'static str {
+    "## Objective & Goal\nhandoff summary\n## Confirmed Scope & Calibers\n2021 projects\n## Report State (doc_id / completed sections / source_ids)\ndoc=runtime-doc\n## Open Comments & Next Steps\ncontinue chapter 2"
 }
 
 fn question_items() -> Vec<QuestionItem> {
@@ -1280,6 +1298,344 @@ async fn knowledge_update_is_injected_once_and_synced_version_advances() {
             .any(|message| message.content.starts_with("<knowledge_update>"))
     );
     service.kb().delete_document(&document_id).await.unwrap();
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compaction_reuses_prefix_and_preserves_pending_state() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let (provider, requests) = RecordingStreamProvider::new(vec![ModelStreamEvent::TextDelta(
+        compaction_summary_text().into(),
+    )]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let session = service
+        .create_session(&unique("compact"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let old_prompt = "OLD PINNED PROMPT";
+    store
+        .set_pinned_prompt(&session.session_id, old_prompt, 0)
+        .await
+        .unwrap();
+    store
+        .insert_context_message(
+            &session.session_id,
+            MessageRole::User,
+            "old question",
+            "compact:old-user",
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .insert_context_message(
+            &session.session_id,
+            MessageRole::Assistant,
+            "old answer",
+            "compact:old-assistant",
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .enqueue_pending_message(
+            &session.session_id,
+            "compact:queue",
+            "queued follow-up",
+            PendingQueueSource::User,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    store
+        .create_question(&session.session_id, "run_pending", None, &question_items())
+        .await
+        .unwrap();
+    store
+        .update_context_usage(
+            &session.session_id,
+            &ContextUsage {
+                context_used: 180_000,
+                context_limit: 200_000,
+                ..ContextUsage::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let detail = service.compact(&session.session_id).await.unwrap();
+    assert!(detail.summary.compacted_at.is_some());
+    assert!(
+        detail
+            .pending_queue
+            .iter()
+            .any(|item| item.content == "queued follow-up")
+    );
+    assert!(detail.pending_question.is_some());
+    let marker = detail
+        .messages
+        .iter()
+        .find(|message| message.role == MessageRole::Compaction)
+        .expect("compaction marker");
+    assert!(marker.content.contains("handoff summary"));
+
+    let captured = requests.lock().await;
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].system_prompt, old_prompt);
+    assert!(captured[0].disable_tools);
+    assert_eq!(
+        captured[0]
+            .history
+            .iter()
+            .find(|message| message.content == "old answer")
+            .map(|message| message.content.as_str()),
+        Some("old answer")
+    );
+    drop(captured);
+
+    let (pinned, synced) = store.pinned_prompt(&session.session_id).await.unwrap();
+    assert_ne!(pinned.as_deref(), Some(old_prompt));
+    assert_eq!(synced, service.kb().current_version().await.unwrap());
+    let usage = detail.summary.context_usage.clone();
+    assert!(usage.context_used > 0 && usage.context_used < 180_000);
+
+    let again = service.compact(&session.session_id).await.unwrap();
+    assert_eq!(requests.lock().await.len(), 1);
+    assert_eq!(again.messages.len(), detail.messages.len());
+
+    store
+        .insert_context_message(
+            &session.session_id,
+            MessageRole::User,
+            "after anchor",
+            "compact:after",
+            None,
+        )
+        .await
+        .unwrap();
+    let resumed = service
+        .resume_context(&session.session_id, "next")
+        .await
+        .unwrap();
+    assert!(
+        resumed
+            .messages
+            .first()
+            .is_some_and(|message| message.content.contains("handoff summary"))
+    );
+    assert!(
+        resumed
+            .messages
+            .iter()
+            .any(|message| message.content == "after anchor")
+    );
+    assert!(
+        !resumed
+            .messages
+            .iter()
+            .any(|message| message.content == "old question")
+    );
+    assert!(
+        resumed
+            .messages
+            .iter()
+            .any(|message| message.content.contains("<report_state>"))
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compaction_failure_leaves_anchor_prompt_and_usage_untouched() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let service = service.with_model_stream_provider(Arc::new(FailingStreamProvider));
+    let session = service
+        .create_session(&unique("compact-fail"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    store
+        .set_pinned_prompt(&session.session_id, "OLD PINNED PROMPT", 0)
+        .await
+        .unwrap();
+    store
+        .insert_context_message(
+            &session.session_id,
+            MessageRole::User,
+            "keep me",
+            "compact-fail:user",
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .update_context_usage(
+            &session.session_id,
+            &ContextUsage {
+                context_used: 190_000,
+                context_limit: 200_000,
+                ..ContextUsage::default()
+            },
+        )
+        .await
+        .unwrap();
+    let before = service.session_detail(&session.session_id).await.unwrap();
+
+    assert!(service.compact(&session.session_id).await.is_err());
+    let after = service.session_detail(&session.session_id).await.unwrap();
+    let state = store.compaction_state(&session.session_id).await.unwrap();
+    assert!(state.summary.is_none());
+    assert!(state.up_to_message_id.is_none());
+    assert_eq!(
+        store
+            .pinned_prompt(&session.session_id)
+            .await
+            .unwrap()
+            .0
+            .as_deref(),
+        Some("OLD PINNED PROMPT")
+    );
+    assert_eq!(
+        after.summary.context_usage.context_used,
+        before.summary.context_usage.context_used
+    );
+    assert_eq!(after.messages.len(), before.messages.len());
+    assert!(
+        !after
+            .messages
+            .iter()
+            .any(|message| message.role == MessageRole::Compaction)
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compaction_conflicts_while_a_run_is_active() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("compact-running"), None)
+        .await
+        .unwrap();
+    let run = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await
+        .unwrap();
+
+    let error = service.compact(&session.session_id).await.unwrap_err();
+    assert!(matches!(error, RuntimeError::CompactionConflict(_)));
+    store
+        .finish_run(&run.run_id, "completed", None)
+        .await
+        .unwrap();
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn automatic_compaction_excludes_the_new_user_message_from_the_anchor() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let (provider, requests) = RecordingStreamProvider::with_turns(vec![
+        vec![ModelStreamEvent::TextDelta(
+            compaction_summary_text().into(),
+        )],
+        vec![ModelStreamEvent::TextDelta("normal reply".into())],
+    ]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let session = service
+        .create_session(&unique("compact-auto"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    store
+        .set_pinned_prompt(&session.session_id, "OLD PINNED PROMPT", 0)
+        .await
+        .unwrap();
+    store
+        .insert_context_message(
+            &session.session_id,
+            MessageRole::User,
+            "old question",
+            "compact-auto:user",
+            None,
+        )
+        .await
+        .unwrap();
+    let anchor = store
+        .insert_context_message(
+            &session.session_id,
+            MessageRole::Assistant,
+            "old answer",
+            "compact-auto:assistant",
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .update_context_usage(
+            &session.session_id,
+            &ContextUsage {
+                context_used: 180_000,
+                context_limit: 200_000,
+                ..ContextUsage::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let new_content = "new request after auto compaction";
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("compact-auto:new"),
+                content: new_content.into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let captured = requests.lock().await;
+    assert!(captured.len() >= 2);
+    assert!(captured[0].disable_tools);
+    assert!(
+        !captured[0]
+            .history
+            .iter()
+            .any(|message| message.content == new_content)
+    );
+    assert_eq!(captured[1].user_message, new_content);
+    drop(captured);
+
+    let state = store.compaction_state(&session.session_id).await.unwrap();
+    assert_eq!(
+        state.up_to_message_id.as_deref(),
+        Some(anchor.message_id.as_str())
+    );
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    let new_message = detail
+        .messages
+        .iter()
+        .find(|message| message.role == MessageRole::User && message.content == new_content)
+        .expect("new user message");
+    assert_ne!(
+        state.up_to_message_id.as_deref(),
+        Some(new_message.message_id.as_str())
+    );
+    let marker_index = detail
+        .messages
+        .iter()
+        .position(|message| message.role == MessageRole::Compaction)
+        .expect("compaction marker");
+    let new_index = detail
+        .messages
+        .iter()
+        .position(|message| message.message_id == new_message.message_id)
+        .expect("new message position");
+    assert!(marker_index < new_index);
+    assert!(detail.summary.context_usage.context_used < 180_000);
     service.delete_session(&session.session_id).await.unwrap();
 }
 

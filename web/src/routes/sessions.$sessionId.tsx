@@ -294,10 +294,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         });
       }}
       onCompact={async () => {
-        await compactSession(sessionId);
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
+        const detail = await compactSession(sessionId);
+        queryClient.setQueryData(["session", sessionId], detail);
       }}
     />
   );

@@ -92,6 +92,8 @@ pub struct ModelTurnRequest {
     pub model_route: String,
     /// Tool allow-list from the primary agent definition.
     pub allowed_tools: Vec<String>,
+    /// Run a single completion round with no tools (used by context compaction).
+    pub disable_tools: bool,
     /// Cancels model streaming, tool execution and subagent inference.
     pub cancellation: CancellationToken,
 }

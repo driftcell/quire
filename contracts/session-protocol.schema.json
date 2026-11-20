@@ -165,7 +165,8 @@
         "user",
         "assistant",
         "tool",
-        "system"
+        "system",
+        "compaction"
       ]
     },
     "PendingQuestion": {
@@ -639,6 +640,13 @@
           "items": {
             "$ref": "#/$defs/AttachmentMeta"
           }
+        },
+        "compacted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
         },
         "context_usage": {
           "$ref": "#/$defs/ContextUsage",
@@ -1260,6 +1268,13 @@
       "properties": {
         "active_run_status": {
           "$ref": "#/$defs/ActiveRunStatus"
+        },
+        "compacted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
         },
         "context_usage": {
           "$ref": "#/$defs/ContextUsage",

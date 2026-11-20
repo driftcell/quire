@@ -29,6 +29,11 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group";
 import { Progress } from "@/components/ui/progress";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
   ActiveRunStatus,
   ContextUsage,
@@ -127,6 +132,7 @@ export function PromptComposer({
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
+  const [compacting, setCompacting] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -420,18 +426,47 @@ export function PromptComposer({
                     </div>
                   </div>
                   {onCompact && (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="w-full gap-1.5"
-                      onClick={() => {
-                        void onCompact();
-                      }}
-                    >
-                      <Minimize2Icon className="size-3" />
-                      <span>压缩上下文 (/compact)</span>
-                    </Button>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={<span className="block w-full" />}
+                      >
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          data-slot="compact-context-button"
+                          className="w-full gap-1.5"
+                          disabled={isRunning || compacting}
+                          onClick={() => {
+                            if (isRunning || compacting) return;
+                            void (async () => {
+                              setCompacting(true);
+                              try {
+                                await onCompact();
+                              } catch {
+                                setSendError("上下文压缩失败，请稍后重试");
+                              } finally {
+                                setCompacting(false);
+                              }
+                            })();
+                          }}
+                        >
+                          <Minimize2Icon className="size-3" />
+                          <span>
+                            {compacting
+                              ? "正在压缩上下文..."
+                              : "压缩上下文 (/compact)"}
+                          </span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {isRunning
+                          ? "Agent 运行中暂不可压缩"
+                          : compacting
+                            ? "正在生成结构化交接摘要"
+                            : "压缩历史并切换到最新系统提示词"}
+                      </TooltipContent>
+                    </Tooltip>
                   )}
                 </HoverCardContent>
               </HoverCard>

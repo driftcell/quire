@@ -29,6 +29,8 @@ pub enum RuntimeError {
     PendingQueueItemNotFound(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    #[error("compaction conflict: {0}")]
+    CompactionConflict(String),
     #[error("knowledge-base branch promotion conflict")]
     KbConflict(Box<KbConflictReport>),
     #[error("internal runtime error: {0}")]
@@ -44,6 +46,7 @@ impl RuntimeError {
             Self::ChartPreviewNotFound(_) => "CHART_PREVIEW_NOT_FOUND",
             Self::PendingQueueItemNotFound(_) => "QUEUE_ITEM_NOT_FOUND",
             Self::InvalidRequest(_) => "INVALID_REQUEST",
+            Self::CompactionConflict(_) => "COMPACTION_CONFLICT",
             Self::KbConflict(_) => "KB_BRANCH_CONFLICT",
             Self::Database(_)
             | Self::Redis(_)
@@ -70,6 +73,9 @@ impl RuntimeError {
             Self::InvalidRequest(_) => {
                 "Check the request body against the session protocol schema."
             }
+            Self::CompactionConflict(_) => {
+                "Wait for the active run to finish, then retry compaction."
+            }
             Self::KbConflict(_) => {
                 "Resolve the overlapping items in the draft branch with kb_upsert_* or delete them, then call kb_promote_branch again."
             }
@@ -87,6 +93,7 @@ impl IntoResponse for RuntimeError {
             | Self::ChartPreviewNotFound(_)
             | Self::PendingQueueItemNotFound(_) => StatusCode::NOT_FOUND,
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            Self::CompactionConflict(_) => StatusCode::CONFLICT,
             Self::KbConflict(_) => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
@@ -97,6 +104,7 @@ impl IntoResponse for RuntimeError {
             | Self::ChartPreviewNotFound(_)
             | Self::PendingQueueItemNotFound(_)
             | Self::InvalidRequest(_)
+            | Self::CompactionConflict(_)
             | Self::KbConflict(_) => self.to_string(),
             _ => {
                 tracing::error!(error = ?self, "runtime request failed internally");

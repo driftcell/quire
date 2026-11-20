@@ -29,7 +29,7 @@ export type RunTraceSegment =
       [k: string]: unknown;
     };
 export type ActiveRunStatus = "idle" | "running" | "interrupted" | "failed" | "awaiting_input";
-export type MessageRole = "user" | "assistant" | "tool" | "system";
+export type MessageRole = "user" | "assistant" | "tool" | "system" | "compaction";
 /**
  * Why a message is waiting in the per-session queue.
  */
@@ -282,6 +282,7 @@ export interface SendMessageRequest {
 export interface SessionDetail {
   active_run_status: ActiveRunStatus;
   attachments?: AttachmentMeta[];
+  compacted_at?: string | null;
   context_usage?: ContextUsage;
   created_at: string;
   /**
@@ -359,6 +360,7 @@ export interface ResolvedQuestion {
 }
 export interface SessionSummary {
   active_run_status: ActiveRunStatus;
+  compacted_at?: string | null;
   context_usage?: ContextUsage1;
   created_at: string;
   /**
