@@ -1078,7 +1078,12 @@ async fn read_skill_resource_tool(
 
 #[rig_tool(
     name = "describe_task",
-    description = "Publish the current task focus to the frontend event stream."
+    description = "Report the current work stage to the user interface. Use it when you want the user to see what you are working on, especially during longer multi-step tasks.",
+    params(
+        title = "Short Chinese status phrase, ideally at most 16 characters.",
+        detail = "Optional clarification of the current focus or blocker.",
+        section_id = "Optional `block_id` of the report heading currently being worked on."
+    )
 )]
 fn describe_task_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -1087,6 +1092,12 @@ fn describe_task_tool(
     section_id: Option<String>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "`title` must be a non-empty status phrase",
+        ));
+    }
     runtime.event_scope.send(ModelStreamEvent::TaskFocus {
         title: title.clone(),
         detail: detail.clone(),
@@ -2604,6 +2615,29 @@ mod tests {
             Some(&json!(["questions"])),
             "ask_user must require the `questions` array"
         );
+    }
+
+    #[test]
+    fn describe_task_schema_advertises_status_and_parameters() {
+        let description = DESCRIBE_TASK_TOOL.description();
+        assert!(description.contains("current work stage"));
+        assert!(description.contains("user interface"));
+
+        let parameters = DESCRIBE_TASK_TOOL.parameters();
+        let properties = parameters
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("describe_task schema should have properties");
+        for name in ["title", "detail", "section_id"] {
+            assert!(properties.contains_key(name), "missing `{name}`");
+        }
+        let title = properties
+            .get("title")
+            .and_then(|value| value.get("description"))
+            .and_then(Value::as_str)
+            .expect("title description");
+        assert!(title.contains("16"));
+        assert_eq!(parameters.get("required"), Some(&json!(["title"])));
     }
 
     #[test]

@@ -79,7 +79,9 @@ retains `started_at` while a thinking phase is still streaming, and `RunTraceSub
 active thinking timer on their original server clocks instead of restarting from zero after refresh.
 
 Built-in tools (`load_skill`, `read_skill_resource`, `describe_task`, `spawn_subagents`) read skills
-from the session branch. `describe_task` emits `TaskFocus`. `spawn_subagents` reads each child
+from the session branch. `describe_task` lets an agent publish `TaskFocus { title, detail,
+section_id }` to the UI while working; the schema documents the short Chinese title, optional detail
+and section `block_id`. `spawn_subagents` reads each child
 `agent_definitions` row, resolves its model route/allowed tools, and runs real nested model loops
 concurrently with `tokio::task::JoinSet`. Parent lifecycle is emitted as `SubagentStarted` /
 `SubagentFinished`; child deltas, task focus, tool calls and usage are wrapped in `SubagentEvent` so
@@ -154,6 +156,7 @@ to live and historical segment builders.
 
 Unit coverage in `crates/quire-runtime/src/rig_agent.rs`:
 
+- `describe_task` schema advertises the status title, detail and section parameters
 - partial `apply_operations` argument block extraction
 - preview ID merge
 - real usage mapping with a 64k context limit

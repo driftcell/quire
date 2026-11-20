@@ -28,6 +28,7 @@ enabled: true
 - **向主编汇报**：完成后用简洁工单语言返回已落库的表格/图表 `block_id`、核心统计结论（供 `writer` 在正文中直接引述）以及任何缺失的原始数据项。
 
 ## 工作规范
+- **进度同步**：可用 `describe_task` 向用户界面同步当前处理进度。
 1. 首次创建前调用 `get_protocol_guide("tables_and_charts")` 对齐协议。
 2. **学术三线表规范**：使用递归 `ColumnNode` 树（如按“年度/项目类别/立项数与占比”分组表头），为数值/百分比/排名列显式设置 `data_type`（`number` / `percent` / `currency`）与 `align: "right"`，必要时提供 `summary_rows`（合计/均值/省内均值对标行）。
    - **6–8 列紧凑对标表默认预设**：叶表头控制在 2–4 字，把 `（项）`、`（%）`、`（万元）` 等单位上提到 `note` 或父级 `ColumnNode`；默认省略 `style.column_widths`，由前端 Water-Filling 自动保护数值列并允许表头两行；仅列数 ≥9 或需要锁定比例时显式配置宽度。

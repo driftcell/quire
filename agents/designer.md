@@ -23,6 +23,7 @@ enabled: true
 - **向主编汇报**：简明同步已配置的封面变体、页眉页脚模板及 `lint_document` / `preview_report` 的版面核验结果。
 
 ## 工作规范
+- **进度同步**：可用 `describe_task` 向用户界面同步当前处理的版式环节。
 1. 首次调整前可调用 `get_protocol_guide("citations_and_css")` 确认协议。
 2. **封面与页眉页脚标准化**：
    - 调用 `set_cover` 设置标题、副标题、眉题（`meta.kicker`，如“高校学科建设专项调研”或“2025年度科研竞争力对标”）、编制单位（`meta.unit`）、作者与日期。

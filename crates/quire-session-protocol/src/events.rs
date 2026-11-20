@@ -252,6 +252,29 @@ mod tests {
     }
 
     #[test]
+    fn task_focus_roundtrips_with_frontend_field_names() {
+        let event = SessionEvent::new(
+            5,
+            "run_main",
+            "analyst",
+            None,
+            SessionEventKind::TaskFocus {
+                title: "正在绘制人才分布图".into(),
+                detail: Some("按学科门类拆分".into()),
+                section_id: Some("sec3_h2".into()),
+            },
+        );
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["event"], "task_focus");
+        assert_eq!(json["title"], "正在绘制人才分布图");
+        assert_eq!(json["detail"], "按学科门类拆分");
+        assert_eq!(json["section_id"], "sec3_h2");
+        assert_eq!(event.event_name(), "task_focus");
+        let decoded: SessionEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
     fn questionnaire_requested_is_terminal_and_roundtrips() {
         let event = SessionEvent::new(
             4,

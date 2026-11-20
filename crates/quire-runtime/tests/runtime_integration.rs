@@ -3481,6 +3481,23 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
             .expect("expected event")
     };
     let task_focus = seq(&|event| matches!(event.kind, SessionEventKind::TaskFocus { .. }));
+    let task_focus_event = events
+        .iter()
+        .find(|event| matches!(event.kind, SessionEventKind::TaskFocus { .. }))
+        .expect("task focus event");
+    assert_eq!(task_focus_event.agent_id, "main");
+    match &task_focus_event.kind {
+        SessionEventKind::TaskFocus {
+            title,
+            detail,
+            section_id,
+        } => {
+            assert_eq!(title, "Review chapter");
+            assert_eq!(detail.as_deref(), Some("checking citations"));
+            assert_eq!(section_id.as_deref(), Some("ch1"));
+        }
+        other => panic!("expected task focus, got {other:?}"),
+    }
     let subagent_started =
         seq(&|event| matches!(event.kind, SessionEventKind::SubagentStarted { .. }));
     let subagent_text = seq(&|event| {
