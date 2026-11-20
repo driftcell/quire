@@ -1,5 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BrainIcon, LoaderCircleIcon } from "lucide-react";
+import {
+  MessageScroller,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
 import {
   Trace,
   TraceCollapsible,
@@ -20,8 +27,6 @@ export interface ThinkingTraceProps {
   durationMs?: number;
 }
 
-const STICK_TO_BOTTOM_THRESHOLD_PX = 24;
-
 function formatDurationSeconds(totalSeconds: number): string {
   if (totalSeconds < 60) {
     return `${totalSeconds}秒`;
@@ -41,9 +46,6 @@ export function ThinkingTrace({
   const [open, setOpen] = useState<boolean | undefined>(defaultOpen);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const startedAtRef = useRef<number | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const innerRef = useRef<HTMLDivElement>(null);
-  const stickToBottomRef = useRef(true);
 
   const hasContent = content.trim().length > 0;
   const expanded = open ?? (isStreaming || isActive);
@@ -63,7 +65,6 @@ export function ThinkingTrace({
     if (!isStreaming) {
       return undefined;
     }
-    stickToBottomRef.current = true;
     if (startedAtRef.current === null) {
       startedAtRef.current = Date.now();
     }
@@ -76,31 +77,6 @@ export function ThinkingTrace({
     }, 1000);
     return () => window.clearInterval(timer);
   }, [isStreaming]);
-
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    if (!el || !hasContent || !expanded || !isStreaming) {
-      return;
-    }
-    if (stickToBottomRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [expanded, hasContent, isStreaming]);
-
-  useEffect(() => {
-    const inner = innerRef.current;
-    const el = scrollRef.current;
-    if (!inner || !el || !hasContent || !expanded || !isStreaming) {
-      return undefined;
-    }
-    const observer = new ResizeObserver(() => {
-      if (stickToBottomRef.current) {
-        el.scrollTop = el.scrollHeight;
-      }
-    });
-    observer.observe(inner);
-    return () => observer.disconnect();
-  }, [expanded, hasContent, isStreaming]);
 
   if (!hasContent) {
     return null;
@@ -130,21 +106,23 @@ export function ThinkingTrace({
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="mt-1 pl-6">
-          <div
-            ref={scrollRef}
-            onScroll={() => {
-              const el = scrollRef.current;
-              if (!el) return;
-              stickToBottomRef.current =
-                el.scrollHeight - el.scrollTop - el.clientHeight <=
-                STICK_TO_BOTTOM_THRESHOLD_PX;
-            }}
-            className="scroll-fade max-h-32 overflow-y-auto pr-2 text-xs leading-5 text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          <MessageScrollerProvider
+            autoScroll
+            defaultScrollPosition="end"
+            scrollEdgeThreshold={24}
           >
-            <div ref={innerRef} className="whitespace-pre-wrap break-words">
-              {content}
-            </div>
-          </div>
+            <MessageScroller className="max-h-32">
+              <MessageScrollerViewport className="scroll-fade pr-2 text-xs leading-5 text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <MessageScrollerContent className="gap-0">
+                  <MessageScrollerItem messageId="thinking-content">
+                    <div className="whitespace-pre-wrap break-words">
+                      {content}
+                    </div>
+                  </MessageScrollerItem>
+                </MessageScrollerContent>
+              </MessageScrollerViewport>
+            </MessageScroller>
+          </MessageScrollerProvider>
         </TraceCollapsibleContent>
       </TraceCollapsible>
     </Trace>
