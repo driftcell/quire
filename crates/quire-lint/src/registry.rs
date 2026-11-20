@@ -136,8 +136,8 @@ define_rules! {
 
     EchartsDataMissing = "QR301", "echarts-data-missing", Error, false;
     EchartsJsFunction = "QR302", "echarts-js-function", Error, false;
-    EchartsOptionMissing = "QR303", "echarts-option-missing", Error, true;
-    EchartsOptionNotObject = "QR304", "echarts-option-not-object", Error, true;
+    EchartsOptionMissing = "QR303", "echarts-option-missing", Error, false;
+    EchartsOptionNotObject = "QR304", "echarts-option-not-object", Error, false;
     EchartsSeriesTypeInvalid = "QR305", "echarts-series-type-invalid", Error, true;
     EchartsIndexOutOfRange = "QR306", "echarts-index-out-of-range", Error, true;
     EchartsCoordinateMissing = "QR307", "echarts-coordinate-missing", Error, true;
@@ -228,13 +228,13 @@ mod tests {
     fn core_and_safety_rules_are_not_suppressible() {
         for code in [
             "QR001", "QR002", "QR003", "QR004", "QR005", "QR006", "QR007", "QR008", "QR101",
-            "QR301", "QR302", "QR501",
+            "QR301", "QR302", "QR303", "QR304", "QR501",
         ] {
-            let rule = RULES
-                .iter()
-                .find(|rule| rule.code == code)
-                .expect("registered rule");
-            assert!(!rule.suppressible, "{code} must not be suppressible");
+            let rule = RULES.iter().find(|rule| rule.code == code);
+            assert!(
+                rule.is_some_and(|rule| !rule.suppressible),
+                "{code} must be registered and not suppressible"
+            );
         }
     }
 

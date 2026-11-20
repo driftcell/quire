@@ -190,13 +190,15 @@ mod tests {
     use super::*;
     use crate::registry::RuleId;
 
-    fn document() -> ReportDocument {
-        ReportDocument::new(quire_protocol::DocId::parse("test-doc").expect("doc id"))
+    fn document() -> Result<ReportDocument, Box<dyn std::error::Error>> {
+        Ok(ReportDocument::new(quire_protocol::DocId::parse(
+            "test-doc",
+        )?))
     }
 
     #[test]
-    fn empty_document_reports_and_summarizes() {
-        let report = lint_document(&document());
+    fn empty_document_reports_and_summarizes() -> Result<(), Box<dyn std::error::Error>> {
+        let report = lint_document(&document()?);
         assert!(
             report
                 .diagnostics
@@ -207,12 +209,13 @@ mod tests {
             report.diagnostics.len(),
             report.summary.errors + report.summary.warnings + report.summary.infos
         );
+        Ok(())
     }
 
     #[test]
-    fn category_select_keeps_only_that_category() {
+    fn category_select_keeps_only_that_category() -> Result<(), Box<dyn std::error::Error>> {
         let report = lint_document_with_options(
-            &document(),
+            &document()?,
             &LintOptions {
                 select: vec!["QR4".into()],
                 ..LintOptions::default()
@@ -225,6 +228,7 @@ mod tests {
                 .all(|diagnostic| diagnostic.code.starts_with("QR4"))
         );
         assert!(!report.diagnostics.is_empty());
+        Ok(())
     }
 
     #[test]

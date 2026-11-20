@@ -34,49 +34,68 @@ fn check_column_width(
     shape: &TableShape,
     index: usize,
 ) {
-    let column_count = shape.leaves.len();
-    if column_count == 0 {
+    if shape.leaves.is_empty() {
         return;
     }
-    let implicit_width = A4_CONTENT_WIDTH_PX / column_count as f64;
+    let widths = block.style.column_widths.as_ref();
+    let mut widest_implicit: Option<(&str, &str, f64)> = None;
+    let mut total_required = 0.0;
+    let mut has_implicit = false;
     for leaf in &shape.leaves {
-        if !has_cjk(&leaf.label) {
-            continue;
-        }
-        let header_units = display_width(&leaf.label);
-        if header_units < 6 {
-            continue;
-        }
-        let required = header_units as f64 * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
-        let explicit = block
-            .style
-            .column_widths
-            .as_ref()
+        let header_units = display_width(&leaf.label).max(1) as f64;
+        let required = header_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
+        total_required += required;
+        let explicit = widths
             .and_then(|widths| widths.get(&leaf.key))
             .and_then(|raw| parse_css_px(raw));
-        let available = explicit.unwrap_or(implicit_width);
-        if available + 0.5 >= required {
+        let Some(available) = explicit else {
+            has_implicit = true;
+            if has_cjk(&leaf.label)
+                && header_units >= 6.0
+                && widest_implicit
+                    .as_ref()
+                    .is_none_or(|(_, _, width)| required > *width)
+            {
+                widest_implicit = Some((leaf.key.as_str(), leaf.label.as_str(), required));
+            }
+            continue;
+        };
+        if !has_cjk(&leaf.label) || header_units < 6.0 || available + 0.5 >= required {
             continue;
         }
-        let reason = if explicit.is_some() {
-            format!(
-                "explicit column width is {:.0}px but header `{}` needs about {:.0}px",
-                available, leaf.label, required
-            )
-        } else {
-            format!(
-                "{column_count} columns leave about {:.0}px per column, but header `{}` needs about {:.0}px",
-                available, leaf.label, required
-            )
-        };
         engine.report(
             RuleId::TableColumnTooNarrow,
-            format!("table `{}` column `{}` is too narrow: {reason}", block.id, leaf.key),
+            format!(
+                "table `{}` column `{}` is too narrow: explicit column width is {:.0}px but header `{}` needs about {:.0}px",
+                block.id, leaf.key, available, leaf.label, required
+            ),
             "shorten the header, reduce the column count, or reserve a wider explicit width such as `120px`/`20%`; CJK headers wrap vertically when squeezed.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].columns.{}", leaf.key)),
         );
     }
+
+    if !has_implicit || total_required <= A4_CONTENT_WIDTH_PX + 0.5 {
+        return;
+    }
+    let Some((key, label, required)) = widest_implicit else {
+        return;
+    };
+    engine.report(
+        RuleId::TableColumnTooNarrow,
+        format!(
+            "table `{}` needs about {:.0}px for {} columns, exceeding the 640px A4 content width; column `{}` header `{}` needs about {:.0}px and will be squeezed",
+            block.id,
+            total_required,
+            shape.leaves.len(),
+            key,
+            label,
+            required
+        ),
+        "shorten long CJK headers, reduce the column count, or give the widest column an explicit width so Water-Filling can allocate enough space.",
+        Some(block.id.clone()),
+        Some(format!("blocks[{index}].columns.{key}")),
+    );
 }
 
 fn check_empty_columns(

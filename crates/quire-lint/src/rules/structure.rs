@@ -330,10 +330,10 @@ fn check_inline_syntax(document: &ReportDocument, engine: &mut Engine<'_>) {
             _ => continue,
         };
         let mut issues = Vec::new();
-        if text.matches("**").count() % 2 != 0 {
+        if !text.matches("**").count().is_multiple_of(2) {
             issues.push("unclosed `**` bold marker");
         }
-        if text.matches('$').count() % 2 != 0 {
+        if has_unpaired_math_delimiter(text) {
             issues.push("unpaired `$` math delimiter");
         }
         if has_unclosed_link(text) {
@@ -496,6 +496,41 @@ fn has_unclosed_link(text: &str) -> bool {
         start = after;
     }
     false
+}
+
+/// Count only math delimiters. Currency forms such as `$500`, `$ 500` and `$12.5M`
+/// are not formula delimiters, and escaped `\$` is ignored.
+fn has_unpaired_math_delimiter(text: &str) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut delimiters = 0usize;
+    for (index, ch) in chars.iter().enumerate() {
+        if *ch != '$' {
+            continue;
+        }
+        if index
+            .checked_sub(1)
+            .and_then(|previous| chars.get(previous))
+            == Some(&'\\')
+        {
+            continue;
+        }
+        let mut next = index + 1;
+        while let Some(candidate) = chars.get(next) {
+            if candidate.is_whitespace() {
+                next += 1;
+                continue;
+            }
+            break;
+        }
+        if chars
+            .get(next)
+            .is_some_and(|candidate| candidate.is_ascii_digit())
+        {
+            continue;
+        }
+        delimiters += 1;
+    }
+    !delimiters.is_multiple_of(2)
 }
 
 fn has_manual_number_prefix(title: &str) -> bool {

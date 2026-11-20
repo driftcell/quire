@@ -18,15 +18,17 @@ use quire_protocol::{
 };
 
 fn doc() -> ReportDocument {
-    ReportDocument::new(DocId::parse("lint-doc").unwrap())
+    ReportDocument::new(
+        DocId::parse("lint-doc").unwrap_or_else(|error| panic!("valid lint doc id: {error}")),
+    )
 }
 
 fn bid(raw: &str) -> BlockId {
-    BlockId::parse(raw).unwrap()
+    BlockId::parse(raw).unwrap_or_else(|error| panic!("valid block id `{raw}`: {error}"))
 }
 
 fn sid(raw: &str) -> SourceId {
-    SourceId::parse(raw).unwrap()
+    SourceId::parse(raw).unwrap_or_else(|error| panic!("valid source id `{raw}`: {error}"))
 }
 
 fn paragraph(id: &str, text: &str) -> Block {
@@ -114,8 +116,12 @@ fn finding<'a>(report: &'a LintReport, code: &str) -> &'a quire_protocol::Diagno
 }
 
 fn chart(option: serde_json::Value) -> Block {
+    chart_named("chart", option)
+}
+
+fn chart_named(id: &str, option: serde_json::Value) -> Block {
     Block::new(
-        bid("chart"),
+        bid(id),
         BlockKind::Echarts(EchartsBlock {
             title: Some("Revenue".into()),
             height: 320,
@@ -347,6 +353,7 @@ fn table_layout_rules_are_detected() {
         vec![wide_row.clone(), wide_row],
     ));
     assert!(has_code(&lint_document(&wide), "QR204"));
+    assert!(has_code(&lint_document(&wide), "QR201"));
 
     let mut units = doc();
     units.blocks.push(table(
@@ -413,6 +420,31 @@ fn chart_safety_rules_are_detected() {
 }
 
 #[test]
+fn echarts_render_blockers_cannot_be_ignored() {
+    let mut document = doc();
+    let mut missing = chart_named("missing-option", serde_json::Value::Null);
+    missing.lint_ignore = vec!["QR303".into(), "QR3".into()];
+    let mut not_object = chart_named("not-an-object", serde_json::json!("invalid"));
+    not_object.lint_ignore = vec!["QR304".into(), "QR3".into()];
+    document.blocks.push(missing);
+    document.blocks.push(not_object);
+    document.lint.ignore = vec!["QR303".into(), "QR304".into()];
+
+    let report = lint_document_with_options(
+        &document,
+        &LintOptions {
+            select: Vec::new(),
+            ignore: vec!["QR3".into(), "QR303".into(), "QR304".into()],
+        },
+    );
+    assert!(has_code(&report, "QR303"), "{:?}", report.diagnostics);
+    assert!(has_code(&report, "QR304"), "{:?}", report.diagnostics);
+    assert!(!finding(&report, "QR303").suppressible);
+    assert!(!finding(&report, "QR304").suppressible);
+    assert_eq!(report.summary.suppressed, 0);
+}
+
+#[test]
 fn structure_and_text_rules_are_detected() {
     let mut placeholder = doc();
     placeholder.blocks.push(paragraph("p", "Revenue is TBD."));
@@ -475,6 +507,62 @@ fn structure_and_text_rules_are_detected() {
         vec![],
     ));
     assert!(has_code(&lint_document(&manual), "QR411"));
+}
+
+#[test]
+fn qr201_water_filling_does_not_flag_tables_that_fit_total_width() {
+    let mut document = doc();
+    let mut columns = vec![ColumnNode::leaf("metric", "指标名称")];
+    for index in 0..5 {
+        columns.push(ColumnNode::leaf(format!("q{index}"), format!("Q{index}")));
+    }
+    let rows: Vec<_> = (0..2)
+        .map(|row_index| {
+            let mut values = BTreeMap::new();
+            values.insert(
+                "metric".to_string(),
+                CellValue::text(format!("指标 {}", row_index + 1)),
+            );
+            for column_index in 0..5 {
+                values.insert(format!("q{column_index}"), CellValue::Integer(column_index));
+            }
+            values
+        })
+        .collect();
+    document
+        .blocks
+        .push(table("water-filling", None, columns, rows));
+
+    let report = lint_document(&document);
+    assert!(
+        !has_code(&report, "QR201"),
+        "six columns whose total minimum width fits A4 must not trigger QR201: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn qr407_ignores_currency_amounts() {
+    let mut document = doc();
+    document
+        .blocks
+        .push(paragraph("budget", "经费 $500 万，另有 $12.5M 的预算。"));
+    let report = lint_document(&document);
+    assert!(
+        !has_code(&report, "QR407"),
+        "currency amounts must not be treated as math delimiters: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn qr407_detects_unpaired_math_delimiter() {
+    let mut document = doc();
+    document
+        .blocks
+        .push(paragraph("formula", "公式 $x + y 尚未闭合。"));
+    let report = lint_document(&document);
+    assert!(has_code(&report, "QR407"), "{:?}", report.diagnostics);
 }
 
 #[test]
@@ -682,9 +770,11 @@ fn metadata_helpers_roundtrip_new_fields() {
     let mut document = valid_document();
     document.lint.ignore = vec!["QR202".into()];
     document.blocks[0].lint_ignore = vec!["QR409".into()];
-    let json = serde_json::to_value(&document).unwrap();
+    let json = serde_json::to_value(&document)
+        .unwrap_or_else(|error| panic!("document serializes: {error}"));
     assert_eq!(json["lint"]["ignore"][0], "QR202");
     assert_eq!(json["blocks"][0]["lint_ignore"][0], "QR409");
-    let parsed: ReportDocument = serde_json::from_value(json).unwrap();
+    let parsed: ReportDocument = serde_json::from_value(json)
+        .unwrap_or_else(|error| panic!("document deserializes: {error}"));
     assert_eq!(parsed, document);
 }
