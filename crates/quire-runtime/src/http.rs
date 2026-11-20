@@ -44,6 +44,7 @@ use crate::{
     },
     preview::ChartPreviewRecord,
     service::{PostMessageOutcome, RuntimeService},
+    store::SessionPatch,
 };
 
 pub fn router(service: RuntimeService) -> Router {
@@ -393,6 +394,8 @@ struct UpdateSessionRequest {
     title: Option<String>,
     #[serde(default)]
     status: Option<quire_session_protocol::SessionStatus>,
+    #[serde(default)]
+    pinned: Option<bool>,
 }
 
 async fn update_session(
@@ -401,7 +404,14 @@ async fn update_session(
     Json(request): Json<UpdateSessionRequest>,
 ) -> RuntimeResult<Json<SessionSummary>> {
     service
-        .update_session(&session_id, request.title.as_deref(), request.status)
+        .update_session(
+            &session_id,
+            SessionPatch {
+                title: request.title.as_deref(),
+                status: request.status,
+                pinned: request.pinned,
+            },
+        )
         .await
         .map(Json)
 }

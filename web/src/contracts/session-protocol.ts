@@ -318,6 +318,7 @@ export interface SessionDetail {
    * Messages waiting for the current run to finish, in FIFO order.
    */
   pending_queue?: PendingQueueItem[];
+  pinned_at?: string | null;
   /**
    * Answered, skipped and dismissed question cards in creation order.
    */
@@ -388,6 +389,7 @@ export interface SessionSummary {
    * Frontend-friendly alias of the bound report ID.
    */
   linked_doc_id?: string | null;
+  pinned_at?: string | null;
   session_id: string;
   status: SessionStatus;
   title: string;

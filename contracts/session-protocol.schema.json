@@ -716,6 +716,13 @@
             "$ref": "#/$defs/PendingQueueItem"
           }
         },
+        "pinned_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
         "resolved_questions": {
           "description": "Answered, skipped and dismissed question cards in creation order.",
           "type": "array",
@@ -1351,6 +1358,13 @@
             "string",
             "null"
           ]
+        },
+        "pinned_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
         },
         "session_id": {
           "type": "string"

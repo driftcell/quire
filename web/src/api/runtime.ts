@@ -299,7 +299,7 @@ export function listSessionTraces(
 
 export function updateSession(
   sessionId: string,
-  patch: { title?: string; status?: SessionStatus },
+  patch: { title?: string; status?: SessionStatus; pinned?: boolean },
 ): Promise<SessionSummary> {
   return runtimeFetch(
     `/api/sessions/${encodeURIComponent(sessionId)}`,

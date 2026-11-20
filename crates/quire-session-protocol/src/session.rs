@@ -312,6 +312,8 @@ pub struct SessionSummary {
     pub compacting: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compacted_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pinned_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -405,6 +407,7 @@ mod tests {
                 },
                 compacting: false,
                 compacted_at: None,
+                pinned_at: None,
                 created_at: now,
                 updated_at: now,
             },

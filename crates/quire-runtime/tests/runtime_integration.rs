@@ -33,6 +33,7 @@ use quire_runtime::{
     mcp_registry::{McpServerInput, McpServerPatch},
     preview::ChartPreviewRecord,
     service::PostMessageOutcome,
+    store::SessionPatch,
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
@@ -599,6 +600,102 @@ async fn restart_recovery_marks_running_runs_interrupted_and_appends_failure() {
         SessionEventKind::TurnFailed { recoverable, .. } if *recoverable
     )));
     service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pinning_preserves_updated_at_and_orders_pinned_sessions_first() {
+    let _guard = test_lock().lock().await;
+    let (service, _store) = test_service().await;
+    let first = service
+        .create_session(&unique("pin-first"), None)
+        .await
+        .unwrap();
+    let second = service
+        .create_session(&unique("pin-second"), None)
+        .await
+        .unwrap();
+    let first_updated_at = first.updated_at;
+    let second_updated_at = second.updated_at;
+
+    let first_pinned = service
+        .update_session(
+            &first.session_id,
+            SessionPatch {
+                pinned: Some(true),
+                ..SessionPatch::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(first_pinned.pinned_at.is_some());
+    assert_eq!(
+        first_pinned.updated_at, first_updated_at,
+        "pinning must not move the session into today's date group"
+    );
+
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let second_pinned = service
+        .update_session(
+            &second.session_id,
+            SessionPatch {
+                pinned: Some(true),
+                ..SessionPatch::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(second_pinned.pinned_at.is_some());
+    assert_eq!(second_pinned.updated_at, second_updated_at);
+    assert!(
+        second_pinned.pinned_at.unwrap() > first_pinned.pinned_at.unwrap(),
+        "the most recent pin should sort first"
+    );
+
+    let sessions = service.list_sessions(200, 0).await.unwrap();
+    let first_index = sessions
+        .iter()
+        .position(|session| session.session_id == first.session_id)
+        .unwrap();
+    let second_index = sessions
+        .iter()
+        .position(|session| session.session_id == second.session_id)
+        .unwrap();
+    assert!(
+        second_index < first_index,
+        "pinned sessions must sort before unpinned sessions and by pinned_at DESC"
+    );
+
+    let first_unpinned = service
+        .update_session(
+            &first.session_id,
+            SessionPatch {
+                pinned: Some(false),
+                ..SessionPatch::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert!(first_unpinned.pinned_at.is_none());
+    assert_eq!(
+        first_unpinned.updated_at, first_updated_at,
+        "unpinning must not rewrite updated_at"
+    );
+
+    let sessions = service.list_sessions(200, 0).await.unwrap();
+    let first_index = sessions
+        .iter()
+        .position(|session| session.session_id == first.session_id)
+        .unwrap();
+    let second_index = sessions
+        .iter()
+        .position(|session| session.session_id == second.session_id)
+        .unwrap();
+    assert!(second_index < first_index);
+    assert!(sessions[second_index].pinned_at.is_some());
+    assert!(sessions[first_index].pinned_at.is_none());
+
+    service.delete_session(&first.session_id).await.unwrap();
+    service.delete_session(&second.session_id).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

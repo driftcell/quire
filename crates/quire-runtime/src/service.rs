@@ -39,7 +39,7 @@ use crate::{
     model_stream::{ModelStreamEvent, ModelStreamProvider, ModelTurnRequest, StubStreamProvider},
     models::ModelRegistry,
     prompt::{ContextMessage, ResumeContext, build_resume_context},
-    store::{CompactionWrite, RunRecord, RuntimeStore},
+    store::{CompactionWrite, RunRecord, RuntimeStore, SessionPatch},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -351,10 +351,9 @@ impl RuntimeService {
     pub async fn update_session(
         &self,
         session_id: &str,
-        title: Option<&str>,
-        status: Option<SessionStatus>,
+        patch: SessionPatch<'_>,
     ) -> RuntimeResult<SessionSummary> {
-        self.store.update_session(session_id, title, status).await
+        self.store.update_session(session_id, patch).await
     }
 
     pub async fn delete_session(&self, session_id: &str) -> RuntimeResult<()> {

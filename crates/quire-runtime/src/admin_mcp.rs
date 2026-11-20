@@ -34,7 +34,7 @@ use crate::{
         ProviderRecord,
     },
     service::RuntimeService,
-    store::RunRecord,
+    store::{RunRecord, SessionPatch},
 };
 
 const SERVER_INSTRUCTIONS: &str = r#"QUIRE RUNTIME ADMIN MCP
@@ -310,6 +310,10 @@ pub struct SessionsUpdateParams {
     /// Optional new status (active or archived).
     #[serde(default)]
     pub status: Option<SessionStatus>,
+    /// Optional pin state. `true` pins with the current timestamp; `false`
+    /// unpins. Omit to keep the current value.
+    #[serde(default)]
+    pub pinned: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema)]
@@ -1400,7 +1404,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "sessions_update",
-        description = "Update a session's title or status (active/archived)."
+        description = "Update a session's title, status (active/archived) or pin state."
     )]
     pub async fn sessions_update(
         &self,
@@ -1410,8 +1414,11 @@ impl AdminMcpServer {
             .service
             .update_session(
                 &request.session_id,
-                request.title.as_deref(),
-                request.status,
+                SessionPatch {
+                    title: request.title.as_deref(),
+                    status: request.status,
+                    pinned: request.pinned,
+                },
             )
             .await
             .map_err(admin_error)?;

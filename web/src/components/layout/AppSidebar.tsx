@@ -6,10 +6,12 @@ import {
   KeyRoundIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
+  PinIcon,
+  PinOffIcon,
   PlusIcon,
   Trash2Icon,
 } from "lucide-react";
-import { deleteSession, listSessions } from "@/api/runtime";
+import { deleteSession, listSessions, updateSession } from "@/api/runtime";
 import { ProductBrand } from "@/components/layout/ProductBrand";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +27,7 @@ import {
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
@@ -42,6 +45,13 @@ import {
 } from "@/components/ui/sidebar";
 import type { SessionSummary } from "@/contracts/session-protocol";
 import { getAuthTokens, saveAuthTokens } from "@/lib/auth";
+import {
+  groupSessionsForSidebar,
+  type SessionGroup,
+} from "@/components/layout/sessionGroups";
+
+export { groupSessionsForSidebar };
+export type { SessionGroup };
 
 function GridLoader() {
   return (
@@ -61,87 +71,6 @@ function GridLoader() {
         );
       })}
     </output>
-  );
-}
-
-type SessionGroupKey = "today" | "yesterday" | "thisWeek" | "earlier";
-
-const GROUP_ORDER: readonly SessionGroupKey[] = [
-  "today",
-  "yesterday",
-  "thisWeek",
-  "earlier",
-];
-
-const GROUP_LABELS: Record<SessionGroupKey, string> = {
-  today: "今天",
-  yesterday: "昨天",
-  thisWeek: "本周",
-  earlier: "更早",
-};
-
-const DAY_MS = 86_400_000;
-
-const shanghaiDayFormatter = new Intl.DateTimeFormat("en-US", {
-  timeZone: "Asia/Shanghai",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-});
-
-function shanghaiCalendarDay(value: Date): number | undefined {
-  if (!Number.isFinite(value.getTime())) return undefined;
-  const parts = shanghaiDayFormatter.formatToParts(value);
-  const year = Number(parts.find((part) => part.type === "year")?.value);
-  const month = Number(parts.find((part) => part.type === "month")?.value);
-  const day = Number(parts.find((part) => part.type === "day")?.value);
-  if (!year || !month || !day) return undefined;
-  return Math.floor(Date.UTC(year, month - 1, day) / DAY_MS);
-}
-
-function startOfWeek(day: number): number {
-  const weekday = new Date(day * DAY_MS).getUTCDay();
-  return day - ((weekday + 6) % 7);
-}
-
-function groupSessionsByDate(sessions: SessionSummary[]) {
-  const today = shanghaiCalendarDay(new Date());
-  const weekStart = today === undefined ? undefined : startOfWeek(today);
-  const groups: Record<SessionGroupKey, SessionSummary[]> = {
-    today: [],
-    yesterday: [],
-    thisWeek: [],
-    earlier: [],
-  };
-
-  const sorted = [...sessions].sort((left, right) => {
-    const diff =
-      Date.parse(right.updated_at || right.created_at) -
-      Date.parse(left.updated_at || left.created_at);
-    return diff || right.session_id.localeCompare(left.session_id);
-  });
-
-  for (const session of sorted) {
-    const day = shanghaiCalendarDay(
-      new Date(session.updated_at || session.created_at),
-    );
-    let key: SessionGroupKey = "earlier";
-    if (day !== undefined && today !== undefined && weekStart !== undefined) {
-      if (day >= today) {
-        key = "today";
-      } else if (day === today - 1) {
-        key = "yesterday";
-      } else if (day >= weekStart) {
-        key = "thisWeek";
-      }
-    }
-    groups[key].push(session);
-  }
-
-  return GROUP_ORDER.flatMap((key) =>
-    groups[key].length > 0
-      ? [{ key, label: GROUP_LABELS[key], items: groups[key] }]
-      : [],
   );
 }
 
@@ -187,6 +116,40 @@ export function AppSidebar() {
     },
   });
 
+  const pinMutation = useMutation({
+    mutationFn: ({
+      sessionId,
+      pinned,
+    }: {
+      sessionId: string;
+      pinned: boolean;
+    }) => updateSession(sessionId, { pinned }),
+    onMutate: async ({ sessionId, pinned }) => {
+      setConfirmingSessionId(null);
+      await queryClient.cancelQueries({ queryKey: ["sessions"] });
+      const previous = queryClient.getQueryData<SessionSummary[]>(["sessions"]);
+      queryClient.setQueryData<SessionSummary[]>(["sessions"], (current) =>
+        current?.map((session) =>
+          session.session_id === sessionId
+            ? {
+                ...session,
+                pinned_at: pinned ? new Date().toISOString() : null,
+              }
+            : session,
+        ),
+      );
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(["sessions"], context.previous);
+      }
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
@@ -199,7 +162,7 @@ export function AppSidebar() {
   }, [navigate]);
 
   const groups = useMemo(
-    () => groupSessionsByDate(sessionsQuery.data ?? []),
+    () => groupSessionsForSidebar(sessionsQuery.data ?? []),
     [sessionsQuery.data],
   );
 
@@ -250,6 +213,10 @@ export function AppSidebar() {
                 {group.items.map((session) => {
                   const confirming = confirmingSessionId === session.session_id;
                   const deleting = deletingSessionId === session.session_id;
+                  const isPinned = Boolean(session.pinned_at);
+                  const isPinning =
+                    pinMutation.isPending &&
+                    pinMutation.variables?.sessionId === session.session_id;
                   const isActive = activeSessionId === session.session_id;
                   const title = session.title || "未命名会话";
 
@@ -326,6 +293,29 @@ export function AppSidebar() {
                           className="w-40"
                         >
                           <DropdownMenuGroup>
+                            <DropdownMenuItem
+                              disabled={isPinning || deleting}
+                              onClick={() => {
+                                setConfirmingSessionId(null);
+                                pinMutation.mutate({
+                                  sessionId: session.session_id,
+                                  pinned: !isPinned,
+                                });
+                              }}
+                            >
+                              {isPinning ? (
+                                <LoaderCircleIcon
+                                  className="animate-spin"
+                                  aria-hidden="true"
+                                />
+                              ) : isPinned ? (
+                                <PinOffIcon aria-hidden="true" />
+                              ) : (
+                                <PinIcon aria-hidden="true" />
+                              )}
+                              {isPinned ? "取消置顶" : "置顶会话"}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
                             <DropdownMenuItem
                               variant="destructive"
                               disabled={deleting}

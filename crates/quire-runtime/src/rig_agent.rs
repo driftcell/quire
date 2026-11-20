@@ -49,6 +49,7 @@ use crate::{
     models::{ModelRegistry, ProviderProtocol},
     prompt::ContextMessage,
     sandbox::{SandboxExecRequest, SandboxLease, SandboxProvider, sandbox_spec_from_config},
+    store::SessionPatch,
 };
 
 pub const BUILTIN_TOOLS: &[&str] = &[
@@ -921,7 +922,13 @@ async fn set_session_title_tool(
         .engine
         .kb
         .store()
-        .update_session(&runtime.execution.session_id, Some(&title), None)
+        .update_session(
+            &runtime.execution.session_id,
+            SessionPatch {
+                title: Some(&title),
+                ..SessionPatch::default()
+            },
+        )
         .await
         .map_err(tool_other)?;
     runtime

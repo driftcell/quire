@@ -44,6 +44,16 @@ pub struct RunRecord {
     pub finished_at: Option<DateTime<Utc>>,
 }
 
+/// Fields that may be changed on an existing session. `None` keeps the
+/// current value; only title/status changes are considered content updates
+/// and may advance `updated_at`.
+#[derive(Debug, Clone, Default)]
+pub struct SessionPatch<'a> {
+    pub title: Option<&'a str>,
+    pub status: Option<SessionStatus>,
+    pub pinned: Option<bool>,
+}
+
 #[derive(Clone)]
 pub struct RuntimeStore {
     pool: PgPool,
@@ -136,7 +146,7 @@ impl RuntimeStore {
         let row = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
                       active_run_status, last_event_seq, context_usage, compaction_started_at,
-                      compacted_at, created_at, updated_at
+                      compacted_at, pinned_at, created_at, updated_at
                FROM agent_sessions WHERE session_id = $1"#,
         )
         .bind(session_id)
@@ -171,9 +181,12 @@ impl RuntimeStore {
         let rows = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
                       active_run_status, last_event_seq, context_usage, compaction_started_at,
-                      compacted_at, created_at, updated_at
+                      compacted_at, pinned_at, created_at, updated_at
                FROM agent_sessions
-               ORDER BY updated_at DESC, session_id ASC
+               ORDER BY (pinned_at IS NOT NULL) DESC,
+                        pinned_at DESC NULLS LAST,
+                        updated_at DESC,
+                        session_id ASC
                LIMIT $1 OFFSET $2"#,
         )
         .bind(limit.clamp(1, 200))
@@ -186,19 +199,27 @@ impl RuntimeStore {
     pub async fn update_session(
         &self,
         session_id: &str,
-        title: Option<&str>,
-        status: Option<SessionStatus>,
+        patch: SessionPatch<'_>,
     ) -> RuntimeResult<SessionSummary> {
         let updated = sqlx::query(
             r#"UPDATE agent_sessions
                SET title = COALESCE($2, title),
                    status = COALESCE($3, status),
-                   updated_at = NOW()
+                   pinned_at = CASE
+                       WHEN $4::boolean IS NULL THEN pinned_at
+                       WHEN $4 THEN NOW()
+                       ELSE NULL
+                   END,
+                   updated_at = CASE
+                       WHEN $2 IS NULL AND $3 IS NULL THEN updated_at
+                       ELSE NOW()
+                   END
                WHERE session_id = $1"#,
         )
         .bind(session_id)
-        .bind(title)
-        .bind(status.map(SessionStatus::as_str))
+        .bind(patch.title)
+        .bind(patch.status.map(SessionStatus::as_str))
+        .bind(patch.pinned)
         .execute(&self.pool)
         .await?;
         if updated.rows_affected() == 0 {
@@ -1449,6 +1470,7 @@ fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
                 Utc::now().signed_duration_since(started) < chrono::Duration::minutes(10)
             }),
         compacted_at: row.try_get("compacted_at")?,
+        pinned_at: row.try_get("pinned_at")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })
