@@ -98,7 +98,7 @@ export function SelectionQuoteToolbar({
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => onComment(action)}
-            className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+            className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium text-amber-700 hover:bg-amber-500/10"
           >
             <MessageSquarePlusIcon className="size-3.5" />
             <span>批注</span>

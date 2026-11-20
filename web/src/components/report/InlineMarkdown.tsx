@@ -244,7 +244,7 @@ export const InlineMarkdown = memo(function InlineMarkdown({
       nodes.push(
         <code
           key={`code-${key++}`}
-          className="rounded bg-black/5 px-1 py-0.5 font-mono text-[0.88em] dark:bg-white/10"
+          className="rounded bg-black/5 px-1 py-0.5 font-mono text-[0.88em]"
         >
           {codeText}
         </code>,

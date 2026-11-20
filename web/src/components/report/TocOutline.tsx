@@ -79,7 +79,7 @@ function TocBranch({
               {actors.length > 0 && (
                 <span
                   title={`${actors.join(", ")} 撰写中`}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-700 dark:text-emerald-300"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] text-emerald-700"
                 >
                   <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
                   {actors[0]}
@@ -266,7 +266,7 @@ export function TocOutline({
         <div className="mb-2 flex items-center justify-between text-xs font-semibold">
           <span>目录大纲与写作状态</span>
           {activeActorsBySection.size > 0 && (
-            <span className="inline-flex items-center gap-1 text-[10px] font-normal text-emerald-600 dark:text-emerald-400">
+            <span className="inline-flex items-center gap-1 text-[10px] font-normal text-emerald-600">
               <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
               实时协作中
             </span>

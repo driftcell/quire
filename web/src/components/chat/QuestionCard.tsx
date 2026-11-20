@@ -234,7 +234,7 @@ export function QuestionCard({
       <CardHeader className="pb-2">
         <CardTitle className="flex items-center gap-2 text-sm">
           {resolvedState?.status === "answered" ? (
-            <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
+            <CheckCircle2Icon className="size-4 text-emerald-600" />
           ) : resolvedState ? (
             <SkipForwardIcon className="size-4 text-muted-foreground" />
           ) : (

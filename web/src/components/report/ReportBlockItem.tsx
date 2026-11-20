@@ -128,7 +128,7 @@ function BlockFooterNotes({
     .join(" ");
   const hasSource = sourceText.length > 0;
 
-  const className = `space-y-0.5 pt-1 text-[11.5px] leading-relaxed text-slate-500 dark:text-slate-400 ${
+  const className = `space-y-0.5 pt-1 text-[11.5px] leading-relaxed text-slate-500 ${
     align === "center" ? "text-center" : "text-left"
   }`;
 
@@ -271,7 +271,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
     bodyNode = (
       <figure id={domId} className="my-5 space-y-2">
         {showCaption && (
-          <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
+          <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
             {captionText}
             {slice.continuation ? "（续）" : ""}
           </figcaption>
@@ -287,7 +287,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
         {slice.continuation &&
           slice.rowStart !== undefined &&
           slice.rowEnd !== undefined && (
-            <div className="text-right text-[11px] font-normal text-slate-500 tabular-nums dark:text-slate-400">
+            <div className="text-right text-[11px] font-normal text-slate-500 tabular-nums">
               接上页 · 第 {slice.rowStart + 1}–{slice.rowEnd} 行 / 共{" "}
               {totalRows} 行
             </div>
@@ -323,7 +323,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
           showTools={showChartTools}
         />
         {captionText && (
-          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
+          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
             {captionText}
           </figcaption>
         )}
@@ -348,7 +348,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
       <figure id={domId} className="my-5 space-y-2">
         <CustomHtmlView block={block} />
         {captionText && (
-          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800 dark:text-slate-100">
+          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
             {captionText}
           </figcaption>
         )}
@@ -368,7 +368,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
   return (
     <div
       data-block-id={block.id}
-      className="group/block relative rounded-lg transition-colors hover:bg-black/[0.015] dark:hover:bg-white/[0.02]"
+      className="group/block relative rounded-lg transition-colors hover:bg-black/[0.015]"
     >
       {!printMode && onOpenCommentForBlock && (
         <button
@@ -383,7 +383,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
           }}
           className={`focus-visible:ring-ring absolute top-1 left-full z-10 ml-2 inline-flex items-center gap-1 rounded-full border bg-background px-2 py-0.5 text-[11px] tabular-nums shadow-xs transition-opacity focus-visible:ring-2 focus-visible:outline-none print:hidden max-md:top-1 max-md:right-1 max-md:left-auto max-md:ml-0 ${
             commentCount > 0
-              ? "border-amber-500/50 text-amber-700 opacity-100 dark:text-amber-300"
+              ? "border-amber-500/50 text-amber-700 opacity-100"
               : "text-muted-foreground opacity-0 group-hover/block:opacity-100 focus-visible:opacity-100"
           }`}
         >

@@ -414,7 +414,7 @@ export function PromptComposer({
                     </div>
                     <div>
                       <div>Cached</div>
-                      <div className="font-medium text-emerald-600 tabular-nums dark:text-emerald-400">
+                      <div className="font-medium text-emerald-600 tabular-nums">
                         {formatTokens(contextUsage.cached_tokens)}
                       </div>
                     </div>

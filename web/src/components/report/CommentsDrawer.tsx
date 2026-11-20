@@ -387,7 +387,7 @@ export function CommentsPanel({
                           ref={replyInputRef}
                           rows={1}
                           disabled={isThreadBusy}
-                          className="min-h-7 resize-none border-0 bg-transparent px-0 py-0 text-xs shadow-none focus-visible:ring-0 disabled:opacity-60 dark:bg-transparent"
+                          className="min-h-7 resize-none border-0 bg-transparent px-0 py-0 text-xs shadow-none focus-visible:ring-0 disabled:opacity-60"
                           placeholder="回复..."
                           value={replyDraft}
                           onClick={(event) => event.stopPropagation()}

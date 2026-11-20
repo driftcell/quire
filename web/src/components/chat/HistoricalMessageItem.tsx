@@ -94,7 +94,7 @@ function CopyMessageButton({ content }: { content: string }) {
         }
       >
         {copied ? (
-          <CheckIcon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+          <CheckIcon className="size-3.5 text-emerald-600" />
         ) : (
           <CopyIcon className="size-3.5" />
         )}

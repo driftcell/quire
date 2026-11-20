@@ -359,7 +359,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       )}
 
       {(missingMaps.length > 0 || missingExts.length > 0) && (
-        <div className="mb-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-700 dark:text-amber-300">
+        <div className="mb-2 rounded border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-[11px] text-amber-700">
           此图表依赖额外注册：
           {[...missingMaps.map((m) => `map:${m}`), ...missingExts].join(", ")}
         </div>
@@ -389,12 +389,12 @@ export const EchartsCanvas = memo(function EchartsCanvas({
           <div className="max-h-[60vh] space-y-4 overflow-auto pr-1">
             {chartTables.map((tbl, idx) => (
               <div key={`${tbl.title}-${idx}`} className="space-y-1.5">
-                <div className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                <div className="text-xs font-medium text-slate-500">
                   {tbl.title}
                 </div>
                 <table className="w-full border-collapse text-xs">
                   <thead>
-                    <tr className="border-b border-slate-700 bg-slate-100/80 text-left text-slate-800 dark:border-slate-300 dark:bg-slate-800/60 dark:text-slate-100">
+                    <tr className="border-b border-slate-700 bg-slate-100/80 text-left text-slate-800">
                       {tbl.headers.map((h, hIdx) => (
                         <th
                           key={hIdx}
@@ -409,12 +409,12 @@ export const EchartsCanvas = memo(function EchartsCanvas({
                     {tbl.rows.map((row, rIdx) => (
                       <tr
                         key={rIdx}
-                        className="border-b border-slate-200/70 even:bg-slate-50/70 dark:border-slate-800 dark:even:bg-slate-900/40"
+                        className="border-b border-slate-200/70 even:bg-slate-50/70"
                       >
                         {row.map((cell, cIdx) => (
                           <td
                             key={cIdx}
-                            className="px-2.5 py-1.5 tabular-nums whitespace-nowrap text-slate-700 dark:text-slate-200"
+                            className="px-2.5 py-1.5 tabular-nums whitespace-nowrap text-slate-700"
                           >
                             {cell}
                           </td>
