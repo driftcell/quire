@@ -62,6 +62,7 @@ export function buildMixedItems(
   const afterPreviewMap = new Map<string, EphemeralPreviewEvent[]>();
   const beforePreviewMap = new Map<string, EphemeralPreviewEvent[]>();
   const tailPreviews: EphemeralPreviewEvent[] = [];
+  const deferred = new Set<string>();
 
   for (const preview of previews) {
     const anchor = preview.anchor;
@@ -77,7 +78,10 @@ export function buildMixedItems(
         list.push(preview);
         beforePreviewMap.set(anchor.block_id, list);
       } else {
-        tailPreviews.push(preview);
+        // The anchor field may arrive after the blocks in streamed tool arguments.
+        // Keep the card hidden until the target exists instead of pinning it to the
+        // document tail; the final resolved frame will render it in place.
+        deferred.add(preview.preview_id);
       }
     } else if (anchor.type === "after_block") {
       if (sliceIds.has(anchor.block_id)) {
@@ -89,7 +93,7 @@ export function buildMixedItems(
         list.push(preview);
         afterPreviewMap.set(anchor.block_id, list);
       } else {
-        tailPreviews.push(preview);
+        deferred.add(preview.preview_id);
       }
     } else if (anchor.type === "append_to_section") {
       const targetId =
@@ -99,10 +103,12 @@ export function buildMixedItems(
         list.push(preview);
         afterMap.set(targetId, list);
       } else {
-        tailPreviews.push(preview);
+        deferred.add(preview.preview_id);
       }
-    } else {
+    } else if (anchor.type === "append_to_doc") {
       tailPreviews.push(preview);
+    } else {
+      deferred.add(preview.preview_id);
     }
   }
 
@@ -157,7 +163,7 @@ export function buildMixedItems(
     emitPreview(preview);
   }
   for (const preview of previews) {
-    if (!emitted.has(preview.preview_id)) {
+    if (!emitted.has(preview.preview_id) && !deferred.has(preview.preview_id)) {
       emitPreview(preview);
     }
   }

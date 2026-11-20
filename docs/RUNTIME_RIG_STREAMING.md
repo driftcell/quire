@@ -130,10 +130,16 @@ timeouts; rmcp MCP transports use a dedicated reqwest 0.13 client with the same 
 While streamed `apply_operations` arguments arrive, `PreviewState` parses the partial
 JSON with rig's partial-object parser, extracts block-like objects (heading, paragraph, quote, table,
 echarts, custom_html), and pushes `PartialBlockPreview` frames through `ToolPreviewStreamer`.
-Anchors follow the real `PatchOp` wire fields: `insert_after`/`insert_before` read `target_id`,
-`patch_block` reads `block_id` and parses the nested `patch`, and `replace_range` reads `start_id`.
-Multi-block insert arrays chain subsequent previews after the previous emitted block ID, so previews
-stay in the target section instead of falling back to the document tail.
+Anchors follow the real `PatchOp` wire fields and accept both the `op` compatibility key and the
+serialized `type` discriminator: `insert_after`/`insert_before` read `target_id`, `append_to_section`
+reads `section_id`, `patch_block` reads `block_id` and parses the nested `patch`, and `replace_range`
+reads `start_id`. Multi-block insert arrays chain subsequent previews after the previous emitted
+block ID, so previews stay in the target section instead of falling back to the document tail.
+Models may emit `blocks` before `target_id`/`section_id`/`type`; a preview whose anchor target is not
+committed or not yet another preview is therefore hidden rather than pinned to the document tail.
+When the tool-call stream ends, `PreviewState` re-extracts the complete arguments, force-publishes the
+final frames with resolved anchors even inside the throttle window, and waits 200 ms for the frontend
+to repaint before the tool executes and the commit clears the previews.
 Frames are throttled to 50-80 ms per block and sent to `POST /api/docs/{doc_id}/ephemeral`. The
 preview IDs are attached to the tool arguments as `preview_ids` immediately before execution, so the
 formal Quire commit clears the placeholders atomically.
@@ -155,8 +161,9 @@ formal Quire commit clears the placeholders atomically.
   later work starts a new activity. The outer transcript never duplicates an inline message ID.
 - A model stream step that produces no event for 120 seconds fails the turn instead of hanging.
   Subagents have no total wall-clock cutoff; network/stream timeouts and parent cancellation bound them.
-- Streamed preview anchors follow `PatchOp` field names and chain multi-block inserts; a preview is
-  never demoted to `AppendToDoc` merely because the legacy `after_id`/`replace_block` names are absent.
+- Streamed preview anchors follow the real `PatchOp` `type` discriminator and `op` compatibility key,
+  and chain multi-block inserts. A preview with an unresolved target anchor is hidden, never pinned to
+  the document tail; the complete-argument pass republishes final anchors before commit.
 - Runtime HTTP clients configure `connect_timeout(15s)` and a request timeout; no unbounded default
   reqwest client is used for model catalogs, preview publishing, comment proxying or MCP transport.
 - An active-run snapshot and its SSE cursor share one `last_event_seq` boundary; refreshing during a
@@ -181,12 +188,15 @@ and after `page.reload()`, exactly one inline user bubble, and two settled activ
 `web/e2e/thinking-duration-accuracy.js` reloads a running session with prior thinking and tools and
 asserts the hydrated timers continue from the server clocks before the terminal SSE events arrive.
 Frontend unit coverage in `web/src/components/chat/traceSegments.test.ts` applies the same boundary
-to live and historical segment builders.
+to live and historical segment builders. `web/src/components/report/ephemeralPreviewMix.test.ts`
+asserts that unresolved `after_block`/`append_to_section` previews stay hidden instead of mounting at
+the document tail, while real `append_to_doc` previews still render at the tail.
 
 Unit coverage in `crates/quire-runtime/src/rig_agent/{mod.rs,preview_stream.rs,builtin_tools.rs,subagents.rs}`:
 
 - `describe_task` schema advertises the status title, detail and section parameters
 - partial `apply_operations` argument block extraction
+- real `PatchOp` `type` discriminator anchors, chained multi-block inserts and `patch_block` type isolation
 - preview ID merge
 - real usage mapping with a 64k context limit
 

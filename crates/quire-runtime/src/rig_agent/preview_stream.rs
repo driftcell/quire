@@ -24,6 +24,7 @@ use crate::{
 use super::AgentExecution;
 
 const PREVIEW_TOOLS: &[&str] = &["apply_operations"];
+const PREVIEW_ANCHOR_SETTLE: Duration = Duration::from_millis(200);
 
 /// Throttle for streamed tool-argument preview frames.
 #[derive(Debug)]
@@ -159,6 +160,20 @@ impl ToolPreviewStreamer {
         if !self.throttle.should_emit() {
             return Ok(false);
         }
+        self.send_block(block).await
+    }
+
+    /// Push the final frame even when the throttle window has not elapsed. Used once the
+    /// complete tool arguments reveal the real anchor so an earlier provisional frame
+    /// cannot be the last event the frontend sees.
+    pub(super) async fn push_block_now(
+        &mut self,
+        block: PartialBlockPreview,
+    ) -> RuntimeResult<bool> {
+        self.send_block(block).await
+    }
+
+    async fn send_block(&mut self, block: PartialBlockPreview) -> RuntimeResult<bool> {
         let event = self.next_preview_event(block)?;
         let payload = EphemeralPayload::Preview { event };
         let response = self
@@ -314,10 +329,71 @@ impl PreviewState {
         }
     }
 
-    pub(super) fn on_end(&mut self, part: usize, call: &ToolCall) {
-        let Some(stream) = self.streams.remove(&part) else {
+    pub(super) async fn on_end(&mut self, part: usize, call: &ToolCall) {
+        let Some(mut stream) = self.streams.remove(&part) else {
             return;
         };
+        let Some(doc_id) = self.doc_id.clone() else {
+            return;
+        };
+        // The model may emit `blocks` before `target_id`/`section_id`/`type`. Frames sent
+        // while those fields are missing carry the provisional `AppendToDoc` anchor. Once
+        // the complete arguments arrive, republish every block with its resolved anchor and
+        // give the frontend one paint window before the commit clears the previews.
+        let mut corrected = false;
+        let final_blocks = extract_preview_blocks(&call.function.arguments_value());
+        for (index, candidate) in final_blocks.iter().enumerate() {
+            let key = candidate
+                .block_id
+                .clone()
+                .unwrap_or_else(|| format!("auto-{index}"));
+            if !stream.streamers.contains_key(&key) {
+                let block_id = candidate
+                    .block_id
+                    .clone()
+                    .unwrap_or_else(|| format!("preview{part}{index}"));
+                let preview_id = format!("{}:{}:{}:{}", self.run_id, stream.tool_name, part, key);
+                stream.streamers.insert(
+                    key.clone(),
+                    ToolPreviewStreamer::new(
+                        &self.base_url,
+                        self.token.clone(),
+                        &doc_id,
+                        &preview_id,
+                        &self.actor,
+                        &block_id,
+                        self.throttle_ms,
+                    )
+                    .with_anchor(candidate.anchor.clone()),
+                );
+                corrected = true;
+            }
+            let Some(streamer) = stream.streamers.get_mut(&key) else {
+                continue;
+            };
+            if streamer.anchor != candidate.anchor {
+                streamer.set_anchor(candidate.anchor.clone());
+                corrected = true;
+            }
+            let block_id = BlockId::parse(
+                candidate
+                    .block_id
+                    .clone()
+                    .unwrap_or_else(|| format!("preview{part}{index}")),
+            )
+            .unwrap_or_else(|_| BlockId::pending());
+            match streamer.push_block_now(candidate.partial(block_id)).await {
+                Ok(_) => {
+                    stream.preview_ids.insert(preview_id_for(streamer));
+                }
+                Err(error) => {
+                    tracing::warn!(%error, tool = %stream.tool_name, "ephemeral preview publish failed");
+                }
+            }
+        }
+        if corrected {
+            tokio::time::sleep(PREVIEW_ANCHOR_SETTLE).await;
+        }
         if !stream.preview_ids.is_empty() {
             self.previews_by_call.insert(
                 call.id.wire().to_string(),
@@ -368,11 +444,25 @@ fn parse_preview_block_id(raw: Option<&str>) -> Option<BlockId> {
         .and_then(|raw| BlockId::parse(raw.to_string()).ok())
 }
 
+fn operation_name(object: &serde_json::Map<String, Value>) -> Option<&str> {
+    object
+        .get("op")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("type").and_then(Value::as_str))
+}
+
+fn is_patch_operation(op_name: Option<&str>, object: &serde_json::Map<String, Value>) -> bool {
+    matches!(
+        op_name,
+        Some("patch_block" | "replace_block" | "update_block")
+    ) || (op_name.is_none() && object.contains_key("patch") && object.contains_key("block_id"))
+}
+
 fn infer_operation_anchor(
     object: &serde_json::Map<String, Value>,
     inherited: &PreviewAnchor,
 ) -> PreviewAnchor {
-    let op_name = object.get("op").and_then(Value::as_str);
+    let op_name = operation_name(object);
     if op_name == Some("append_to_section") || object.contains_key("section_id") {
         if let Some(section_id) =
             parse_preview_block_id(object.get("section_id").and_then(Value::as_str))
@@ -405,10 +495,7 @@ fn infer_operation_anchor(
         }
         return inherited.clone();
     }
-    if matches!(
-        op_name,
-        Some("patch_block" | "replace_block" | "update_block")
-    ) {
+    if is_patch_operation(op_name, object) {
         if let Some(block_id) =
             parse_preview_block_id(object.get("block_id").and_then(Value::as_str))
         {
@@ -457,12 +544,9 @@ fn collect_preview_blocks(
     }
     match value {
         Value::Object(object) => {
-            let op_name = object.get("op").and_then(Value::as_str);
+            let op_name = operation_name(object);
             let next_anchor = infer_operation_anchor(object, anchor);
-            let patch_op = matches!(
-                op_name,
-                Some("patch_block" | "replace_block" | "update_block")
-            );
+            let patch_op = is_patch_operation(op_name, object);
             let mut consumed_patch = false;
             if patch_op && let Some(Value::Object(patch)) = object.get("patch") {
                 let mut merged = patch.clone();
@@ -470,11 +554,6 @@ fn collect_preview_blocks(
                     && let Some(block_id) = object.get("block_id")
                 {
                     merged.insert("id".to_string(), block_id.clone());
-                }
-                if !merged.contains_key("type")
-                    && let Some(block_type) = object.get("type")
-                {
-                    merged.insert("type".to_string(), block_type.clone());
                 }
                 if let Some(block) = preview_block(&merged, &next_anchor) {
                     push_preview_block(block, blocks, seen);
@@ -715,6 +794,72 @@ mod tests {
                 block_id: BlockId::parse("sec3_p1").expect("valid previous block")
             }
         );
+    }
+
+    #[test]
+    fn partial_patch_operation_anchors_from_block_id_before_type_arrives() {
+        let arguments = json!({
+            "ops": [{
+                "block_id": "ch2_p2",
+                "patch": {"text": "updated"}
+            }]
+        });
+        let blocks = extract_preview_blocks(&arguments);
+        assert_eq!(blocks.len(), 1);
+        let block = blocks.first().expect("partial patch preview");
+        assert_eq!(block.block_id.as_deref(), Some("ch2_p2"));
+        assert_eq!(block.block_type, "paragraph");
+        assert_eq!(block.text.as_deref(), Some("updated"));
+        assert_eq!(
+            block.anchor,
+            PreviewAnchor::ReplaceBlock {
+                block_id: BlockId::parse("ch2_p2").expect("patch target")
+            }
+        );
+    }
+
+    #[test]
+    fn preview_anchors_follow_real_type_discriminator_wire_format() {
+        let arguments = json!({
+            "doc_id": "report",
+            "ops": [
+                {
+                    "blocks": [
+                        {"id": "ch2_sec", "level": 2, "text": "（四）配套建议", "type": "heading"},
+                        {"id": "ch2_p1", "text": "人才引育", "type": "paragraph"}
+                    ],
+                    "target_id": "ch2_p_update",
+                    "type": "insert_after"
+                },
+                {
+                    "block_id": "ch2_p2",
+                    "patch": {"text": "updated"},
+                    "type": "patch_block"
+                }
+            ]
+        });
+        let blocks = extract_preview_blocks(&arguments);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(
+            blocks[0].anchor,
+            PreviewAnchor::AfterBlock {
+                block_id: BlockId::parse("ch2_p_update").expect("real target")
+            }
+        );
+        assert_eq!(
+            blocks[1].anchor,
+            PreviewAnchor::AfterBlock {
+                block_id: BlockId::parse("ch2_sec").expect("chained previous block")
+            }
+        );
+        assert_eq!(
+            blocks[2].anchor,
+            PreviewAnchor::ReplaceBlock {
+                block_id: BlockId::parse("ch2_p2").expect("patch target")
+            }
+        );
+        assert_eq!(blocks[2].block_type, "paragraph");
+        assert_eq!(blocks[2].text.as_deref(), Some("updated"));
     }
 
     #[test]

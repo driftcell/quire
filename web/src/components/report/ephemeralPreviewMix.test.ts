@@ -142,4 +142,36 @@ describe("buildMixedItems preview anchors", () => {
       "sec4_p1",
     ]);
   });
+
+  test("hides an after_block preview until its streamed target exists", () => {
+    const pending = preview("p-pending", "ch2_new", {
+      type: "after_block",
+      block_id: "ch2_p_update",
+    });
+    const items = build(
+      [headingSlice("ch2", 1), slice("ch2_p1")],
+      [pending],
+    );
+
+    expect(itemIds(items)).toEqual(["ch2", "ch2_p1"]);
+  });
+
+  test("hides an append_to_section preview until its section exists", () => {
+    const pending = preview("p-pending", "ch2_new", {
+      type: "append_to_section",
+      section_id: "missing_section",
+    });
+    const items = build([headingSlice("ch2", 1), slice("ch2_p1")], [pending]);
+
+    expect(itemIds(items)).toEqual(["ch2", "ch2_p1"]);
+  });
+
+  test("still renders append_to_doc previews at the document tail", () => {
+    const appended = preview("p-tail", "doc_new", {
+      type: "append_to_doc",
+    });
+    const items = build([slice("ch2_p1")], [appended]);
+
+    expect(itemIds(items)).toEqual(["ch2_p1", "preview:p-tail"]);
+  });
 });

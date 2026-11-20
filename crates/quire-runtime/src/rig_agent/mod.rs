@@ -598,7 +598,7 @@ async fn handle_stream_event(
         }
         StreamEvent::End { part, content } => {
             if let AssistantContent::ToolCall(call) = content {
-                previews.on_end(part.index(), call);
+                previews.on_end(part.index(), call).await;
             }
             false
         }
