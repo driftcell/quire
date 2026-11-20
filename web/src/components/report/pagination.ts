@@ -183,7 +183,14 @@ export function paginateBlocks(
     if (block.type === "heading") {
       const nextBlock = blocks[i + 1];
       const nextHeight = nextBlock
-        ? Math.min(140, blockHeights[nextBlock.id] ?? 80)
+        ? nextBlock.type === "table"
+          ? tableChromeHeight(
+              nextBlock.id,
+              tableMeasurements[nextBlock.id],
+              blockHeights,
+            ) +
+            2 * DEFAULT_ROW_HEIGHT_PX
+          : Math.max(24, blockHeights[nextBlock.id] ?? 80)
         : 0;
       if (
         (currentItems.length > 0 || currentIncludeToc) &&

@@ -146,6 +146,7 @@ fn check_chart(
 
     let option = effective_chart_option(chart);
     check_dense_labels(engine, block, &option, index);
+    check_line_end_labels(engine, block, &option, index);
     let has_matrix = option.get("matrix").is_some_and(|value| !value.is_null());
     for (axis_key, axis_path) in [("xAxis", "xAxis"), ("yAxis", "yAxis")] {
         let grid_count = i64::try_from(axis_count(&option, "grid")).unwrap_or(i64::MAX);
@@ -412,6 +413,60 @@ fn axis_label_text(value: &Value) -> Option<&str> {
     value
         .as_str()
         .or_else(|| value.get("value").and_then(Value::as_str))
+}
+
+fn check_line_end_labels(
+    engine: &mut Engine<'_>,
+    block: &quire_protocol::Block,
+    option: &Value,
+    index: usize,
+) {
+    let top_level_overlap_guard = option
+        .get("labelLayout")
+        .and_then(|layout| layout.get("hideOverlap"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let mut enabled_series = 0usize;
+    let mut missing_text_border = false;
+    let mut series_overlap_guard = false;
+    for series in chart_series(option) {
+        if series.get("type").and_then(Value::as_str) != Some("line") {
+            continue;
+        }
+        let Some(end_label) = series.get("endLabel") else {
+            continue;
+        };
+        if end_label.get("show").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        enabled_series = enabled_series.saturating_add(1);
+        if end_label.get("textBorderWidth").and_then(Value::as_f64) != Some(0.0) {
+            missing_text_border = true;
+        }
+        if series
+            .get("labelLayout")
+            .and_then(|layout| layout.get("hideOverlap"))
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            series_overlap_guard = true;
+        }
+    }
+    let multiple_without_guard =
+        enabled_series >= 2 && !top_level_overlap_guard && !series_overlap_guard;
+    if enabled_series == 0 || (!missing_text_border && !multiple_without_guard) {
+        return;
+    }
+    engine.report(
+        RuleId::EchartsLineEndLabelStyle,
+        format!(
+            "chart `{}` enables line `endLabel` without `textBorderWidth: 0` or overlap guard",
+            block.id
+        ),
+        "On each `line` series with `endLabel.show: true`, set `endLabel.textBorderWidth: 0` to prevent text ghosting on white backgrounds, and set `labelLayout: { hideOverlap: true }` (or rely on legend) when multiple series end closely.",
+        Some(block.id.clone()),
+        Some(format!("blocks[{index}].option.series")),
+    );
 }
 
 fn axis_label_handled(value: &Value) -> bool {

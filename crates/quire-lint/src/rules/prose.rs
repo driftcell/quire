@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use quire_protocol::{BlockKind, ReportDocument};
 
+use super::structure::normalize_heading_text;
 use crate::{engine::Engine, registry::RuleId};
 
 const CLICHE_TRANSITIONS: &[&str] = &[
@@ -207,6 +208,8 @@ const LIGHT_HEDGES: &[&str] = &[
     "换个角度看",
 ];
 
+const DENSE_PROSE_EXEMPT_HEADINGS: &[&str] = &["导论", "引言", "前言", "结语", "总结", "摘要"];
+
 const ECO_PREFIXES: &[&str] = &[
     "海洋",
     "陆地",
@@ -263,6 +266,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
     check_template_parallel(document, engine);
     check_contrast_and_hedging(document, engine);
     check_wall_of_text(document, engine);
+    check_dense_prose_section(document, engine);
 }
 
 fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
@@ -576,6 +580,68 @@ fn check_wall_of_text(document: &ReportDocument, engine: &mut Engine<'_>) {
                 prose_chars = 0;
                 streak_reported = false;
             }
+        }
+    }
+}
+
+fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>) {
+    let mut exempt = false;
+    let mut prose_blocks = 0usize;
+    let mut prose_chars = 0usize;
+    let mut reported = false;
+    for (index, block) in document.blocks.iter().enumerate() {
+        match &block.body {
+            BlockKind::Heading { level, text } if *level == 1 || *level == 2 => {
+                prose_blocks = 0;
+                prose_chars = 0;
+                reported = false;
+                exempt = *level == 2
+                    && DENSE_PROSE_EXEMPT_HEADINGS.contains(&normalize_heading_text(text));
+            }
+            BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_) => {
+                prose_blocks = 0;
+                prose_chars = 0;
+                reported = false;
+            }
+            BlockKind::Paragraph { text } => {
+                if !exempt {
+                    prose_blocks = prose_blocks.saturating_add(1);
+                    prose_chars = prose_chars.saturating_add(wall_of_text_char_count(text));
+                    if !reported && prose_blocks >= 4 && prose_chars >= 1000 {
+                        reported = true;
+                        engine.report(
+                            RuleId::DenseProseRunNeedsVisual,
+                            format!(
+                                "block `{}` completes a {prose_blocks}-block ({prose_chars}-char) prose run with no Table or Echarts chart",
+                                block.id
+                            ),
+                            "In this section via apply_operations, extract multi-entity comparisons or per-school recommendations into a Table or Echarts chart (e.g. stacked bar for talent/metrics or summary action table), and trim the prose to analytical takeaways; never delete real facts merely to drop below the char limit.",
+                            Some(block.id.clone()),
+                            Some(format!("blocks[{index}].text")),
+                        );
+                    }
+                }
+            }
+            BlockKind::Quote { text } if !text.trim().is_empty() => {
+                if !exempt {
+                    prose_blocks = prose_blocks.saturating_add(1);
+                    prose_chars = prose_chars.saturating_add(wall_of_text_char_count(text));
+                    if !reported && prose_blocks >= 4 && prose_chars >= 1000 {
+                        reported = true;
+                        engine.report(
+                            RuleId::DenseProseRunNeedsVisual,
+                            format!(
+                                "block `{}` completes a {prose_blocks}-block ({prose_chars}-char) prose run with no Table or Echarts chart",
+                                block.id
+                            ),
+                            "In this section via apply_operations, extract multi-entity comparisons or per-school recommendations into a Table or Echarts chart (e.g. stacked bar for talent/metrics or summary action table), and trim the prose to analytical takeaways; never delete real facts merely to drop below the char limit.",
+                            Some(block.id.clone()),
+                            Some(format!("blocks[{index}].text")),
+                        );
+                    }
+                }
+            }
+            BlockKind::Heading { .. } | BlockKind::Quote { .. } => {}
         }
     }
 }

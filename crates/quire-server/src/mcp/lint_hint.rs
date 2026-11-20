@@ -27,7 +27,7 @@ fn warning_tier(code: &str) -> u8 {
         .strip_prefix("QR")
         .and_then(|digits| digits.parse::<u16>().ok());
     match numeric {
-        Some(417 | 418) => 2,
+        Some(417..=419) => 2,
         Some(412..=415) => 3,
         _ => 1,
     }
@@ -221,6 +221,7 @@ mod tests {
         let visuals = diagnostic("QR416", Severity::Warning, Some(block_id("b_visuals")?));
         let layout = diagnostic("QR417", Severity::Warning, Some(block_id("b_layout")?));
         let heading = diagnostic("QR418", Severity::Warning, Some(block_id("b_heading")?));
+        let dense_prose = diagnostic("QR419", Severity::Warning, Some(block_id("b_dense_prose")?));
         let prose = diagnostic("QR412", Severity::Warning, Some(block_id("b_prose")?));
         let prose_fourteen = diagnostic("QR414", Severity::Warning, Some(block_id("b_prose_14")?));
         let info = diagnostic("QR103", Severity::Info, Some(block_id("b_info")?));
@@ -229,6 +230,7 @@ mod tests {
         assert_eq!(priority_tier(&visuals), 1);
         assert_eq!(priority_tier(&layout), 2);
         assert_eq!(priority_tier(&heading), 2);
+        assert_eq!(priority_tier(&dense_prose), 2);
         assert_eq!(priority_tier(&prose), 3);
         assert_eq!(priority_tier(&prose_fourteen), 3);
         assert_eq!(priority_tier(&info), 4);

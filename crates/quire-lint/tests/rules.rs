@@ -1418,6 +1418,82 @@ fn qr316_flags_dense_pie_and_category_axis_labels() {
 }
 
 #[test]
+fn qr317_flags_unguarded_line_end_labels() {
+    let mut unguarded = doc();
+    unguarded.blocks.push(chart_named(
+        "line-end",
+        serde_json::json!({
+            "series": [{
+                "type": "line",
+                "data": [1, 2],
+                "endLabel": {"show": true}
+            }]
+        }),
+    ));
+    let report = lint_document(&unguarded);
+    let diagnostic = finding(&report, "QR317");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert!(diagnostic.message.contains("endLabel"));
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].option.series"));
+
+    let mut fixed = doc();
+    fixed.blocks.push(chart_named(
+        "line-end-fixed",
+        serde_json::json!({
+            "series": [{
+                "type": "line",
+                "data": [1, 2],
+                "endLabel": {"show": true, "textBorderWidth": 0}
+            }]
+        }),
+    ));
+    assert!(!has_code(&lint_document(&fixed), "QR317"));
+
+    let mut multiple = doc();
+    multiple.blocks.push(chart_named(
+        "line-end-multiple",
+        serde_json::json!({
+            "series": [
+                {"type": "line", "data": [1, 2], "endLabel": {"show": true, "textBorderWidth": 0}},
+                {"type": "line", "data": [2, 3], "endLabel": {"show": true, "textBorderWidth": 0}}
+            ]
+        }),
+    ));
+    assert!(has_code(&lint_document(&multiple), "QR317"));
+
+    let mut guarded = doc();
+    guarded.blocks.push(chart_named(
+        "line-end-guarded",
+        serde_json::json!({
+            "labelLayout": {"hideOverlap": true},
+            "series": [
+                {"type": "line", "data": [1, 2], "endLabel": {"show": true, "textBorderWidth": 0}},
+                {"type": "line", "data": [2, 3], "endLabel": {"show": true, "textBorderWidth": 0}}
+            ]
+        }),
+    ));
+    assert!(!has_code(&lint_document(&guarded), "QR317"));
+
+    let mut ignored = chart_named(
+        "line-end-ignored",
+        serde_json::json!({
+            "series": [{
+                "type": "line",
+                "data": [1, 2],
+                "endLabel": {"show": true}
+            }]
+        }),
+    );
+    ignored.lint_ignore = vec!["QR317".into()];
+    let mut ignored_doc = doc();
+    ignored_doc.blocks.push(ignored);
+    let report = lint_document(&ignored_doc);
+    assert!(!has_code(&report, "QR317"));
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
 fn qr416_flags_third_consecutive_visual_only() {
     let mut two = doc();
     two.blocks.push(table(
@@ -1550,6 +1626,98 @@ fn qr417_flags_walls_of_text_and_long_prose_runs() {
         .collect();
     assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
     assert_eq!(hits[0].block_id.as_ref(), Some(&bid("run-5")));
+}
+
+#[test]
+fn qr419_flags_dense_prose_runs_with_section_exemptions() {
+    let text = "数".repeat(250);
+    let mut normal = doc();
+    normal.blocks.push(heading("dense-h2", 2, "规模结构"));
+    for index in 1..=4 {
+        let id = format!("dense-{index}");
+        normal.blocks.push(paragraph(id.as_str(), text.as_str()));
+    }
+    let report = lint_document(&normal);
+    let diagnostic = finding(&report, "QR419");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert!(
+        diagnostic.message.contains("4-block (1000-char)"),
+        "{}",
+        diagnostic.message
+    );
+    assert!(diagnostic.hint.contains("Table or Echarts"));
+
+    for title in ["导论", "结语"] {
+        let mut exempt = doc();
+        exempt.blocks.push(heading("exempt-h2", 2, title));
+        for index in 1..=4 {
+            let id = format!("exempt-{index}");
+            exempt.blocks.push(paragraph(id.as_str(), text.as_str()));
+        }
+        assert!(
+            !has_code(&lint_document(&exempt), "QR419"),
+            "section `{title}` must be exempt"
+        );
+    }
+
+    let long_text = "数".repeat(350);
+    let mut reset = doc();
+    reset.blocks.push(heading("reset-h2", 2, "规模结构"));
+    for index in 1..=3 {
+        let id = format!("before-table-{index}");
+        reset
+            .blocks
+            .push(paragraph(id.as_str(), long_text.as_str()));
+    }
+    reset.blocks.push(table(
+        "reset-table",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    ));
+    for index in 1..=4 {
+        let id = format!("after-table-{index}");
+        reset.blocks.push(paragraph(id.as_str(), text.as_str()));
+    }
+    let report = lint_document(&reset);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR419")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("after-table-4")));
+
+    let medium_text = "数".repeat(300);
+    let mut h3 = doc();
+    h3.blocks.push(heading("h3-section", 2, "规模结构"));
+    h3.blocks
+        .push(paragraph("h3-before-1", medium_text.as_str()));
+    h3.blocks
+        .push(paragraph("h3-before-2", medium_text.as_str()));
+    h3.blocks.push(heading("h3-sub", 3, "细分结构"));
+    h3.blocks.push(paragraph("h3-after-1", text.as_str()));
+    h3.blocks.push(paragraph("h3-after-2", text.as_str()));
+    let report = lint_document(&h3);
+    assert_eq!(
+        finding(&report, "QR419").block_id.as_ref(),
+        Some(&bid("h3-after-2"))
+    );
+
+    let mut ignored = doc();
+    ignored.blocks.push(heading("ignored-h2", 2, "规模结构"));
+    for index in 1..=4 {
+        let id = format!("ignored-{index}");
+        let mut block = paragraph(id.as_str(), text.as_str());
+        if index == 4 {
+            block.lint_ignore = vec!["QR419".into()];
+        }
+        ignored.blocks.push(block);
+    }
+    let report = lint_document(&ignored);
+    assert!(!has_code(&report, "QR419"), "{:?}", report.diagnostics);
+    assert!(report.summary.suppressed >= 1);
 }
 
 #[test]

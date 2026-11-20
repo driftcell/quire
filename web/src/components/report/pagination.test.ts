@@ -248,6 +248,27 @@ describe("paginateBlocks references page break", () => {
   });
 });
 
+describe("paginateBlocks heading keep-with-next", () => {
+  test("moves a heading with a non-table block that no longer fits", () => {
+    const pages = paginateBlocks(
+      [paragraph("before"), heading("h2", 2), paragraph("next")],
+      measurements({
+        blockHeights: { before: 280, h2: 40, next: 220 },
+      }),
+      500,
+    );
+
+    expect(pages).toHaveLength(2);
+    expect(pageAt(pages, 0).items.map((item) => item.block.id)).toEqual([
+      "before",
+    ]);
+    expect(pageAt(pages, 1).items.map((item) => item.block.id)).toEqual([
+      "h2",
+      "next",
+    ]);
+  });
+});
+
 describe("paginateBlocks cover page isolation", () => {
   test("coverFullPage puts only the cover on page 1 and starts TOC/body on page 2", () => {
     const pages = paginateBlocks(

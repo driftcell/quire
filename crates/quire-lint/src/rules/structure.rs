@@ -478,7 +478,7 @@ fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
     }
 }
 
-fn normalize_heading_text(text: &str) -> &str {
+pub(super) fn normalize_heading_text(text: &str) -> &str {
     let stripped = strip_heading_number(text.trim());
     stripped
         .trim_matches(|ch: char| matches!(ch, ':' | '：' | '—' | '-' | '、' | ' ' | '\t'))

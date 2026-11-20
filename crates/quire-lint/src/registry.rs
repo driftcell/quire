@@ -41,6 +41,7 @@ pub enum RuleId {
     EchartsEntityColorInconsistent,
     EchartsPaletteInconsistent,
     EchartsDenseLabelsOverlap,
+    EchartsLineEndLabelStyle,
     PlaceholderTextLeak,
     HeadingLevelJump,
     HeadingEmptySection,
@@ -59,6 +60,7 @@ pub enum RuleId {
     ConsecutiveVisualsWithoutProse,
     WallOfTextParagraph,
     BoringOrCountingHeading,
+    DenseProseRunNeedsVisual,
     CssSyntaxError,
     CustomHtmlExternalResource,
     CustomHtmlFixedOverflow,
@@ -162,6 +164,7 @@ define_rules! {
     EchartsEntityColorInconsistent = "QR314", "echarts-entity-color-inconsistent", Warning, true;
     EchartsPaletteInconsistent = "QR315", "echarts-palette-inconsistent", Warning, true;
     EchartsDenseLabelsOverlap = "QR316", "echarts-dense-labels-overlap", Warning, true;
+    EchartsLineEndLabelStyle = "QR317", "echarts-line-end-label-style", Warning, true;
 
     PlaceholderTextLeak = "QR401", "placeholder-text-leak", Error, true;
     HeadingLevelJump = "QR402", "heading-level-jump", Warning, true;
@@ -181,6 +184,7 @@ define_rules! {
     ConsecutiveVisualsWithoutProse = "QR416", "consecutive-visuals-without-prose", Warning, true;
     WallOfTextParagraph = "QR417", "wall-of-text-paragraph", Warning, true;
     BoringOrCountingHeading = "QR418", "boring-or-counting-heading", Warning, true;
+    DenseProseRunNeedsVisual = "QR419", "dense-prose-run-needs-visual", Warning, true;
 
     CssSyntaxError = "QR501", "css-syntax-error", Error, false;
     CustomHtmlExternalResource = "QR502", "custom-html-external-resource", Warning, true;

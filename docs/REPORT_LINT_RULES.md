@@ -90,6 +90,10 @@ visible characters, is dense unless `axisLabel.rotate` is non-zero or `axisLabel
 non-zero/`auto`. `yAxis` categories are intentionally exempt because horizontal bars own a row per
 label.
 
+`QR317` checks line-series `endLabel`: every enabled end label must set
+`endLabel.textBorderWidth: 0` to avoid white-background double-stroke ghosting. Two or more line
+series with end labels also need a top-level or series-level `labelLayout.hideOverlap: true` guard.
+
 `QR416` counts consecutive Table/ECharts/CustomHtml blocks. Empty text and headings do not reset the
 streak; a non-empty Paragraph or Quote does. The third visual block in a streak reports once, so two
 complementary visuals remain allowed.
@@ -103,6 +107,11 @@ threshold. Headings, tables, charts, custom HTML, quotes and list paragraphs res
 punctuation, then flags exact generic headings (`概述`, `行动建议`, `Overview`, etc.) and counting
 shells such as `三大核心维度`. A counting heading with a colon followed by at least six characters,
 or a long title with concrete data/entities, is exempt.
+
+`QR419` detects dense prose sections that should become a visual. It tracks the current H2 section,
+resets on a new H1/H2 and after any Table/ECharts/CustomHtml, and does not let H3-H6 split a prose run.
+Four or more non-visual paragraphs (or non-empty quotes) totaling 1000+ visible characters in a
+non-exempt section report once. `导论`、`引言`、`前言`、`结语`、`总结`、`摘要` sections are exempt.
 
 ### Matching and filter layers
 
@@ -168,9 +177,10 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
   report a single B-class jargon word as `QR412`.
 - Contrast tics are sentence-bounded and require a 1-45 character gap; a single contrast sentence or
   a single light hedging phrase does not report `QR415`.
-- Dense chart labels report at most once per chart; `QR416` reports only the third visual in a run;
-  `QR417` never double-reports a block that already breached the single-paragraph wall limit;
-  `QR418` skips level-1 headings and numbering-only prefixes.
+- Dense chart labels report at most once per chart; line end-label checks fire at most once per chart;
+  `QR416` reports only the third visual in a run; `QR417` never double-reports a block that already
+  breached the single-paragraph wall limit; `QR418` skips level-1 headings and numbering-only
+  prefixes; `QR419` reports once per non-exempt H2 prose run.
 - Hint groups are deterministic, merged by block, capped at five expanded groups, and preserve tier
   order; `apply_operations` never advances past inline warnings without naming the affected blocks.
 - Document and block ignore policies survive reload, revision updates and rollback.
