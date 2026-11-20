@@ -26,7 +26,7 @@ async (page) => {
     },
   ];
 
-  const detail = (activeStatus, compacted) => ({
+  const detail = (activeStatus, compacted, compacting = false) => ({
     session_id: sessionId,
     title: "E2E session compaction",
     status: "active",
@@ -36,6 +36,7 @@ async (page) => {
     last_event_seq: 2,
     doc_id: "report-compaction",
     linked_doc_id: "report-compaction",
+    compacting,
     messages: compacted
       ? [
           ...baseMessages,
@@ -72,8 +73,14 @@ async (page) => {
   const state = {
     activeStatus: "running",
     compacted: false,
+    compacting: false,
     compactRequests: 0,
   };
+
+  let releaseCompaction = () => undefined;
+  const compactionGate = new Promise((resolve) => {
+    releaseCompaction = resolve;
+  });
 
   const handleSessionApi = async (route) => {
     const request = route.request();
@@ -85,6 +92,7 @@ async (page) => {
       }
       state.compactRequests += 1;
       state.compacted = true;
+      state.compacting = false;
       state.activeStatus = "idle";
       await route.fulfill({
         status: 200,
@@ -102,6 +110,28 @@ async (page) => {
       return;
     }
     if (path === `/api/sessions/${sessionId}/events`) {
+      if (state.compacting) {
+        await compactionGate;
+        state.compacting = false;
+        state.compacted = true;
+        await route.fulfill({
+          status: 200,
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+          },
+          body: `data: ${JSON.stringify({
+            seq: 5,
+            run_id: "compaction",
+            agent_id: "main",
+            parent_run_id: null,
+            timestamp: new Date().toISOString(),
+            event: "compaction_finished",
+            success: true,
+          })}\n\n`,
+        });
+        return;
+      }
       await route.fulfill({
         status: 200,
         headers: {
@@ -119,7 +149,7 @@ async (page) => {
         body: JSON.stringify(
           state.compacted
             ? detail("idle", true)
-            : detail(state.activeStatus, false),
+            : detail(state.activeStatus, false, state.compacting),
         ),
       });
       return;
@@ -175,6 +205,27 @@ async (page) => {
     .getByText("旧回答：已完成第一轮对标分析。", { exact: true })
     .waitFor({ state: "visible", timeout: 5000 });
 
+  state.compacted = false;
+  state.compacting = true;
+  state.activeStatus = "idle";
+  await page.reload();
+  const recoveringContext = page.getByRole("button", { name: "85%" });
+  await recoveringContext.waitFor({ state: "visible", timeout: 15000 });
+  await recoveringContext.hover();
+  await compactButton.waitFor({ state: "visible", timeout: 15000 });
+  assert(
+    await compactButton.isDisabled(),
+    "server compacting state must disable the button after refresh",
+  );
+  releaseCompaction();
+
+  await page
+    .getByRole("button", { name: "10%" })
+    .waitFor({ state: "visible", timeout: 15000 });
+  await page
+    .locator('[data-slot="compaction-divider"]')
+    .waitFor({ state: "visible", timeout: 15000 });
+
   return {
     pass: true,
     scenario: "session-compaction",
@@ -188,6 +239,8 @@ async (page) => {
       compactRequests: state.compactRequests,
       dividerVisible: true,
       historyPreserved: true,
+      refreshWhileCompactingDisabled: true,
+      sseFinishedRecovered: true,
     },
   };
 }

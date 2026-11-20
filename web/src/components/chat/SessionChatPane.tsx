@@ -43,6 +43,7 @@ export interface SessionChatPaneProps {
   onDeletePending: (queueId: string) => Promise<void>;
   onInterrupt: () => Promise<void>;
   runStatus: ActiveRunStatus;
+  compacting?: boolean;
   contextUsage?: ContextUsage;
   quotedSnippet: QuotedChatSnippet | null;
   pendingCommentRefs: CommentRefPayload[];
@@ -76,6 +77,7 @@ export function SessionChatPane({
   onDeletePending,
   onInterrupt,
   runStatus,
+  compacting = false,
   contextUsage,
   quotedSnippet,
   pendingCommentRefs,
@@ -136,6 +138,7 @@ export function SessionChatPane({
         >
           <PromptComposer
             runStatus={runStatus}
+            compacting={compacting}
             contextUsage={contextUsage}
             quotedSnippet={quotedSnippet}
             pendingCommentRefs={pendingCommentRefs}

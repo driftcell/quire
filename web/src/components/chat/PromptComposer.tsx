@@ -58,6 +58,7 @@ export interface QuotedChatSnippet {
 export interface PromptComposerProps {
   placeholder?: string;
   runStatus?: ActiveRunStatus;
+  compacting?: boolean;
   contextUsage?: ContextUsage;
   quotedSnippet?: QuotedChatSnippet | null;
   pendingCommentRefs?: CommentRefPayload[];
@@ -117,6 +118,7 @@ function ContextRing({ pct }: { pct: number }) {
 export function PromptComposer({
   placeholder = "Shift + Enter 换行 · 支持拖拽或粘贴截图",
   runStatus = "idle",
+  compacting = false,
   contextUsage,
   quotedSnippet,
   pendingCommentRefs = [],
@@ -132,7 +134,7 @@ export function PromptComposer({
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
-  const [compacting, setCompacting] = useState(false);
+  const [compactingRequest, setCompactingRequest] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -436,24 +438,28 @@ export function PromptComposer({
                           variant="outline"
                           data-slot="compact-context-button"
                           className="w-full gap-1.5"
-                          disabled={isRunning || compacting}
+                          disabled={
+                            isRunning || compacting || compactingRequest
+                          }
                           onClick={() => {
-                            if (isRunning || compacting) return;
+                            if (isRunning || compacting || compactingRequest) {
+                              return;
+                            }
                             void (async () => {
-                              setCompacting(true);
+                              setCompactingRequest(true);
                               try {
                                 await onCompact();
                               } catch {
                                 setSendError("上下文压缩失败，请稍后重试");
                               } finally {
-                                setCompacting(false);
+                                setCompactingRequest(false);
                               }
                             })();
                           }}
                         >
                           <Minimize2Icon className="size-3" />
                           <span>
-                            {compacting
+                            {compacting || compactingRequest
                               ? "正在压缩上下文..."
                               : "压缩上下文 (/compact)"}
                           </span>
@@ -463,8 +469,10 @@ export function PromptComposer({
                         {isRunning
                           ? "Agent 运行中暂不可压缩"
                           : compacting
-                            ? "正在生成结构化交接摘要"
-                            : "压缩历史并切换到最新系统提示词"}
+                            ? "服务端正在压缩上下文"
+                            : compactingRequest
+                              ? "正在生成结构化交接摘要"
+                              : "压缩历史并切换到最新系统提示词"}
                       </TooltipContent>
                     </Tooltip>
                   )}

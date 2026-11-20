@@ -132,6 +132,10 @@ pub enum SessionEventKind {
     PendingQueueUpdated {
         items: Vec<PendingQueueItem>,
     },
+    CompactionStarted,
+    CompactionFinished {
+        success: bool,
+    },
 }
 
 impl SessionEventKind {
@@ -156,6 +160,8 @@ impl SessionEventKind {
             Self::SessionTitleUpdated { .. } => "session_title_updated",
             Self::UserMessageAdded { .. } => "user_message_added",
             Self::PendingQueueUpdated { .. } => "pending_queue_updated",
+            Self::CompactionStarted => "compaction_started",
+            Self::CompactionFinished { .. } => "compaction_finished",
         }
     }
 
@@ -294,6 +300,8 @@ mod tests {
             "session_title_updated",
             "user_message_added",
             "pending_queue_updated",
+            "compaction_started",
+            "compaction_finished",
         ] {
             assert!(rendered.contains(event), "missing {event} in schema");
         }

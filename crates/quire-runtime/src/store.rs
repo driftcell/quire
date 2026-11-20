@@ -135,7 +135,8 @@ impl RuntimeStore {
     pub async fn get_session_summary(&self, session_id: &str) -> RuntimeResult<SessionSummary> {
         let row = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
-                      active_run_status, last_event_seq, context_usage, compacted_at, created_at, updated_at
+                      active_run_status, last_event_seq, context_usage, compaction_started_at,
+                      compacted_at, created_at, updated_at
                FROM agent_sessions WHERE session_id = $1"#,
         )
         .bind(session_id)
@@ -169,7 +170,8 @@ impl RuntimeStore {
     ) -> RuntimeResult<Vec<SessionSummary>> {
         let rows = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
-                      active_run_status, last_event_seq, context_usage, compacted_at, created_at, updated_at
+                      active_run_status, last_event_seq, context_usage, compaction_started_at,
+                      compacted_at, created_at, updated_at
                FROM agent_sessions
                ORDER BY updated_at DESC, session_id ASC
                LIMIT $1 OFFSET $2"#,
@@ -254,6 +256,62 @@ impl RuntimeStore {
         Ok(())
     }
 
+    pub async fn begin_compaction(&self, session_id: &str) -> RuntimeResult<DateTime<Utc>> {
+        let started: Option<DateTime<Utc>> = sqlx::query_scalar(
+            r#"UPDATE agent_sessions
+               SET compaction_started_at = NOW(), updated_at = NOW()
+               WHERE session_id = $1
+                 AND active_run_status <> 'running'
+                 AND (
+                     compaction_started_at IS NULL
+                     OR compaction_started_at < NOW() - INTERVAL '10 minutes'
+                 )
+               RETURNING compaction_started_at"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if let Some(started) = started {
+            return Ok(started);
+        }
+        let session = self.get_session_summary(session_id).await?;
+        if session.active_run_status == ActiveRunStatus::Running {
+            return Err(RuntimeError::CompactionConflict(
+                "session has an active run; wait for it to finish before compacting".into(),
+            ));
+        }
+        Err(RuntimeError::CompactionConflict(
+            "session compaction is already in progress".into(),
+        ))
+    }
+
+    pub async fn clear_compaction(&self, session_id: &str) -> RuntimeResult<()> {
+        sqlx::query(
+            "UPDATE agent_sessions SET compaction_started_at = NULL, updated_at = NOW() WHERE session_id = $1",
+        )
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn clear_compaction_if_started(
+        &self,
+        session_id: &str,
+        started_at: DateTime<Utc>,
+    ) -> RuntimeResult<()> {
+        sqlx::query(
+            r#"UPDATE agent_sessions
+               SET compaction_started_at = NULL, updated_at = NOW()
+               WHERE session_id = $1 AND compaction_started_at = $2"#,
+        )
+        .bind(session_id)
+        .bind(started_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn compaction_state(&self, session_id: &str) -> RuntimeResult<CompactionState> {
         let row = sqlx::query(
             r#"SELECT compaction_summary, compacted_up_to_message_id, compacted_at
@@ -296,6 +354,7 @@ impl RuntimeStore {
                SET compaction_summary = $2,
                    compacted_up_to_message_id = $3,
                    compacted_at = NOW(),
+                   compaction_started_at = NULL,
                    pinned_system_prompt = $4,
                    synced_kb_version = $5,
                    context_usage = $6,
@@ -1384,6 +1443,11 @@ fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
         })?,
         last_event_seq: u64::try_from(last_seq).unwrap_or(0),
         context_usage: serde_json::from_value(usage_raw).unwrap_or_default(),
+        compacting: row
+            .try_get::<Option<DateTime<Utc>>, _>("compaction_started_at")?
+            .is_some_and(|started| {
+                Utc::now().signed_duration_since(started) < chrono::Duration::minutes(10)
+            }),
         compacted_at: row.try_get("compacted_at")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
@@ -1691,6 +1755,12 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
     let mut index: HashMap<String, usize> = HashMap::new();
 
     for event in events {
+        if matches!(
+            event.kind,
+            SessionEventKind::CompactionStarted | SessionEventKind::CompactionFinished { .. }
+        ) {
+            continue;
+        }
         let trace_run_id = event.parent_run_id.as_deref().unwrap_or(&event.run_id);
         let position = ensure_run_trace(&mut traces, &mut index, trace_run_id, event.timestamp);
         let Some(trace) = traces.get_mut(position) else {
@@ -1911,7 +1981,9 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             | SessionEventKind::DocLinked { .. }
             | SessionEventKind::SessionTitleUpdated { .. }
             | SessionEventKind::UserMessageAdded { .. }
-            | SessionEventKind::PendingQueueUpdated { .. } => {}
+            | SessionEventKind::PendingQueueUpdated { .. }
+            | SessionEventKind::CompactionStarted
+            | SessionEventKind::CompactionFinished { .. } => {}
         }
     }
 

@@ -169,6 +169,15 @@ export type SessionEvent1 =
       event: "pending_queue_updated";
       items: PendingQueueItem[];
       [k: string]: unknown;
+    }
+  | {
+      event: "compaction_started";
+      [k: string]: unknown;
+    }
+  | {
+      event: "compaction_finished";
+      success: boolean;
+      [k: string]: unknown;
     };
 
 export interface QuireSessionProtocol {
@@ -283,6 +292,7 @@ export interface SessionDetail {
   active_run_status: ActiveRunStatus;
   attachments?: AttachmentMeta[];
   compacted_at?: string | null;
+  compacting?: boolean;
   context_usage?: ContextUsage;
   created_at: string;
   /**
@@ -361,6 +371,7 @@ export interface ResolvedQuestion {
 export interface SessionSummary {
   active_run_status: ActiveRunStatus;
   compacted_at?: string | null;
+  compacting?: boolean;
   context_usage?: ContextUsage1;
   created_at: string;
   /**

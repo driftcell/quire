@@ -919,7 +919,10 @@ async fn compact(
     State(service): State<RuntimeService>,
     Path(session_id): Path<String>,
 ) -> RuntimeResult<Json<SessionDetail>> {
-    service.compact(&session_id).await.map(Json)
+    let task = tokio::spawn(async move { service.compact(&session_id).await });
+    task.await
+        .map_err(|error| RuntimeError::Internal(format!("compaction task failed: {error}")))?
+        .map(Json)
 }
 
 #[derive(Debug, Deserialize)]

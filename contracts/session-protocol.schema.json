@@ -648,6 +648,10 @@
           ],
           "format": "date-time"
         },
+        "compacting": {
+          "type": "boolean",
+          "default": false
+        },
         "context_usage": {
           "$ref": "#/$defs/ContextUsage",
           "default": {
@@ -1207,6 +1211,34 @@
             "event",
             "items"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "compaction_started"
+            }
+          },
+          "required": [
+            "event"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "compaction_finished"
+            },
+            "success": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "event",
+            "success"
+          ]
         }
       ],
       "required": [
@@ -1275,6 +1307,10 @@
             "null"
           ],
           "format": "date-time"
+        },
+        "compacting": {
+          "type": "boolean",
+          "default": false
         },
         "context_usage": {
           "$ref": "#/$defs/ContextUsage",

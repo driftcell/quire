@@ -317,6 +317,19 @@ export function useSessionEventStream({
           context_used: ev.context_used,
           context_limit: ev.context_limit,
         });
+      } else if (ev.event === "compaction_started") {
+        queryClient.setQueryData<SessionDetail>(
+          ["session", sessionId],
+          (current) => (current ? { ...current, compacting: true } : current),
+        );
+      } else if (ev.event === "compaction_finished") {
+        queryClient.setQueryData<SessionDetail>(
+          ["session", sessionId],
+          (current) => (current ? { ...current, compacting: false } : current),
+        );
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
       } else if (ev.event === "questionnaire_requested") {
         setLiveRunStatus("awaiting_input");
         setLiveMain((prev) =>

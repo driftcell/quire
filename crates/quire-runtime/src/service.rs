@@ -143,6 +143,50 @@ pub enum PostMessageOutcome {
     },
 }
 
+struct CompactionFlagGuard {
+    store: RuntimeStore,
+    session_id: String,
+    started_at: chrono::DateTime<chrono::Utc>,
+    armed: bool,
+}
+
+impl CompactionFlagGuard {
+    fn new(
+        store: RuntimeStore,
+        session_id: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> Self {
+        Self {
+            store,
+            session_id: session_id.to_string(),
+            started_at,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CompactionFlagGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let store = self.store.clone();
+        let session_id = self.session_id.clone();
+        let started_at = self.started_at;
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = store
+                    .clear_compaction_if_started(&session_id, started_at)
+                    .await;
+            });
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RuntimeService {
     store: RuntimeStore,
@@ -859,6 +903,69 @@ impl RuntimeService {
         session_id: &str,
         exclude_message_id: Option<&str>,
     ) -> RuntimeResult<SessionDetail> {
+        let started_at = self.store.begin_compaction(session_id).await?;
+        let mut flag_guard = CompactionFlagGuard::new(self.store.clone(), session_id, started_at);
+        if let Err(error) = self
+            .emit(
+                session_id,
+                "compaction",
+                "main",
+                None,
+                SessionEventKind::CompactionStarted,
+            )
+            .await
+        {
+            let _ = self
+                .store
+                .clear_compaction_if_started(session_id, started_at)
+                .await;
+            flag_guard.disarm();
+            return Err(error);
+        }
+        let result = self
+            .compact_started(session_id, exclude_message_id, started_at)
+            .await;
+        match &result {
+            Ok(_) => {
+                let _ = self
+                    .emit(
+                        session_id,
+                        "compaction",
+                        "main",
+                        None,
+                        SessionEventKind::CompactionFinished { success: true },
+                    )
+                    .await;
+            }
+            Err(_) => {
+                if let Err(error) = self
+                    .store
+                    .clear_compaction_if_started(session_id, started_at)
+                    .await
+                {
+                    warn!(%error, %session_id, "failed to clear compaction state");
+                }
+                let _ = self
+                    .emit(
+                        session_id,
+                        "compaction",
+                        "main",
+                        None,
+                        SessionEventKind::CompactionFinished { success: false },
+                    )
+                    .await;
+            }
+        }
+        flag_guard.disarm();
+        result
+    }
+
+    async fn compact_started(
+        &self,
+        session_id: &str,
+        exclude_message_id: Option<&str>,
+        started_at: chrono::DateTime<chrono::Utc>,
+    ) -> RuntimeResult<SessionDetail> {
         let session = self.store.get_session_summary(session_id).await?;
         if session.active_run_status == ActiveRunStatus::Running
             || self.store.latest_running_run(session_id).await?.is_some()
@@ -899,6 +1006,9 @@ impl RuntimeService {
             let version = self.kb.current_version().await?;
             self.store
                 .set_pinned_prompt(session_id, prompt.as_str(), version)
+                .await?;
+            self.store
+                .clear_compaction_if_started(session_id, started_at)
                 .await?;
             return self.store.get_session_detail(session_id).await;
         }
@@ -1015,7 +1125,7 @@ impl RuntimeService {
         let Ok(session) = self.store.get_session_summary(session_id).await else {
             return;
         };
-        if session.active_run_status != ActiveRunStatus::Idle {
+        if session.active_run_status != ActiveRunStatus::Idle || session.compacting {
             return;
         }
         let usage = &session.context_usage;

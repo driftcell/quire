@@ -275,6 +275,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         });
       }}
       runStatus={effectiveRunStatus}
+      compacting={sessionQuery.data?.compacting ?? false}
       contextUsage={effectiveUsage}
       quotedSnippet={quotedForChat}
       pendingCommentRefs={pendingCommentRefs}

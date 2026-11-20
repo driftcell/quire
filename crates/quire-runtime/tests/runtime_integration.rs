@@ -460,6 +460,40 @@ impl ModelStreamProvider for RecordingStreamProvider {
     }
 }
 
+struct BlockingSummaryProvider {
+    released: Arc<AtomicBool>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl BlockingSummaryProvider {
+    fn new() -> Self {
+        Self {
+            released: Arc::new(AtomicBool::new(false)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for BlockingSummaryProvider {
+    async fn stream_turn(
+        &self,
+        _request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        while !self.released.load(Ordering::SeqCst) {
+            self.notify.notified().await;
+        }
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
+            ModelStreamEvent::TextDelta(compaction_summary_text().into()),
+        )])))
+    }
+}
+
 struct FailingStreamProvider;
 
 #[async_trait::async_trait]
@@ -1400,6 +1434,19 @@ async fn compaction_reuses_prefix_and_preserves_pending_state() {
     assert_eq!(synced, service.kb().current_version().await.unwrap());
     let usage = detail.summary.context_usage.clone();
     assert!(usage.context_used > 0 && usage.context_used < 180_000);
+    let events = store
+        .list_events(&session.session_id, 0, 500)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.kind, SessionEventKind::CompactionStarted))
+    );
+    assert!(events.iter().any(|event| matches!(
+        event.kind,
+        SessionEventKind::CompactionFinished { success: true }
+    )));
 
     let again = service.compact(&session.session_id).await.unwrap();
     assert_eq!(requests.lock().await.len(), 1);
@@ -1487,6 +1534,7 @@ async fn compaction_failure_leaves_anchor_prompt_and_usage_untouched() {
     let state = store.compaction_state(&session.session_id).await.unwrap();
     assert!(state.summary.is_none());
     assert!(state.up_to_message_id.is_none());
+    assert!(!after.summary.compacting);
     assert_eq!(
         store
             .pinned_prompt(&session.session_id)
@@ -1529,6 +1577,57 @@ async fn compaction_conflicts_while_a_run_is_active() {
         .finish_run(&run.run_id, "completed", None)
         .await
         .unwrap();
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compacting_state_survives_a_client_refresh_until_finished() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let provider = Arc::new(BlockingSummaryProvider::new());
+    let release = Arc::clone(&provider);
+    let service = service.with_model_stream_provider(provider);
+    let session = service
+        .create_session(&unique("compact-state"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    store
+        .insert_context_message(
+            &session.session_id,
+            MessageRole::User,
+            "summarize this",
+            "compact-state:user",
+            None,
+        )
+        .await
+        .unwrap();
+
+    let compact_session = session.session_id.clone();
+    let task_service = service.clone();
+    let handle = tokio::spawn(async move { task_service.compact(&compact_session).await });
+
+    let mut saw_compacting = false;
+    for _ in 0..100 {
+        let detail = store.get_session_detail(&session.session_id).await.unwrap();
+        if detail.summary.compacting {
+            saw_compacting = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(saw_compacting, "compaction state must be persisted");
+
+    release.release();
+    let result = handle.await.unwrap();
+    assert!(result.is_ok());
+    let detail = store.get_session_detail(&session.session_id).await.unwrap();
+    assert!(!detail.summary.compacting);
+    assert!(
+        detail
+            .messages
+            .iter()
+            .any(|message| message.role == MessageRole::Compaction)
+    );
     service.delete_session(&session.session_id).await.unwrap();
 }
 
