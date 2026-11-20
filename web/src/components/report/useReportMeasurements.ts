@@ -17,7 +17,8 @@ export function useReportMeasurements({
     tableMeasurements: {},
     coverHeight: 0,
     tocHeight: 0,
-    bibliographyHeight: 0,
+    bibliographyHeaderHeight: 0,
+    bibliographyItemHeights: [],
   });
 
   useEffect(() => {
@@ -82,13 +83,38 @@ export function useReportMeasurements({
       const bibEl = container.querySelector<HTMLElement>(
         '[data-measure-bib="true"]',
       );
+      const bibRoot = bibEl?.querySelector<HTMLElement>(
+        '[data-bibliography-root="true"]',
+      );
+      const bibHeader = bibRoot?.querySelector<HTMLElement>(
+        '[data-bibliography-header="true"]',
+      );
+      let bibliographyHeaderHeight = 0;
+      if (bibRoot && bibHeader) {
+        const rootStyle = window.getComputedStyle(bibRoot);
+        const headerStyle = window.getComputedStyle(bibHeader);
+        bibliographyHeaderHeight =
+          bibHeader.getBoundingClientRect().height +
+          (Number.parseFloat(headerStyle.marginBottom) || 0) +
+          (Number.parseFloat(rootStyle.marginTop) || 0) +
+          (Number.parseFloat(rootStyle.paddingTop) || 0) +
+          (Number.parseFloat(rootStyle.borderTopWidth) || 0);
+      }
+      const bibItems = bibRoot
+        ? Array.from(bibRoot.querySelectorAll<HTMLElement>("[data-bib-index]"))
+        : [];
+      const bibliographyItemHeights = bibItems.map((item, index) => {
+        const height = item.getBoundingClientRect().height;
+        return height + (index + 1 < bibItems.length ? 14 : 0);
+      });
 
       setMeasurements({
         blockHeights,
         tableMeasurements,
         coverHeight: coverEl ? coverEl.getBoundingClientRect().height : 0,
         tocHeight: tocEl ? tocEl.getBoundingClientRect().height : 0,
-        bibliographyHeight: bibEl ? bibEl.getBoundingClientRect().height : 0,
+        bibliographyHeaderHeight,
+        bibliographyItemHeights,
       });
     };
 

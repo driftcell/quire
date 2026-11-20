@@ -29,7 +29,8 @@ function measurements(
     tableMeasurements: {},
     coverHeight: 0,
     tocHeight: 0,
-    bibliographyHeight: 0,
+    bibliographyHeaderHeight: 0,
+    bibliographyItemHeights: [],
     ...overrides,
   };
 }
@@ -168,15 +169,16 @@ describe("paginateBlocks references page break", () => {
       [paragraph("body")],
       measurements({
         blockHeights: { body: 100 },
-        bibliographyHeight: 80,
+        bibliographyHeaderHeight: 40,
+        bibliographyItemHeights: [20, 20],
       }),
       500,
       { referencesPageBreakBefore: true },
     );
 
     expect(pages).toHaveLength(2);
-    expect(pageAt(pages, 0).includeBibliography).toBeUndefined();
-    expect(pageAt(pages, 1).includeBibliography).toBe(true);
+    expect(pageAt(pages, 0).bibliographyRange).toBeUndefined();
+    expect(pageAt(pages, 1).bibliographyRange).toEqual({ start: 0, end: 2 });
   });
 
   test("page_break_before=false shares the last page when references fit", () => {
@@ -184,14 +186,15 @@ describe("paginateBlocks references page break", () => {
       [paragraph("body")],
       measurements({
         blockHeights: { body: 100 },
-        bibliographyHeight: 80,
+        bibliographyHeaderHeight: 40,
+        bibliographyItemHeights: [20, 20],
       }),
       500,
       { referencesPageBreakBefore: false },
     );
 
     expect(pages).toHaveLength(1);
-    expect(pageAt(pages, 0).includeBibliography).toBe(true);
+    expect(pageAt(pages, 0).bibliographyRange).toEqual({ start: 0, end: 2 });
   });
 
   test("page_break_before=false still breaks when references overflow", () => {
@@ -199,15 +202,49 @@ describe("paginateBlocks references page break", () => {
       [paragraph("body")],
       measurements({
         blockHeights: { body: 100 },
-        bibliographyHeight: 450,
+        bibliographyHeaderHeight: 250,
+        bibliographyItemHeights: [200, 200],
       }),
       500,
       { referencesPageBreakBefore: false },
     );
 
-    expect(pages).toHaveLength(2);
-    expect(pageAt(pages, 0).includeBibliography).toBeUndefined();
-    expect(pageAt(pages, 1).includeBibliography).toBe(true);
+    expect(pages).toHaveLength(3);
+    expect(pageAt(pages, 0).bibliographyRange).toBeUndefined();
+    expect(pageAt(pages, 1).bibliographyRange).toEqual({ start: 0, end: 1 });
+    expect(pageAt(pages, 2).bibliographyRange).toEqual({ start: 1, end: 2 });
+  });
+
+  test("splits an oversized bibliography into contiguous ranges", () => {
+    const itemHeights = Array.from({ length: 15 }, () => 60);
+    const pages = paginateBlocks(
+      [paragraph("body")],
+      measurements({
+        blockHeights: { body: 100 },
+        bibliographyHeaderHeight: 100,
+        bibliographyItemHeights: itemHeights,
+      }),
+      500,
+      { referencesPageBreakBefore: true },
+    );
+
+    const bibliographyPages = pages.filter(
+      (page) => page.bibliographyRange !== undefined,
+    );
+    expect(bibliographyPages.length).toBeGreaterThanOrEqual(2);
+
+    let nextStart = 0;
+    for (const page of bibliographyPages) {
+      const range = page.bibliographyRange;
+      if (!range) {
+        throw new Error("bibliography page without a range");
+      }
+      expect(range.start).toBe(nextStart);
+      expect(range.end).toBeGreaterThan(range.start);
+      expect(range.end).toBeLessThanOrEqual(15);
+      nextStart = range.end;
+    }
+    expect(nextStart).toBe(15);
   });
 });
 

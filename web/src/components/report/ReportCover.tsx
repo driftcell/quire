@@ -137,7 +137,7 @@ export function ReportCover({
               {kicker}
             </div>
           )}
-          <h1 className="text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
+          <h1 className="text-balance text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
             {cover.title}
           </h1>
           {cover.subtitle && (
@@ -159,7 +159,7 @@ export function ReportCover({
             {kicker}
           </div>
         )}
-        <h1 className="text-2xl leading-snug font-semibold tracking-tight text-[var(--rpt-ink)]">
+        <h1 className="text-balance text-2xl leading-snug font-semibold tracking-tight text-[var(--rpt-ink)]">
           {cover.title}
         </h1>
         {cover.subtitle && (
@@ -181,7 +181,7 @@ export function ReportCover({
               {kicker}
             </div>
           )}
-          <h1 className="text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
+          <h1 className="text-balance text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
             {cover.title}
           </h1>
           {cover.subtitle && (
@@ -206,7 +206,7 @@ export function ReportCover({
           {kicker}
         </div>
       )}
-      <h1 className="mx-auto max-w-[92%] text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
+      <h1 className="mx-auto max-w-[92%] text-balance text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
         {cover.title}
       </h1>
       {cover.subtitle && (

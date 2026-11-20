@@ -84,9 +84,9 @@ export function ReportPage({
         data-page-number={page.pageNumber}
         data-include-cover={page.includeCover ? "true" : undefined}
         data-include-toc={page.includeToc ? "true" : undefined}
-        data-include-bibliography={
-          page.includeBibliography ? "true" : undefined
-        }
+        data-include-bibliography={page.bibliographyRange ? "true" : undefined}
+        data-bibliography-start={page.bibliographyRange?.start}
+        data-bibliography-end={page.bibliographyRange?.end}
         data-full-page-cover={fullPageCover ? "true" : undefined}
         style={{
           width: `${A4_PAGE_WIDTH_PX}px`,

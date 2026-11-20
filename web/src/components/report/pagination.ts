@@ -11,12 +11,18 @@ export interface PageSlice {
   continuation?: boolean;
 }
 
+export interface BibliographyRange {
+  /** Half-open range `[start, end)` into the full bibliography entry list. */
+  start: number;
+  end: number;
+}
+
 export interface A4Page {
   pageNumber: number;
   items: PageSlice[];
   includeCover?: boolean;
   includeToc?: boolean;
-  includeBibliography?: boolean;
+  bibliographyRange?: BibliographyRange;
 }
 
 export interface TableMeasurement {
@@ -32,7 +38,10 @@ export interface PageMeasurements {
   tableMeasurements: Record<string, TableMeasurement>;
   coverHeight: number;
   tocHeight: number;
-  bibliographyHeight: number;
+  /** Measured first-page bibliography header including its top spacing. */
+  bibliographyHeaderHeight: number;
+  /** Per-item heights including the 14px `space-y-3.5` gap. */
+  bibliographyItemHeights: number[];
 }
 
 export interface PaginateOptions {
@@ -90,8 +99,9 @@ function tableChromeHeight(
  * - Headings enforce keep-with-next when the following block doesn't fit.
  * - Oversized tables slice rows by measured row height while repeating <thead>,
  *   enforcing a minimum 2-row orphan guard at page bottoms.
- * - Bibliography starts a new page when `referencesPageBreakBefore` is true
- *   (the protocol default) or when it does not fit on the last content page.
+ * - Bibliography requests a new page when `referencesPageBreakBefore` is true
+ *   (the protocol default) or when its header and first entry do not fit. Entries
+ *   are then greedily sliced into contiguous `bibliographyRange` pages.
  */
 export function paginateBlocks(
   blocks: ReportBlock[],
@@ -99,13 +109,8 @@ export function paginateBlocks(
   pageHeight: number = A4_CONTENT_HEIGHT_PX,
   options: PaginateOptions = {},
 ): A4Page[] {
-  const {
-    blockHeights,
-    tableMeasurements,
-    coverHeight,
-    tocHeight,
-    bibliographyHeight,
-  } = measurements;
+  const { blockHeights, tableMeasurements, coverHeight, tocHeight } =
+    measurements;
 
   const fullPageCover = options.coverFullPage ?? false;
   const headingPageBreak = options.headingPageBreak ?? "none";
@@ -275,55 +280,140 @@ export function paginateBlocks(
 
   pushPage();
 
-  if (bibliographyHeight > 0 && pages.length > 0) {
-    const lastPage = pages[pages.length - 1];
-    if (lastPage) {
-      const lastPageUsed = lastPage.items.reduce(
-        (sum, slice) => {
-          if (slice.rowStart !== undefined && slice.rowEnd !== undefined) {
-            const metrics = tableMeasurements[slice.block.id];
-            const rowsCost = metrics
-              ? metrics.rowHeights
-                  .slice(slice.rowStart, slice.rowEnd)
-                  .reduce((a, b) => a + b, 0)
-              : (slice.rowEnd - slice.rowStart) * DEFAULT_ROW_HEIGHT_PX;
-            return (
-              sum +
-              tableChromeHeight(slice.block.id, metrics, blockHeights) +
-              rowsCost +
-              (slice.includeSummary
-                ? (metrics?.tfootHeight ?? 0)
-                : CONTINUATION_FOOTER_PX)
-            );
-          }
-          return sum + (blockHeights[slice.block.id] ?? 80);
-        },
-        (lastPage.includeCover ? Math.min(coverHeight, pageHeight * 0.75) : 0) +
-          (lastPage.includeToc ? tocHeight : 0),
-      );
-
-      const hasContent =
-        lastPage.includeCover ||
-        lastPage.includeToc ||
-        lastPage.items.length > 0;
-      const mustBreak = options.referencesPageBreakBefore ?? true;
-
-      if (
-        hasContent &&
-        (mustBreak || lastPageUsed + bibliographyHeight > pageHeight)
-      ) {
-        pages.push({
-          pageNumber: pages.length + 1,
-          items: [],
-          includeBibliography: true,
-        });
-      } else {
-        lastPage.includeBibliography = true;
-      }
-    }
-  }
+  appendBibliographyPages(
+    pages,
+    measurements,
+    pageHeight,
+    options.referencesPageBreakBefore ?? true,
+  );
 
   return pages;
+}
+
+/** Derive the compact continuation header from the measured first-page header. */
+function continuedBibliographyHeaderHeight(firstHeaderHeight: number): number {
+  const firstTopSpacing = 40 + 1 + 24; // mt-10 + border-t + pt-6
+  const continuedTopSpacing = 8; // pt-2
+  return Math.max(
+    48,
+    firstHeaderHeight - (firstTopSpacing - continuedTopSpacing),
+  );
+}
+
+function bibliographyItemsForPage(
+  itemHeights: number[],
+  start: number,
+  availableHeight: number,
+): number {
+  let usedHeight = 0;
+  let count = 0;
+  while (start + count < itemHeights.length) {
+    const itemHeight = itemHeights[start + count] ?? 0;
+    if (count > 0 && usedHeight + itemHeight > availableHeight) {
+      break;
+    }
+    usedHeight += itemHeight;
+    count += 1;
+  }
+  return Math.max(1, count);
+}
+
+function estimatedPageUsedHeight(
+  page: A4Page,
+  measurements: PageMeasurements,
+  pageHeight: number,
+): number {
+  const { blockHeights, tableMeasurements, coverHeight, tocHeight } =
+    measurements;
+  return page.items.reduce(
+    (sum, slice) => {
+      if (slice.rowStart !== undefined && slice.rowEnd !== undefined) {
+        const metrics = tableMeasurements[slice.block.id];
+        const rowsCost = metrics
+          ? metrics.rowHeights
+              .slice(slice.rowStart, slice.rowEnd)
+              .reduce((a, b) => a + b, 0)
+          : (slice.rowEnd - slice.rowStart) * DEFAULT_ROW_HEIGHT_PX;
+        return (
+          sum +
+          tableChromeHeight(slice.block.id, metrics, blockHeights) +
+          rowsCost +
+          (slice.includeSummary
+            ? (metrics?.tfootHeight ?? 0)
+            : CONTINUATION_FOOTER_PX)
+        );
+      }
+      return sum + (blockHeights[slice.block.id] ?? 80);
+    },
+    (page.includeCover ? Math.min(coverHeight, pageHeight * 0.75) : 0) +
+      (page.includeToc ? tocHeight : 0),
+  );
+}
+
+function appendBibliographyPages(
+  pages: A4Page[],
+  measurements: PageMeasurements,
+  pageHeight: number,
+  mustBreak: boolean,
+) {
+  const { bibliographyHeaderHeight, bibliographyItemHeights } = measurements;
+  if (bibliographyItemHeights.length === 0) {
+    return;
+  }
+  const lastPage = pages[pages.length - 1];
+  if (!lastPage) {
+    return;
+  }
+
+  const lastPageUsed = estimatedPageUsedHeight(
+    lastPage,
+    measurements,
+    pageHeight,
+  );
+  const hasContent =
+    Boolean(lastPage.includeCover) ||
+    Boolean(lastPage.includeToc) ||
+    lastPage.items.length > 0;
+  const firstItemHeight = bibliographyItemHeights[0] ?? 0;
+
+  let page = lastPage;
+  let pageUsed = lastPageUsed;
+  if (
+    hasContent &&
+    (mustBreak ||
+      lastPageUsed + bibliographyHeaderHeight + firstItemHeight > pageHeight)
+  ) {
+    page = {
+      pageNumber: pages.length + 1,
+      items: [],
+    };
+    pages.push(page);
+    pageUsed = 0;
+  }
+
+  let cursor = 0;
+  while (cursor < bibliographyItemHeights.length) {
+    const headerHeight =
+      cursor === 0
+        ? bibliographyHeaderHeight
+        : continuedBibliographyHeaderHeight(bibliographyHeaderHeight);
+    const available = pageHeight - pageUsed - headerHeight;
+    const take = bibliographyItemsForPage(
+      bibliographyItemHeights,
+      cursor,
+      available,
+    );
+    page.bibliographyRange = { start: cursor, end: cursor + take };
+    cursor += take;
+    if (cursor < bibliographyItemHeights.length) {
+      page = {
+        pageNumber: pages.length + 1,
+        items: [],
+      };
+      pages.push(page);
+      pageUsed = 0;
+    }
+  }
 }
 
 /**

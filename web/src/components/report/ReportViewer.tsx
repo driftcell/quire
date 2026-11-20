@@ -23,6 +23,7 @@ import {
   A4_HEADER_HEIGHT_PX,
   buildBlockPageMap,
   paginateBlocks,
+  type BibliographyRange,
   type PageSlice,
 } from "@/components/report/pagination";
 import { usePageScale } from "@/components/report/usePageScale";
@@ -374,12 +375,18 @@ export function ReportViewer({
     />
   );
 
-  const renderBibliography = (measurementOnly = false) =>
+  const renderBibliography = (
+    measurementOnly = false,
+    range?: BibliographyRange,
+  ) =>
     showReferences ? (
       <ReportBibliography
         entries={computed.bibliography}
         title={referencesTitle}
         measurementOnly={measurementOnly}
+        startIndex={range?.start}
+        endIndex={range?.end}
+        continued={range?.start !== undefined && range.start > 0}
       />
     ) : null;
 
@@ -528,7 +535,9 @@ export function ReportViewer({
               }
               toc={page.includeToc ? renderToc(blockPageMap) : null}
               bibliography={
-                page.includeBibliography ? renderBibliography() : null
+                page.bibliographyRange
+                  ? renderBibliography(false, page.bibliographyRange)
+                  : null
               }
               computed={computed}
               bibliographyById={bibliographyById}
