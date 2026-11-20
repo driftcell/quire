@@ -105,12 +105,12 @@ report no usage use the legacy text-length estimate.
 
 The cancellation token is checked by the stream wrapper, every model turn and every tool execution.
 Dropping or cancelling the stream stops subagent `JoinSet` work as well. Each `stream.next()` read has
-a 120-second idle timeout so a half-open provider connection cannot hang a turn forever. Each
-subagent runs inside a total timeout (360 seconds by default, override with
-`QUIRE_SUBAGENT_TIMEOUT_SECS`); on expiry the child token is cancelled, `SubagentFinished` is emitted
-with `status: "failed"` and `summary: "subagent timed out"`, and the parent `JoinSet` always converges.
-Runtime HTTP clients use a 15-second connect timeout plus bounded request timeouts; rmcp MCP transports
-use a dedicated reqwest 0.13 client with the same connect bound and a 300-second request bound.
+a 120-second idle timeout so a half-open provider connection cannot hang a turn forever. Subagents are
+not bounded by a total wall-clock timeout: a long-running subagent that keeps making progress is
+allowed to finish, and termination comes from normal completion, parent cancellation, or a network /
+stream idle timeout. Runtime HTTP clients use a 15-second connect timeout plus bounded request
+timeouts; rmcp MCP transports use a dedicated reqwest 0.13 client with the same connect bound and a
+300-second request bound.
 
 ### Ephemeral previews
 
@@ -141,7 +141,7 @@ formal Quire commit clears the placeholders atomically.
 - Live and refreshed traces share the `UserMessage` boundary: the previous activity is completed and
   later work starts a new activity. The outer transcript never duplicates an inline message ID.
 - A model stream step that produces no event for 120 seconds fails the turn instead of hanging.
-  Subagents are bounded by the total timeout and always emit one terminal `SubagentFinished`.
+  Subagents have no total wall-clock cutoff; network/stream timeouts and parent cancellation bound them.
 - Streamed preview anchors follow `PatchOp` field names and chain multi-block inserts; a preview is
   never demoted to `AppendToDoc` merely because the legacy `after_id`/`replace_block` names are absent.
 - Runtime HTTP clients configure `connect_timeout(15s)` and a request timeout; no unbounded default

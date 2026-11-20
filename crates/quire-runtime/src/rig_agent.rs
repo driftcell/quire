@@ -381,18 +381,6 @@ const MAX_TOOL_CODE_BYTES: usize = 256 * 1024;
 const MAX_TOOL_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-const DEFAULT_SUBAGENT_TIMEOUT_SECS: u64 = 360;
-
-fn subagent_timeout() -> Duration {
-    std::env::var("QUIRE_SUBAGENT_TIMEOUT_SECS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|seconds| *seconds > 0)
-        .map_or(
-            Duration::from_secs(DEFAULT_SUBAGENT_TIMEOUT_SECS),
-            Duration::from_secs,
-        )
-}
 
 fn bounded_tool_text(text: String) -> (String, bool) {
     if text.len() <= MAX_TOOL_OUTPUT_BYTES {
@@ -1823,10 +1811,8 @@ impl RigModelCore {
             task: task.task.clone(),
             section_id: task.section_id.clone(),
         });
-        let subagent_cancellation = parent.cancellation.child_token();
-        let mut timed_out = false;
-        let result = match tokio::time::timeout(subagent_timeout(), async {
-            if subagent_cancellation.is_cancelled() {
+        let result = async {
+            if parent.cancellation.is_cancelled() {
                 return Err(RuntimeError::InvalidRequest("run cancelled".into()));
             }
             let definition = self
@@ -1850,45 +1836,29 @@ impl RigModelCore {
                 doc_id: parent.doc_id.clone(),
                 session_id: parent.session_id.clone(),
                 run_id: subagent_run_id.clone(),
-                cancellation: subagent_cancellation.clone(),
+                cancellation: parent.cancellation.clone(),
             };
             let scope = parent_scope.child(subagent_run_id.clone(), task.agent_name.clone());
             let outcome = self
                 .run_turn(execution, vec![Message::user(task.task.clone())], scope)
                 .await?;
             Ok::<String, RuntimeError>(outcome)
-        })
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                timed_out = true;
-                subagent_cancellation.cancel();
-                Err(RuntimeError::Internal("subagent timed out".into()))
-            }
-        };
-        let (status, summary) = if timed_out {
-            if parent_scope.cancellation.is_cancelled() {
+        }
+        .await;
+        let (status, summary) = match result {
+            Ok(_) if parent_scope.cancellation.is_cancelled() => {
                 ("cancelled".to_string(), "cancelled".to_string())
-            } else {
-                ("failed".to_string(), "subagent timed out".to_string())
             }
-        } else {
-            match result {
-                Ok(_) if parent_scope.cancellation.is_cancelled() => {
-                    ("cancelled".to_string(), "cancelled".to_string())
-                }
-                Ok(summary) if summary.trim().is_empty() => {
-                    ("completed".to_string(), "completed".to_string())
-                }
-                Ok(summary) => ("completed".to_string(), summary),
-                Err(RuntimeError::InvalidRequest(message))
-                    if parent_scope.cancellation.is_cancelled() || message == "run cancelled" =>
-                {
-                    ("cancelled".to_string(), "cancelled".to_string())
-                }
-                Err(error) => ("failed".to_string(), error.to_string()),
+            Ok(summary) if summary.trim().is_empty() => {
+                ("completed".to_string(), "completed".to_string())
             }
+            Ok(summary) => ("completed".to_string(), summary),
+            Err(RuntimeError::InvalidRequest(message))
+                if parent_scope.cancellation.is_cancelled() || message == "run cancelled" =>
+            {
+                ("cancelled".to_string(), "cancelled".to_string())
+            }
+            Err(error) => ("failed".to_string(), error.to_string()),
         };
         parent_scope.send_raw(ModelStreamEvent::SubagentFinished {
             subagent_run_id,
