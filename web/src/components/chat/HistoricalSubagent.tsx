@@ -1,4 +1,5 @@
 import { ListTreeIcon, UsersIcon } from "lucide-react";
+import { SubagentOutput } from "@/components/chat/SubagentOutput";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
 import { toToolTraceItems } from "@/components/chat/traceSegments";
@@ -72,9 +73,7 @@ export function HistoricalSubagent({
             </Trace>
           )}
           {subagent.summary && (
-            <div className="text-xs text-muted-foreground">
-              {subagent.summary}
-            </div>
+            <SubagentOutput text={subagent.summary} streaming={false} />
           )}
         </TraceCollapsibleContent>
       </TraceCollapsible>

@@ -73,8 +73,6 @@ export function PendingUserBubble({
   const parsed = parseCommentRefs(item.content);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const locked = isBusy || busy;
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -90,29 +88,16 @@ export function PendingUserBubble({
 
   const save = async () => {
     const trimmed = draft.trim();
-    if (!trimmed || !onEdit || locked) {
+    if (!trimmed || !onEdit || isBusy) {
       return;
     }
-    setBusy(true);
-    try {
-      await onEdit(
-        item.queue_id,
-        updateCommentRefContent(item.content, trimmed),
-      );
-      setEditing(false);
-    } finally {
-      setBusy(false);
-    }
+    await onEdit(item.queue_id, updateCommentRefContent(item.content, trimmed));
+    setEditing(false);
   };
 
   const runAction = async (action?: () => Promise<void>) => {
-    if (!action || locked) return;
-    setBusy(true);
-    try {
-      await action();
-    } finally {
-      setBusy(false);
-    }
+    if (!action || isBusy) return;
+    await action();
   };
 
   return (
@@ -144,7 +129,7 @@ export function PendingUserBubble({
               <Textarea
                 ref={inputRef}
                 rows={2}
-                disabled={locked}
+                disabled={isBusy}
                 className="min-h-10 text-sm disabled:opacity-60"
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
@@ -176,7 +161,7 @@ export function PendingUserBubble({
                 <button
                   type="button"
                   className="hover:text-foreground disabled:opacity-50"
-                  disabled={locked || !draft.trim()}
+                  disabled={isBusy || !draft.trim()}
                   onClick={() => void save()}
                 >
                   保存
@@ -200,7 +185,7 @@ export function PendingUserBubble({
                 type="button"
                 aria-label="编辑排队消息"
                 title="编辑"
-                disabled={locked}
+                disabled={isBusy}
                 className="rounded p-0.5 hover:bg-muted hover:text-foreground disabled:opacity-50"
                 onClick={startEditing}
               >
@@ -210,7 +195,7 @@ export function PendingUserBubble({
                 type="button"
                 aria-label="撤回到输入框"
                 title="撤回到输入框"
-                disabled={locked}
+                disabled={isBusy}
                 className="rounded p-0.5 hover:bg-muted hover:text-foreground disabled:opacity-50"
                 onClick={() => {
                   if (onRecall) void runAction(() => onRecall(item));
@@ -222,7 +207,7 @@ export function PendingUserBubble({
                 type="button"
                 aria-label="删除排队消息"
                 title="删除"
-                disabled={locked}
+                disabled={isBusy}
                 className="rounded p-0.5 hover:bg-muted hover:text-destructive disabled:opacity-50"
                 onClick={() => {
                   if (onDelete) void runAction(() => onDelete(item.queue_id));

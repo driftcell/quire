@@ -2,6 +2,7 @@ import { Fragment, memo, type ReactNode } from "react";
 import { ListTreeIcon, LoaderCircleIcon, UsersIcon } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
+import { SubagentOutput } from "@/components/chat/SubagentOutput";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
 import {
@@ -12,6 +13,7 @@ import {
   activityHasQuestion,
   buildHistoricalSegments,
   buildLiveSegments,
+  extractSubagentLiveView,
   type ActivityRenderSegment,
   type ExecutionActivity,
   type ExecutionSubagent,
@@ -326,9 +328,11 @@ function LiveSubagent({
   sessionId: string;
   sub: LiveSubagentRun;
 }) {
-  const segments = buildLiveSegments(sub.trace, [], {
-    defaultCollapsed: true,
-  });
+  const { thinkingText, isThinkingStreaming, tools, streamingText } =
+    extractSubagentLiveView(sub.trace);
+  const outputText =
+    sub.summary?.trim() ||
+    (sub.status === "running" ? streamingText.trim() : "");
   const title = sub.displayName?.trim() || sub.agentName;
   return (
     <Trace>
@@ -360,9 +364,36 @@ function LiveSubagent({
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
-          <RenderSegments sessionId={sessionId} segments={segments} />
-          {sub.summary && (
-            <div className="text-xs text-muted-foreground">{sub.summary}</div>
+          <ThinkingTrace
+            content={thinkingText}
+            isStreaming={isThinkingStreaming}
+            defaultOpen={false}
+          />
+          {tools.length > 0 && (
+            <Trace>
+              <TraceCollapsible defaultOpen={false}>
+                <TraceCollapsibleTrigger>
+                  <TraceLine className="h-6 text-xs leading-5">
+                    <TraceIcon>
+                      <ListTreeIcon className="size-3.5" />
+                    </TraceIcon>
+                    <TraceTitle>执行详情</TraceTitle>
+                    <TraceDescription className="text-[11px]">
+                      {tools.length} 个工具
+                    </TraceDescription>
+                  </TraceLine>
+                </TraceCollapsibleTrigger>
+                <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
+                  <ToolCallList sessionId={sessionId} tools={tools} />
+                </TraceCollapsibleContent>
+              </TraceCollapsible>
+            </Trace>
+          )}
+          {outputText && (
+            <SubagentOutput
+              text={outputText}
+              streaming={!sub.summary && sub.status === "running"}
+            />
           )}
         </TraceCollapsibleContent>
       </TraceCollapsible>

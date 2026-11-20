@@ -56,6 +56,58 @@ type TextRenderSegment = {
 
 export type RenderSegment = ActivityRenderSegment | TextRenderSegment;
 
+export type LiveToolTraceItem = ToolCallTraceItem;
+
+export interface SubagentLiveView {
+  thinkingText: string;
+  isThinkingStreaming: boolean;
+  tools: LiveToolTraceItem[];
+  streamingText: string;
+}
+
+function joinLiveText(parts: string[]): string {
+  return parts
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n")
+    .trim();
+}
+
+/**
+ * Extract the subagent card model directly from the live trace. Subagent text
+ * is its own output, never part of the "thinking and execution" process block.
+ */
+export function extractSubagentLiveView(
+  trace: LiveAgentTrace,
+): SubagentLiveView {
+  const thinkingParts: string[] = [];
+  const textParts: string[] = [];
+  const tools: LiveToolTraceItem[] = [];
+
+  for (const segment of trace.segments) {
+    if (segment.kind === "thinking") {
+      thinkingParts.push(segment.text);
+      continue;
+    }
+    if (segment.kind === "text") {
+      textParts.push(segment.text);
+      continue;
+    }
+    for (const tool of segment.tools) {
+      if (tool.toolName !== "describe_task") {
+        tools.push(tool);
+      }
+    }
+  }
+
+  const lastSegment = trace.segments[trace.segments.length - 1];
+  return {
+    thinkingText: joinLiveText(thinkingParts),
+    isThinkingStreaming: trace.isStreaming && lastSegment?.kind === "thinking",
+    tools,
+    streamingText: joinLiveText(textParts),
+  };
+}
+
 function traceToolStatus(status: string): ToolCallTraceItem["status"] {
   if (status === "running") {
     return "running";

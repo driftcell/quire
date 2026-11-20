@@ -1,8 +1,9 @@
 /* eslint-disable no-unused-expressions -- Playwright CLI loads this file as a function expression. */
 async (page) => {
-  const server = 'http://127.0.0.1:8082';
-  const runtime = 'http://127.0.0.1:8081';
   const env = globalThis.process?.env ?? {};
+  const server = env.E2E_SERVER_URL || 'http://127.0.0.1:8082';
+  const runtime = env.E2E_RUNTIME_URL || 'http://127.0.0.1:8081';
+  const web = env.E2E_WEB_URL || 'http://localhost:5173';
   const rwToken = env.E2E_QUIRE_RW_TOKEN || 'dev-rw-token-change-me';
   const roToken = env.E2E_QUIRE_RO_TOKEN || 'dev-ro-token-change-me';
   const runtimeToken = env.E2E_RUNTIME_TOKEN || 'dev-runtime-token-change-me';
@@ -95,7 +96,7 @@ async (page) => {
       },
     );
 
-    await page.goto(`http://localhost:5173/sessions/${sessionId}`);
+    await page.goto(`${web}/sessions/${sessionId}`);
     await page.getByRole('tab', { name: /批注/ }).click();
 
     const cardA = page.locator(`#comment-thread-${threadA.thread_id}`);

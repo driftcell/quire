@@ -1,7 +1,8 @@
 /* eslint-disable no-unused-expressions -- Playwright CLI loads this file as a function expression. */
 async (page) => {
-  const runtime = 'http://127.0.0.1:8081';
   const env = globalThis.process?.env ?? {};
+  const runtime = env.E2E_RUNTIME_URL || 'http://127.0.0.1:8081';
+  const web = env.E2E_WEB_URL || 'http://localhost:5173';
   const runtimeToken = env.E2E_RUNTIME_TOKEN || 'dev-runtime-token-change-me';
   const auth = { Authorization: `Bearer ${runtimeToken}` };
 
@@ -75,7 +76,7 @@ async (page) => {
       await route.continue();
     });
 
-    await page.goto(`http://localhost:5173/sessions/${sessionId}`);
+    await page.goto(`${web}/sessions/${sessionId}`);
 
     const bubbleA = page.locator(`[data-queue-id="${queueA}"]`);
     const bubbleB = page.locator(`[data-queue-id="${queueB}"]`);

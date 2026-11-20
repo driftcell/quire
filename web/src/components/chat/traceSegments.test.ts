@@ -8,13 +8,14 @@ import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 import {
   buildHistoricalSegments,
   buildLiveSegments,
+  extractSubagentLiveView,
   type RenderSegment,
 } from "./traceSegments";
 
-function tool(id: string): ToolCallTraceItem {
+function tool(id: string, toolName = "read_blocks"): ToolCallTraceItem {
   return {
     toolCallId: id,
-    toolName: "read_blocks",
+    toolName,
     status: "completed",
     inputPreview: "{}",
   };
@@ -138,5 +139,53 @@ describe("buildLiveSegments", () => {
       throw new Error("expected text segment");
     }
     expect(body.isStreaming).toBe(true);
+  });
+});
+
+describe("extractSubagentLiveView", () => {
+  test("keeps subagent output text out of the thinking/execution process", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "writer",
+      isStreaming: false,
+      segments: [
+        { kind: "thinking", text: "分析数据" },
+        { kind: "text", text: "中间正文" },
+        {
+          kind: "execution",
+          tools: [
+            tool("read-1"),
+            tool("describe-1", "describe_task"),
+            tool("read-2"),
+          ],
+          subagentRunIds: [],
+        },
+        { kind: "thinking", text: "复核口径" },
+        { kind: "text", text: "最终正文" },
+      ],
+    };
+
+    const view = extractSubagentLiveView(trace);
+    expect(view.thinkingText).toBe("分析数据\n\n复核口径");
+    expect(view.thinkingText).not.toContain("正文");
+    expect(view.tools.map((item) => item.toolCallId)).toEqual([
+      "read-1",
+      "read-2",
+    ]);
+    expect(view.streamingText).toBe("中间正文\n\n最终正文");
+    expect(view.isThinkingStreaming).toBe(false);
+  });
+
+  test("marks a trailing thinking segment as streaming", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "writer",
+      isStreaming: true,
+      segments: [{ kind: "thinking", text: "正在推理" }],
+    };
+
+    const view = extractSubagentLiveView(trace);
+    expect(view.thinkingText).toBe("正在推理");
+    expect(view.isThinkingStreaming).toBe(true);
+    expect(view.streamingText).toBe("");
+    expect(view.tools).toEqual([]);
   });
 });
