@@ -67,7 +67,7 @@ export function HistoricalSubagent({
                   </TraceLine>
                 </TraceCollapsibleTrigger>
                 <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
-                  <ToolCallList sessionId={sessionId} tools={subTools} />
+                  <ToolCallList sessionId={sessionId} tools={filteredTools} />
                 </TraceCollapsibleContent>
               </TraceCollapsible>
             </Trace>
