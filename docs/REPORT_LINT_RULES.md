@@ -61,7 +61,7 @@ Category ranges:
 | Range | Family | Policy |
 | --- | --- | --- |
 | `QR0xx` | Document/block/table core contract | Non-suppressible |
-| `QR1xx` | Citations and source quality | `QR101` non-suppressible; quality advisories suppressible |
+| `QR1xx` | Citations and source quality | `QR101` and `QR107` non-suppressible; quality advisories suppressible |
 | `QR2xx` | Table layout risk | Suppressible warnings |
 | `QR3xx` | ECharts safety/data | `QR301`-`QR304` non-suppressible; other chart checks suppressible |
 | `QR4xx` | Structure and text quality | Suppressible, including placeholder errors |
@@ -108,7 +108,7 @@ verify loop: fix every `error`, review `warning`, and ignore only diagnostics wh
 
 - `quire-lint` has no CLI and no I/O dependencies.
 - Every `RuleMeta.code` and `.name` is unique; the registry stays code-sorted.
-- `QR001`-`QR008`, `QR101`, `QR301`-`QR304` and `QR501` are never suppressible.
+- `QR001`-`QR008`, `QR101`, `QR107`, `QR301`-`QR304` and `QR501` are never suppressible.
 - Prefix, name and code matching produce the same rule set as the registry.
 - `summary.suppressed` counts each suppressible diagnostic hidden once.
 - Document and block ignore policies survive reload, revision updates and rollback.

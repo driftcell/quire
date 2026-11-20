@@ -19,6 +19,7 @@ pub enum RuleId {
     DuplicateSourceUrl,
     SourceTitleEmpty,
     SourceUrlUnsafe,
+    MalformedCitationSyntax,
     TableColumnTooNarrow,
     TableEmptyColumn,
     TableConstantColumn,
@@ -129,6 +130,7 @@ define_rules! {
     DuplicateSourceUrl = "QR104", "duplicate-source-url", Warning, true;
     SourceTitleEmpty = "QR105", "source-title-empty", Warning, true;
     SourceUrlUnsafe = "QR106", "source-url-unsafe", Warning, true;
+    MalformedCitationSyntax = "QR107", "malformed-citation-syntax", Error, false;
 
     TableColumnTooNarrow = "QR201", "table-column-too-narrow", Warning, true;
     TableEmptyColumn = "QR202", "table-empty-column", Warning, true;
@@ -232,7 +234,7 @@ mod tests {
     fn core_and_safety_rules_are_not_suppressible() {
         for code in [
             "QR001", "QR002", "QR003", "QR004", "QR005", "QR006", "QR007", "QR008", "QR101",
-            "QR301", "QR302", "QR303", "QR304", "QR501",
+            "QR107", "QR301", "QR302", "QR303", "QR304", "QR501",
         ] {
             let rule = RULES.iter().find(|rule| rule.code == code);
             assert!(

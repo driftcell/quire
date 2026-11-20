@@ -283,6 +283,184 @@ fn citation_and_source_rules_are_detected() {
 }
 
 #[test]
+fn malformed_citation_syntax_is_rejected() {
+    let mut document = doc();
+    document
+        .sources
+        .insert(sid("jxufe_101"), SourceEntry::new("JXUFE 101"));
+    document
+        .sources
+        .insert(sid("jxufe_102"), SourceEntry::new("JXUFE 102"));
+    document.blocks.push(paragraph(
+        "colon",
+        "招生计划 [^jxufe_101: 【2025招生】计划] 已公布。",
+    ));
+
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR107");
+    assert_eq!(diagnostic.severity, Severity::Error);
+    assert_eq!(diagnostic.rule, "malformed-citation-syntax");
+    assert!(!diagnostic.suppressible);
+    assert!(
+        diagnostic.hint.contains("[^jxufe_101]"),
+        "{}",
+        diagnostic.hint
+    );
+}
+
+#[test]
+fn malformed_citation_separators_and_whitespace_are_rejected() {
+    for text in [
+        "[^jxufe_101, jxufe_102]",
+        "[^jxufe_101; jxufe_102]",
+        "[^jxufe_101、jxufe_102]",
+    ] {
+        let mut document = doc();
+        document
+            .sources
+            .insert(sid("jxufe_101"), SourceEntry::new("JXUFE 101"));
+        document
+            .sources
+            .insert(sid("jxufe_102"), SourceEntry::new("JXUFE 102"));
+        document
+            .blocks
+            .push(paragraph("merged", &format!("数据 {text}。")));
+
+        let report = lint_document(&document);
+        let diagnostic = finding(&report, "QR107");
+        assert!(
+            diagnostic.hint.contains("[^jxufe_101][^jxufe_102]"),
+            "{}",
+            diagnostic.hint
+        );
+    }
+
+    for text in ["[^ jxufe_101]", "[^jxufe_101 ]", "[^jxufe 101]", "[^]"] {
+        let mut document = doc();
+        document
+            .sources
+            .insert(sid("jxufe_101"), SourceEntry::new("JXUFE 101"));
+        document
+            .blocks
+            .push(paragraph("space", &format!("数据 {text}。")));
+
+        let report = lint_document(&document);
+        let diagnostic = finding(&report, "QR107");
+        assert!(
+            diagnostic.hint.contains("[^jxufe_101]"),
+            "{}",
+            diagnostic.hint
+        );
+    }
+}
+
+#[test]
+fn malformed_citation_before_another_marker_is_not_skipped() {
+    let mut document = doc();
+    document
+        .sources
+        .insert(sid("jxufe_101"), SourceEntry::new("JXUFE 101"));
+    document
+        .sources
+        .insert(sid("jxufe_102"), SourceEntry::new("JXUFE 102"));
+    document.blocks.push(paragraph(
+        "adjacent",
+        "数据 [^jxufe_101: 标题][^jxufe_102]。",
+    ));
+
+    let report = lint_document(&document);
+    assert!(has_code(&report, "QR107"), "{:?}", report.diagnostics);
+}
+
+#[test]
+fn registered_source_id_without_caret_is_rejected() {
+    let mut document = doc();
+    document
+        .sources
+        .insert(sid("jxufe_101"), SourceEntry::new("JXUFE 101"));
+    document
+        .blocks
+        .push(paragraph("missing-caret", "见 [jxufe_101]。"));
+
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR107");
+    assert!(
+        diagnostic.hint.contains("[^jxufe_101]"),
+        "{}",
+        diagnostic.hint
+    );
+}
+
+#[test]
+fn valid_citations_and_links_do_not_trigger_malformed_syntax() {
+    let mut document = doc();
+    document
+        .sources
+        .insert(sid("jxufe_101"), SourceEntry::new("JXUFE 101"));
+    document
+        .sources
+        .insert(sid("jxufe_102"), SourceEntry::new("JXUFE 102"));
+    document.blocks.push(paragraph(
+        "valid",
+        "连写 [^jxufe_101][^jxufe_102]，普通括号 [注1]，链接 [jxufe_101](https://example.com)，引用链接 [jxufe_101][ref]。",
+    ));
+
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR107"), "{:?}", report.diagnostics);
+}
+
+#[test]
+fn malformed_citations_are_checked_in_notes_and_source_notes() {
+    let mut document = doc();
+    document
+        .sources
+        .insert(sid("jxufe_101"), SourceEntry::new("JXUFE 101"));
+
+    let mut table_block = table(
+        "note-table",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    );
+    if let BlockKind::Table(ref mut table) = table_block.body {
+        table.note = Some("口径见 [^jxufe_101: 公报]".into());
+    }
+    table_block.source_note = Some("来源 [jxufe_101]".into());
+    document.blocks.push(table_block);
+
+    let mut chart_block = chart_named(
+        "note-chart",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    );
+    if let BlockKind::Echarts(ref mut chart) = chart_block.body {
+        chart.note = Some("说明 [^jxufe_101, jxufe_102]".into());
+    }
+    document.blocks.push(chart_block);
+
+    let mut html_block = custom_html("<div>KPI</div>", "KPI");
+    if let BlockKind::CustomHtml(ref mut html) = html_block.body {
+        html.note = Some("注释 [^jxufe_101 ]".into());
+    }
+    document.blocks.push(html_block);
+
+    let report = lint_document(&document);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR107")
+        .collect();
+    assert_eq!(hits.len(), 4, "{:?}", report.diagnostics);
+    let paths: Vec<_> = hits
+        .iter()
+        .map(|diagnostic| diagnostic.path.as_deref().unwrap_or(""))
+        .collect();
+    assert!(paths.contains(&"blocks[0].note"));
+    assert!(paths.contains(&"blocks[0].source_note"));
+    assert!(paths.contains(&"blocks[1].note"));
+    assert!(paths.contains(&"blocks[2].note"));
+}
+
+#[test]
 fn table_layout_rules_are_detected() {
     let mut narrow = doc();
     narrow.blocks.push(
