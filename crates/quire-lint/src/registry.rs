@@ -37,6 +37,8 @@ pub enum RuleId {
     EchartsDuplicateInnerTitle,
     EchartsInnerTitleStripped,
     EchartsToolboxStripped,
+    EchartsEntityColorInconsistent,
+    EchartsPaletteInconsistent,
     PlaceholderTextLeak,
     HeadingLevelJump,
     HeadingEmptySection,
@@ -147,6 +149,8 @@ define_rules! {
     EchartsDuplicateInnerTitle = "QR311", "echarts-duplicate-inner-title", Warning, true;
     EchartsInnerTitleStripped = "QR312", "echarts-inner-title-stripped", Warning, true;
     EchartsToolboxStripped = "QR313", "echarts-toolbox-stripped", Warning, true;
+    EchartsEntityColorInconsistent = "QR314", "echarts-entity-color-inconsistent", Warning, true;
+    EchartsPaletteInconsistent = "QR315", "echarts-palette-inconsistent", Warning, true;
 
     PlaceholderTextLeak = "QR401", "placeholder-text-leak", Error, true;
     HeadingLevelJump = "QR402", "heading-level-jump", Warning, true;

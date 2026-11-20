@@ -445,6 +445,157 @@ fn echarts_render_blockers_cannot_be_ignored() {
 }
 
 #[test]
+fn echarts_entity_color_mismatch_is_reported_across_charts() {
+    let mut document = doc();
+    document.blocks.push(chart_named(
+        "chart_1",
+        serde_json::json!({
+            "series": [
+                {"name": "浙江理工大学", "type": "bar", "data": [1]}
+            ]
+        }),
+    ));
+    document.blocks.push(chart_named(
+        "chart_2",
+        serde_json::json!({
+            "series": [
+                {"name": "样本高校", "type": "bar", "data": [2]},
+                {"name": "浙江理工大学", "type": "bar", "data": [3]}
+            ]
+        }),
+    ));
+
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR314");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert_eq!(diagnostic.block_id.as_ref(), Some(&bid("chart_2")));
+    assert!(diagnostic.hint.contains("浙江理工大学"));
+    assert!(diagnostic.hint.contains("#5070dd"));
+    assert!(diagnostic.hint.contains("#b6d634"));
+    assert!(diagnostic.hint.contains("chart_1"));
+    assert!(diagnostic.hint.contains("chart_2"));
+}
+
+#[test]
+fn echarts_fixed_entity_colors_ignore_series_order() {
+    let mut document = doc();
+    document.blocks.push(chart_named(
+        "chart_1",
+        serde_json::json!({
+            "series": [{
+                "name": "浙江理工大学",
+                "type": "bar",
+                "itemStyle": {"color": "#1E3A5F"},
+                "data": [1]
+            }]
+        }),
+    ));
+    document.blocks.push(chart_named(
+        "chart_2",
+        serde_json::json!({
+            "series": [
+                {"name": "样本高校", "type": "bar", "data": [2]},
+                {
+                    "name": "浙江理工大学",
+                    "type": "bar",
+                    "itemStyle": {"color": "#1e3a5f"},
+                    "data": [3]
+                }
+            ]
+        }),
+    ));
+
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR314"), "{:?}", report.diagnostics);
+}
+
+#[test]
+fn echarts_year_and_generic_labels_do_not_trigger_color_mismatch() {
+    let mut document = doc();
+    document.blocks.push(chart_named(
+        "chart_1",
+        serde_json::json!({
+            "series": [{
+                "type": "pie",
+                "data": [
+                    {"name": "2025", "value": 1},
+                    {"name": "平均值", "value": 2}
+                ]
+            }]
+        }),
+    ));
+    document.blocks.push(chart_named(
+        "chart_2",
+        serde_json::json!({
+            "series": [{
+                "type": "pie",
+                "data": [
+                    {"name": "样本高校", "value": 3},
+                    {"name": "2025", "value": 1},
+                    {"name": "平均值", "value": 2}
+                ]
+            }]
+        }),
+    ));
+
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR314"), "{:?}", report.diagnostics);
+}
+
+#[test]
+fn echarts_explicit_palettes_must_match_across_charts() {
+    let mut document = doc();
+    document.blocks.push(chart_named(
+        "chart_1",
+        serde_json::json!({
+            "color": ["#111111", "#222222"],
+            "series": [{"name": "浙江理工大学", "type": "bar", "data": [1]}]
+        }),
+    ));
+    document.blocks.push(chart_named(
+        "chart_2",
+        serde_json::json!({
+            "color": ["#111111", "#333333"],
+            "series": [{"name": "浙江理工大学", "type": "bar", "data": [2]}]
+        }),
+    ));
+
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR315");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert_eq!(diagnostic.block_id.as_ref(), Some(&bid("chart_2")));
+    assert!(diagnostic.hint.contains("option.color"));
+}
+
+#[test]
+fn cross_chart_color_rules_can_be_block_ignored() {
+    let mut document = doc();
+    document.blocks.push(chart_named(
+        "chart_1",
+        serde_json::json!({
+            "color": ["#111111", "#222222"],
+            "series": [{"name": "浙江理工大学", "type": "bar", "data": [1]}]
+        }),
+    ));
+    let mut second = chart_named(
+        "chart_2",
+        serde_json::json!({
+            "color": ["#333333", "#444444"],
+            "series": [{"name": "浙江理工大学", "type": "bar", "data": [2]}]
+        }),
+    );
+    second.lint_ignore = vec!["QR314".into(), "QR315".into()];
+    document.blocks.push(second);
+
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR314"), "{:?}", report.diagnostics);
+    assert!(!has_code(&report, "QR315"), "{:?}", report.diagnostics);
+    assert!(report.summary.suppressed >= 2, "{:?}", report.summary);
+}
+
+#[test]
 fn structure_and_text_rules_are_detected() {
     let mut placeholder = doc();
     placeholder.blocks.push(paragraph("p", "Revenue is TBD."));
