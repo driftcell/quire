@@ -413,6 +413,14 @@
               "type": "string",
               "const": "thinking"
             },
+            "started_at": {
+              "description": "Server timestamp when this thinking phase started. Retained while the\nphase is still streaming so clients can continue the timer after refresh.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
             "text": {
               "type": "string"
             }
@@ -509,6 +517,13 @@
             "null"
           ]
         },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
         "status": {
           "type": "string"
         },
@@ -534,6 +549,10 @@
             }
           ]
         },
+        "text": {
+          "description": "Text streamed by the subagent before it finishes.",
+          "type": "string"
+        },
         "thinking": {
           "type": "string"
         },
@@ -544,6 +563,14 @@
           ],
           "format": "uint64",
           "minimum": 0
+        },
+        "thinking_started_at": {
+          "description": "Start of the currently streaming thinking phase. `None` once settled.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
         },
         "tools": {
           "type": "array",
@@ -581,6 +608,14 @@
           "items": {
             "$ref": "#/$defs/RunTraceSegment"
           }
+        },
+        "started_at": {
+          "description": "Server timestamp of the run's `turn_started` event.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
         },
         "status": {
           "type": "string"
@@ -730,6 +765,24 @@
       "properties": {
         "active_run_status": {
           "$ref": "#/$defs/ActiveRunStatus"
+        },
+        "active_run_trace": {
+          "description": "Aggregated trace of the active run, captured at `last_event_seq`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunTraceSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_subagent_traces": {
+          "description": "Subagents embedded in the active run, with their streaming clocks.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunTraceSubagent"
+          }
         },
         "attachments": {
           "type": "array",

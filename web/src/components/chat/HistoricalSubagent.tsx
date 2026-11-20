@@ -31,7 +31,7 @@ export function HistoricalSubagent({
         thinkingStreaming: false,
         thinkingDurationMs: subagent.thinking_duration_ms ?? undefined,
         tools,
-        outputText: subagent.summary?.trim() ?? "",
+        outputText: subagent.summary?.trim() || subagent.text?.trim() || "",
         outputStreaming: false,
       }}
     />

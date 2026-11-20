@@ -83,6 +83,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     sessionId,
     enabled: sessionQuery.isSuccess,
     lastEventSeq: sessionQuery.data?.last_event_seq ?? 0,
+    serverActiveRunStatus: sessionQuery.data?.active_run_status,
+    activeRunTrace: sessionQuery.data?.active_run_trace,
+    activeSubagentTraces: sessionQuery.data?.active_subagent_traces,
     serverPendingQuestion: sessionQuery.data?.pending_question ?? null,
     serverResolvedQuestions: sessionQuery.data?.resolved_questions,
   });

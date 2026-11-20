@@ -1,4 +1,6 @@
 /* eslint-disable no-unused-expressions -- Playwright CLI loads this file as a function expression. */
+// Playwright CLI evaluates `(file)(page)`, so this expression must not end in `;`.
+// prettier-ignore
 async (page) => {
   const env = globalThis.process?.env ?? {};
   const web = env.E2E_WEB_URL || "http://localhost:5173";
@@ -6,7 +8,9 @@ async (page) => {
 
   const now = Date.now();
   const liveId = "e2e-thinking-live";
+  const reloadId = "e2e-thinking-reload";
   const historyId = "e2e-thinking-history";
+  let reloaded = false;
 
   const detail = (sessionId, overrides = {}) => ({
     session_id: sessionId,
@@ -51,6 +55,147 @@ async (page) => {
       delta: "正在核对五校科研口径与统计范围。",
     }),
   ];
+
+  const reloadStartedAt = new Date(now - 15_000).toISOString();
+  const reloadFirstThinkingAt = new Date(now - 15_000).toISOString();
+  const reloadSecondThinkingAt = new Date(now - 5_000).toISOString();
+  const reloadInitialEvents = [
+    event(1, "run-reload", "main", now - 15_000, {
+      event: "turn_started",
+    }),
+    event(2, "run-reload", "main", now - 15_000, {
+      event: "thinking_delta",
+      delta: "先核对统计口径与样本范围。",
+    }),
+    event(3, "run-reload", "main", now - 11_000, {
+      event: "tool_call_started",
+      tool_call_id: "reload-tool-1",
+      tool_name: "read_blocks",
+      input_preview: "{}",
+      truncated: false,
+    }),
+    event(4, "run-reload", "main", now - 9_000, {
+      event: "tool_call_finished",
+      tool_call_id: "reload-tool-1",
+      status: "completed",
+      output_preview: "{}",
+      truncated: false,
+      duration_ms: 1200,
+    }),
+    event(5, "run-reload", "main", now - 8_000, {
+      event: "tool_call_started",
+      tool_call_id: "reload-tool-2",
+      tool_name: "preview_echarts",
+      input_preview: "{}",
+      truncated: false,
+    }),
+    event(6, "run-reload", "main", now - 5_000, {
+      event: "thinking_delta",
+      delta: "正在复核第二轮数据。",
+    }),
+  ];
+  const reloadContinuationEvents = [
+    event(7, "run-reload", "main", now, {
+      event: "text_delta",
+      delta: "复核完成，整理结论。",
+    }),
+    event(8, "run-reload", "main", now, {
+      event: "tool_call_finished",
+      tool_call_id: "reload-tool-2",
+      status: "completed",
+      output_preview: "{}",
+      truncated: false,
+      duration_ms: 800,
+    }),
+    event(9, "run-reload", "main", now, { event: "turn_finished" }),
+  ];
+  const reloadTrace = {
+    run_id: "run-reload",
+    status: "running",
+    started_at: reloadStartedAt,
+    task_focus: { title: "复核招生计划" },
+    segments: [
+      {
+        kind: "thinking",
+        text: "先核对统计口径与样本范围。",
+        duration_ms: 4_000,
+        started_at: reloadFirstThinkingAt,
+      },
+      {
+        kind: "execution",
+        tools: [
+          {
+            tool_call_id: "reload-tool-1",
+            tool_name: "read_blocks",
+            status: "completed",
+            input_preview: "{}",
+            output_preview: "{}",
+            duration_ms: 1_200,
+            truncated: false,
+          },
+          {
+            tool_call_id: "reload-tool-2",
+            tool_name: "preview_echarts",
+            status: "running",
+            input_preview: "{}",
+            truncated: false,
+          },
+        ],
+        subagents: [],
+      },
+      {
+        kind: "thinking",
+        text: "正在复核第二轮数据。",
+        started_at: reloadSecondThinkingAt,
+      },
+    ],
+  };
+  const reloadFinishedTrace = {
+    run_id: "run-reload",
+    status: "completed",
+    started_at: reloadStartedAt,
+    duration_ms: 15_000,
+    task_focus: { title: "复核招生计划" },
+    segments: [
+      {
+        kind: "thinking",
+        text: "先核对统计口径与样本范围。",
+        duration_ms: 4_000,
+        started_at: reloadFirstThinkingAt,
+      },
+      {
+        kind: "execution",
+        tools: [
+          {
+            tool_call_id: "reload-tool-1",
+            tool_name: "read_blocks",
+            status: "completed",
+            input_preview: "{}",
+            output_preview: "{}",
+            duration_ms: 1_200,
+            truncated: false,
+          },
+          {
+            tool_call_id: "reload-tool-2",
+            tool_name: "preview_echarts",
+            status: "completed",
+            input_preview: "{}",
+            output_preview: "{}",
+            duration_ms: 800,
+            truncated: false,
+          },
+        ],
+        subagents: [],
+      },
+      {
+        kind: "thinking",
+        text: "正在复核第二轮数据。",
+        duration_ms: 5_000,
+        started_at: reloadSecondThinkingAt,
+      },
+      { kind: "text", text: "复核完成，整理结论。" },
+    ],
+  };
 
   const historyTrace = {
     run_id: "run-history",
@@ -104,6 +249,35 @@ async (page) => {
       batches: [liveEvents],
       sseCount: 0,
     },
+    [reloadId]: {
+      detail: detail(reloadId),
+      hydratedDetail: detail(reloadId, {
+        last_event_seq: 6,
+        active_run_trace: reloadTrace,
+        active_subagent_traces: [],
+      }),
+      finishedDetail: detail(reloadId, {
+        active_run_status: "idle",
+        last_event_seq: 9,
+        messages: [
+          {
+            message_id: "reload-assistant",
+            session_id: reloadId,
+            role: "assistant",
+            content: "复核完成，整理结论。",
+            run_id: "run-reload",
+            created_at: new Date(now).toISOString(),
+          },
+        ],
+      }),
+      traces: [],
+      finishedTraces: [reloadFinishedTrace],
+      batches: [reloadInitialEvents],
+      continuation: reloadContinuationEvents,
+      continuationServed: false,
+      finished: false,
+      sseCount: 0,
+    },
     [historyId]: {
       detail: detail(historyId, {
         active_run_status: "idle",
@@ -147,6 +321,35 @@ async (page) => {
     }
 
     if (suffix === "events") {
+      if (sessionId === reloadId && reloaded) {
+        if (!scenario.continuationServed) {
+          scenario.continuationServed = true;
+          // Leave enough time for the reload assertions to observe the hydrated
+          // live trace before the terminal events arrive.
+          await new Promise((resolve) => setTimeout(resolve, 4_000));
+          scenario.finished = true;
+          await route.fulfill({
+            status: 200,
+            headers: {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              Connection: "keep-alive",
+            },
+            body: sseBody(scenario.continuation),
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+          body: ": keepalive\n\n",
+        });
+        return;
+      }
       const index = scenario.sseCount;
       scenario.sseCount += 1;
       const events = scenario.batches[index] ?? [];
@@ -163,18 +366,27 @@ async (page) => {
     }
 
     if (suffix === "traces") {
+      const traces = scenario.finished
+        ? (scenario.finishedTraces ?? scenario.traces)
+        : scenario.traces;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify(scenario.traces),
+        body: JSON.stringify(traces),
       });
       return;
     }
 
+    const payload =
+      sessionId === reloadId && reloaded
+        ? scenario.finished
+          ? scenario.finishedDetail
+          : scenario.hydratedDetail
+        : scenario.detail;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(scenario.detail),
+      body: JSON.stringify(payload),
     });
   };
 
@@ -191,6 +403,13 @@ async (page) => {
     const match = text.match(/思考用时\s*(\d+)秒|正在思考\s*(\d+)秒/);
     if (!match) return null;
     return Number(match[1] ?? match[2]);
+  };
+
+  const elapsedSecondsFromText = (text) => {
+    const mins = text.match(/(\d+)分/);
+    const secs = text.match(/(\d+)秒/);
+    if (!mins && !secs) return null;
+    return Number(mins?.[1] ?? 0) * 60 + Number(secs?.[1] ?? 0);
   };
 
   await page.goto(`${web}/sessions/${liveId}`);
@@ -223,6 +442,136 @@ async (page) => {
   assert(
     liveSeconds !== null && liveSeconds >= 11,
     `live thinking timer was not restored from the server timestamp: ${liveThinkingText}`,
+  );
+
+  await page.goto(`${web}/sessions/${reloadId}`);
+  await page.locator('[data-live-header="true"]').first().waitFor({
+    state: "visible",
+    timeout: 15000,
+  });
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('[data-slot="thinking-trace"]')].some(
+        (trace) => /正在复核第二轮数据/.test(trace.textContent ?? ""),
+      ),
+    undefined,
+    { timeout: 15000 },
+  );
+  const beforeReloadThinking = page
+    .locator('[data-slot="thinking-trace"]', {
+      hasText: "正在复核第二轮数据",
+    })
+    .first();
+  const beforeReloadThinkingText = (
+    await beforeReloadThinking.innerText()
+  ).replace(/\s+/g, " ");
+  const beforeReloadThinkingSeconds = secondsFromText(beforeReloadThinkingText);
+  assert(
+    beforeReloadThinkingSeconds !== null && beforeReloadThinkingSeconds >= 4,
+    `pre-reload thinking timer should be running: ${beforeReloadThinkingText}`,
+  );
+  assert(
+    (await page.locator('[data-tool-name="read_blocks"]').count()) >= 1,
+    "completed tool must be visible before reload",
+  );
+  assert(
+    (await page.locator('[data-tool-name="preview_echarts"]').count()) >= 1,
+    "running tool must be visible before reload",
+  );
+  const beforeReloadElapsed = elapsedSecondsFromText(
+    await page.locator('[data-live-elapsed="true"]').first().innerText(),
+  );
+  assert(
+    beforeReloadElapsed !== null && beforeReloadElapsed >= 14,
+    `pre-reload run timer should be running: ${beforeReloadElapsed}`,
+  );
+
+  reloaded = true;
+  await page.reload();
+  await page.locator('[data-live-header="true"]').first().waitFor({
+    state: "visible",
+    timeout: 15000,
+  });
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('[data-slot="thinking-trace"]')].some(
+        (trace) => /正在复核第二轮数据/.test(trace.textContent ?? ""),
+      ),
+    undefined,
+    { timeout: 15000 },
+  );
+  const afterReloadThinking = page
+    .locator('[data-slot="thinking-trace"]', {
+      hasText: "正在复核第二轮数据",
+    })
+    .first();
+  const afterReloadThinkingText = (
+    await afterReloadThinking.innerText()
+  ).replace(/\s+/g, " ");
+  const afterReloadThinkingSeconds = secondsFromText(afterReloadThinkingText);
+  assert(
+    afterReloadThinkingSeconds !== null && afterReloadThinkingSeconds >= 4,
+    `thinking timer reset after reload: ${afterReloadThinkingText}`,
+  );
+  const afterReloadElapsed = elapsedSecondsFromText(
+    await page.locator('[data-live-elapsed="true"]').first().innerText(),
+  );
+  assert(
+    afterReloadElapsed !== null && afterReloadElapsed >= 14,
+    `run timer reset after reload: ${afterReloadElapsed}`,
+  );
+  assert(
+    (await page.locator('[data-tool-name="read_blocks"]').count()) >= 1,
+    "completed tool was lost after reload",
+  );
+  assert(
+    (await page.locator('[data-tool-name="preview_echarts"]').count()) >= 1,
+    "running tool was lost after reload",
+  );
+
+  await page.waitForFunction(
+    () => !document.querySelector('[data-live-header="true"]'),
+    undefined,
+    { timeout: 15000 },
+  );
+  await page.waitForFunction(
+    () => document.body.textContent?.includes("复核完成，整理结论。"),
+    undefined,
+    { timeout: 15000 },
+  );
+  const reloadedActivityTrigger = page
+    .locator("[data-activity-trigger]")
+    .first();
+  await reloadedActivityTrigger.waitFor({ state: "visible", timeout: 15000 });
+  await reloadedActivityTrigger.click();
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("[data-activity-trigger]")
+        ?.getAttribute("aria-expanded") === "true",
+    undefined,
+    { timeout: 15000 },
+  );
+  const settledThinkingCount = await page
+    .locator('[data-slot="thinking-trace"]')
+    .count();
+  assert(
+    settledThinkingCount === 2,
+    `reloaded run should have exactly two thinking segments, got ${settledThinkingCount}`,
+  );
+  const settledReadBlocks = await page
+    .locator('[data-tool-name="read_blocks"]')
+    .count();
+  const settledPreviewCharts = await page
+    .locator('[data-tool-name="preview_echarts"]')
+    .count();
+  assert(
+    settledReadBlocks === 1,
+    `reloaded run should have one read_blocks trace, got ${settledReadBlocks}`,
+  );
+  assert(
+    settledPreviewCharts === 1,
+    `reloaded run should have one preview_echarts trace, got ${settledPreviewCharts}`,
   );
 
   await page.goto(`${web}/sessions/${historyId}`);
@@ -291,6 +640,15 @@ async (page) => {
         seconds: liveSeconds,
         text: liveThinkingText,
       },
+      reload: {
+        beforeThinkingSeconds: beforeReloadThinkingSeconds,
+        afterThinkingSeconds: afterReloadThinkingSeconds,
+        beforeElapsedSeconds: beforeReloadElapsed,
+        afterElapsedSeconds: afterReloadElapsed,
+        thinkingSegments: settledThinkingCount,
+        readBlocks: settledReadBlocks,
+        previewCharts: settledPreviewCharts,
+      },
       history: {
         mainSeconds,
         mainText: mainThinkingText,
@@ -299,4 +657,4 @@ async (page) => {
       },
     },
   };
-};
+}

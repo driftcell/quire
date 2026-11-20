@@ -5302,3 +5302,221 @@ async fn chart_preview_endpoint_accepts_ro_token_and_hides_expired_previews() {
     assert_eq!(missing.status(), axum::http::StatusCode::NOT_FOUND);
     store.bus().delete_chart_preview(&preview_id).await.unwrap();
 }
+
+#[tokio::test]
+async fn session_detail_returns_an_atomic_active_run_snapshot() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("active-trace"), None)
+        .await
+        .unwrap();
+    let run = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await
+        .unwrap();
+    let session_id = session.session_id.as_str();
+
+    let turn_started = store
+        .append_event(
+            session_id,
+            &run.run_id,
+            "main",
+            None,
+            SessionEventKind::TurnStarted,
+        )
+        .await
+        .unwrap();
+    store
+        .append_event(
+            session_id,
+            &run.run_id,
+            "main",
+            None,
+            SessionEventKind::ThinkingDelta {
+                delta: "先核对统计口径。".into(),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .append_event(
+            session_id,
+            &run.run_id,
+            "main",
+            None,
+            SessionEventKind::ToolCallStarted {
+                tool_call_id: "main-done".into(),
+                tool_name: "read_blocks".into(),
+                input_preview: "{}".into(),
+                truncated: false,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .append_event(
+            session_id,
+            &run.run_id,
+            "main",
+            None,
+            SessionEventKind::ToolCallFinished {
+                tool_call_id: "main-done".into(),
+                status: "completed".into(),
+                output_preview: "{}".into(),
+                truncated: false,
+                duration_ms: 1_200,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .append_event(
+            session_id,
+            &run.run_id,
+            "main",
+            None,
+            SessionEventKind::ToolCallStarted {
+                tool_call_id: "main-live".into(),
+                tool_name: "preview_echarts".into(),
+                input_preview: "{}".into(),
+                truncated: false,
+            },
+        )
+        .await
+        .unwrap();
+    let subagent_started = store
+        .append_event(
+            session_id,
+            "run-sub",
+            "analyst",
+            Some(&run.run_id),
+            SessionEventKind::SubagentStarted {
+                subagent_run_id: "run-sub".into(),
+                agent_name: "analyst".into(),
+                display_name: Some("量化分析师".into()),
+                task: "核对数据".into(),
+                section_id: None,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .append_event(
+            session_id,
+            "run-sub",
+            "analyst",
+            Some(&run.run_id),
+            SessionEventKind::TextDelta {
+                delta: "子代理输出片段。".into(),
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .append_event(
+            session_id,
+            "run-sub",
+            "analyst",
+            Some(&run.run_id),
+            SessionEventKind::ToolCallStarted {
+                tool_call_id: "sub-live".into(),
+                tool_name: "read_blocks".into(),
+                input_preview: "{}".into(),
+                truncated: false,
+            },
+        )
+        .await
+        .unwrap();
+    let subagent_thinking = store
+        .append_event(
+            session_id,
+            "run-sub",
+            "analyst",
+            Some(&run.run_id),
+            SessionEventKind::ThinkingDelta {
+                delta: "子代理正在思考。".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let live_thinking = store
+        .append_event(
+            session_id,
+            &run.run_id,
+            "main",
+            None,
+            SessionEventKind::ThinkingDelta {
+                delta: "正在核对最新数据。".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let detail = store.get_session_detail(session_id).await.unwrap();
+    let event_count = store.list_events(session_id, 0, 1_000).await.unwrap().len();
+    assert_eq!(detail.summary.last_event_seq, event_count as u64);
+    let trace = detail
+        .active_run_trace
+        .as_ref()
+        .expect("running session must expose its active trace");
+    assert_eq!(trace.run_id, run.run_id);
+    assert_eq!(trace.status, "running");
+    assert_eq!(trace.started_at, Some(turn_started.timestamp));
+
+    let execution = trace
+        .segments
+        .iter()
+        .find_map(|segment| match segment {
+            RunTraceSegment::Execution { tools, .. } => Some(tools),
+            _ => None,
+        })
+        .expect("active trace must contain execution tools");
+    let done = execution
+        .iter()
+        .find(|tool| tool.tool_call_id == "main-done")
+        .expect("completed tool must be retained");
+    assert_eq!(done.status, "completed");
+    assert_eq!(done.duration_ms, Some(1_200));
+    let running = execution
+        .iter()
+        .find(|tool| tool.tool_call_id == "main-live")
+        .expect("running tool must be retained");
+    assert_eq!(running.status, "running");
+
+    let Some(RunTraceSegment::Thinking {
+        text,
+        duration_ms,
+        started_at,
+    }) = trace.segments.last()
+    else {
+        panic!("active thinking must be the trailing segment");
+    };
+    assert_eq!(text, "正在核对最新数据。");
+    assert_eq!(*duration_ms, None);
+    assert_eq!(*started_at, Some(live_thinking.timestamp));
+
+    assert_eq!(detail.active_subagent_traces.len(), 1);
+    let subagent = &detail.active_subagent_traces[0];
+    assert_eq!(subagent.subagent_run_id, "run-sub");
+    assert_eq!(subagent.status, "running");
+    assert_eq!(subagent.started_at, Some(subagent_started.timestamp));
+    assert_eq!(subagent.text, "子代理输出片段。");
+    assert_eq!(subagent.thinking, "子代理正在思考。");
+    assert_eq!(
+        subagent.thinking_started_at,
+        Some(subagent_thinking.timestamp)
+    );
+    assert!(
+        subagent
+            .tools
+            .iter()
+            .any(|tool| tool.tool_call_id == "sub-live" && tool.status == "running")
+    );
+
+    store
+        .finish_run(&run.run_id, "completed", None)
+        .await
+        .unwrap();
+    service.delete_session(session_id).await.unwrap();
+}

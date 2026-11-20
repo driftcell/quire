@@ -184,6 +184,11 @@ impl RuntimeStore {
 
     pub async fn get_session_detail(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
         let summary = self.get_session_summary(session_id).await?;
+        let events = self
+            .events_through(session_id, summary.last_event_seq)
+            .await?;
+        let (active_run_trace, active_subagent_traces) =
+            active_trace_snapshot(&summary, aggregate_run_traces(&events));
         let messages = self.list_messages(session_id).await?;
         let attachments = self.list_attachments(session_id).await?;
         let pending_question = self.pending_question(session_id).await?;
@@ -196,7 +201,31 @@ impl RuntimeStore {
             pending_question,
             resolved_questions,
             pending_queue,
+            active_run_trace,
+            active_subagent_traces,
         })
+    }
+
+    async fn events_through(
+        &self,
+        session_id: &str,
+        max_seq: u64,
+    ) -> RuntimeResult<Vec<SessionEvent>> {
+        let rows = sqlx::query(
+            r#"SELECT event FROM session_events
+               WHERE session_id = $1 AND seq <= $2
+               ORDER BY seq ASC"#,
+        )
+        .bind(session_id)
+        .bind(i64::try_from(max_seq).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                let value: Value = row.try_get("event")?;
+                Ok(serde_json::from_value(value)?)
+            })
+            .collect()
     }
 
     pub async fn list_sessions(
@@ -1624,6 +1653,7 @@ fn ensure_run_trace(
         summary: RunTraceSummary {
             run_id: run_id.to_string(),
             status: "running".to_string(),
+            started_at: Some(timestamp),
             duration_ms: None,
             task_focus: None,
             segments: Vec::new(),
@@ -1640,14 +1670,23 @@ fn is_subagent_event(event: &SessionEvent) -> bool {
     event.parent_run_id.is_some() || event.agent_id != "main"
 }
 
-fn append_thinking_segment(summary: &mut RunTraceSummary, delta: &str) {
-    if let Some(RunTraceSegment::Thinking { text, .. }) = summary.segments.last_mut() {
+fn append_thinking_segment(summary: &mut RunTraceSummary, delta: &str, started_at: DateTime<Utc>) {
+    if let Some(RunTraceSegment::Thinking {
+        text,
+        started_at: current,
+        ..
+    }) = summary.segments.last_mut()
+    {
         text.push_str(delta);
+        if current.is_none() {
+            *current = Some(started_at);
+        }
         return;
     }
     summary.segments.push(RunTraceSegment::Thinking {
         text: delta.to_string(),
         duration_ms: None,
+        started_at: Some(started_at),
     });
 }
 
@@ -1768,9 +1807,12 @@ fn ensure_subagent(summary: &mut RunTraceSummary, event: &SessionEvent) -> Optio
             task: String::new(),
             section_id: None,
             status: "running".to_string(),
+            started_at: Some(event.timestamp),
             summary: None,
             thinking: String::new(),
             thinking_duration_ms: None,
+            thinking_started_at: None,
+            text: String::new(),
             task_focus: None,
             tools: Vec::new(),
         },
@@ -1812,6 +1854,28 @@ impl RunTraceAccumulator {
                 .unwrap_or(0)
                 .saturating_add(elapsed),
         );
+        record.thinking_started_at = None;
+    }
+
+    fn finalize_active_clocks(&mut self) {
+        if let Some(started) = self.active_main_thinking_start.take()
+            && let Some(RunTraceSegment::Thinking { started_at, .. }) =
+                self.summary.segments.last_mut()
+        {
+            *started_at = Some(started);
+        }
+        let active_sub_starts = std::mem::take(&mut self.active_sub_thinking_start);
+        for (run_id, started) in active_sub_starts {
+            let Some(location) =
+                find_subagent_location(&self.summary, |sub| sub.subagent_run_id == run_id)
+            else {
+                continue;
+            };
+            let Some(record) = subagent_mut(&mut self.summary, location) else {
+                continue;
+            };
+            record.thinking_started_at = Some(started);
+        }
     }
 }
 
@@ -1901,6 +1965,9 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                 if trace.started_at.is_none() {
                     trace.started_at = Some(event.timestamp);
                 }
+                if trace.summary.started_at.is_none() {
+                    trace.summary.started_at = Some(event.timestamp);
+                }
             }
             SessionEventKind::TurnFinished => {
                 trace.summary.status = "completed".to_string();
@@ -1916,7 +1983,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             }
             SessionEventKind::ThinkingDelta { delta } => {
                 if subagent_event {
-                    trace
+                    let thinking_start = *trace
                         .active_sub_thinking_start
                         .entry(event.run_id.clone())
                         .or_insert(event.timestamp);
@@ -1924,6 +1991,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                         && let Some(record) = subagent_mut(&mut trace.summary, location)
                     {
                         record.thinking.push_str(delta);
+                        record.thinking_started_at = Some(thinking_start);
                     }
                 } else {
                     if !matches!(
@@ -1932,11 +2000,17 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                     ) {
                         trace.active_main_thinking_start = Some(event.timestamp);
                     }
-                    append_thinking_segment(&mut trace.summary, delta);
+                    append_thinking_segment(&mut trace.summary, delta, event.timestamp);
                 }
             }
             SessionEventKind::TextDelta { delta } => {
-                if !subagent_event {
+                if subagent_event {
+                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
+                        && let Some(record) = subagent_mut(&mut trace.summary, location)
+                    {
+                        record.text.push_str(delta);
+                    }
+                } else {
                     append_text_segment(&mut trace.summary, delta);
                 }
             }
@@ -2035,6 +2109,9 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                     subagent.task = task.clone();
                     subagent.section_id = section_id.clone();
                     subagent.status = "running".to_string();
+                    if subagent.started_at.is_none() {
+                        subagent.started_at = Some(event.timestamp);
+                    }
                 } else {
                     append_execution_subagent(
                         &mut trace.summary,
@@ -2045,9 +2122,12 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                             task: task.clone(),
                             section_id: section_id.clone(),
                             status: "running".to_string(),
+                            started_at: Some(event.timestamp),
                             summary: None,
                             thinking: String::new(),
                             thinking_duration_ms: None,
+                            thinking_started_at: None,
+                            text: String::new(),
                             task_focus: None,
                             tools: Vec::new(),
                         },
@@ -2079,6 +2159,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                             task: String::new(),
                             section_id: None,
                             status: status.clone(),
+                            started_at: Some(event.timestamp),
                             summary: if summary.is_empty() {
                                 None
                             } else {
@@ -2086,6 +2167,8 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                             },
                             thinking: String::new(),
                             thinking_duration_ms: None,
+                            thinking_started_at: None,
+                            text: String::new(),
                             task_focus: None,
                             tools: Vec::new(),
                         },
@@ -2117,7 +2200,38 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
         }
     }
 
+    for trace in &mut traces {
+        trace.finalize_active_clocks();
+    }
     traces.into_iter().map(|trace| trace.summary).collect()
+}
+
+fn active_trace_snapshot(
+    summary: &SessionSummary,
+    traces: Vec<RunTraceSummary>,
+) -> (Option<RunTraceSummary>, Vec<RunTraceSubagent>) {
+    if !matches!(
+        summary.active_run_status,
+        ActiveRunStatus::Running | ActiveRunStatus::AwaitingInput
+    ) {
+        return (None, Vec::new());
+    }
+    let Some(trace) = traces.into_iter().next_back() else {
+        return (None, Vec::new());
+    };
+    if trace.status != "running" {
+        return (None, Vec::new());
+    }
+    let mut subagents = Vec::new();
+    for segment in &trace.segments {
+        if let RunTraceSegment::Execution {
+            subagents: items, ..
+        } = segment
+        {
+            subagents.extend(items.iter().cloned());
+        }
+    }
+    (Some(trace), subagents)
 }
 
 fn row_to_run(row: &PgRow) -> RuntimeResult<RunRecord> {

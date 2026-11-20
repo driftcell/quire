@@ -6,6 +6,8 @@ import type {
   ContextUsage,
   PendingQuestion,
   QuestionAnswer,
+  RunTraceSubagent,
+  RunTraceSummary,
   SessionDetail,
   SessionEvent,
 } from "@/contracts/session-protocol";
@@ -19,6 +21,7 @@ import {
   ensureLiveTraceStarted,
   finishThinkingSegment,
   finishToolSegment,
+  hydrateActiveRun,
   type LiveAgentTrace,
   type LiveSubagentRun,
 } from "@/lib/liveTrace";
@@ -42,6 +45,9 @@ export interface UseSessionEventStreamOptions {
   sessionId: string;
   enabled: boolean;
   lastEventSeq: number;
+  serverActiveRunStatus?: ActiveRunStatus;
+  activeRunTrace?: RunTraceSummary | null;
+  activeSubagentTraces?: RunTraceSubagent[];
   serverPendingQuestion?: PendingQuestion | null;
   serverResolvedQuestions?: SessionDetail["resolved_questions"];
 }
@@ -50,6 +56,9 @@ export function useSessionEventStream({
   sessionId,
   enabled,
   lastEventSeq,
+  serverActiveRunStatus,
+  activeRunTrace,
+  activeSubagentTraces,
   serverPendingQuestion,
   serverResolvedQuestions,
 }: UseSessionEventStreamOptions) {
@@ -72,6 +81,57 @@ export function useSessionEventStream({
   useEffect(() => {
     afterSeqRef.current = lastEventSeq;
   }, [lastEventSeq]);
+
+  const liveMainRef = useRef<LiveAgentTrace | null>(null);
+  useEffect(() => {
+    liveMainRef.current = liveMain;
+  }, [liveMain]);
+  const hydratedRunIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !activeRunTrace) {
+      return;
+    }
+    const runId = activeRunTrace.run_id;
+    const current = liveMainRef.current;
+    const isStreaming =
+      serverActiveRunStatus === "running" ||
+      serverActiveRunStatus === "awaiting_input" ||
+      activeRunTrace.status === "running";
+    if (current) {
+      if (current.runId !== runId || hydratedRunIdRef.current === runId) {
+        // A local trace already owns the pane. Never replace it with a detail
+        // snapshot that may be behind the SSE cursor.
+        return;
+      }
+      const hydrated = hydrateActiveRun(
+        activeRunTrace,
+        activeSubagentTraces,
+        isStreaming,
+      );
+      setLiveSubagents((previous) => {
+        const byId = new Map(
+          previous.map((subagent) => [subagent.subagentRunId, subagent]),
+        );
+        for (const subagent of hydrated.subagents) {
+          if (!byId.has(subagent.subagentRunId)) {
+            byId.set(subagent.subagentRunId, subagent);
+          }
+        }
+        return Array.from(byId.values());
+      });
+      hydratedRunIdRef.current = runId;
+      return;
+    }
+    const hydrated = hydrateActiveRun(
+      activeRunTrace,
+      activeSubagentTraces,
+      isStreaming,
+    );
+    setLiveMain(hydrated.main);
+    setLiveSubagents(hydrated.subagents);
+    hydratedRunIdRef.current = runId;
+  }, [enabled, activeRunTrace, activeSubagentTraces, serverActiveRunStatus]);
 
   const effectivePendingQuestion =
     livePendingQuestion ?? serverPendingQuestion ?? null;
@@ -419,6 +479,7 @@ export function useSessionEventStream({
           ]);
           setLiveMain(null);
           setLiveSubagents([]);
+          hydratedRunIdRef.current = null;
         })();
         void queryClient.invalidateQueries({ queryKey: ["sessions"] });
       } else if (ev.event === "turn_failed") {

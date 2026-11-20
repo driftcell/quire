@@ -63,6 +63,21 @@ the same segment to `liveMain` and closes the preceding activity. Frontend rende
 activity after the user segment, reuses the standard right-aligned user bubble with full message
 metadata when available, and suppresses only those message IDs from the outer transcript.
 
+### Active-run hydration
+
+`SessionDetail` is the refresh-safe counterpart of the live SSE pane. When the session is `Running`
+or `AwaitingInput` and the latest aggregated run is still active, the detail response carries
+`active_run_trace` plus its flattened `active_subagent_traces`. The runtime builds both from
+`session_events` using the same `seq <= last_event_seq` boundary returned in the summary, so the
+snapshot and the subsequent `afterSeq = last_event_seq` SSE connection partition the event stream
+without gaps or duplicates.
+
+`RunTraceSummary.started_at` is the originating `TurnStarted` timestamp. `RunTraceSegment::Thinking`
+retains `started_at` while a thinking phase is still streaming, and `RunTraceSubagent` carries its own
+`started_at`, `thinking_started_at` and streamed `text`. The frontend converts the snapshot to
+`LiveAgentTrace` / `LiveSubagentRun` before subscribing to SSE, which keeps the top run timer and the
+active thinking timer on their original server clocks instead of restarting from zero after refresh.
+
 Built-in tools (`load_skill`, `read_skill_resource`, `describe_task`, `spawn_subagents`) read skills
 from the session branch. `describe_task` emits `TaskFocus`. `spawn_subagents` reads each child
 `agent_definitions` row, resolves its model route/allowed tools, and runs real nested model loops
@@ -113,6 +128,8 @@ formal Quire commit clears the placeholders atomically.
   messages use `user_message_added` and do not masquerade as inline activity.
 - Live and refreshed traces share the `UserMessage` boundary: the previous activity is completed and
   later work starts a new activity. The outer transcript never duplicates an inline message ID.
+- An active-run snapshot and its SSE cursor share one `last_event_seq` boundary; refreshing during a
+  run hydrates prior thinking, tools and subagents, then continues from the next event.
 - `ask_user` suspension leaves the pending queue untouched.
 - Idle completion notifies the queue loop immediately; the 2-second interval is only a fallback.
 - `context_usage.context_limit` is the resolved provider model limit, not a fixed constant.
@@ -125,11 +142,15 @@ Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
   `[Execution(tool), UserMessage(inline), Text(next round)]`.
 - `idle_completion_wakes_pending_queue_without_interval_wait`
 - `ask_user_suspension_keeps_pending_queue_untouched`
+- `session_detail_returns_an_atomic_active_run_snapshot` verifies the active trace, `started_at`,
+  completed/running tools, streaming thinking and active subagent clocks against `last_event_seq`.
 
 Browser coverage in `web/e2e/pending-user-message-timeline.js` verifies the same DOM order before
-and after `page.reload()`, exactly one inline user bubble, and two settled activity groups. Frontend
-unit coverage in `web/src/components/chat/traceSegments.test.ts` applies the same boundary to live
-and historical segment builders.
+and after `page.reload()`, exactly one inline user bubble, and two settled activity groups.
+`web/e2e/thinking-duration-accuracy.js` reloads a running session with prior thinking and tools and
+asserts the hydrated timers continue from the server clocks before the terminal SSE events arrive.
+Frontend unit coverage in `web/src/components/chat/traceSegments.test.ts` applies the same boundary
+to live and historical segment builders.
 
 Unit coverage in `crates/quire-runtime/src/rig_agent.rs`:
 

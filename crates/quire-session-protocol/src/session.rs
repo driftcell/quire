@@ -269,10 +269,18 @@ pub struct RunTraceSubagent {
     pub section_id: Option<String>,
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
     pub thinking: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thinking_duration_ms: Option<u64>,
+    /// Start of the currently streaming thinking phase. `None` once settled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_started_at: Option<DateTime<Utc>>,
+    /// Text streamed by the subagent before it finishes.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_focus: Option<RunTaskFocus>,
     #[serde(default)]
@@ -289,6 +297,10 @@ pub enum RunTraceSegment {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         duration_ms: Option<u64>,
+        /// Server timestamp when this thinking phase started. Retained while the
+        /// phase is still streaming so clients can continue the timer after refresh.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_at: Option<DateTime<Utc>>,
     },
     Execution {
         #[serde(default)]
@@ -310,6 +322,9 @@ pub enum RunTraceSegment {
 pub struct RunTraceSummary {
     pub run_id: String,
     pub status: String,
+    /// Server timestamp of the run's `turn_started` event.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -364,6 +379,12 @@ pub struct SessionDetail {
     /// Messages waiting for the current run to finish, in FIFO order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_queue: Vec<PendingQueueItem>,
+    /// Aggregated trace of the active run, captured at `last_event_seq`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_run_trace: Option<RunTraceSummary>,
+    /// Subagents embedded in the active run, with their streaming clocks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub active_subagent_traces: Vec<RunTraceSubagent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -481,6 +502,8 @@ mod tests {
                 created_at: now,
             }),
             pending_queue: Vec::new(),
+            active_run_trace: None,
+            active_subagent_traces: Vec::new(),
         };
         let json = serde_json::to_value(&detail).unwrap();
         assert_eq!(json["session_id"], "sess_1");

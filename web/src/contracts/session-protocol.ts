@@ -14,6 +14,11 @@ export type RunTraceSegment =
   | {
       duration_ms?: number | null;
       kind: "thinking";
+      /**
+       * Server timestamp when this thinking phase started. Retained while the
+       * phase is still streaming so clients can continue the timer after refresh.
+       */
+      started_at?: string | null;
       text: string;
       [k: string]: unknown;
     }
@@ -264,6 +269,10 @@ export interface RunTraceSummary {
   duration_ms?: number | null;
   run_id: string;
   segments?: RunTraceSegment[];
+  /**
+   * Server timestamp of the run's `turn_started` event.
+   */
+  started_at?: string | null;
   status: string;
   task_focus?: RunTaskFocus | null;
   [k: string]: unknown;
@@ -272,13 +281,22 @@ export interface RunTraceSubagent {
   agent_name: string;
   display_name?: string | null;
   section_id?: string | null;
+  started_at?: string | null;
   status: string;
   subagent_run_id: string;
   summary?: string | null;
   task: string;
   task_focus?: RunTaskFocus | null;
+  /**
+   * Text streamed by the subagent before it finishes.
+   */
+  text?: string;
   thinking: string;
   thinking_duration_ms?: number | null;
+  /**
+   * Start of the currently streaming thinking phase. `None` once settled.
+   */
+  thinking_started_at?: string | null;
   tools?: RunTraceToolItem[];
   [k: string]: unknown;
 }
@@ -320,6 +338,14 @@ export interface SessionCommentRef {
 }
 export interface SessionDetail {
   active_run_status: ActiveRunStatus;
+  /**
+   * Aggregated trace of the active run, captured at `last_event_seq`.
+   */
+  active_run_trace?: RunTraceSummary | null;
+  /**
+   * Subagents embedded in the active run, with their streaming clocks.
+   */
+  active_subagent_traces?: RunTraceSubagent[];
   attachments?: AttachmentMeta[];
   compacted_at?: string | null;
   compacting?: boolean;

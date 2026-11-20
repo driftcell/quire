@@ -3,13 +3,15 @@ import { isVisibleTraceTool } from "@/components/chat/toolMeta";
 import type {
   RunTraceSubagent,
   RunTraceSummary,
-  RunTraceToolItem,
 } from "@/contracts/session-protocol";
-import type {
-  LiveAgentTrace,
-  LiveSubagentRun,
-  LiveTraceSegment,
+import {
+  toToolTraceItems,
+  type LiveAgentTrace,
+  type LiveSubagentRun,
+  type LiveTraceSegment,
 } from "@/lib/liveTrace";
+
+export { toToolTraceItems };
 
 export type ThinkingActivity = {
   key: string;
@@ -194,30 +196,6 @@ export function extractSubagentLiveView(
     tools,
     streamingText: joinLiveText(textParts),
   };
-}
-
-function traceToolStatus(status: string): ToolCallTraceItem["status"] {
-  if (status === "running") {
-    return "running";
-  }
-  if (status === "failed" || status === "error") {
-    return "failed";
-  }
-  return "completed";
-}
-
-export function toToolTraceItems(
-  tools: RunTraceToolItem[] | undefined,
-): ToolCallTraceItem[] {
-  return (tools ?? []).map((tool) => ({
-    toolCallId: tool.tool_call_id,
-    toolName: tool.tool_name,
-    status: traceToolStatus(tool.status),
-    inputPreview: tool.input_preview,
-    outputPreview: tool.output_preview ?? undefined,
-    truncated: tool.truncated ?? false,
-    durationMs: tool.duration_ms ?? undefined,
-  }));
 }
 
 export function activityHasQuestion(

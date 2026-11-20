@@ -296,9 +296,7 @@ function LiveSubagent({
     tools,
     streamingText,
   } = extractSubagentLiveView(sub.trace);
-  const outputText =
-    sub.summary?.trim() ||
-    (sub.status === "running" ? streamingText.trim() : "");
+  const outputText = sub.summary?.trim() || streamingText.trim();
 
   return (
     <SubagentTrace

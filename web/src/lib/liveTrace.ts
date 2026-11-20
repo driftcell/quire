@@ -1,4 +1,10 @@
 import type { ToolCallTraceItem } from "@/components/chat/ToolCallTrace";
+import type {
+  RunTraceSegment,
+  RunTraceSubagent,
+  RunTraceSummary,
+  RunTraceToolItem,
+} from "@/contracts/session-protocol";
 
 export type LiveTraceSegment =
   | {
@@ -39,6 +45,219 @@ export interface LiveSubagentRun {
   status: "running" | "completed" | "failed";
   summary?: string;
   trace: LiveAgentTrace;
+}
+
+function serverTimeMs(value: string | null | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function traceToolStatus(status: string): ToolCallTraceItem["status"] {
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "failed" || status === "error") {
+    return "failed";
+  }
+  return "completed";
+}
+
+export function toToolTraceItems(
+  tools: RunTraceToolItem[] | undefined,
+): ToolCallTraceItem[] {
+  return (tools ?? []).map((tool) => ({
+    toolCallId: tool.tool_call_id,
+    toolName: tool.tool_name,
+    status: traceToolStatus(tool.status),
+    inputPreview: tool.input_preview,
+    outputPreview: tool.output_preview ?? undefined,
+    truncated: tool.truncated ?? false,
+    durationMs: tool.duration_ms ?? undefined,
+  }));
+}
+
+function liveSegmentFromTrace(
+  segment: RunTraceSegment,
+  index: number,
+  lastIndex: number,
+  isStreaming: boolean,
+  fallbackStartedAtMs: number | undefined,
+): LiveTraceSegment | null {
+  if (segment.kind === "thinking") {
+    return {
+      kind: "thinking",
+      text: segment.text,
+      durationMs: segment.duration_ms ?? undefined,
+      startedAtMs:
+        serverTimeMs(segment.started_at) ??
+        (isStreaming && index === lastIndex ? fallbackStartedAtMs : undefined),
+    };
+  }
+  if (segment.kind === "execution") {
+    const tools = toToolTraceItems(segment.tools);
+    const subagentRunIds = (segment.subagents ?? []).map(
+      (subagent) => subagent.subagent_run_id,
+    );
+    if (tools.length === 0 && subagentRunIds.length === 0) {
+      return null;
+    }
+    return { kind: "execution", tools, subagentRunIds };
+  }
+  if (segment.kind === "user_message") {
+    return {
+      kind: "user_message",
+      messageId: segment.message_id,
+      content: segment.content,
+      createdAt: segment.created_at,
+    };
+  }
+  return { kind: "text", text: segment.text };
+}
+
+/**
+ * Rebuild a live main-agent trace from the server's active-run snapshot.
+ * `started_at` preserves the original `turn_started` clock across refreshes.
+ */
+export function liveTraceFromSummary(
+  trace: RunTraceSummary,
+  isStreaming = trace.status === "running",
+): LiveAgentTrace {
+  const startedAtMs = serverTimeMs(trace.started_at);
+  const source = trace.segments ?? [];
+  const lastIndex = source.length - 1;
+  const segments: LiveTraceSegment[] = [];
+  source.forEach((segment, index) => {
+    const live = liveSegmentFromTrace(
+      segment,
+      index,
+      lastIndex,
+      isStreaming,
+      startedAtMs,
+    );
+    if (live) {
+      segments.push(live);
+    }
+  });
+  return {
+    agentId: "main",
+    runId: trace.run_id,
+    startedAtMs,
+    segments,
+    taskFocus: trace.task_focus
+      ? {
+          title: trace.task_focus.title,
+          detail: trace.task_focus.detail ?? undefined,
+          sectionId: trace.task_focus.section_id ?? undefined,
+        }
+      : undefined,
+    isStreaming: isStreaming && trace.status === "running",
+  };
+}
+
+function liveSubagentStatus(
+  status: string,
+): "running" | "completed" | "failed" {
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "failed" || status === "error") {
+    return "failed";
+  }
+  return "completed";
+}
+
+/**
+ * Rebuild one subagent card from the active-run snapshot, including its
+ * thinking clock, streamed tools, streamed text and task focus.
+ */
+export function liveSubagentFromSummary(
+  subagent: RunTraceSubagent,
+  isStreaming = subagent.status === "running",
+): LiveSubagentRun {
+  const status = liveSubagentStatus(subagent.status);
+  const startedAtMs = serverTimeMs(subagent.started_at);
+  const thinkingDurationMs = subagent.thinking_duration_ms ?? undefined;
+  const thinkingStartedAtMs =
+    serverTimeMs(subagent.thinking_started_at) ??
+    (thinkingDurationMs === undefined ? startedAtMs : undefined);
+  const segments: LiveTraceSegment[] = [];
+  if (subagent.thinking.length > 0) {
+    segments.push({
+      kind: "thinking",
+      text: subagent.thinking,
+      durationMs: thinkingDurationMs,
+      startedAtMs:
+        thinkingDurationMs === undefined ? thinkingStartedAtMs : undefined,
+    });
+  }
+  const tools = toToolTraceItems(subagent.tools);
+  if (tools.length > 0) {
+    segments.push({ kind: "execution", tools, subagentRunIds: [] });
+  }
+  if (subagent.text) {
+    segments.push({ kind: "text", text: subagent.text });
+  }
+  return {
+    subagentRunId: subagent.subagent_run_id,
+    agentName: subagent.agent_name,
+    displayName: subagent.display_name ?? undefined,
+    task: subagent.task,
+    sectionId: subagent.section_id ?? undefined,
+    status,
+    summary: subagent.summary ?? undefined,
+    trace: {
+      agentId: subagent.agent_name,
+      runId: subagent.subagent_run_id,
+      startedAtMs,
+      segments,
+      taskFocus: subagent.task_focus
+        ? {
+            title: subagent.task_focus.title,
+            detail: subagent.task_focus.detail ?? undefined,
+            sectionId: subagent.task_focus.section_id ?? undefined,
+          }
+        : undefined,
+      isStreaming: isStreaming && status === "running",
+    },
+  };
+}
+
+export interface HydratedActiveRun {
+  main: LiveAgentTrace;
+  subagents: LiveSubagentRun[];
+}
+
+/**
+ * Hydrate the whole live run from the atomic `SessionDetail` snapshot. The
+ * main trace already embeds subagent records; the dedicated array is preferred
+ * when present because it is the flattened contract for active subagents.
+ */
+export function hydrateActiveRun(
+  trace: RunTraceSummary,
+  subagents: RunTraceSubagent[] | undefined,
+  isStreaming = trace.status === "running",
+): HydratedActiveRun {
+  const main = liveTraceFromSummary(trace, isStreaming);
+  const embedded: RunTraceSubagent[] = [];
+  for (const segment of trace.segments ?? []) {
+    if (segment.kind === "execution") {
+      embedded.push(...(segment.subagents ?? []));
+    }
+  }
+  const source = subagents && subagents.length > 0 ? subagents : embedded;
+  const seen = new Set<string>();
+  const liveSubagents: LiveSubagentRun[] = [];
+  for (const subagent of source) {
+    if (seen.has(subagent.subagent_run_id)) {
+      continue;
+    }
+    seen.add(subagent.subagent_run_id);
+    liveSubagents.push(liveSubagentFromSummary(subagent, isStreaming));
+  }
+  return { main, subagents: liveSubagents };
 }
 
 export function emptyLiveTrace(
