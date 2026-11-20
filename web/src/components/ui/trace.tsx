@@ -81,11 +81,12 @@ function TraceDescription({
   );
 }
 
-function TraceCollapsible({
-  className,
-  ...props
-}: Omit<React.ComponentProps<typeof Collapsible>, "open"> &
-  (
+type TraceCollapsibleProps = Omit<
+  React.ComponentProps<typeof Collapsible>,
+  "open" | "defaultOpen"
+> & {
+  defaultOpen?: boolean;
+} & (
     | { open?: undefined }
     | {
         open: boolean;
@@ -93,11 +94,39 @@ function TraceCollapsible({
           React.ComponentProps<typeof Collapsible>["onOpenChange"]
         >;
       }
-  )) {
+  );
+
+function TraceCollapsible({
+  className,
+  defaultOpen = false,
+  open,
+  onOpenChange,
+  ...props
+}: TraceCollapsibleProps) {
+  const [internalOpen, setInternalOpen] = React.useState(defaultOpen);
+  const controlled = open !== undefined;
+
+  // Base UI warns when `defaultOpen` changes after mount. Keep the public
+  // defaultOpen-as-initial-state semantics, but drive Collapsible in
+  // controlled mode internally so dynamic trace updates stay warning-free.
+  const handleOpenChange = React.useCallback<
+    NonNullable<React.ComponentProps<typeof Collapsible>["onOpenChange"]>
+  >(
+    (nextOpen, eventDetails) => {
+      onOpenChange?.(nextOpen, eventDetails);
+      if (!controlled) {
+        setInternalOpen(nextOpen);
+      }
+    },
+    [controlled, onOpenChange],
+  );
+
   return (
     <Collapsible
       data-slot="trace-collapsible"
       className={cn("flex w-full min-w-0 flex-col", className)}
+      open={controlled ? open : internalOpen}
+      onOpenChange={handleOpenChange}
       {...props}
     />
   );

@@ -279,6 +279,16 @@ pub struct SubagentTask {
     pub section_id: Option<String>,
 }
 
+struct ToolBuildContext {
+    execution: AgentExecution,
+    scope: EventScope,
+    engine: Arc<RigModelCore>,
+    pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
+    supports_vision: bool,
+    sandbox: Arc<SandboxLease>,
+    doc_id: Arc<Mutex<Option<String>>>,
+}
+
 struct RuntimeToolScope {
     engine: Arc<RigModelCore>,
     execution: AgentExecution,
@@ -286,6 +296,9 @@ struct RuntimeToolScope {
     pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
     supports_vision: bool,
     sandbox: Arc<SandboxLease>,
+    /// Latest bound report ID, shared across the turn so subagents spawned
+    /// after a lazy `create_report` inherit the new document.
+    doc_id: Arc<Mutex<Option<String>>>,
 }
 
 fn runtime_tool_scope(context: &ToolContext) -> Result<Arc<RuntimeToolScope>, ToolExecutionError> {
@@ -949,11 +962,13 @@ async fn run_subagents_tool(
     tasks: Vec<SubagentTask>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let bound_doc_id = runtime.doc_id.lock().await.clone();
     let mut joinset = JoinSet::new();
     for task in tasks {
         let engine = Arc::clone(&runtime.engine);
         let scope = runtime.event_scope.clone();
-        let execution = runtime.execution.clone();
+        let mut execution = runtime.execution.clone();
+        execution.doc_id = bound_doc_id.clone();
         joinset.spawn(async move { engine.run_subagent(scope, execution, task).await });
     }
     let mut outcomes = Vec::new();
@@ -1205,6 +1220,7 @@ impl RigModelCore {
         let supports_vision = resolved.supports_vision;
         let pending_preview_images: Arc<Mutex<Vec<PreviewImage>>> =
             Arc::new(Mutex::new(Vec::new()));
+        let doc_id_state = Arc::new(Mutex::new(execution.doc_id.clone()));
         let mut sandbox_spec = sandbox_spec_from_config(&self.config.sandbox);
         sandbox_spec
             .metadata
@@ -1216,14 +1232,15 @@ impl RigModelCore {
             Arc::clone(&self.sandbox_provider),
             sandbox_spec,
         ));
-        let mut tools = self.build_tools(
-            &execution,
-            scope.clone(),
-            Arc::clone(&self),
-            Arc::clone(&pending_preview_images),
+        let mut tools = self.build_tools(ToolBuildContext {
+            execution: execution.clone(),
+            scope: scope.clone(),
+            engine: Arc::clone(&self),
+            pending_preview_images: Arc::clone(&pending_preview_images),
             supports_vision,
-            Arc::clone(&sandbox_lease),
-        )?;
+            sandbox: Arc::clone(&sandbox_lease),
+            doc_id: Arc::clone(&doc_id_state),
+        })?;
         for binding in self.mcp.tools_for_agent(&execution.allowed_tools).await? {
             let allowed: Vec<String> = binding
                 .tool_names
@@ -1360,6 +1377,7 @@ impl RigModelCore {
                         tracing::warn!(%error, %doc_id, session_id = %execution.session_id, "failed to bind lazily created report");
                     } else {
                         execution.doc_id = Some(doc_id.clone());
+                        *doc_id_state.lock().await = Some(doc_id.clone());
                         scope.send(ModelStreamEvent::DocLinked { doc_id, title });
                     }
                 }
@@ -1408,15 +1426,16 @@ impl RigModelCore {
         Ok(final_text)
     }
 
-    fn build_tools(
-        &self,
-        execution: &AgentExecution,
-        scope: EventScope,
-        engine: Arc<RigModelCore>,
-        pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
-        supports_vision: bool,
-        sandbox: Arc<SandboxLease>,
-    ) -> RuntimeResult<Vec<DynamicTool>> {
+    fn build_tools(&self, context: ToolBuildContext) -> RuntimeResult<Vec<DynamicTool>> {
+        let ToolBuildContext {
+            execution,
+            scope,
+            engine,
+            pending_preview_images,
+            supports_vision,
+            sandbox,
+            doc_id,
+        } = context;
         let runtime = Arc::new(RuntimeToolScope {
             engine,
             execution: execution.clone(),
@@ -1424,6 +1443,7 @@ impl RigModelCore {
             pending_preview_images,
             supports_vision,
             sandbox,
+            doc_id,
         });
         let mut tools = Vec::new();
         if allow_list_matches(&execution.allowed_tools, "preview_report") {
