@@ -4,6 +4,7 @@ import {
   ToolCallTrace,
   type ToolCallTraceItem,
 } from "@/components/chat/ToolCallTrace";
+import { isVisibleTraceTool } from "@/components/chat/traceSegments";
 
 const COLLAPSE_THRESHOLD = 5;
 const VISIBLE_RECENT_TOOLS = 4;
@@ -18,10 +19,7 @@ export const ToolCallList = memo(function ToolCallList({
   questionSlots?: Map<string, ReactNode>;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const tools = useMemo(
-    () => rawTools.filter((t) => t.toolName !== "describe_task"),
-    [rawTools],
-  );
+  const tools = useMemo(() => rawTools.filter(isVisibleTraceTool), [rawTools]);
 
   const renderTool = (tool: ToolCallTraceItem) => (
     <Fragment key={tool.toolCallId}>

@@ -65,6 +65,22 @@ export interface SubagentLiveView {
   streamingText: string;
 }
 
+/**
+ * Internal orchestration tools never render as their own trace row. The
+ * subagent cards below the execution segment already represent their effect,
+ * so showing the tool too would duplicate the loading state. A failed
+ * `spawn_subagents` call is the exception: keep it visible for debugging.
+ */
+export function isVisibleTraceTool(tool: ToolCallTraceItem): boolean {
+  if (tool.toolName === "describe_task") {
+    return false;
+  }
+  if (tool.toolName === "spawn_subagents") {
+    return tool.status === "failed";
+  }
+  return true;
+}
+
 function joinLiveText(parts: string[]): string {
   return parts
     .filter((part) => part.trim().length > 0)
@@ -93,7 +109,7 @@ export function extractSubagentLiveView(
       continue;
     }
     for (const tool of segment.tools) {
-      if (tool.toolName !== "describe_task") {
+      if (isVisibleTraceTool(tool)) {
         tools.push(tool);
       }
     }
@@ -196,7 +212,7 @@ export function buildHistoricalSegments(
       });
       return;
     }
-    const tools = toToolTraceItems(segment.tools);
+    const tools = toToolTraceItems(segment.tools).filter(isVisibleTraceTool);
     const subagents = segment.subagents ?? [];
     if (tools.length === 0 && subagents.length === 0) {
       return;
@@ -280,13 +296,14 @@ export function buildLiveSegments(
     const runs = segment.subagentRunIds
       .map((id) => subagents.find((sub) => sub.subagentRunId === id))
       .filter((sub): sub is LiveSubagentRun => sub !== undefined);
-    if (segment.tools.length === 0 && runs.length === 0) {
+    const tools = segment.tools.filter(isVisibleTraceTool);
+    if (tools.length === 0 && runs.length === 0) {
       return;
     }
     activity.push({
       key: `execution-${index}`,
       kind: "execution",
-      tools: segment.tools,
+      tools,
       subagents: runs.map((subagent) => ({
         kind: "live" as const,
         key: subagent.subagentRunId,

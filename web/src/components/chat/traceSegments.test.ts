@@ -9,6 +9,7 @@ import {
   buildHistoricalSegments,
   buildLiveSegments,
   extractSubagentLiveView,
+  isVisibleTraceTool,
   type RenderSegment,
 } from "./traceSegments";
 
@@ -38,6 +39,28 @@ function segmentAt(segments: RenderSegment[], index: number): RenderSegment {
   }
   return segment;
 }
+
+describe("isVisibleTraceTool", () => {
+  test("hides orchestration tools except failed spawn calls", () => {
+    expect(isVisibleTraceTool(tool("describe", "describe_task"))).toBe(false);
+    expect(isVisibleTraceTool(tool("spawn-running", "spawn_subagents"))).toBe(
+      false,
+    );
+    expect(
+      isVisibleTraceTool({
+        ...tool("spawn-completed", "spawn_subagents"),
+        status: "completed",
+      }),
+    ).toBe(false);
+    expect(
+      isVisibleTraceTool({
+        ...tool("spawn-failed", "spawn_subagents"),
+        status: "failed",
+      }),
+    ).toBe(true);
+    expect(isVisibleTraceTool(tool("read", "read_blocks"))).toBe(true);
+  });
+});
 
 describe("buildHistoricalSegments", () => {
   test("groups process head and keeps the trailing body as text", () => {
@@ -90,6 +113,82 @@ describe("buildHistoricalSegments", () => {
     expect(body.text).toBe("final body");
     expect(body.isStreaming).toBe(false);
   });
+
+  test("hides orchestration tools and keeps a subagent-only execution", () => {
+    const trace: RunTraceSummary = {
+      run_id: "run-2",
+      status: "completed",
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            {
+              tool_call_id: "spawn-1",
+              tool_name: "spawn_subagents",
+              status: "completed",
+              input_preview: "{}",
+            },
+            {
+              tool_call_id: "describe-1",
+              tool_name: "describe_task",
+              status: "completed",
+              input_preview: "{}",
+            },
+          ],
+          subagents: [subagent("sub-1")],
+        },
+      ],
+    };
+
+    const segments = buildHistoricalSegments(trace);
+    expect(segments).toHaveLength(1);
+    const activity = segmentAt(segments, 0);
+    if (activity.kind !== "activity") {
+      throw new Error("expected activity segment");
+    }
+    expect(activity.items).toHaveLength(1);
+    const execution = activity.items[0];
+    if (execution?.kind !== "execution") {
+      throw new Error("expected execution item");
+    }
+    expect(execution.tools).toEqual([]);
+    expect(execution.subagents).toEqual([
+      { kind: "historical", key: "sub-1", subagent: subagent("sub-1") },
+    ]);
+  });
+
+  test("keeps a failed spawn_subagents call visible", () => {
+    const trace: RunTraceSummary = {
+      run_id: "run-3",
+      status: "failed",
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            {
+              tool_call_id: "spawn-1",
+              tool_name: "spawn_subagents",
+              status: "failed",
+              input_preview: "{}",
+            },
+          ],
+          subagents: [],
+        },
+      ],
+    };
+
+    const segments = buildHistoricalSegments(trace);
+    const activity = segmentAt(segments, 0);
+    if (activity.kind !== "activity") {
+      throw new Error("expected activity segment");
+    }
+    const execution = activity.items[0];
+    if (execution?.kind !== "execution") {
+      throw new Error("expected execution item");
+    }
+    expect(execution.tools.map((item) => item.toolCallId)).toEqual(["spawn-1"]);
+    expect(execution.tools[0]?.status).toBe("failed");
+  });
 });
 
 describe("buildLiveSegments", () => {
@@ -140,6 +239,122 @@ describe("buildLiveSegments", () => {
     }
     expect(body.isStreaming).toBe(true);
   });
+
+  test("hides orchestration tools and keeps the live subagent card", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "main",
+      isStreaming: true,
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            tool("spawn-1", "spawn_subagents"),
+            tool("describe-1", "describe_task"),
+            tool("read-1"),
+          ],
+          subagentRunIds: ["sub-1"],
+        },
+      ],
+    };
+    const liveSub: LiveSubagentRun = {
+      subagentRunId: "sub-1",
+      agentName: "writer",
+      task: "write",
+      status: "running",
+      trace: {
+        agentId: "writer",
+        isStreaming: true,
+        segments: [],
+      },
+    };
+
+    const segments = buildLiveSegments(trace, [liveSub]);
+    expect(segments).toHaveLength(1);
+    const activity = segmentAt(segments, 0);
+    if (activity.kind !== "activity") {
+      throw new Error("expected activity segment");
+    }
+    const execution = activity.items[0];
+    if (execution?.kind !== "execution") {
+      throw new Error("expected execution item");
+    }
+    expect(execution.tools.map((item) => item.toolCallId)).toEqual(["read-1"]);
+    expect(execution.subagents).toEqual([
+      { kind: "live", key: "sub-1", subagent: liveSub },
+    ]);
+  });
+
+  test("keeps an execution segment when only subagents remain", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "main",
+      isStreaming: true,
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            tool("spawn-1", "spawn_subagents"),
+            tool("describe-1", "describe_task"),
+          ],
+          subagentRunIds: ["sub-1"],
+        },
+      ],
+    };
+    const liveSub: LiveSubagentRun = {
+      subagentRunId: "sub-1",
+      agentName: "writer",
+      task: "write",
+      status: "running",
+      trace: {
+        agentId: "writer",
+        isStreaming: true,
+        segments: [],
+      },
+    };
+
+    const segments = buildLiveSegments(trace, [liveSub]);
+    expect(segments).toHaveLength(1);
+    const activity = segmentAt(segments, 0);
+    if (activity.kind !== "activity") {
+      throw new Error("expected activity segment");
+    }
+    const execution = activity.items[0];
+    if (execution?.kind !== "execution") {
+      throw new Error("expected execution item");
+    }
+    expect(execution.tools).toEqual([]);
+    expect(execution.subagents).toHaveLength(1);
+  });
+
+  test("keeps a failed live spawn_subagents call visible", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "main",
+      isStreaming: true,
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            {
+              ...tool("spawn-1", "spawn_subagents"),
+              status: "failed",
+            },
+          ],
+          subagentRunIds: [],
+        },
+      ],
+    };
+
+    const segments = buildLiveSegments(trace, []);
+    const activity = segmentAt(segments, 0);
+    if (activity.kind !== "activity") {
+      throw new Error("expected activity segment");
+    }
+    const execution = activity.items[0];
+    if (execution?.kind !== "execution") {
+      throw new Error("expected execution item");
+    }
+    expect(execution.tools.map((item) => item.toolCallId)).toEqual(["spawn-1"]);
+    expect(execution.tools[0]?.status).toBe("failed");
+  });
 });
 
 describe("extractSubagentLiveView", () => {
@@ -155,6 +370,7 @@ describe("extractSubagentLiveView", () => {
           tools: [
             tool("read-1"),
             tool("describe-1", "describe_task"),
+            tool("spawn-1", "spawn_subagents"),
             tool("read-2"),
           ],
           subagentRunIds: [],

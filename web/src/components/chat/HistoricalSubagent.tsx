@@ -2,7 +2,10 @@ import { ListTreeIcon, UsersIcon } from "lucide-react";
 import { SubagentOutput } from "@/components/chat/SubagentOutput";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
-import { toToolTraceItems } from "@/components/chat/traceSegments";
+import {
+  isVisibleTraceTool,
+  toToolTraceItems,
+} from "@/components/chat/traceSegments";
 import {
   Trace,
   TraceCollapsible,
@@ -24,9 +27,7 @@ export function HistoricalSubagent({
 }) {
   const title = subagent.display_name?.trim() || subagent.agent_name;
   const subTools = toToolTraceItems(subagent.tools);
-  const filteredTools = subTools.filter(
-    (tool) => tool.toolName !== "describe_task",
-  );
+  const filteredTools = subTools.filter(isVisibleTraceTool);
   return (
     <Trace>
       <TraceCollapsible defaultOpen={false}>
