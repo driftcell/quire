@@ -1107,6 +1107,43 @@ fn qr414_detects_mechanical_templates() {
 }
 
 #[test]
+fn qr414_detects_punctuated_and_four_item_enumerations() {
+    for text in [
+        "其一，方向要聚焦；其二，任务要分解；其三，结果要复盘。",
+        "第一，明确目标；第二，压实责任；第三，跟踪评估。",
+    ] {
+        let mut document = doc();
+        document
+            .blocks
+            .push(paragraph("punctuated-enumeration", text));
+        assert!(
+            has_code(&lint_document(&document), "QR414"),
+            "punctuated enumeration must trigger: {text}"
+        );
+    }
+
+    let mut four_items = doc();
+    four_items.blocks.push(paragraph(
+        "four-items",
+        "一是2024年投入3亿元[^src_1]，二是产出显著增长，三是平台完成验收，四是队伍规模扩大。",
+    ));
+    assert!(
+        has_code(&lint_document(&four_items), "QR414"),
+        "four or more 一是/二是 enumerations must trigger even with numbers and citations"
+    );
+
+    let mut ordinal_prose = doc();
+    ordinal_prose.blocks.push(paragraph(
+        "ordinal-prose",
+        "全国第一，全省第二，冲击第三轮。",
+    ));
+    assert!(
+        !has_code(&lint_document(&ordinal_prose), "QR414"),
+        "ordinary ordinal prose without enumeration punctuation must remain unflagged"
+    );
+}
+
+#[test]
 fn qr415_requires_more_than_one_contrast_hit() {
     let mut single = doc();
     single
@@ -1530,6 +1567,12 @@ fn qr418_flags_generic_and_counting_headings() {
     let mut counting = doc();
     counting.blocks.push(heading("counting", 2, "三大核心维度"));
     assert!(has_code(&lint_document(&counting), "QR418"));
+
+    let mut action_advice = doc();
+    action_advice
+        .blocks
+        .push(heading("action-advice", 2, "八、行动建议"));
+    assert!(has_code(&lint_document(&action_advice), "QR418"));
 
     let mut h1 = doc();
     h1.blocks.push(heading("h1-generic", 1, "概述"));

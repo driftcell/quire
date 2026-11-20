@@ -77,7 +77,9 @@ cliché from mechanical transitions, process/disclaimer leakage, extreme interne
 untranslated statistical names, or at least two distinct empty-jargon words (with ecological
 compounds such as `生态环境` exempt); `QR413` requires a long paragraph with no digits, citations or book titles;
 `QR414` detects ordered mechanical connectives, the third and later `一方面/另一方面` contrast pair,
-or three or more empty bold-list headings. `QR415` counts sentence-bounded contrast pairs whose gap is
+three or more empty bold-list headings, and punctuated `其一/其二/其三` or `第一/第二/第三`
+enumerations. A four-item `一是/二是/三是/四是` run reports regardless of digits or citations unless
+the paragraph is a newline-delimited list. `QR415` counts sentence-bounded contrast pairs whose gap is
 1-45 characters, plus strong hedging phrases or two distinct light hedging phrases in one paragraph.
 
 ### Layout rhythm and chart readability
@@ -98,9 +100,9 @@ of text; five or more consecutive non-list paragraphs totaling 1000+ characters 
 threshold. Headings, tables, charts, custom HTML, quotes and list paragraphs reset the run.
 
 `QR418` only inspects headings at level 2 or deeper. It strips common manual numbering and
-punctuation, then flags exact generic headings (`概述`, `Overview`, etc.) and counting shells such as
-`三大核心维度`. A counting heading with a colon followed by at least six characters, or a long title
-with concrete data/entities, is exempt.
+punctuation, then flags exact generic headings (`概述`, `行动建议`, `Overview`, etc.) and counting
+shells such as `三大核心维度`. A counting heading with a colon followed by at least six characters,
+or a long title with concrete data/entities, is exempt.
 
 ### Matching and filter layers
 

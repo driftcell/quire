@@ -18,9 +18,10 @@ enabled: true
    `get_protocol_guide("quickstart")` -> `create_report` -> `upsert_sources` -> `preview_echarts` 审图后 `commit_chart` -> `apply_operations` -> `lint_document` 校验交付。
 2. **多 Agent 集群协同（4+ 节综合研报 / 多校全面对标）**：
    - **立项建桩**：你先创建报告，统一 `upsert_sources`，写入全篇一级标题锚点（`sec1_h1`, `sec2_h1`...）；
-   - **先图后文**：派 `analyst` 落库三线表与经 `preview_echarts` 校验的图表，回收 `block_id` 与极值结论；
-   - **分章并行**：并行派多个 `writer`（严格隔离 `block_id` 前缀），传入对应图表 `block_id` 与 `source_id` 撰稿；
-   - **装帧与独立审校**：并行派 `designer` 配置封面/目录/页眉页脚，`reviewer` 加载 `review-rubric.md` 执行四类审查；
+   - **先图后文**：派 `analyst` 落库三线表与经 `preview_echarts` 校验的图表，回收 `block_id`、核心极值与关键统一口径（如各校学科评估唯一档位、专项资金统计时间窗口、核心排名结论）；
+   - **共享事实锁（`shared_facts`）**：主编把上述口径整理成精简的只读事实锁；派发并行 `writer` 与 `reviewer` 时必须附带同一版本，所有角色不得自行换算或改写，发现检索结果与事实锁冲突须向主编汇报；
+   - **分章并行**：并行派多个 `writer`（严格隔离 `block_id` 前缀），传入对应图表 `block_id`、`source_id` 与 `shared_facts` 撰稿；
+   - **装帧与独立审校**：并行派 `designer` 配置封面/目录/页眉页脚，`reviewer` 加载 `review-rubric.md` 并对照 `shared_facts` 执行四类审查；
    - **终审合龙**：根据 `reviewer` 命中的修订清单定点修补，确认 `lint_document` 零 error 后交付。
 3. **批注修订**：先 `read_blocks`，仅在批注指明范围内修订，随后 `reply_comment(..., mark_addressed=true, addressed_rev=最新版本)`。
 

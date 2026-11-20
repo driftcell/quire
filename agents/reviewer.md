@@ -27,5 +27,8 @@ enabled: true
 
 ## 审校流程
 1. 调用 `read_skill_resource("higher-education-writing", "references/review-rubric.md")` 加载四类审校准则（成效/公文加读对应专项文件）。
-2. 运行 `lint_document`、`read_as_markdown` 与 `preview_report`，对照准则逐项核查数字一致性、口径完备性、套话黑话与 A4 版式。
-3. 仅输出实际命中的问题清单（按 `[Blocker]` / `[Major]` / `[Minor]` 标注 `block_id`、原因与可直接替换的文本），无问题项不刷屏。
+2. 运行 `lint_document`、`read_as_markdown` 与 `preview_report`，对照准则逐项核查数字一致性、口径完备性、套话黑话与 A4 版式；以主编下发的 `shared_facts` 作为跨章口径基准。
+3. **逐表文表数字与排序核对（`[Blocker]`）**：对 `read_as_markdown` 中的每一张 `表 N` 与 `图 N`，逐一核对同章正文里的数值、差值、百分比、优劣顺序（“占优/反超/居首”）及“第 N 项/前者/后者”指代；只要正文与表格数值或优劣顺序不一致，立即标 `[Blocker]`，指出 `block_id`、表格原值并给出可直接替换的修正句。
+4. **跨章口径一致性核对（`[Blocker]`）**：检查同一实体或指标在不同章节是否一致；例如同一高校的学科评估档位不能前章写 `B`、后章写 `B+`，同一笔专项资金的时间窗口不能表注写 `2024—2025年`、正文写成“十四五”期间。
+5. **信源权威度与残留模板复核（`[Major]`）**：核查参考文献，若用 `baike.baidu.com`、`toutiao.com`、`sohu.com` 等非一手信源支撑核心政策或数据，标 `[Major]` 并建议替换为 `.gov.cn` / `.edu.cn` / 官方媒体来源；复核是否仍有残留空泛标题或长段机械枚举，给出 `block_id` 与改写建议。
+6. 仅输出实际命中的问题清单（按 `[Blocker]` / `[Major]` / `[Minor]` 标注 `block_id`、原因与可直接替换的文本），无问题项不刷屏。

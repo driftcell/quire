@@ -357,7 +357,19 @@ fn check_template_parallel(document: &ReportDocument, engine: &mut Engine<'_>) {
         {
             reasons.push("机械三段式连接词");
         }
-        if contains_in_order(&masked, &["一是", "二是", "三是"])
+        if !has_list_structure(text) {
+            if contains_punctuated_sequence(&masked, &["其一", "其二", "其三"]) {
+                reasons.push("机械“其一/其二/其三”枚举");
+            }
+            if contains_punctuated_sequence(&masked, &["第一", "第二", "第三"]) {
+                reasons.push("机械“第一/第二/第三”枚举");
+            }
+        }
+        let has_four_item_enumeration =
+            contains_in_order(&masked, &["一是", "二是", "三是", "四是"]);
+        if has_four_item_enumeration && !has_list_structure(text) {
+            reasons.push("机械“一是/二是/三是/四是”枚举");
+        } else if contains_in_order(&masked, &["一是", "二是", "三是"])
             && !text.chars().any(|ch| ch.is_ascii_digit())
             && !has_citation_evidence
         {
@@ -385,7 +397,7 @@ fn check_template_parallel(document: &ReportDocument, engine: &mut Engine<'_>) {
                 block.id,
                 reasons.join("；")
             ),
-            "In this Paragraph via apply_operations, remove the mechanical connectives/parallel list and state each claim with its metric, mechanism or source evidence; do not swap in another template or synonym shell.",
+            "In this Paragraph via apply_operations, remove the mechanical connectives/parallel enumeration and split it into a bullet list or separate paragraphs, or state each claim with its metric, mechanism or source evidence; do not swap in another template or synonym shell.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -892,6 +904,33 @@ fn is_markdown_symbol(ch: char) -> bool {
             | '|'
             | '\\'
     )
+}
+
+fn contains_punctuated_sequence(text: &str, items: &[&str]) -> bool {
+    let mut search = 0usize;
+    for item in items {
+        let mut matched = false;
+        while let Some(rest) = text.get(search..) {
+            let Some(found) = rest.find(item) else {
+                return false;
+            };
+            let absolute = search + found;
+            let after = absolute + item.len();
+            let Some(next) = text.get(after..).and_then(|tail| tail.chars().next()) else {
+                return false;
+            };
+            if matches!(next, '，' | '、' | '：' | ',' | ':') {
+                search = after + next.len_utf8();
+                matched = true;
+                break;
+            }
+            search = after;
+        }
+        if !matched {
+            return false;
+        }
+    }
+    true
 }
 
 fn contains_in_order(text: &str, items: &[&str]) -> bool {
