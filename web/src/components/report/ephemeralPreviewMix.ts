@@ -32,57 +32,100 @@ export function buildMixedItems(
   }
 
   const sliceIds = new Set(slices.map((s) => s.block.id));
+  const previewById = new Map<string, EphemeralPreviewEvent>();
+  for (const preview of previews) {
+    const blockId = preview.block.block_id;
+    if (blockId) {
+      previewById.set(blockId, preview);
+    }
+  }
+
   const afterMap = new Map<string, EphemeralPreviewEvent[]>();
   const beforeMap = new Map<string, EphemeralPreviewEvent[]>();
   const replaceMap = new Map<string, EphemeralPreviewEvent>();
+  const afterPreviewMap = new Map<string, EphemeralPreviewEvent[]>();
+  const beforePreviewMap = new Map<string, EphemeralPreviewEvent[]>();
   const tailPreviews: EphemeralPreviewEvent[] = [];
 
-  for (const p of previews) {
-    const anchor = p.anchor;
+  for (const preview of previews) {
+    const anchor = preview.anchor;
     if (anchor.type === "replace_block" && sliceIds.has(anchor.block_id)) {
-      replaceMap.set(anchor.block_id, p);
-    } else if (
-      anchor.type === "before_block" &&
-      sliceIds.has(anchor.block_id)
-    ) {
-      const list = beforeMap.get(anchor.block_id) ?? [];
-      list.push(p);
-      beforeMap.set(anchor.block_id, list);
-    } else if (anchor.type === "after_block" && sliceIds.has(anchor.block_id)) {
-      const list = afterMap.get(anchor.block_id) ?? [];
-      list.push(p);
-      afterMap.set(anchor.block_id, list);
+      replaceMap.set(anchor.block_id, preview);
+    } else if (anchor.type === "before_block") {
+      if (sliceIds.has(anchor.block_id)) {
+        const list = beforeMap.get(anchor.block_id) ?? [];
+        list.push(preview);
+        beforeMap.set(anchor.block_id, list);
+      } else if (previewById.has(anchor.block_id)) {
+        const list = beforePreviewMap.get(anchor.block_id) ?? [];
+        list.push(preview);
+        beforePreviewMap.set(anchor.block_id, list);
+      } else {
+        tailPreviews.push(preview);
+      }
+    } else if (anchor.type === "after_block") {
+      if (sliceIds.has(anchor.block_id)) {
+        const list = afterMap.get(anchor.block_id) ?? [];
+        list.push(preview);
+        afterMap.set(anchor.block_id, list);
+      } else if (previewById.has(anchor.block_id)) {
+        const list = afterPreviewMap.get(anchor.block_id) ?? [];
+        list.push(preview);
+        afterPreviewMap.set(anchor.block_id, list);
+      } else {
+        tailPreviews.push(preview);
+      }
     } else if (anchor.type === "append_to_section") {
       const targetId =
         sectionLastBlock.get(anchor.section_id) ?? anchor.section_id;
       if (sliceIds.has(targetId)) {
         const list = afterMap.get(targetId) ?? [];
-        list.push(p);
+        list.push(preview);
         afterMap.set(targetId, list);
       } else {
-        tailPreviews.push(p);
+        tailPreviews.push(preview);
       }
     } else {
-      tailPreviews.push(p);
+      tailPreviews.push(preview);
     }
   }
 
   const out: MixedRenderItem[] = [];
+  const emitted = new Set<string>();
+  const emitPreview = (preview: EphemeralPreviewEvent) => {
+    if (emitted.has(preview.preview_id)) {
+      return;
+    }
+    emitted.add(preview.preview_id);
+    const blockId = preview.block.block_id;
+    if (blockId) {
+      for (const child of beforePreviewMap.get(blockId) ?? []) {
+        emitPreview(child);
+      }
+    }
+    out.push({
+      kind: "preview",
+      key: `preview-${preview.preview_id}`,
+      preview,
+    });
+    if (blockId) {
+      for (const child of afterPreviewMap.get(blockId) ?? []) {
+        emitPreview(child);
+      }
+    }
+  };
+
   for (let idx = 0; idx < slices.length; idx += 1) {
     const slice = slices[idx];
     if (!slice) continue;
     const bid = slice.block.id;
 
-    for (const p of beforeMap.get(bid) ?? []) {
-      out.push({ kind: "preview", key: `pre-${p.preview_id}`, preview: p });
+    for (const preview of beforeMap.get(bid) ?? []) {
+      emitPreview(preview);
     }
     const replacement = replaceMap.get(bid);
     if (replacement) {
-      out.push({
-        kind: "preview",
-        key: `rep-${replacement.preview_id}`,
-        preview: replacement,
-      });
+      emitPreview(replacement);
     } else {
       out.push({
         kind: "slice",
@@ -90,12 +133,17 @@ export function buildMixedItems(
         slice,
       });
     }
-    for (const p of afterMap.get(bid) ?? []) {
-      out.push({ kind: "preview", key: `post-${p.preview_id}`, preview: p });
+    for (const preview of afterMap.get(bid) ?? []) {
+      emitPreview(preview);
     }
   }
-  for (const p of tailPreviews) {
-    out.push({ kind: "preview", key: `tail-${p.preview_id}`, preview: p });
+  for (const preview of tailPreviews) {
+    emitPreview(preview);
+  }
+  for (const preview of previews) {
+    if (!emitted.has(preview.preview_id)) {
+      emitPreview(preview);
+    }
   }
   return out;
 }

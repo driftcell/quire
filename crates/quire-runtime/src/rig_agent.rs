@@ -207,7 +207,7 @@ impl ToolPreviewStreamer {
     }
 
     /// Override where the previewed block appears. Replace anchors are rewritten to the
-    /// streamer's block ID.
+    /// streamer's block ID; AfterBlock and BeforeBlock targets are preserved.
     pub fn with_anchor(mut self, anchor: PreviewAnchor) -> Self {
         self.anchor = anchor;
         self
@@ -234,12 +234,11 @@ impl ToolPreviewStreamer {
         .await
     }
 
-    /// Push one partial block frame. The streamer remains responsible for throttling and
-    /// monotonic sequence numbers.
-    pub async fn push_block(&mut self, block: PartialBlockPreview) -> RuntimeResult<bool> {
-        if !self.throttle.should_emit() {
-            return Ok(false);
-        }
+    /// Build the next ephemeral event with the resolved anchor without sending it.
+    fn next_preview_event(
+        &mut self,
+        block: PartialBlockPreview,
+    ) -> RuntimeResult<EphemeralPreviewEvent> {
         self.seq = self.seq.saturating_add(1);
         let block_id = quire_protocol::BlockId::parse(self.block_id.clone())
             .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?;
@@ -247,28 +246,30 @@ impl ToolPreviewStreamer {
             PreviewAnchor::ReplaceBlock { .. } => PreviewAnchor::ReplaceBlock {
                 block_id: block_id.clone(),
             },
-            PreviewAnchor::AfterBlock { .. } => PreviewAnchor::AfterBlock {
-                block_id: block_id.clone(),
-            },
-            PreviewAnchor::BeforeBlock { .. } => PreviewAnchor::BeforeBlock {
-                block_id: block_id.clone(),
-            },
             other => other,
         };
-        let payload = EphemeralPayload::Preview {
-            event: EphemeralPreviewEvent {
-                doc_id: quire_protocol::DocId::parse(self.doc_id.clone())
-                    .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?,
-                preview_id: self.preview_id.clone(),
-                actor: self.actor.clone(),
-                anchor,
-                status: PreviewStatus::Streaming,
-                seq: Some(self.seq),
-                ttl_ms: None,
-                block,
-                received_at: chrono::Utc::now(),
-            },
-        };
+        Ok(EphemeralPreviewEvent {
+            doc_id: quire_protocol::DocId::parse(self.doc_id.clone())
+                .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?,
+            preview_id: self.preview_id.clone(),
+            actor: self.actor.clone(),
+            anchor,
+            status: PreviewStatus::Streaming,
+            seq: Some(self.seq),
+            ttl_ms: None,
+            block,
+            received_at: chrono::Utc::now(),
+        })
+    }
+
+    /// Push one partial block frame. The streamer remains responsible for throttling and
+    /// monotonic sequence numbers.
+    pub async fn push_block(&mut self, block: PartialBlockPreview) -> RuntimeResult<bool> {
+        if !self.throttle.should_emit() {
+            return Ok(false);
+        }
+        let event = self.next_preview_event(block)?;
+        let payload = EphemeralPayload::Preview { event };
         let response = self
             .http
             .post(format!(
@@ -2801,6 +2802,71 @@ mod tests {
         assert_eq!(block.block_id.as_deref(), Some("q3-revenue"));
         assert_eq!(block.block_type, "paragraph");
         assert_eq!(block.text.as_deref(), Some("Revenue grew"));
+    }
+
+    #[test]
+    fn preview_anchor_preserves_after_before_and_replace_targets()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let target = BlockId::parse("sec2_h1")?;
+        let current = BlockId::parse("sec2_p1")?;
+        let block = PartialBlockPreview {
+            block_id: Some(current.clone()),
+            block_type: "paragraph".into(),
+            title: None,
+            level: None,
+            text: Some("streaming".into()),
+        };
+        let make_streamer = |preview_id: &str, anchor: PreviewAnchor| {
+            ToolPreviewStreamer::new(
+                "http://127.0.0.1:1",
+                SecretString::from("token"),
+                "doc",
+                preview_id,
+                "actor",
+                "sec2_p1",
+                0,
+            )
+            .with_anchor(anchor)
+        };
+
+        let mut after = make_streamer(
+            "preview-after",
+            PreviewAnchor::AfterBlock {
+                block_id: target.clone(),
+            },
+        );
+        let event = after.next_preview_event(block.clone())?;
+        assert_eq!(
+            event.anchor,
+            PreviewAnchor::AfterBlock {
+                block_id: target.clone()
+            }
+        );
+
+        let mut before = make_streamer(
+            "preview-before",
+            PreviewAnchor::BeforeBlock {
+                block_id: target.clone(),
+            },
+        );
+        let event = before.next_preview_event(block.clone())?;
+        assert_eq!(
+            event.anchor,
+            PreviewAnchor::BeforeBlock {
+                block_id: target.clone()
+            }
+        );
+
+        let mut replace = make_streamer(
+            "preview-replace",
+            PreviewAnchor::ReplaceBlock { block_id: target },
+        );
+        let event = replace.next_preview_event(block)?;
+        assert_eq!(
+            event.anchor,
+            PreviewAnchor::ReplaceBlock { block_id: current }
+        );
+        Ok(())
     }
 
     #[test]
