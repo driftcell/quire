@@ -410,6 +410,12 @@ pub struct ConfigureTocParams {
     /// standard | numbered | dotted
     #[serde(default)]
     pub variant: Option<String>,
+    /// Start the TOC on a new page after the cover.
+    #[serde(default)]
+    pub page_break_before: Option<bool>,
+    /// Start body content on a new page after the TOC.
+    #[serde(default)]
+    pub page_break_after: Option<bool>,
 }
 
 /// Output for `configure_toc`.
@@ -702,6 +708,19 @@ mod tests {
         .expect("valid comment reply");
         assert!(reply.mark_addressed);
         assert_eq!(reply.addressed_rev, Some(4));
+    }
+
+    #[test]
+    fn configure_toc_accepts_page_break_options() {
+        let params: ConfigureTocParams = serde_json::from_value(json!({
+            "doc_id": "synthetic",
+            "enabled": true,
+            "page_break_before": true,
+            "page_break_after": false
+        }))
+        .expect("valid TOC page-break params");
+        assert_eq!(params.page_break_before, Some(true));
+        assert_eq!(params.page_break_after, Some(false));
     }
 
     #[test]

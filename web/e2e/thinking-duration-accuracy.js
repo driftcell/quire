@@ -25,7 +25,14 @@ async (page) => {
     ...overrides,
   });
 
-  const event = (seq, runId, agentId, timestampMs, payload, parentRunId = null) => ({
+  const event = (
+    seq,
+    runId,
+    agentId,
+    timestampMs,
+    payload,
+    parentRunId = null,
+  ) => ({
     seq,
     run_id: runId,
     agent_id: agentId,
@@ -187,7 +194,7 @@ async (page) => {
   };
 
   await page.goto(`${web}/sessions/${liveId}`);
-  await page.locator("[data-activity-trigger]").first().waitFor({
+  await page.locator('[data-live-header="true"]').first().waitFor({
     state: "visible",
     timeout: 15000,
   });
@@ -219,9 +226,9 @@ async (page) => {
   await activityTrigger.click();
   await page.waitForFunction(
     () =>
-      document.querySelector("[data-activity-trigger]")?.getAttribute(
-        "aria-expanded",
-      ) === "true",
+      document
+        .querySelector("[data-activity-trigger]")
+        ?.getAttribute("aria-expanded") === "true",
     undefined,
     { timeout: 15000 },
   );
@@ -283,4 +290,4 @@ async (page) => {
       },
     },
   };
-}
+};

@@ -93,6 +93,73 @@ describe("paginateBlocks with an inline TOC", () => {
     const pageMap = buildBlockPageMap(pages);
     expect(pageMap.get("p1")).toBe(2);
   });
+
+  test("tocPageBreakBefore starts the TOC on a fresh page even when it fits", () => {
+    const pages = paginateBlocks(
+      [paragraph("p1")],
+      measurements({
+        blockHeights: { p1: 100 },
+        coverHeight: 120,
+        tocHeight: 80,
+      }),
+      500,
+      { tocPageBreakBefore: true },
+    );
+
+    expect(pages).toHaveLength(2);
+    expect(pageAt(pages, 0).includeCover).toBe(true);
+    expect(pageAt(pages, 0).includeToc).toBe(false);
+    expect(pageAt(pages, 0).items).toHaveLength(0);
+    expect(pageAt(pages, 1).includeToc).toBe(true);
+    expect(pageAt(pages, 1).items[0]?.block.id).toBe("p1");
+  });
+
+  test("tocPageBreakAfter starts body content on the page after the TOC", () => {
+    const pages = paginateBlocks(
+      [paragraph("p1")],
+      measurements({
+        blockHeights: { p1: 100 },
+        coverHeight: 120,
+        tocHeight: 80,
+      }),
+      500,
+      { tocPageBreakAfter: true },
+    );
+
+    expect(pages).toHaveLength(2);
+    expect(pageAt(pages, 0).includeCover).toBe(true);
+    expect(pageAt(pages, 0).includeToc).toBe(true);
+    expect(pageAt(pages, 0).items).toHaveLength(0);
+    expect(pageAt(pages, 1).includeToc).toBe(false);
+    expect(pageAt(pages, 1).items[0]?.block.id).toBe("p1");
+  });
+
+  test("both TOC page breaks make the TOC occupy its own page", () => {
+    const pages = paginateBlocks(
+      [paragraph("p1")],
+      measurements({
+        blockHeights: { p1: 100 },
+        coverHeight: 120,
+        tocHeight: 80,
+      }),
+      500,
+      { tocPageBreakBefore: true, tocPageBreakAfter: true },
+    );
+
+    expect(pages).toHaveLength(3);
+    expect(pageAt(pages, 0)).toMatchObject({
+      includeCover: true,
+      includeToc: false,
+      items: [],
+    });
+    expect(pageAt(pages, 1)).toMatchObject({
+      includeCover: false,
+      includeToc: true,
+      items: [],
+    });
+    expect(pageAt(pages, 2).includeToc).toBe(false);
+    expect(pageAt(pages, 2).items[0]?.block.id).toBe("p1");
+  });
 });
 
 describe("paginateBlocks references page break", () => {

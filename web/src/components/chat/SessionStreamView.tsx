@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { CompassIcon, SparklesIcon } from "lucide-react";
 import {
   HistoricalRunTrace,
@@ -8,7 +15,11 @@ import { HistoricalMessageItem } from "@/components/chat/HistoricalMessageItem";
 import { PendingUserBubble } from "@/components/chat/PendingUserBubble";
 import { QuestionCard } from "@/components/chat/QuestionCard";
 import { StopTurnButton } from "@/components/chat/StopTurnButton";
-import { buildLiveSegments } from "@/components/chat/traceSegments";
+import {
+  buildLiveSegments,
+  formatLiveElapsed,
+  summarizeLiveProgress,
+} from "@/components/chat/traceSegments";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
   MessageScroller,
@@ -28,6 +39,136 @@ import type {
   SessionMessage,
 } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
+
+function LiveRunSection({
+  sessionId,
+  trace,
+  subagents,
+  segments,
+  questionSlots,
+  onJumpToSection,
+  onInterrupt,
+  messageById,
+  attachmentMap,
+}: {
+  sessionId: string;
+  trace: LiveAgentTrace;
+  subagents: LiveSubagentRun[];
+  segments: ReturnType<typeof buildLiveSegments>;
+  questionSlots: Map<string, ReactNode>;
+  onJumpToSection?: (sectionId: string) => void;
+  onInterrupt?: () => Promise<void>;
+  messageById: ReadonlyMap<string, SessionMessage>;
+  attachmentMap: Map<string, AttachmentMeta>;
+}) {
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [startedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(startedAt);
+
+  useEffect(() => {
+    const interval = trace.isStreaming
+      ? window.setInterval(() => setNow(Date.now()), 1000)
+      : null;
+    return () => {
+      if (interval !== null) {
+        window.clearInterval(interval);
+      }
+    };
+  }, [trace.isStreaming]);
+
+  const progress = summarizeLiveProgress(trace, subagents);
+  const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+
+  return (
+    <>
+      {trace.isStreaming && (
+        <div
+          data-live-header="true"
+          className="flex h-6 w-full items-center justify-between gap-1 text-xs leading-5 text-muted-foreground"
+        >
+          <button
+            type="button"
+            data-live-header-toggle="true"
+            aria-expanded={detailsOpen}
+            title={detailsOpen ? "折叠执行过程" : "展开执行过程"}
+            onClick={() => setDetailsOpen((open) => !open)}
+            className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          >
+            <span
+              data-live-header-icon="sparkles"
+              className="flex size-4 shrink-0 items-center justify-center"
+            >
+              <SparklesIcon className="size-3.5 text-primary" />
+            </span>
+            <span className="shimmer min-w-0 truncate font-medium">
+              {trace.taskFocus?.title ?? "正在处理"}
+            </span>
+            {trace.taskFocus?.detail && (
+              <span className="min-w-0 truncate text-[11px] opacity-75">
+                — {trace.taskFocus.detail}
+              </span>
+            )}
+            <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground/75">
+              {progress.toolCount > 0 && (
+                <span data-live-progress-tools="true">
+                  {`工具 ${progress.completedToolCount}/${progress.toolCount}`}
+                </span>
+              )}
+              {progress.subagentCount > 0 && (
+                <span data-live-progress-subagents="true">
+                  {`子代理 ${progress.completedSubagentCount}/${progress.subagentCount}`}
+                </span>
+              )}
+              <span data-live-elapsed="true">{formatLiveElapsed(elapsed)}</span>
+            </span>
+          </button>
+          {trace.taskFocus?.sectionId && onJumpToSection && (
+            <button
+              type="button"
+              data-live-header-jump="true"
+              aria-label="跳转到当前章节"
+              title="跳转到当前章节"
+              onClick={() => {
+                if (trace.taskFocus?.sectionId) {
+                  onJumpToSection(trace.taskFocus.sectionId);
+                }
+              }}
+              className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <CompassIcon className="size-3.5" aria-hidden="true" />
+            </button>
+          )}
+          {onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
+        </div>
+      )}
+
+      {!trace.isStreaming && trace.taskFocus && (
+        <button
+          type="button"
+          onClick={() => {
+            if (trace.taskFocus?.sectionId) {
+              onJumpToSection?.(trace.taskFocus.sectionId);
+            }
+          }}
+          className="flex w-fit items-center gap-1.5 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <CompassIcon className="size-3.5 text-primary" />
+          <span className="font-medium">{trace.taskFocus.title}</span>
+        </button>
+      )}
+
+      <LiveTraceSegments
+        sessionId={sessionId}
+        segments={segments}
+        questionSlots={questionSlots}
+        onJumpToSection={onJumpToSection}
+        messageById={messageById}
+        attachmentMap={attachmentMap}
+        showActiveDetails={detailsOpen}
+      />
+    </>
+  );
+}
 
 function CompactionDivider({ summary }: { summary: string }) {
   return (
@@ -149,9 +290,6 @@ export function SessionStreamView({
   const liveSegments = useMemo(
     () => (liveMain ? buildLiveSegments(liveMain, liveSubagents) : []),
     [liveMain, liveSubagents],
-  );
-  const hasActiveLiveActivity = liveSegments.some(
-    (segment) => segment.kind === "activity" && segment.isActive,
   );
 
   const allQuestionCards = useMemo(() => {
@@ -341,60 +479,13 @@ export function SessionStreamView({
                 <MessageGroup>
                   <Message align="start">
                     <MessageContent className="w-full gap-1">
-                      {liveMain.isStreaming && !hasActiveLiveActivity && (
-                        <div
-                          data-live-focus-fallback="true"
-                          className="flex h-6 w-full items-center justify-between gap-2 text-xs leading-5 text-muted-foreground"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (liveMain.taskFocus?.sectionId) {
-                                onJumpToSection?.(liveMain.taskFocus.sectionId);
-                              }
-                            }}
-                            className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                          >
-                            <span className="flex size-4 shrink-0 items-center justify-center">
-                              <SparklesIcon className="size-3.5 text-primary" />
-                            </span>
-                            <span className="shimmer truncate font-medium">
-                              {liveMain.taskFocus?.title ?? "正在处理"}
-                            </span>
-                            {liveMain.taskFocus?.detail && (
-                              <span className="truncate opacity-75">
-                                — {liveMain.taskFocus.detail}
-                              </span>
-                            )}
-                          </button>
-                          {onInterrupt && (
-                            <StopTurnButton onInterrupt={onInterrupt} />
-                          )}
-                        </div>
-                      )}
-
-                      {!liveMain.isStreaming && liveMain.taskFocus && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (liveMain.taskFocus?.sectionId) {
-                              onJumpToSection?.(liveMain.taskFocus.sectionId);
-                            }
-                          }}
-                          className="flex w-fit items-center gap-1.5 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                        >
-                          <CompassIcon className="size-3.5 text-primary" />
-                          <span className="font-medium">
-                            {liveMain.taskFocus.title}
-                          </span>
-                        </button>
-                      )}
-
-                      <LiveTraceSegments
+                      <LiveRunSection
+                        key={liveMain.runId ?? "live-main"}
                         sessionId={sessionId}
+                        trace={liveMain}
+                        subagents={liveSubagents}
                         segments={liveSegments}
                         questionSlots={questionSlots}
-                        taskFocus={liveMain.taskFocus}
                         onJumpToSection={onJumpToSection}
                         onInterrupt={onInterrupt}
                         messageById={messageById}

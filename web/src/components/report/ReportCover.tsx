@@ -215,8 +215,6 @@ export function ReportCover({
         </p>
       )}
       {renderMeta("mt-5 justify-center")}
-      <div className="mt-6 border-t border-[var(--rpt-border)]" />
-      <div className="mt-1 border-t-2 border-[var(--rpt-accent)]" />
     </header>
   );
 }

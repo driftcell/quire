@@ -298,12 +298,16 @@ export function ReportViewer({
     if (!isPaged) return [];
     return paginateBlocks(document.blocks, measurements, effectivePageHeight, {
       referencesPageBreakBefore: referencesBreak,
+      tocPageBreakBefore: document.toc.page_break_before,
+      tocPageBreakAfter: document.toc.page_break_after,
       coverFullPage: isCustomFullPageCover,
       headingPageBreak: effectivePageChrome.heading_page_break,
     });
   }, [
     isPaged,
     document.blocks,
+    document.toc.page_break_before,
+    document.toc.page_break_after,
     measurements,
     effectivePageHeight,
     referencesBreak,

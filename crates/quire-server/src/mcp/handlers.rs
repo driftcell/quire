@@ -563,7 +563,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_toc",
-        description = "Enable/disable the auto-generated TOC and set title, max_depth (1..=3) and variant (standard|numbered|dotted)."
+        description = "Enable/disable the auto-generated TOC and set title, max_depth (1..=3), variant (standard|numbered|dotted) and page breaks before/after the TOC."
     )]
     pub async fn configure_toc(
         &self,
@@ -602,6 +602,12 @@ impl QuireMcpServer {
                 }
                 if let Some(variant) = &request.variant {
                     toc.variant = variant.clone();
+                }
+                if let Some(page_break_before) = request.page_break_before {
+                    toc.page_break_before = page_break_before;
+                }
+                if let Some(page_break_after) = request.page_break_after {
+                    toc.page_break_after = page_break_after;
                 }
                 Ok(vec![PatchOp::SetToc { toc: toc.clone() }])
             })

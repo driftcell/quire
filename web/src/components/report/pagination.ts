@@ -38,6 +38,10 @@ export interface PageMeasurements {
 export interface PaginateOptions {
   /** Protocol default is `true`; only an explicit `false` may share the last page. */
   referencesPageBreakBefore?: boolean;
+  /** Start the TOC on a new page after the cover. */
+  tocPageBreakBefore?: boolean;
+  /** Start body content on a new page after the TOC. */
+  tocPageBreakAfter?: boolean;
   /** Give a custom-HTML cover its own first page in paged/print mode. */
   coverFullPage?: boolean;
   /** Automatic page break before level-1 and/or level-2 headings. */
@@ -79,8 +83,9 @@ function tableChromeHeight(
 /**
  * Bin-pack blocks into fixed A4 pages using real per-block and per-row DOM measurements.
  * - Page 1 deducts Cover height from available content height.
- * - The inline TOC follows the cover, sharing the page when it fits and moving
- *   to a clean page when it does not.
+ * - The inline TOC follows the cover, sharing the page when it fits. Protocol
+ *   `page_break_before`/`page_break_after` can force the TOC and body onto
+ *   separate pages.
  * - ECharts and CustomHtml blocks are always atomic and never split across pages.
  * - Headings enforce keep-with-next when the following block doesn't fit.
  * - Oversized tables slice rows by measured row height while repeating <thead>,
@@ -104,6 +109,8 @@ export function paginateBlocks(
 
   const fullPageCover = options.coverFullPage ?? false;
   const headingPageBreak = options.headingPageBreak ?? "none";
+  const tocPageBreakBefore = options.tocPageBreakBefore ?? false;
+  const tocPageBreakAfter = options.tocPageBreakAfter ?? false;
 
   const pages: A4Page[] = [];
   let currentItems: PageSlice[] = [];
@@ -136,11 +143,17 @@ export function paginateBlocks(
   };
 
   if (tocHeight > 0) {
-    if (usedHeight > 0 && usedHeight + tocHeight > pageHeight) {
+    if (
+      usedHeight > 0 &&
+      (tocPageBreakBefore || usedHeight + tocHeight > pageHeight)
+    ) {
       pushPage();
     }
     currentIncludeToc = true;
     usedHeight += tocHeight;
+    if (tocPageBreakAfter) {
+      pushPage();
+    }
   }
 
   for (let i = 0; i < blocks.length; i += 1) {

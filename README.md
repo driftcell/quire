@@ -185,7 +185,7 @@ for transient blocks.
 | `rollback_revision` | replay inverse ops into a new monotonic revision |
 | `upsert_sources` | URL/normalized-title deduplicated citation registry |
 | `set_cover` | partial cover update |
-| `configure_toc` | enable/title/depth/variant |
+| `configure_toc` | enable/title/depth/variant and page breaks before/after the TOC |
 | `configure_references` | bibliography style/page break + orphan sources |
 | `configure_page_chrome` | A4 header/footer slots, first-page visibility and automatic heading page breaks (`none` / `h1` / `h1_and_h2`) |
 | `update_style_and_css` | presets, tokens, validated scoped CSS |

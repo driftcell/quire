@@ -329,6 +329,10 @@ async (page) => {
     ),
   ];
 
+  let releaseMidRun;
+  const midRunGate = new Promise((resolve) => {
+    releaseMidRun = resolve;
+  });
   let releaseFinish;
   const finishGate = new Promise((resolve) => {
     releaseFinish = resolve;
@@ -389,7 +393,7 @@ async (page) => {
       detail: detail(finishedId),
       finalDetail: detail(finishedId, {
         active_run_status: "idle",
-        last_event_seq: 20,
+        last_event_seq: 44,
         messages: [
           {
             message_id: "finished-user",
@@ -413,8 +417,29 @@ async (page) => {
       batches: [
         runningEvents.slice(0, 13),
         [
+          event(30, "run-live", "main", {
+            event: "text_delta",
+            delta: "阶段性正文：已完成章节结构梳理。",
+          }),
+          event(31, "run-live", "main", {
+            event: "tool_call_started",
+            tool_call_id: "main-second-read",
+            tool_name: "read_blocks",
+            input_preview: '{"block_ids":["ch1"]}',
+            truncated: false,
+          }),
+        ],
+        [
+          event(40, "run-live", "main", {
+            event: "tool_call_finished",
+            tool_call_id: "main-second-read",
+            status: "completed",
+            output_preview: '{"blocks":1}',
+            duration_ms: 60,
+            truncated: false,
+          }),
           event(
-            20,
+            41,
             "sub-1",
             "writer",
             {
@@ -426,7 +451,7 @@ async (page) => {
             "run-live",
           ),
           event(
-            21,
+            42,
             "sub-2",
             "analyst",
             {
@@ -437,15 +462,22 @@ async (page) => {
             },
             "run-live",
           ),
-          event(22, "run-live", "main", {
+          event(43, "run-live", "main", {
             event: "text_delta",
             delta: "这是主代理最终正文，已完成第 1 章现状与对标图表。",
           }),
-          event(23, "run-live", "main", { event: "turn_finished" }),
+          event(44, "run-live", "main", { event: "turn_finished" }),
         ],
       ],
       sseCount: 0,
       finished: false,
+      gate: async (index) => {
+        if (index === 1) {
+          await midRunGate;
+        } else {
+          await finishGate;
+        }
+      },
     },
     [statusId]: {
       detail: detail(statusId),
@@ -487,10 +519,10 @@ async (page) => {
       const index = scenario.sseCount;
       scenario.sseCount += 1;
       let events = scenario.batches[index] ?? [];
-      if (scenario.finished === false && index >= 1) {
-        await finishGate;
-        scenario.finished = true;
-        events = scenario.finalTraces ? scenario.batches[1] : [];
+      if (scenario.finalTraces && scenario.finished === false && index >= 1) {
+        await scenario.gate?.(index);
+        events = scenario.batches[index] ?? [];
+        scenario.finished = index >= scenario.batches.length - 1;
       }
       await route.fulfill({
         status: 200,
@@ -549,29 +581,33 @@ async (page) => {
   const results = {};
 
   await page.goto(`${web}/sessions/${runningId}`);
-  await page.locator("[data-activity-trigger]").first().waitFor({
+  await page.locator('[data-live-header="true"]').first().waitFor({
     state: "visible",
     timeout: 15000,
   });
   await waitForExpanded(
-    "[data-activity-trigger]",
+    "[data-live-header-toggle]",
     "true",
-    "running activity did not expand",
+    "live header did not start expanded",
   );
 
-  const liveHeaderCount = await page
-    .locator('[data-activity-trigger], [data-live-focus-fallback="true"]')
-    .count();
+  const liveHeader = page.locator('[data-live-header="true"]');
+  const liveHeaderCount = await liveHeader.count();
   assert(
     liveHeaderCount === 1,
-    `expected exactly one live process header, got ${liveHeaderCount}`,
+    `expected exactly one live header, got ${liveHeaderCount}`,
   );
-  const fallbackHeaderCount = await page
-    .locator('[data-live-focus-fallback="true"]')
+  const loaderHeaderCount = await liveHeader.locator(".animate-spin").count();
+  assert(
+    loaderHeaderCount === 0,
+    `live header must not render a spinner, got ${loaderHeaderCount}`,
+  );
+  const sparklesCount = await page
+    .locator('[data-live-header-icon="sparkles"] svg')
     .count();
   assert(
-    fallbackHeaderCount === 0,
-    "fallback task-focus row duplicated the active activity header",
+    sparklesCount === 1,
+    `expected one SparklesIcon in the live header, got ${sparklesCount}`,
   );
   const activeStopCount = await page.locator('[data-slot="stop-turn"]').count();
   assert(
@@ -581,25 +617,64 @@ async (page) => {
   const stopNestedInTrigger = await page
     .locator('[data-slot="stop-turn"]')
     .first()
-    .evaluate((element) => element.closest("[data-activity-trigger]") !== null);
+    .evaluate(
+      (element) => element.closest("[data-live-header-toggle]") !== null,
+    );
   assert(
     !stopNestedInTrigger,
-    "stop button must be a sibling of the collapse trigger, not nested inside it",
+    "stop button must be a sibling of the collapse toggle, not nested inside it",
   );
-  const activeHeaderText = (
-    await page.locator("[data-activity-trigger]").first().innerText()
-  ).replace(/\s+/g, " ");
+  const toolsProgress = (
+    await page.locator('[data-live-progress-tools="true"]').innerText()
+  ).trim();
+  const subagentsProgress = (
+    await page.locator('[data-live-progress-subagents="true"]').innerText()
+  ).trim();
+  assert(
+    toolsProgress === "工具 3/3",
+    `live header tool progress mismatch: ${toolsProgress}`,
+  );
+  assert(
+    subagentsProgress === "子代理 0/2",
+    `live header subagent progress mismatch: ${subagentsProgress}`,
+  );
+  await page.waitForFunction(
+    () => {
+      const text =
+        document.querySelector('[data-live-elapsed="true"]')?.textContent ?? "";
+      const match = text.match(/(\d+)秒/);
+      return match !== null && Number(match[1]) >= 1;
+    },
+    undefined,
+    { timeout: 5000 },
+  );
+  const elapsedLabel = (
+    await page.locator('[data-live-elapsed="true"]').innerText()
+  ).trim();
+  assert(
+    /^\d+秒$/.test(elapsedLabel),
+    `live header elapsed label mismatch: ${elapsedLabel}`,
+  );
+  const activeHeaderText = (await liveHeader.innerText()).replace(/\s+/g, " ");
   assert(
     activeHeaderText.includes("梳理报告结构"),
-    `active header missing task focus title: ${activeHeaderText}`,
+    `live header missing task focus title: ${activeHeaderText}`,
   );
-
-  const runningActivity = page.locator('[data-slot="activity"]').first();
-  const runningText = (await runningActivity.innerText()).replace(/\s+/g, " ");
+  const liveHeaderBox = await liveHeader.boundingBox();
   assert(
-    runningText.includes("2 个子代理运行中"),
-    `running title missing concurrent count: ${runningText}`,
+    liveHeaderBox !== null && Math.round(liveHeaderBox.height) === 24,
+    `live header height is not stable: ${JSON.stringify(liveHeaderBox)}`,
   );
+  await page.evaluate(() => {
+    document
+      .querySelector('[data-live-header="true"]')
+      ?.setAttribute("data-e2e-stable", "true");
+  });
+
+  const runningActivity = page.locator(
+    '[data-slot="activity"][data-active="true"]',
+  );
+  const runningText = (await runningActivity.innerText()).replace(/\s+/g, " ");
   assert(
     runningText.includes("读取报告内容") &&
       runningText.includes("预渲染图表") &&
@@ -610,6 +685,12 @@ async (page) => {
     !runningText.includes("spawn_subagents") &&
       !runningText.includes("describe_task"),
     "orchestration tools leaked into the running trace",
+  );
+  assert(
+    (await runningActivity
+      .locator('[data-slot="activity-details"]')
+      .count()) === 1,
+    "active execution details should be expanded by default",
   );
 
   const mainRead = page.locator('[data-tool-name="read_blocks"]').first();
@@ -643,45 +724,166 @@ async (page) => {
     "expected both subagents to show running spinners",
   );
 
+  const activeActivityTriggerCount = await page
+    .locator(
+      '[data-slot="activity"][data-active="true"] [data-activity-trigger]',
+    )
+    .count();
+  assert(
+    activeActivityTriggerCount === 0,
+    `active activity rendered ${activeActivityTriggerCount} duplicate headers`,
+  );
+
   results.streaming = {
-    title: (
-      await page.locator("[data-activity-trigger]").first().innerText()
-    ).replace(/\s+/g, " "),
+    title: activeHeaderText,
+    toolsProgress,
+    subagentsProgress,
+    elapsedLabel,
     toolLabels: ["读取报告内容", "预渲染图表", "查看可用子代理"],
     hiddenTools: ["spawn_subagents", "describe_task"],
     subagents: ["撰写第 1 章现状", "绘制对标图表"],
     toolIcons: mainReadIcons,
     liveHeaderCount,
-    fallbackHeaderCount,
+    loaderHeaderCount,
+    sparklesCount,
     activeStopCount,
     stopNestedInTrigger,
+    activeActivityTriggerCount,
   };
 
-  const runningTrigger = page.locator("[data-activity-trigger]").first();
-  await runningTrigger.click();
+  const runningToggle = page.locator("[data-live-header-toggle]").first();
+  await runningToggle.click();
   await waitForExpanded(
-    "[data-activity-trigger]",
+    "[data-live-header-toggle]",
     "false",
-    "running activity did not collapse on click",
+    "live header did not collapse details on click",
   );
-  await runningTrigger.click();
+  await page.waitForFunction(
+    () =>
+      document.querySelectorAll('[data-slot="activity-details"]').length === 0,
+    undefined,
+    { timeout: 5000 },
+  );
+  assert(
+    (await liveHeader.count()) === 1,
+    "live header disappeared after collapsing details",
+  );
+  await runningToggle.click();
   await waitForExpanded(
-    "[data-activity-trigger]",
+    "[data-live-header-toggle]",
     "true",
-    "running activity did not expand again on click",
+    "live header did not expand details again on click",
+  );
+  assert(
+    (await runningActivity
+      .locator('[data-slot="activity-details"]')
+      .count()) === 1,
+    "active execution details did not return after expanding",
+  );
+  assert(
+    (await page
+      .locator('[data-live-header="true"][data-e2e-stable="true"]')
+      .count()) === 1,
+    "live header DOM node was replaced during the streaming lifecycle",
+  );
+  assert(
+    (await page.locator('[data-slot="stop-turn"]').count()) === 1,
+    "stop button did not remain stable after detail toggling",
   );
 
   await page.goto(`${web}/sessions/${finishedId}`);
-  await page.locator("[data-activity-trigger]").first().waitFor({
+  await page.locator('[data-live-header="true"]').first().waitFor({
     state: "visible",
     timeout: 15000,
   });
   await waitForExpanded(
-    "[data-activity-trigger]",
+    "[data-live-header-toggle]",
     "true",
-    "finished scenario did not start in the running expanded state",
+    "finished scenario did not start with expanded live details",
+  );
+  const finishedLiveHeader = page.locator('[data-live-header="true"]');
+  assert(
+    (await finishedLiveHeader.count()) === 1,
+    "finished scenario did not render one live header",
+  );
+  const initialToolsProgress = (
+    await page.locator('[data-live-progress-tools="true"]').innerText()
+  ).trim();
+  const initialSubagentsProgress = (
+    await page.locator('[data-live-progress-subagents="true"]').innerText()
+  ).trim();
+  assert(
+    initialToolsProgress === "工具 3/3",
+    `unexpected initial tool progress: ${initialToolsProgress}`,
+  );
+  assert(
+    initialSubagentsProgress === "子代理 0/2",
+    `unexpected initial subagent progress: ${initialSubagentsProgress}`,
+  );
+  await page.evaluate(() => {
+    document
+      .querySelector('[data-live-header="true"]')
+      ?.setAttribute("data-e2e-stable", "true");
+  });
+  const initialHeaderBox = await finishedLiveHeader.boundingBox();
+  assert(initialHeaderBox !== null, "could not measure the live header");
+
+  releaseMidRun();
+  await page.waitForFunction(
+    () => {
+      const tools =
+        document.querySelector('[data-live-progress-tools="true"]')
+          ?.textContent ?? "";
+      return (
+        document.body.innerText.includes("阶段性正文：已完成章节结构梳理。") &&
+        tools.includes("工具 3/4")
+      );
+    },
+    undefined,
+    { timeout: 15000 },
+  );
+  const midToolsProgress = (
+    await page.locator('[data-live-progress-tools="true"]').innerText()
+  ).trim();
+  const midSubagentsProgress = (
+    await page.locator('[data-live-progress-subagents="true"]').innerText()
+  ).trim();
+  assert(
+    midToolsProgress === "工具 3/4",
+    `tool progress did not update after the second tool call: ${midToolsProgress}`,
+  );
+  assert(
+    midSubagentsProgress === "子代理 0/2",
+    `subagent progress changed before completion: ${midSubagentsProgress}`,
+  );
+  assert(
+    (await page
+      .locator('[data-live-header="true"][data-e2e-stable="true"]')
+      .count()) === 1,
+    "live header node was replaced when text and another tool arrived",
+  );
+  assert(
+    (await page.locator('[data-slot="stop-turn"]').count()) === 1,
+    "stop button disappeared when text and another tool arrived",
+  );
+  assert(
+    (await page.locator('[data-live-header="true"] .animate-spin').count()) ===
+      0,
+    "live header rendered a duplicate spinner during the lifecycle",
+  );
+  const midHeaderBox = await finishedLiveHeader.boundingBox();
+  assert(
+    initialHeaderBox !== null &&
+      midHeaderBox !== null &&
+      Math.round(initialHeaderBox.height) === Math.round(midHeaderBox.height),
+    "live header height changed during the streaming lifecycle",
   );
   releaseFinish();
+  await page.waitForFunction(
+    () => document.querySelector('[data-live-header="true"]') === null,
+    undefined,
+    { timeout: 15000 },
+  );
 
   await page.waitForFunction(
     () =>
@@ -771,6 +973,12 @@ async (page) => {
     nestedExecutionDetail: 0,
     subagentOutputCount: subagentOutputs,
     summaryCount: summaryMatches,
+    initialToolsProgress,
+    midToolsProgress,
+    initialSubagentsProgress,
+    midSubagentsProgress,
+    headerStable: true,
+    liveHeaderRemoved: true,
   };
 
   await page.goto(`${web}/sessions/${statusId}`);
@@ -837,7 +1045,7 @@ async (page) => {
   };
 
   await page.goto(`${web}/sessions/${smoothId}`);
-  await page.locator("[data-activity-trigger]").first().waitFor({
+  await page.locator('[data-live-header="true"]').first().waitFor({
     state: "visible",
     timeout: 15000,
   });
@@ -846,15 +1054,26 @@ async (page) => {
     smoothText,
     { timeout: 15000 },
   );
-  const smoothFallbackCount = await page
-    .locator('[data-live-focus-fallback="true"]')
+  const smoothLiveHeaderCount = await page
+    .locator('[data-live-header="true"]')
+    .count();
+  const smoothSparklesCount = await page
+    .locator('[data-live-header-icon="sparkles"] svg')
+    .count();
+  const smoothLoaderCount = await page
+    .locator('[data-live-header="true"] .animate-spin')
     .count();
   const smoothActiveCount = await page
     .locator('[data-slot="activity"][data-active="true"]')
     .count();
+  const smoothStopCount = await page.locator('[data-slot="stop-turn"]').count();
   assert(
-    smoothFallbackCount === 1 && smoothActiveCount === 0,
-    `streaming body fallback header mismatch: fallback=${smoothFallbackCount} active=${smoothActiveCount}`,
+    smoothLiveHeaderCount === 1 &&
+      smoothSparklesCount === 1 &&
+      smoothLoaderCount === 0 &&
+      smoothActiveCount === 0 &&
+      smoothStopCount === 1,
+    `streaming body header mismatch: header=${smoothLiveHeaderCount} sparkles=${smoothSparklesCount} loader=${smoothLoaderCount} active=${smoothActiveCount} stop=${smoothStopCount}`,
   );
   const thinkingTrigger = page
     .locator(
@@ -903,8 +1122,11 @@ async (page) => {
     animatedSpans: smoothMetrics.animatedSpans,
     autoScrolled: smoothMetrics.atBottom,
     consoleErrors: 0,
-    fallbackHeaderCount: smoothFallbackCount,
+    liveHeaderCount: smoothLiveHeaderCount,
+    sparklesCount: smoothSparklesCount,
+    loaderHeaderCount: smoothLoaderCount,
     activeActivityCount: smoothActiveCount,
+    stopCount: smoothStopCount,
   };
 
   return {

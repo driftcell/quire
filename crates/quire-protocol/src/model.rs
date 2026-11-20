@@ -80,6 +80,12 @@ pub struct TocConfig {
     /// One of `standard`, `numbered`, `dotted`; unknown values render as standard.
     #[serde(default = "default_toc_variant")]
     pub variant: String,
+    /// Start the TOC on a new page after the cover.
+    #[serde(default)]
+    pub page_break_before: bool,
+    /// Start body content on a new page after the TOC.
+    #[serde(default)]
+    pub page_break_after: bool,
 }
 
 fn default_toc_variant() -> String {
@@ -112,6 +118,8 @@ impl Default for TocConfig {
             title: default_toc_title(),
             max_depth: default_toc_depth(),
             variant: default_toc_variant(),
+            page_break_before: false,
+            page_break_after: false,
         }
     }
 }
@@ -462,6 +470,30 @@ mod tests {
     #[test]
     fn default_references_break_before_page() {
         assert!(ReferencesConfig::default().page_break_before);
+    }
+
+    #[test]
+    fn toc_page_breaks_default_false_and_roundtrip() {
+        let default = TocConfig::default();
+        assert!(!default.page_break_before);
+        assert!(!default.page_break_after);
+
+        let serialized = serde_json::to_value(&default).expect("serialize toc");
+        assert_eq!(serialized["page_break_before"], false);
+        assert_eq!(serialized["page_break_after"], false);
+
+        let config: TocConfig = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "title": "Contents",
+            "max_depth": 2,
+            "variant": "numbered",
+            "page_break_before": true,
+            "page_break_after": true
+        }))
+        .expect("toc config");
+        assert!(config.page_break_before);
+        assert!(config.page_break_after);
+        assert_eq!(config.variant_key(), "numbered");
     }
 
     #[test]

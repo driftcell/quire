@@ -958,6 +958,14 @@ export interface TocConfig {
    * Maximum heading depth to include. Protocol range is 1..=3.
    */
   max_depth?: number;
+  /**
+   * Start body content on a new page after the TOC.
+   */
+  page_break_after?: boolean;
+  /**
+   * Start the TOC on a new page after the cover.
+   */
+  page_break_before?: boolean;
   title?: string;
   /**
    * One of `standard`, `numbered`, `dotted`; unknown values render as standard.
@@ -1245,6 +1253,14 @@ export interface TocConfig1 {
    * Maximum heading depth to include. Protocol range is 1..=3.
    */
   max_depth?: number;
+  /**
+   * Start body content on a new page after the TOC.
+   */
+  page_break_after?: boolean;
+  /**
+   * Start the TOC on a new page after the cover.
+   */
+  page_break_before?: boolean;
   title?: string;
   /**
    * One of `standard`, `numbered`, `dotted`; unknown values render as standard.

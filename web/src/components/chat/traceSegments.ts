@@ -86,6 +86,51 @@ export interface ActivitySummary {
   runningTools: number;
 }
 
+export interface LiveProgressSummary {
+  toolCount: number;
+  completedToolCount: number;
+  subagentCount: number;
+  completedSubagentCount: number;
+}
+
+/**
+ * Aggregate the live run's visible main-agent tools and subagent lifecycle.
+ * Subagent tool calls stay inside their own cards so the header never double-counts them.
+ */
+export function summarizeLiveProgress(
+  trace: LiveAgentTrace | null | undefined,
+  subagents: LiveSubagentRun[],
+): LiveProgressSummary {
+  const tools = (trace?.segments ?? []).flatMap((segment) =>
+    segment.kind === "execution"
+      ? segment.tools.filter(isVisibleTraceTool)
+      : [],
+  );
+  return {
+    toolCount: tools.length,
+    completedToolCount: tools.filter((tool) => tool.status !== "running")
+      .length,
+    subagentCount: subagents.length,
+    completedSubagentCount: subagents.filter(
+      (subagent) => subagent.status !== "running",
+    ).length,
+  };
+}
+
+/** Format an elapsed live-run duration with second-level precision. */
+export function formatLiveElapsed(totalSeconds: number): string {
+  const seconds = Math.max(
+    0,
+    Math.floor(Number.isFinite(totalSeconds) ? totalSeconds : 0),
+  );
+  if (seconds < 60) {
+    return `${seconds}秒`;
+  }
+  const mins = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return remaining > 0 ? `${mins}分${remaining}秒` : `${mins}分`;
+}
+
 export function summarizeActivity(items: ActivityItem[]): ActivitySummary {
   const tools = items.flatMap((item) =>
     item.kind === "execution" ? item.tools : [],

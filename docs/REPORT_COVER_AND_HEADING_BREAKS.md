@@ -8,16 +8,18 @@
 
 ## 1. Scope & Non-Goals
 
-This document governs two A4 layout contracts:
+This document governs three A4 layout contracts:
 
 - `cover.custom_html` rendering in continuous versus paged/print mode, including mandatory XSS
   sanitization.
 - Document-level automatic heading page breaks configured through `configure_page_chrome` and the
   `PageChromeDialog`.
+- Document-level TOC page breaks configured through `configure_toc` and `TocConfig`.
 
 It does not cover built-in cover variants (`classic`, `modern`, `minimal`, `split`) beyond preserving
-their existing inline behavior, the block bin-packing algorithm, table row slicing, or theme CSS
-sanitization.
+their inline behavior, the block bin-packing algorithm, table row slicing, or theme CSS sanitization.
+The default centered cover deliberately ends with natural `<header>` whitespace and no built-in
+bottom rule; agents that need a rule or a special layout should provide `cover.custom_html`.
 
 ## 2. Canonical Design & Contract
 
@@ -38,12 +40,19 @@ input deserializes to `none`. The canonical schema is
 `contracts/report-protocol.schema.json`, regenerated with `just schema`, and the frontend type is
 generated with `web/` `bun run gen:types`.
 
+`TocConfig` carries `#[serde(default)] pub page_break_before: bool` and
+`#[serde(default)] pub page_break_after: bool`. Both default to `false` and are first-class document
+fields, not local display preferences.
+
 ### MCP and guide
 
 `configure_page_chrome` accepts an optional `heading_page_break`. Omitting it preserves the current
 value; supplying it merges only that field, exactly like the header/footer slots and first-page
 visibility flags. `get_protocol_guide("citations_and_css")` documents the three values and the
 custom-cover behavior for agents.
+
+`configure_toc` accepts optional `page_break_before` and `page_break_after`. Omitting either field
+preserves the current value; supplying one merges only that field into `document.toc`.
 
 ### Custom HTML cover sanitization
 
@@ -77,10 +86,14 @@ before sanitization.
 
 ### Pagination
 
-`PaginateOptions` adds `coverFullPage` and `headingPageBreak`. When `coverHeight > 0` and
-`coverFullPage` is true, page 1 is emitted immediately with `includeCover: true`, no items and no
-TOC; TOC and body always begin on page 2. Without a full-page cover, the cover still shares page 1
-with the TOC when it fits.
+`PaginateOptions` adds `coverFullPage`, `headingPageBreak`, `tocPageBreakBefore` and
+`tocPageBreakAfter`. When `coverHeight > 0` and `coverFullPage` is true, page 1 is emitted
+immediately with `includeCover: true`, no items and no TOC; TOC and body always begin on page 2.
+Without a full-page cover, the cover still shares page 1 with the TOC when it fits.
+
+The TOC starts a new page when `tocPageBreakBefore` is true and the current page already has content,
+or when it would overflow the current page. When `tocPageBreakAfter` is true, body content starts on
+the next page after the TOC. With both flags true, the TOC occupies its own page.
 
 While iterating blocks, a heading starts a new page when its own `style.page_break_before` is true
 or when the document policy matches its level (`h1` for level 1, `h1_and_h2` for levels 1-2). The
@@ -102,6 +115,10 @@ choice.
 - Continuous custom covers keep natural height with a bottom separator and flow into the TOC.
 - `HeadingPageBreak` defaults to `none`; all three values round-trip through serde and the generated
   JSON Schema.
+- `TocConfig.page_break_before` and `page_break_after` default to `false`; both round-trip through
+  serde and the generated JSON Schema.
+- `tocPageBreakBefore` and `tocPageBreakAfter` are applied independently; enabling both gives the
+  TOC an exclusive page.
 - Automatic heading breaks never emit a blank page when the heading is already at a page top.
 - Sanitization removes the required executable elements, inline handlers and script protocols, but
   keeps ordinary layout markup and placeholders.
@@ -116,7 +133,7 @@ Frontend verification:
 
 ```bash
 cd web
-bun run test          # pagination.test.ts covers cover isolation, heading breaks and sanitization
+bun run test          # pagination.test.ts covers cover isolation, TOC/heading breaks and sanitization
 bun run typecheck
 bun run lint
 bun run build
