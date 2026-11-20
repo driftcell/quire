@@ -143,6 +143,43 @@ function isAttachmentMeta(value: unknown): value is AttachmentMeta {
   return isRecord(value) && typeof value.attachment_id === "string";
 }
 
+interface AttachmentPresignOss {
+  mode: "oss";
+  attachment_id: string;
+  object_key: string;
+  upload_url: string;
+  headers: Record<string, string>;
+}
+
+interface AttachmentPresignInline {
+  mode: "inline";
+}
+
+type AttachmentPresign = AttachmentPresignOss | AttachmentPresignInline;
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
+}
+
+function isAttachmentPresign(value: unknown): value is AttachmentPresign {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.mode === "inline") {
+    return true;
+  }
+  return (
+    value.mode === "oss" &&
+    typeof value.attachment_id === "string" &&
+    typeof value.object_key === "string" &&
+    typeof value.upload_url === "string" &&
+    isStringRecord(value.headers)
+  );
+}
+
 function isToolCallDetail(value: unknown): value is ToolCallDetail {
   return isRecord(value) && typeof value.tool_call_id === "string";
 }
@@ -408,6 +445,55 @@ export async function uploadAttachment(
   sessionId: string,
   file: File,
 ): Promise<AttachmentMeta> {
+  const mimeType = file.type || "application/octet-stream";
+  const presign = await runtimeFetch(
+    `/api/sessions/${encodeURIComponent(sessionId)}/attachments/presign`,
+    (raw) => decodeWith(raw, isAttachmentPresign, "attachment presign"),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        filename: file.name,
+        mime_type: mimeType,
+        size_bytes: file.size,
+      }),
+    },
+  );
+  if (presign.mode === "oss") {
+    const upload = await fetch(presign.upload_url, {
+      method: "PUT",
+      headers: presign.headers,
+      body: file,
+    });
+    if (!upload.ok) {
+      throw new ApiError(
+        upload.status,
+        "OSS_UPLOAD_FAILED",
+        `Attachment upload failed with status ${upload.status}`,
+      );
+    }
+    return runtimeFetch(
+      `/api/sessions/${encodeURIComponent(sessionId)}/attachments`,
+      (raw) => decodeWith(raw, isAttachmentMeta, "attachment"),
+      {
+        method: "POST",
+        body: JSON.stringify({
+          attachment_id: presign.attachment_id,
+          object_key: presign.object_key,
+          filename: file.name,
+          mime_type: mimeType,
+          size_bytes: file.size,
+        }),
+      },
+    );
+  }
+  return uploadInlineAttachment(sessionId, file, mimeType);
+}
+
+async function uploadInlineAttachment(
+  sessionId: string,
+  file: File,
+  mimeType: string,
+): Promise<AttachmentMeta> {
   const buffer = await file.arrayBuffer();
   const bytes = new Uint8Array(buffer);
   let binary = "";
@@ -424,7 +510,7 @@ export async function uploadAttachment(
       method: "POST",
       body: JSON.stringify({
         filename: file.name,
-        mime_type: file.type || "application/octet-stream",
+        mime_type: mimeType,
         size_bytes: file.size,
         content_base64,
       }),

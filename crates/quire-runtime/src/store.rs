@@ -55,6 +55,31 @@ pub struct SessionPatch<'a> {
     pub pinned: Option<bool>,
 }
 
+/// Values needed to persist an uploaded attachment without exposing storage
+/// provenance to the session wire contract.
+pub struct AttachmentInsert<'a> {
+    pub session_id: &'a str,
+    pub attachment_id: Option<&'a str>,
+    pub filename: &'a str,
+    pub mime_type: &'a str,
+    pub size_bytes: u64,
+    pub storage_path: &'a str,
+    pub storage_provider: &'a str,
+}
+
+/// Internal attachment record including storage provenance. Never serialized
+/// into `AttachmentMeta` or any model-visible payload.
+#[derive(Debug, Clone)]
+pub struct StoredAttachment {
+    pub attachment_id: String,
+    pub session_id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub storage_path: String,
+    pub storage_provider: String,
+}
+
 #[derive(Clone)]
 pub struct RuntimeStore {
     pool: PgPool,
@@ -1021,31 +1046,61 @@ impl RuntimeStore {
 
     pub async fn insert_attachment(
         &self,
-        session_id: &str,
-        filename: &str,
-        mime_type: &str,
-        size_bytes: u64,
-        storage_path: &str,
+        attachment: AttachmentInsert<'_>,
     ) -> RuntimeResult<AttachmentMeta> {
-        let attachment_id = short_id("att");
+        let attachment_id = attachment
+            .attachment_id
+            .map(str::to_string)
+            .unwrap_or_else(|| short_id("att"));
         sqlx::query(
             r#"INSERT INTO agent_attachments
-               (attachment_id, session_id, filename, mime_type, size_bytes, storage_path)
-               VALUES ($1, $2, $3, $4, $5, $6)"#,
+               (attachment_id, session_id, filename, mime_type, size_bytes, storage_path,
+                storage_provider)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
         )
         .bind(&attachment_id)
-        .bind(session_id)
-        .bind(filename)
-        .bind(mime_type)
-        .bind(i64::try_from(size_bytes).unwrap_or(i64::MAX))
-        .bind(storage_path)
+        .bind(attachment.session_id)
+        .bind(attachment.filename)
+        .bind(attachment.mime_type)
+        .bind(i64::try_from(attachment.size_bytes).unwrap_or(i64::MAX))
+        .bind(attachment.storage_path)
+        .bind(attachment.storage_provider)
         .execute(&self.pool)
         .await?;
         Ok(AttachmentMeta {
             attachment_id,
-            filename: filename.to_string(),
-            mime_type: mime_type.to_string(),
-            size_bytes,
+            filename: attachment.filename.to_string(),
+            mime_type: attachment.mime_type.to_string(),
+            size_bytes: attachment.size_bytes,
+        })
+    }
+
+    /// Load an attachment only when it belongs to the requested session.
+    pub async fn get_session_attachment(
+        &self,
+        session_id: &str,
+        attachment_id: &str,
+    ) -> RuntimeResult<StoredAttachment> {
+        let row = sqlx::query(
+            r#"SELECT attachment_id, session_id, filename, mime_type, size_bytes,
+                      storage_path, storage_provider
+               FROM agent_attachments
+               WHERE attachment_id = $1 AND session_id = $2"#,
+        )
+        .bind(attachment_id)
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(|| RuntimeError::AttachmentNotFound(attachment_id.to_string()))?;
+        let size_bytes: i64 = row.try_get("size_bytes")?;
+        Ok(StoredAttachment {
+            attachment_id: row.try_get("attachment_id")?,
+            session_id: row.try_get("session_id")?,
+            filename: row.try_get("filename")?,
+            mime_type: row.try_get("mime_type")?,
+            size_bytes: u64::try_from(size_bytes).unwrap_or(0),
+            storage_path: row.try_get("storage_path")?,
+            storage_provider: row.try_get("storage_provider")?,
         })
     }
 

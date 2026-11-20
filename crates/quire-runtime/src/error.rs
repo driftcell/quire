@@ -23,6 +23,8 @@ pub enum RuntimeError {
     RunNotFound(String),
     #[error("tool call `{0}` was not found")]
     ToolCallNotFound(String),
+    #[error("attachment `{0}` was not found for this session")]
+    AttachmentNotFound(String),
     #[error("chart preview `{0}` was not found or expired")]
     ChartPreviewNotFound(String),
     #[error("pending queue item `{0}` was not found")]
@@ -43,6 +45,7 @@ impl RuntimeError {
             Self::SessionNotFound(_) => "SESSION_NOT_FOUND",
             Self::RunNotFound(_) => "RUN_NOT_FOUND",
             Self::ToolCallNotFound(_) => "TOOL_CALL_NOT_FOUND",
+            Self::AttachmentNotFound(_) => "ATTACHMENT_NOT_FOUND",
             Self::ChartPreviewNotFound(_) => "CHART_PREVIEW_NOT_FOUND",
             Self::PendingQueueItemNotFound(_) => "QUEUE_ITEM_NOT_FOUND",
             Self::InvalidRequest(_) => "INVALID_REQUEST",
@@ -63,6 +66,9 @@ impl RuntimeError {
             Self::RunNotFound(_) => "Refresh the session detail and retry with the active run ID.",
             Self::ToolCallNotFound(_) => {
                 "Open the session detail and retry with a tool_call_id from this session."
+            }
+            Self::AttachmentNotFound(_) => {
+                "Use an attachment_id returned by the current session's upload endpoint."
             }
             Self::ChartPreviewNotFound(_) => {
                 "Call preview_echarts again to create a fresh preview; chart previews expire after 30 minutes."
@@ -90,6 +96,7 @@ impl IntoResponse for RuntimeError {
             Self::SessionNotFound(_)
             | Self::RunNotFound(_)
             | Self::ToolCallNotFound(_)
+            | Self::AttachmentNotFound(_)
             | Self::ChartPreviewNotFound(_)
             | Self::PendingQueueItemNotFound(_) => StatusCode::NOT_FOUND,
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
@@ -101,6 +108,7 @@ impl IntoResponse for RuntimeError {
             Self::SessionNotFound(_)
             | Self::RunNotFound(_)
             | Self::ToolCallNotFound(_)
+            | Self::AttachmentNotFound(_)
             | Self::ChartPreviewNotFound(_)
             | Self::PendingQueueItemNotFound(_)
             | Self::InvalidRequest(_)

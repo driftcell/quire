@@ -41,13 +41,15 @@ is not a runtime setting and is not interchangeable with `SANDBOX_FC_API_KEY`.
 
 ### rig tools and lifecycle
 
-`RigModelStreamProvider::new` receives an `Arc<dyn SandboxProvider>`. `rig_agent.rs` adds three
+`RigModelStreamProvider::new` receives an `Arc<dyn SandboxProvider>`. `rig_agent.rs` adds four
 allow-listed built-ins, with the same wildcard, event persistence and cancellation behavior as
 other runtime tools:
 
 - `sandbox_execute`: Python, JavaScript or Bash source, optional working directory and timeout.
 - `sandbox_read_file`: UTF-8 text or base64 binary output, limited to 256 KiB per tool call.
 - `sandbox_write_file`: UTF-8 content, limited to 256 KiB per tool call.
+- `sandbox_mount_attachment`: session-scoped attachment download to
+  `/workspace/attachments/{attachment_id}/{filename}`; see `RUNTIME_OSS_ATTACHMENTS.md`.
 
 The first sandbox call in a run creates the instance; subsequent calls reuse its filesystem and
 installed dependencies. Source execution is process-based, not a Jupyter state contract. Tool text

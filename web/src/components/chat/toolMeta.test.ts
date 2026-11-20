@@ -8,6 +8,7 @@ import {
   HistoryIcon,
   LayoutTemplateIcon,
   MessageSquareIcon,
+  PaperclipIcon,
   UsersIcon,
   WrenchIcon,
 } from "lucide-react";
@@ -62,6 +63,7 @@ describe("getToolMeta", () => {
     expectMeta("preview_echarts", "预渲染图表", BarChart3Icon);
     expectMeta("configure_toc", "配置目录", LayoutTemplateIcon);
     expectMeta("add_comment", "添加批注", MessageSquareIcon);
+    expectMeta("sandbox_mount_attachment", "挂载附件到沙箱", PaperclipIcon);
   });
 
   test("covers report lifecycle and subagent orchestration tools", () => {
@@ -100,6 +102,7 @@ describe("getToolMeta", () => {
       "sandbox_execute",
       "sandbox_read_file",
       "sandbox_write_file",
+      "sandbox_mount_attachment",
       "ask_user",
       "set_session_title",
       "describe_task",

@@ -51,7 +51,10 @@ use crate::{
     models::{ModelRegistry, ProviderProtocol},
     prompt::ContextMessage,
     sandbox::{SandboxExecRequest, SandboxLease, SandboxProvider, sandbox_spec_from_config},
-    service::PendingQueueCoordinator,
+    service::{
+        PendingQueueCoordinator, SANDBOX_ATTACHMENT_GET_TTL_SECS, safe_attachment_filename,
+        safe_attachment_id,
+    },
     store::SessionPatch,
 };
 
@@ -69,6 +72,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "sandbox_execute",
     "sandbox_read_file",
     "sandbox_write_file",
+    "sandbox_mount_attachment",
 ];
 
 /// Return configured patterns that match no assembled tool.
@@ -489,6 +493,194 @@ async fn sandbox_write_file_tool(
         "path": path,
         "bytes_written": content.len(),
     }))
+}
+
+#[rig_tool(
+    name = "sandbox_mount_attachment",
+    description = "Mount an attachment uploaded to this session into the run's sandbox at /workspace/attachments/{attachment_id}/{filename}. Returns the sandbox path and attachment metadata. Download credentials, signed URLs and storage internals are never returned."
+)]
+async fn sandbox_mount_attachment_tool(
+    #[rig(context)] context: &mut ToolContext,
+    attachment_id: String,
+) -> Result<Value, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let attachment_id = safe_attachment_id(&attachment_id).map_err(tool_other)?;
+    let stored = runtime
+        .engine
+        .kb
+        .store()
+        .get_session_attachment(&runtime.execution.session_id, attachment_id)
+        .await
+        .map_err(tool_other)?;
+    let attachment_id = safe_attachment_id(&stored.attachment_id).map_err(tool_other)?;
+    let filename = safe_attachment_filename(&stored.filename).map_err(tool_other)?;
+    let directory = format!("/workspace/attachments/{attachment_id}");
+    let target_path = format!("{directory}/{filename}");
+    let sandbox = runtime.sandbox.get_or_create().await.map_err(tool_other)?;
+
+    match stored.storage_provider.as_str() {
+        "oss" => {
+            let object_key = stored.storage_path.as_str();
+            if !runtime
+                .engine
+                .config
+                .oss
+                .owns_object_key(&runtime.execution.session_id, object_key)
+            {
+                return Err(ToolExecutionError::other(
+                    "attachment object key does not belong to this session",
+                ));
+            }
+            let signed_url = runtime
+                .engine
+                .config
+                .oss
+                .presign_get_for_sandbox(object_key, SANDBOX_ATTACHMENT_GET_TTL_SECS)
+                .map_err(tool_other)?;
+            let command = format!(
+                "set -euo pipefail\n\
+                 if ! mkdir -p {directory} 2>/dev/null; then\n\
+                   sudo -n mkdir -p {directory}\n\
+                   sudo -n chown \"$(id -u):$(id -g)\" /workspace\n\
+                   sudo -n chown -R \"$(id -u):$(id -g)\" {directory}\n\
+                 fi\n\
+                 curl -fsSL --retry 2 --connect-timeout 15 --max-time 120 -o {target} {url}",
+                directory = shell_quote(&directory),
+                target = shell_quote(&target_path),
+                url = shell_quote(&signed_url),
+            );
+            let result = sandbox
+                .exec_code(SandboxExecRequest {
+                    language: "bash".into(),
+                    code: command,
+                    cwd: None,
+                    timeout_seconds: Some(150),
+                })
+                .await
+                .map_err(tool_other)?;
+            if result.exit_code != 0 {
+                return Err(ToolExecutionError::other(format!(
+                    "failed to download attachment from OSS (exit code {}): {}",
+                    result.exit_code,
+                    sanitize_oss_download_error(&result.stderr, &signed_url)
+                )));
+            }
+        }
+        "local" => {
+            let bytes = tokio::fs::read(&stored.storage_path)
+                .await
+                .map_err(|error| {
+                    tool_other(format!("failed to read local attachment file: {error}"))
+                })?;
+            sandbox
+                .upload_file(&target_path, &bytes)
+                .await
+                .map_err(tool_other)?;
+        }
+        provider => {
+            return Err(ToolExecutionError::other(format!(
+                "unsupported attachment storage provider `{provider}`"
+            )));
+        }
+    }
+
+    Ok(json!({
+        "sandbox_id": sandbox.id(),
+        "attachment_id": attachment_id,
+        "path": target_path,
+        "filename": filename,
+        "mime_type": stored.mime_type,
+        "size_bytes": stored.size_bytes,
+    }))
+}
+
+fn shell_quote(value: &str) -> String {
+    let mut quoted = String::with_capacity(value.len().saturating_add(2));
+    quoted.push('\'');
+    for character in value.chars() {
+        if character == '\'' {
+            quoted.push_str("'\\''");
+        } else {
+            quoted.push(character);
+        }
+    }
+    quoted.push('\'');
+    quoted
+}
+
+/// Remove any URL and signed query values before an OSS download error can
+/// reach the model, the persisted tool call or a RunTrace preview.
+fn sanitize_oss_download_error(stderr: &str, signed_url: &str) -> String {
+    let mut sanitized = stderr.replace(signed_url, "[REDACTED_OSS_URL]");
+    sanitized = redact_urls(&sanitized);
+    for parameter in [
+        "x-oss-signature=",
+        "x-oss-credential=",
+        "x-oss-security-token=",
+    ] {
+        sanitized = redact_query_parameter(&sanitized, parameter);
+    }
+    let bounded: String = sanitized.trim().chars().take(2_000).collect();
+    if bounded.is_empty() {
+        "OSS download command failed without diagnostic output".into()
+    } else {
+        bounded
+    }
+}
+
+fn redact_urls(text: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let position = match (rest.find("https://"), rest.find("http://")) {
+            (Some(left), Some(right)) => left.min(right),
+            (Some(left), None) => left,
+            (None, Some(right)) => right,
+            (None, None) => break,
+        };
+        let (before, from_url) = rest.split_at(position);
+        output.push_str(before);
+        output.push_str("[REDACTED_OSS_URL]");
+        let end = from_url
+            .find(|character: char| {
+                character.is_whitespace() || matches!(character, '\'' | '"' | ')' | ']' | '>' | '<')
+            })
+            .unwrap_or(from_url.len());
+        if end == 0 {
+            break;
+        }
+        rest = from_url.get(end..).unwrap_or_default();
+    }
+    output.push_str(rest);
+    output
+}
+
+fn redact_query_parameter(text: &str, parameter: &str) -> String {
+    let mut output = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(position) = rest.find(parameter) {
+        let (before, from_parameter) = rest.split_at(position);
+        output.push_str(before);
+        output.push_str("[REDACTED_OSS_QUERY]");
+        let value_start = parameter.len();
+        let end = from_parameter
+            .get(value_start..)
+            .and_then(|value| {
+                value.find(|character: char| {
+                    character.is_whitespace()
+                        || matches!(character, '&' | '\'' | '"' | ')' | ']' | '>' | '<')
+                })
+            })
+            .map(|offset| value_start.saturating_add(offset))
+            .unwrap_or(from_parameter.len());
+        if end <= value_start {
+            rest = from_parameter.get(value_start..).unwrap_or_default();
+            continue;
+        }
+        rest = from_parameter.get(end..).unwrap_or_default();
+    }
+    output.push_str(rest);
+    output
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1539,6 +1731,11 @@ impl RigModelCore {
                 SandboxWriteFileTool
             })?);
         }
+        if allow_list_matches(&execution.allowed_tools, "sandbox_mount_attachment") {
+            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
+                SandboxMountAttachmentTool
+            })?);
+        }
         if allow_list_matches(&execution.allowed_tools, "load_skill") {
             tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || LoadSkillTool)?);
         }
@@ -2491,6 +2688,37 @@ mod tests {
             parameters.get("required"),
             Some(&json!(["language", "code"]))
         );
+    }
+
+    #[test]
+    fn sandbox_mount_attachment_schema_requires_attachment_id() {
+        let parameters = SANDBOX_MOUNT_ATTACHMENT_TOOL.parameters();
+        let properties = parameters
+            .get("properties")
+            .and_then(Value::as_object)
+            .expect("sandbox_mount_attachment schema should have properties");
+        assert!(properties.contains_key("attachment_id"));
+        assert_eq!(parameters.get("required"), Some(&json!(["attachment_id"])));
+    }
+
+    #[test]
+    fn oss_download_errors_never_expose_signed_query_values() {
+        let url = "https://agentcore-ws-test.oss-cn-hangzhou.aliyuncs.com/quire/attachments/sess/att/data.csv?x-oss-credential=LTAI_TEST%2F20261120%2Fcn-hangzhou%2Foss%2Faliyun_v4_request&x-oss-date=20261120T080000Z&x-oss-expires=600&x-oss-signature-version=OSS4-HMAC-SHA256&x-oss-signature=deadbeef";
+        let stderr = format!(
+            "curl: (22) The requested URL returned error: 403\n{url}\nx-oss-signature=deadbeef"
+        );
+        let sanitized = sanitize_oss_download_error(&stderr, url);
+        assert!(sanitized.contains("[REDACTED_OSS_URL]"));
+        assert!(!sanitized.contains("x-oss-signature="));
+        assert!(!sanitized.contains("x-oss-credential="));
+        assert!(!sanitized.contains("deadbeef"));
+        assert!(!sanitized.contains("LTAI_TEST"));
+    }
+
+    #[test]
+    fn shell_quote_handles_quotes_and_shell_metacharacters() {
+        assert_eq!(shell_quote("data.csv"), "'data.csv'");
+        assert_eq!(shell_quote("a'b&c"), "'a'\\''b&c'");
     }
 
     #[test]

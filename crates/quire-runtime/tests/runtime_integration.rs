@@ -34,13 +34,13 @@ use quire_runtime::{
     models::ModelInput,
     preview::ChartPreviewRecord,
     sandbox::build_sandbox_provider,
-    service::PostMessageOutcome,
+    service::{AttachmentWrite, PostMessageOutcome},
     store::SessionPatch,
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
-    RunTraceSegment, SendMessageRequest, SessionCommentRef, SessionEvent, SessionEventKind,
-    SessionMessage,
+    RunTraceSegment, RunTraceSummary, RunTraceToolItem, SendMessageRequest, SessionCommentRef,
+    SessionEvent, SessionEventKind, SessionMessage,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -178,18 +178,8 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
     test_service_with_quire_base("http://127.0.0.1:1").await
 }
 
-async fn test_service_with_quire_base(base_url: &str) -> (RuntimeService, RuntimeStore) {
-    let store = RuntimeStore::connect(&database_url(), &redis_url())
-        .await
-        .expect("PostgreSQL and Redis are required");
-    store.migrate().await.expect("runtime migrations");
-    let kb = KbService::new(store.clone());
-    let models = ModelRegistry::new(
-        store.clone(),
-        Some(SecretString::from("test-master-key")),
-        "https://models.dev/api.json",
-    );
-    let config = Arc::new(Config {
+fn test_config(base_url: &str) -> Config {
+    Config {
         database_url: database_url(),
         redis_url: redis_url(),
         bind_addr: "127.0.0.1:0".into(),
@@ -210,9 +200,162 @@ async fn test_service_with_quire_base(base_url: &str) -> (RuntimeService, Runtim
         preview_public_url: "http://localhost:5173".into(),
         playwright_mcp_url: None,
         sandbox: quire_runtime::sandbox::SandboxConfig::default(),
-    });
-    let service = RuntimeService::new(store.clone(), kb, Arc::new(models), config);
+        oss: quire_runtime::oss::OssConfig::default(),
+    }
+}
+
+async fn test_service_with_quire_base(base_url: &str) -> (RuntimeService, RuntimeStore) {
+    test_service_with_config(test_config(base_url)).await
+}
+
+async fn test_service_with_config(config: Config) -> (RuntimeService, RuntimeStore) {
+    let store = RuntimeStore::connect(&database_url(), &redis_url())
+        .await
+        .expect("PostgreSQL and Redis are required");
+    store.migrate().await.expect("runtime migrations");
+    let kb = KbService::new(store.clone());
+    let models = ModelRegistry::new(
+        store.clone(),
+        Some(SecretString::from("test-master-key")),
+        "https://models.dev/api.json",
+    );
+    let service = RuntimeService::new(store.clone(), kb, Arc::new(models), Arc::new(config));
     (service, store)
+}
+
+async fn install_scripted_agent(
+    service: &RuntimeService,
+    model_base_url: &str,
+    allowed_tools: &[String],
+) -> String {
+    let provider_id = unique("scripted-provider");
+    service
+        .models()
+        .upsert_provider(ProviderInput {
+            provider_id: provider_id.clone(),
+            name: "Scripted OpenAI".into(),
+            protocol: ProviderProtocol::OpenaiCompatible,
+            base_url: model_base_url.to_string(),
+            api_key_ref: "test-key".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let route_id = unique("scripted-model");
+    service
+        .models()
+        .upsert_model(ModelInput {
+            id: route_id.clone(),
+            provider_id,
+            model_id: "mock-model".into(),
+            display_name: "Scripted Model".into(),
+            context_limit: 32_000,
+            max_output_tokens: Some(1024),
+            supports_reasoning: false,
+            supports_tools: true,
+            supports_vision: false,
+            cost_input: None,
+            cost_output: None,
+            cost_cache_read: None,
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    service
+        .kb()
+        .upsert_agent(
+            "main",
+            "",
+            &route_id,
+            "Scripted attachment mount agent",
+            allowed_tools,
+            true,
+            true,
+        )
+        .await
+        .unwrap();
+    route_id
+}
+
+fn with_local_rig_provider(service: RuntimeService) -> RuntimeService {
+    let sandbox_provider = build_sandbox_provider(&service.config().sandbox).unwrap();
+    let provider = RigModelStreamProvider::new(
+        service.kb().clone(),
+        Arc::new(service.models().clone()),
+        Arc::new(service.config().clone()),
+        service.mcp_registry(),
+        sandbox_provider,
+        service.pending_queue(),
+    );
+    service.with_model_stream_provider(Arc::new(provider))
+}
+
+async fn start_scripted_model(turns: Vec<Vec<String>>) -> (String, tokio::task::JoinHandle<()>) {
+    let state = Arc::new(ScriptedChatState {
+        turns: Mutex::new(VecDeque::from(turns)),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new()
+                .route("/v1/responses", axum::routing::post(mock_scripted_chat))
+                .with_state(state),
+        )
+        .await
+        .unwrap();
+    });
+    (format!("http://{address}/v1"), server)
+}
+
+async fn post_json(app: &axum::Router, uri: &str, body: Value) -> (axum::http::StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header("authorization", "Bearer runtime-test-token")
+                .header("content-type", "application/json")
+                .body(axum::body::Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, value)
+}
+
+fn test_oss_config() -> quire_runtime::oss::OssConfig {
+    quire_runtime::oss::OssConfig {
+        bucket: Some("agentcore-ws-test".into()),
+        region: Some("cn-hangzhou".into()),
+        public_endpoint: Some("https://oss-cn-hangzhou.aliyuncs.com".into()),
+        internal_endpoint: Some("https://oss-cn-hangzhou-internal.aliyuncs.com".into()),
+        access_key_id: Some("LTAI_TEST_ACCESS_KEY".into()),
+        access_key_secret: Some(SecretString::from("test-secret-value")),
+        key_prefix: "quire/attachments".into(),
+    }
+}
+
+fn find_trace_tool<'a>(
+    traces: &'a [RunTraceSummary],
+    tool_name: &str,
+) -> Option<&'a RunTraceToolItem> {
+    traces
+        .iter()
+        .flat_map(|trace| trace.segments.iter())
+        .find_map(|segment| match segment {
+            RunTraceSegment::Execution { tools, .. } => {
+                tools.iter().find(|tool| tool.tool_name == tool_name)
+            }
+            _ => None,
+        })
 }
 
 async fn wait_for_idle(store: &RuntimeStore, session_id: &str) {
@@ -679,6 +822,83 @@ async fn mock_chat_completions(
         .header("content-type", "text/event-stream")
         .body(axum::body::Body::from_stream(stream))
         .unwrap()
+}
+
+#[derive(Default)]
+struct ScriptedChatState {
+    turns: Mutex<VecDeque<Vec<String>>>,
+}
+
+async fn mock_scripted_chat(
+    axum::extract::State(state): axum::extract::State<Arc<ScriptedChatState>>,
+    axum::Json(_body): axum::Json<Value>,
+) -> axum::response::Response {
+    let chunks = state
+        .turns
+        .lock()
+        .await
+        .pop_front()
+        .unwrap_or_else(text_stream);
+    let stream = futures::stream::iter(
+        chunks
+            .into_iter()
+            .map(|chunk| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(chunk))),
+    );
+    axum::response::Response::builder()
+        .header("content-type", "text/event-stream")
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap()
+}
+
+fn tool_call_stream_for(tool_name: &str, call_id: &str, arguments: &Value) -> Vec<String> {
+    let arguments = arguments.to_string();
+    let item = json!({
+        "type": "function_call",
+        "id": format!("fc_{call_id}"),
+        "call_id": call_id,
+        "name": tool_name,
+        "arguments": arguments,
+        "status": "completed"
+    });
+    vec![
+        sse(json!({
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": response_base(json!([]))
+        })),
+        sse(json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": 1,
+            "item": {
+                "type": "function_call",
+                "id": format!("fc_{call_id}"),
+                "call_id": call_id,
+                "name": tool_name,
+                "arguments": "",
+                "status": "in_progress"
+            }
+        })),
+        sse(json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": format!("fc_{call_id}"),
+            "output_index": 0,
+            "content_index": 0,
+            "sequence_number": 2,
+            "delta": arguments
+        })),
+        sse(json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": 3,
+            "item": item
+        })),
+        sse(json!({
+            "type": "response.completed",
+            "sequence_number": 4,
+            "response": response_base(json!([item]))
+        })),
+    ]
 }
 
 #[derive(Clone)]
@@ -1386,30 +1606,42 @@ async fn attachments_reject_traversal_and_decode_base64() {
         .await
         .unwrap();
     let traversal = service
-        .create_attachment(&session.session_id, "../escape.txt", "text/plain", 5, None)
+        .create_attachment(AttachmentWrite {
+            session_id: &session.session_id,
+            attachment_id: None,
+            filename: "../escape.txt",
+            mime_type: "text/plain",
+            size_bytes: 5,
+            content_base64: None,
+            object_key: None,
+        })
         .await;
     assert!(traversal.is_err());
     let invalid = service
-        .create_attachment(
-            &session.session_id,
-            "note.txt",
-            "text/plain",
-            3,
-            Some("not-base64!!!"),
-        )
+        .create_attachment(AttachmentWrite {
+            session_id: &session.session_id,
+            attachment_id: None,
+            filename: "note.txt",
+            mime_type: "text/plain",
+            size_bytes: 3,
+            content_base64: Some("not-base64!!!"),
+            object_key: None,
+        })
         .await;
     assert!(invalid.is_err());
 
     let filename = format!("{}.txt", unique("attachment"));
     let encoded = base64::engine::general_purpose::STANDARD.encode(b"hello attachment");
     let meta = service
-        .create_attachment(
-            &session.session_id,
-            &filename,
-            "text/plain",
-            16,
-            Some(&encoded),
-        )
+        .create_attachment(AttachmentWrite {
+            session_id: &session.session_id,
+            attachment_id: None,
+            filename: &filename,
+            mime_type: "text/plain",
+            size_bytes: 16,
+            content_base64: Some(&encoded),
+            object_key: None,
+        })
         .await
         .unwrap();
     assert_eq!(meta.filename, filename);
@@ -1429,6 +1661,345 @@ async fn attachments_reject_traversal_and_decode_base64() {
     assert_eq!(std::fs::read(&stored).unwrap(), b"hello attachment");
     let _ = std::fs::remove_file(stored);
     service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn attachments_presign_inline_and_local_mount() {
+    let _guard = test_lock().lock().await;
+    let mut config = test_config("http://127.0.0.1:1");
+    config.sandbox = quire_runtime::sandbox::SandboxConfig {
+        provider: "local".into(),
+        ..Default::default()
+    };
+    let (service, store) = test_service_with_config(config).await;
+    let app = quire_runtime::http::router(service.clone());
+    let session = service
+        .create_session(&unique("inline-attachment"), Some("runtime-doc"))
+        .await
+        .unwrap();
+
+    let (status, presign) = post_json(
+        &app,
+        &format!("/api/sessions/{}/attachments/presign", session.session_id),
+        json!({
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12
+        }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(presign["mode"], "inline");
+
+    let encoded = base64::engine::general_purpose::STANDARD.encode(b"a,b\n1,2\n3,4");
+    let (status, meta) = post_json(
+        &app,
+        &format!("/api/sessions/{}/attachments", session.session_id),
+        json!({
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12,
+            "content_base64": encoded
+        }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let attachment_id = meta["attachment_id"].as_str().unwrap().to_string();
+    let stored = store
+        .get_session_attachment(&session.session_id, &attachment_id)
+        .await
+        .unwrap();
+    assert_eq!(stored.storage_provider, "local");
+    assert!(Path::new(&stored.storage_path).is_file());
+
+    let (model_base_url, server) = start_scripted_model(vec![
+        tool_call_stream_for(
+            "sandbox_mount_attachment",
+            "call_local_mount",
+            &json!({"attachment_id": attachment_id}),
+        ),
+        text_stream(),
+    ])
+    .await;
+    install_scripted_agent(
+        &service,
+        &model_base_url,
+        &["sandbox_mount_attachment".to_string()],
+    )
+    .await;
+    let service = with_local_rig_provider(service);
+    service.boot().await.unwrap();
+
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("inline-mount-message"),
+                content: "Mount the attachment into the sandbox.".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: vec![attachment_id.clone()],
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    let tool = find_trace_tool(&traces, "sandbox_mount_attachment")
+        .expect("local mount tool call must be traced");
+    assert_eq!(tool.status, "completed");
+    let output = tool.output_preview.as_deref().unwrap_or_default();
+    assert!(output.contains(&format!("/workspace/attachments/{attachment_id}/data.csv")));
+    assert!(!output.contains("http"));
+
+    service.delete_session(&session.session_id).await.unwrap();
+    service.kb().delete_agent("main").await.unwrap();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachments_oss_presign_and_object_key_scope() {
+    let _guard = test_lock().lock().await;
+    let mut config = test_config("http://127.0.0.1:1");
+    config.oss = test_oss_config();
+    let (service, store) = test_service_with_config(config).await;
+    let app = quire_runtime::http::router(service.clone());
+    let session = service
+        .create_session(&unique("oss-attachment"), Some("runtime-doc"))
+        .await
+        .unwrap();
+
+    let (status, presign) = post_json(
+        &app,
+        &format!("/api/sessions/{}/attachments/presign", session.session_id),
+        json!({
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12
+        }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(presign["mode"], "oss");
+    let attachment_id = presign["attachment_id"].as_str().unwrap().to_string();
+    let object_key = presign["object_key"].as_str().unwrap().to_string();
+    let upload_url = presign["upload_url"].as_str().unwrap_or_default();
+    assert!(
+        upload_url.starts_with(
+            "https://agentcore-ws-test.oss-cn-hangzhou.aliyuncs.com/quire/attachments/"
+        )
+    );
+    assert!(upload_url.contains("x-oss-signature="));
+    assert!(upload_url.contains("x-oss-credential="));
+    assert!(!upload_url.contains("test-secret-value"));
+    assert_eq!(
+        presign["headers"]["Content-Type"].as_str(),
+        Some("text/csv")
+    );
+    assert!(object_key.starts_with(&format!("quire/attachments/{}/", session.session_id)));
+
+    let (wrong_status, _) = post_json(
+        &app,
+        &format!("/api/sessions/{}/attachments", session.session_id),
+        json!({
+            "attachment_id": attachment_id,
+            "object_key": "quire/attachments/another_session/att_x/data.csv",
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12
+        }),
+    )
+    .await;
+    assert_eq!(wrong_status, axum::http::StatusCode::BAD_REQUEST);
+
+    let (status, meta) = post_json(
+        &app,
+        &format!("/api/sessions/{}/attachments", session.session_id),
+        json!({
+            "attachment_id": attachment_id,
+            "object_key": object_key,
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12
+        }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(meta["attachment_id"], attachment_id);
+    let stored = store
+        .get_session_attachment(&session.session_id, &attachment_id)
+        .await
+        .unwrap();
+    assert_eq!(stored.storage_provider, "oss");
+    assert_eq!(stored.storage_path, object_key);
+
+    let (plain_service, _plain_store) = test_service().await;
+    let plain_app = quire_runtime::http::router(plain_service.clone());
+    let plain_session = plain_service
+        .create_session(&unique("plain-oss-rejected"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let (status, _) = post_json(
+        &plain_app,
+        &format!("/api/sessions/{}/attachments", plain_session.session_id),
+        json!({
+            "object_key": format!(
+                "quire/attachments/{}/att_fake/data.csv",
+                plain_session.session_id
+            ),
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12
+        }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+
+    plain_service
+        .delete_session(&plain_session.session_id)
+        .await
+        .unwrap();
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sandbox_mount_attachment_scopes_sessions_and_redacts_traces() {
+    let _guard = test_lock().lock().await;
+    let mut config = test_config("http://127.0.0.1:1");
+    config.oss = test_oss_config();
+    config.sandbox = quire_runtime::sandbox::SandboxConfig {
+        provider: "local".into(),
+        ..Default::default()
+    };
+    let (service, store) = test_service_with_config(config).await;
+    let app = quire_runtime::http::router(service.clone());
+    let owner = service
+        .create_session(&unique("oss-mount-owner"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let intruder = service
+        .create_session(&unique("oss-mount-intruder"), Some("runtime-doc"))
+        .await
+        .unwrap();
+
+    let (status, presign) = post_json(
+        &app,
+        &format!("/api/sessions/{}/attachments/presign", owner.session_id),
+        json!({
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12
+        }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let attachment_id = presign["attachment_id"].as_str().unwrap().to_string();
+    let object_key = presign["object_key"].as_str().unwrap().to_string();
+    let (status, _) = post_json(
+        &app,
+        &format!("/api/sessions/{}/attachments", owner.session_id),
+        json!({
+            "attachment_id": attachment_id,
+            "object_key": object_key,
+            "filename": "data.csv",
+            "mime_type": "text/csv",
+            "size_bytes": 12
+        }),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+
+    let (model_base_url, server) = start_scripted_model(vec![
+        tool_call_stream_for(
+            "sandbox_mount_attachment",
+            "call_owner",
+            &json!({"attachment_id": attachment_id}),
+        ),
+        text_stream(),
+        tool_call_stream_for(
+            "sandbox_mount_attachment",
+            "call_intruder",
+            &json!({"attachment_id": attachment_id}),
+        ),
+        text_stream(),
+    ])
+    .await;
+    install_scripted_agent(
+        &service,
+        &model_base_url,
+        &["sandbox_mount_attachment".to_string()],
+    )
+    .await;
+    let service = with_local_rig_provider(service);
+    service.boot().await.unwrap();
+
+    service
+        .post_message(
+            &owner.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("owner-mount-message"),
+                content: "Mount my attachment.".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: vec![attachment_id.clone()],
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &owner.session_id).await;
+    let owner_traces = store.list_run_traces(&owner.session_id).await.unwrap();
+    let owner_tool = find_trace_tool(&owner_traces, "sandbox_mount_attachment")
+        .expect("owner mount must be traced");
+    assert_eq!(owner_tool.status, "completed");
+    assert!(
+        owner_tool
+            .output_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains(&format!("/workspace/attachments/{attachment_id}/data.csv"))
+    );
+    let owner_trace_text = serde_json::to_string(&owner_traces).unwrap();
+    assert!(!owner_trace_text.contains("x-oss-signature"));
+    assert!(!owner_trace_text.contains("x-oss-credential"));
+    assert!(!owner_trace_text.contains("agentcore-ws-test"));
+    assert!(!owner_trace_text.contains("https://"));
+
+    service
+        .post_message(
+            &intruder.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("intruder-mount-message"),
+                content: "Mount another session's attachment.".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: vec![attachment_id.clone()],
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &intruder.session_id).await;
+    let intruder_traces = store.list_run_traces(&intruder.session_id).await.unwrap();
+    let intruder_tool = find_trace_tool(&intruder_traces, "sandbox_mount_attachment")
+        .expect("cross-session mount attempt must be traced");
+    assert_eq!(intruder_tool.status, "failed");
+    let intruder_output = intruder_tool.output_preview.as_deref().unwrap_or_default();
+    assert!(intruder_output.contains("not found"));
+    assert!(!intruder_output.contains("x-oss-signature"));
+    let intruder_trace_text = serde_json::to_string(&intruder_traces).unwrap();
+    assert!(!intruder_trace_text.contains("x-oss-signature"));
+    assert!(!intruder_trace_text.contains("agentcore-ws-test"));
+    assert!(!intruder_trace_text.contains("https://"));
+
+    let detail = store
+        .get_tool_call(&intruder.session_id, &intruder_tool.tool_call_id)
+        .await
+        .unwrap();
+    let serialized = serde_json::to_string(&detail).unwrap();
+    assert!(!serialized.contains("x-oss-signature"));
+    assert!(!serialized.contains("agentcore-ws-test"));
+
+    service.delete_session(&intruder.session_id).await.unwrap();
+    service.delete_session(&owner.session_id).await.unwrap();
+    service.kb().delete_agent("main").await.unwrap();
+    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

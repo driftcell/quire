@@ -8,7 +8,7 @@ use std::{
 
 use secrecy::SecretString;
 
-use crate::sandbox::SandboxConfig;
+use crate::{oss::OssConfig, sandbox::SandboxConfig};
 
 #[derive(Clone)]
 pub struct Config {
@@ -32,6 +32,7 @@ pub struct Config {
     pub preview_public_url: String,
     pub playwright_mcp_url: Option<String>,
     pub sandbox: SandboxConfig,
+    pub oss: OssConfig,
 }
 
 impl Debug for Config {
@@ -64,6 +65,7 @@ impl Debug for Config {
             .field("preview_public_url", &self.preview_public_url)
             .field("playwright_mcp_url", &self.playwright_mcp_url)
             .field("sandbox", &self.sandbox)
+            .field("oss", &self.oss)
             .finish()
     }
 }
@@ -114,6 +116,7 @@ impl Config {
             .ok()
             .filter(|value| !value.trim().is_empty());
         let sandbox = SandboxConfig::from_env();
+        let oss = OssConfig::from_env();
         Self {
             database_url,
             redis_url,
@@ -135,6 +138,7 @@ impl Config {
             preview_public_url,
             playwright_mcp_url,
             sandbox,
+            oss,
         }
     }
 
@@ -170,6 +174,11 @@ mod tests {
     fn debug_redacts_secrets() {
         let mut sandbox = SandboxConfig::default();
         sandbox.fc.api_key = Some(SecretString::from("sandbox-secret"));
+        let oss = OssConfig {
+            access_key_id: Some("oss-access-key".into()),
+            access_key_secret: Some(SecretString::from("oss-secret-value")),
+            ..OssConfig::default()
+        };
         let config = Config {
             database_url: "postgres://user:secret@db/app".into(),
             redis_url: "redis://:secret@cache".into(),
@@ -191,6 +200,7 @@ mod tests {
             preview_public_url: "http://localhost:5173".into(),
             playwright_mcp_url: None,
             sandbox,
+            oss,
         };
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[REDACTED]"));
@@ -198,5 +208,7 @@ mod tests {
         assert!(!rendered.contains("model-secret"));
         assert!(!rendered.contains("master-secret"));
         assert!(!rendered.contains("sandbox-secret"));
+        assert!(!rendered.contains("oss-access-key"));
+        assert!(!rendered.contains("oss-secret-value"));
     }
 }

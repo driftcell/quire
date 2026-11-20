@@ -43,7 +43,7 @@ use crate::{
         ProviderRecord,
     },
     preview::ChartPreviewRecord,
-    service::{PostMessageOutcome, RuntimeService},
+    service::{AttachmentPresign, AttachmentWrite, PostMessageOutcome, RuntimeService},
     store::SessionPatch,
 };
 
@@ -113,6 +113,10 @@ pub fn router(service: RuntimeService) -> Router {
         .route(
             "/api/sessions/{session_id}/attachments",
             post(post_session_attachment),
+        )
+        .route(
+            "/api/sessions/{session_id}/attachments/presign",
+            post(presign_session_attachment),
         )
         .route("/attachments", post(post_attachment))
         .route(
@@ -941,6 +945,14 @@ async fn compact(
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AttachmentPresignRequest {
+    filename: String,
+    mime_type: String,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
 struct AttachmentUpload {
     #[serde(default)]
     session_id: Option<String>,
@@ -949,6 +961,26 @@ struct AttachmentUpload {
     size_bytes: u64,
     #[serde(default)]
     content_base64: Option<String>,
+    #[serde(default)]
+    attachment_id: Option<String>,
+    #[serde(default)]
+    object_key: Option<String>,
+}
+
+async fn presign_session_attachment(
+    State(service): State<RuntimeService>,
+    Path(session_id): Path<String>,
+    Json(request): Json<AttachmentPresignRequest>,
+) -> RuntimeResult<Json<AttachmentPresign>> {
+    service
+        .presign_attachment(
+            &session_id,
+            &request.filename,
+            &request.mime_type,
+            request.size_bytes,
+        )
+        .await
+        .map(Json)
 }
 
 async fn post_attachment(
@@ -975,13 +1007,15 @@ async fn attach(
     request: AttachmentUpload,
 ) -> RuntimeResult<Json<AttachmentMeta>> {
     service
-        .create_attachment(
+        .create_attachment(AttachmentWrite {
             session_id,
-            &request.filename,
-            &request.mime_type,
-            request.size_bytes,
-            request.content_base64.as_deref(),
-        )
+            attachment_id: request.attachment_id.as_deref(),
+            filename: &request.filename,
+            mime_type: &request.mime_type,
+            size_bytes: request.size_bytes,
+            content_base64: request.content_base64.as_deref(),
+            object_key: request.object_key.as_deref(),
+        })
         .await
         .map(Json)
 }

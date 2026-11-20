@@ -16,6 +16,7 @@ pub mod mcp_client;
 pub mod mcp_registry;
 pub mod model_stream;
 pub mod models;
+pub mod oss;
 pub mod preview;
 pub mod prompt;
 pub mod rig_agent;
