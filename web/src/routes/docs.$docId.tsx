@@ -6,6 +6,7 @@ import { getDocument, listComments } from "@/api/quire";
 import { CommentsPanel } from "@/components/report/CommentsDrawer";
 import { ReportPaneToolbar } from "@/components/report/ReportPaneToolbar";
 import { ReportViewer } from "@/components/report/ReportViewer";
+import { flashHighlightElement } from "@/components/report/reportDom";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSidebar } from "@/components/ui/sidebar";
@@ -54,12 +55,7 @@ function DocumentPage() {
     const el = window.document.getElementById(`block-${sectionId}`);
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
-    el.classList.remove("quire-flash-highlight");
-    void el.offsetWidth;
-    el.classList.add("quire-flash-highlight");
-    window.setTimeout(() => {
-      el.classList.remove("quire-flash-highlight");
-    }, 1600);
+    flashHighlightElement(el);
   }, []);
 
   const openCommentsCount =

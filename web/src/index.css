@@ -272,20 +272,42 @@
   animation: quire-shimmer 1.6s ease-in-out infinite;
 }
 
-@keyframes quire-flash-ring {
+@keyframes quire-flash-underline {
   0% {
-    box-shadow: 0 0 0 3px oklch(0.65 0.18 250 / 0.45);
-    background-color: oklch(0.65 0.18 250 / 0.08);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  72% {
+    opacity: 1;
   }
   100% {
-    box-shadow: 0 0 0 0 transparent;
-    background-color: transparent;
+    opacity: 0;
   }
 }
 
 .quire-flash-highlight {
-  border-radius: 0.5rem;
-  animation: quire-flash-ring 1.6s ease-out forwards;
+  position: relative;
+}
+
+.quire-flash-highlight::after {
+  position: absolute;
+  right: 0;
+  bottom: -6px;
+  left: 0;
+  border-bottom: 1.5px dashed oklch(0.769 0.188 70.08 / 0.75);
+  content: "";
+  pointer-events: none;
+  opacity: 0;
+  animation: quire-flash-underline 3s ease-in-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quire-flash-highlight::after {
+    animation: none;
+    opacity: 1;
+  }
 }
 
 /* ------------------------------------------------------------------------- */

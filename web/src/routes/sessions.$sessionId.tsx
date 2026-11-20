@@ -23,6 +23,7 @@ import {
   SessionWorkspaceLayout,
   type SessionMobileTab,
 } from "@/components/report/SessionWorkspaceLayout";
+import { flashHighlightElement } from "@/components/report/reportDom";
 import { useSidebar } from "@/components/ui/sidebar";
 import type {
   ActiveRunStatus,
@@ -158,12 +159,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     const el = window.document.getElementById(`block-${sectionId}`);
     if (!el) return;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
-    el.classList.remove("quire-flash-highlight");
-    void el.offsetWidth;
-    el.classList.add("quire-flash-highlight");
-    window.setTimeout(() => {
-      el.classList.remove("quire-flash-highlight");
-    }, 1600);
+    flashHighlightElement(el);
   }, []);
 
   const jumpToSectionFromChat = useCallback(

@@ -13,6 +13,7 @@ import { ReportCover } from "@/components/report/ReportCover";
 import { ReportPage } from "@/components/report/ReportPage";
 import { ReportTocSection } from "@/components/report/ReportTocSection";
 import { SelectionQuoteToolbar } from "@/components/report/SelectionQuoteToolbar";
+import { flashHighlightElement } from "@/components/report/reportDom";
 import {
   A4_CONTENT_HEIGHT_PX,
   A4_CONTENT_WIDTH_PX,
@@ -209,10 +210,7 @@ export function ReportViewer({
       return;
     }
     el.scrollIntoView({ behavior: "smooth", block: "center" });
-    el.classList.add("quire-flash-highlight");
-    window.setTimeout(() => {
-      el.classList.remove("quire-flash-highlight");
-    }, 1600);
+    flashHighlightElement(el);
   }, []);
 
   const pages = useMemo(() => {
