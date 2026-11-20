@@ -237,12 +237,13 @@ export function SessionStreamView({
 
   return (
     <MessageScrollerProvider
+      key={sessionId}
       autoScroll
-      defaultScrollPosition="last-anchor"
+      defaultScrollPosition="end"
       scrollEdgeThreshold={24}
     >
       <MessageScroller className="h-full">
-        <MessageScrollerViewport className="px-4">
+        <MessageScrollerViewport className="px-4 data-[pending-scroll]:opacity-0">
           <MessageScrollerContent className={`${contentClassName} py-4`}>
             {visibleMessages.map((msg) => {
               const trace = msg.run_id
