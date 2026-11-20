@@ -9,7 +9,7 @@ import {
   buildHistoricalSegments,
   buildLiveSegments,
   extractSubagentLiveView,
-  isVisibleTraceTool,
+  summarizeActivity,
   type RenderSegment,
 } from "./traceSegments";
 
@@ -40,25 +40,44 @@ function segmentAt(segments: RenderSegment[], index: number): RenderSegment {
   return segment;
 }
 
-describe("isVisibleTraceTool", () => {
-  test("hides orchestration tools except failed spawn calls", () => {
-    expect(isVisibleTraceTool(tool("describe", "describe_task"))).toBe(false);
-    expect(isVisibleTraceTool(tool("spawn-running", "spawn_subagents"))).toBe(
-      false,
-    );
-    expect(
-      isVisibleTraceTool({
-        ...tool("spawn-completed", "spawn_subagents"),
-        status: "completed",
-      }),
-    ).toBe(false);
-    expect(
-      isVisibleTraceTool({
-        ...tool("spawn-failed", "spawn_subagents"),
-        status: "failed",
-      }),
-    ).toBe(true);
-    expect(isVisibleTraceTool(tool("read", "read_blocks"))).toBe(true);
+describe("summarizeActivity", () => {
+  test("counts visible tools and concurrent running subagents", () => {
+    const runningSub = {
+      ...subagent("sub-1"),
+      status: "running",
+    };
+    const summary = summarizeActivity([
+      {
+        key: "execution-1",
+        kind: "execution",
+        tools: [
+          tool("read-1"),
+          { ...tool("chart-1", "preview_echarts"), status: "running" },
+        ],
+        subagents: [
+          { kind: "historical", key: "sub-1", subagent: runningSub },
+          {
+            kind: "historical",
+            key: "sub-2",
+            subagent: { ...subagent("sub-2"), status: "running" },
+          },
+        ],
+      },
+      {
+        key: "thinking-1",
+        kind: "thinking",
+        text: "plan",
+        isStreaming: true,
+        isActive: true,
+      },
+    ]);
+
+    expect(summary).toEqual({
+      toolCount: 2,
+      subagentCount: 2,
+      runningSubagents: 2,
+      runningTools: 1,
+    });
   });
 });
 
@@ -88,6 +107,8 @@ describe("buildHistoricalSegments", () => {
       throw new Error("expected activity segment");
     }
     expect(activity.items).toHaveLength(2);
+    expect(activity.isActive).toBe(false);
+    expect(activity.durationMs).toBe(1200);
     const thinking = activity.items[0];
     if (thinking?.kind !== "thinking") {
       throw new Error("expected thinking item");
@@ -225,6 +246,7 @@ describe("buildLiveSegments", () => {
     if (activity.kind !== "activity") {
       throw new Error("expected activity segment");
     }
+    expect(activity.isActive).toBe(true);
     const execution = activity.items[1];
     if (execution?.kind !== "execution") {
       throw new Error("expected execution item");

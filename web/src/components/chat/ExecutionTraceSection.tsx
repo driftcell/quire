@@ -1,25 +1,22 @@
-import { Fragment, memo, type ReactNode } from "react";
-import { ListTreeIcon, LoaderCircleIcon, UsersIcon } from "lucide-react";
+import { Fragment, memo, useState, type ReactNode } from "react";
+import { ListTreeIcon, LoaderCircleIcon } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
-import { SubagentOutput } from "@/components/chat/SubagentOutput";
-import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
-import { ToolCallList } from "@/components/chat/ToolCallList";
+import { SubagentTrace } from "@/components/chat/SubagentTrace";
 import {
   CHAT_PROSE,
   STREAMDOWN_CONTROLS,
 } from "@/components/chat/chatMarkdown";
+import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
+import { ToolCallList } from "@/components/chat/ToolCallList";
 import {
   activityHasQuestion,
   buildHistoricalSegments,
   buildLiveSegments,
   extractSubagentLiveView,
+  summarizeActivity,
   type ActivityRenderSegment,
-  type ExecutionActivity,
-  type ExecutionSubagent,
   type RenderSegment,
-  type TextActivity,
-  type ThinkingActivity,
 } from "@/components/chat/traceSegments";
 import {
   Trace,
@@ -34,87 +31,20 @@ import {
 import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
-function ExecutionSubagents({
-  sessionId,
-  subagents,
-}: {
-  sessionId: string;
-  subagents: ExecutionSubagent[];
-}) {
-  if (subagents.length === 0) {
+function formatActivityDuration(durationMs?: number): string | null {
+  if (durationMs === undefined || durationMs <= 0) {
     return null;
   }
-  return (
-    <>
-      {subagents.map((entry) =>
-        entry.kind === "historical" ? (
-          <HistoricalSubagent
-            key={entry.key}
-            sessionId={sessionId}
-            subagent={entry.subagent}
-          />
-        ) : (
-          <LiveSubagent
-            key={entry.key}
-            sessionId={sessionId}
-            sub={entry.subagent}
-          />
-        ),
-      )}
-    </>
-  );
-}
-
-function ExecutionTrace({
-  segmentKey,
-  sessionId,
-  tools,
-  subagents,
-  defaultOpen,
-  questionSlots,
-}: {
-  segmentKey: string;
-  sessionId: string;
-  tools: ExecutionActivity["tools"];
-  subagents: ExecutionSubagent[];
-  defaultOpen: boolean;
-  questionSlots?: Map<string, ReactNode>;
-}) {
-  if (tools.length === 0 && subagents.length === 0) {
-    return null;
+  if (durationMs < 1000) {
+    return `${durationMs}ms`;
   }
-  const summaryParts: string[] = [];
-  if (tools.length > 0) {
-    summaryParts.push(`${tools.length} 个工具`);
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  if (totalSeconds < 60) {
+    return `${totalSeconds}秒`;
   }
-  if (subagents.length > 0) {
-    summaryParts.push(`${subagents.length} 个子代理`);
-  }
-  return (
-    <Trace key={segmentKey}>
-      <TraceCollapsible defaultOpen={defaultOpen}>
-        <TraceCollapsibleTrigger>
-          <TraceLine className="h-6 text-xs leading-5">
-            <TraceIcon>
-              <ListTreeIcon className="size-3.5" />
-            </TraceIcon>
-            <TraceTitle>执行详情</TraceTitle>
-            <TraceDescription className="text-[11px]">
-              {summaryParts.join(" · ")}
-            </TraceDescription>
-          </TraceLine>
-        </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
-          <ToolCallList
-            sessionId={sessionId}
-            tools={tools}
-            questionSlots={questionSlots}
-          />
-          <ExecutionSubagents sessionId={sessionId} subagents={subagents} />
-        </TraceCollapsibleContent>
-      </TraceCollapsible>
-    </Trace>
-  );
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  return secs > 0 ? `${mins}分${secs}秒` : `${mins}分`;
 }
 
 function ActivitySegment({
@@ -126,94 +56,59 @@ function ActivitySegment({
   segment: ActivityRenderSegment;
   questionSlots?: Map<string, ReactNode>;
 }) {
-  const thinkingItems = segment.items.filter(
-    (item): item is ThinkingActivity => item.kind === "thinking",
-  );
-  const executionItems = segment.items.filter(
-    (item): item is ExecutionActivity => item.kind === "execution",
-  );
-  const textItems = segment.items.filter(
-    (item): item is TextActivity => item.kind === "text",
-  );
   const hasQuestion = activityHasQuestion(segment.items, questionSlots);
+  const summary = summarizeActivity(segment.items);
+  const isActive = segment.isActive;
+  const defaultOpen = isActive || hasQuestion;
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? defaultOpen;
 
-  if (executionItems.length === 0 && textItems.length === 0) {
-    return (
-      <>
-        {thinkingItems.map((item) => (
-          <ThinkingTrace
-            key={item.key}
-            content={item.text}
-            isStreaming={item.isStreaming}
-            isActive={item.isActive}
-            defaultOpen={item.defaultOpen}
-            durationMs={item.durationMs}
-          />
-        ))}
-      </>
-    );
-  }
-
-  if (thinkingItems.length === 0 && textItems.length === 0) {
-    return (
-      <ExecutionTrace
-        segmentKey={segment.key}
-        sessionId={sessionId}
-        tools={executionItems.flatMap((item) => item.tools)}
-        subagents={executionItems.flatMap((item) => item.subagents)}
-        defaultOpen={
-          hasQuestion || executionItems.some((item) => item.defaultOpen)
-        }
-        questionSlots={questionSlots}
-      />
-    );
+  const duration = formatActivityDuration(segment.durationMs);
+  const descriptionParts: string[] = [];
+  if (isActive) {
+    if (summary.runningTools > 0) {
+      descriptionParts.push(`${summary.runningTools} 个工具运行中`);
+    }
+  } else {
+    if (duration) {
+      descriptionParts.push(duration);
+    }
+    if (summary.subagentCount > 0) {
+      descriptionParts.push(`${summary.subagentCount} 个子代理`);
+    }
   }
 
-  const tools = executionItems.flatMap((item) => item.tools);
-  const subagents = executionItems.flatMap((item) => item.subagents);
-  const summaryParts: string[] = [];
-  if (tools.length > 0) {
-    summaryParts.push(`${tools.length} 个工具`);
-  }
-  if (subagents.length > 0) {
-    summaryParts.push(`${subagents.length} 个子代理`);
-  }
-  const streaming = segment.items.some(
-    (item) =>
-      (item.kind === "thinking" || item.kind === "text") && item.isStreaming,
-  );
-  const title =
-    tools.length > 0 || subagents.length > 0
-      ? thinkingItems.length > 0
-        ? "思考与执行"
-        : "执行详情"
-      : "思考过程";
+  const title = isActive
+    ? summary.runningSubagents > 0
+      ? `正在处理 · ${summary.runningSubagents} 个子代理运行中`
+      : "正在处理"
+    : summary.toolCount > 0
+      ? `已完成思考与 ${summary.toolCount} 次操作`
+      : summary.subagentCount > 0
+        ? `已完成思考与 ${summary.subagentCount} 个子代理`
+        : "已完成思考";
 
   return (
-    <Trace key={segment.key}>
-      <TraceCollapsible
-        defaultOpen={
-          hasQuestion ||
-          streaming ||
-          executionItems.some((item) => item.defaultOpen)
-        }
-      >
-        <TraceCollapsibleTrigger>
+    <Trace data-slot="activity" data-active={isActive ? "true" : "false"}>
+      <TraceCollapsible open={open} onOpenChange={setUserOpen}>
+        <TraceCollapsibleTrigger data-activity-trigger="true">
           <TraceLine
-            status={streaming ? "running" : undefined}
+            status={isActive ? "running" : undefined}
             className="h-6 text-xs leading-5"
           >
             <TraceIcon>
-              {streaming ? (
+              {isActive ? (
                 <LoaderCircleIcon className="size-3.5 animate-spin" />
               ) : (
-                <ListTreeIcon className="size-3.5" />
+                <ListTreeIcon className="size-3.5 text-muted-foreground" />
               )}
             </TraceIcon>
-            <TraceTitle>{streaming ? "正在处理" : title}</TraceTitle>
-            <TraceDescription className="text-[11px]">
-              {summaryParts.join(" · ")}
-            </TraceDescription>
+            <TraceTitle>{title}</TraceTitle>
+            {descriptionParts.length > 0 && (
+              <TraceDescription className="text-[11px]">
+                {descriptionParts.join(" · ")}
+              </TraceDescription>
+            )}
           </TraceLine>
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="mt-1.5 space-y-2 border-l pl-4">
@@ -225,7 +120,7 @@ function ActivitySegment({
                   content={item.text}
                   isStreaming={item.isStreaming}
                   isActive={item.isActive}
-                  defaultOpen={item.defaultOpen}
+                  defaultOpen={false}
                   durationMs={item.durationMs}
                 />
               );
@@ -249,10 +144,21 @@ function ActivitySegment({
                   tools={item.tools}
                   questionSlots={questionSlots}
                 />
-                <ExecutionSubagents
-                  sessionId={sessionId}
-                  subagents={item.subagents}
-                />
+                {item.subagents.map((entry) =>
+                  entry.kind === "historical" ? (
+                    <HistoricalSubagent
+                      key={entry.key}
+                      sessionId={sessionId}
+                      subagent={entry.subagent}
+                    />
+                  ) : (
+                    <LiveSubagent
+                      key={entry.key}
+                      sessionId={sessionId}
+                      sub={entry.subagent}
+                    />
+                  ),
+                )}
               </Fragment>
             );
           })}
@@ -333,71 +239,22 @@ function LiveSubagent({
   const outputText =
     sub.summary?.trim() ||
     (sub.status === "running" ? streamingText.trim() : "");
-  const title = sub.displayName?.trim() || sub.agentName;
+
   return (
-    <Trace>
-      <TraceCollapsible defaultOpen={false}>
-        <TraceCollapsibleTrigger>
-          <TraceLine
-            className="h-6 text-xs leading-5"
-            status={
-              sub.status === "running"
-                ? "running"
-                : sub.status === "failed"
-                  ? "error"
-                  : undefined
-            }
-          >
-            <TraceIcon>
-              {sub.status === "running" ? (
-                <LoaderCircleIcon className="size-3.5 animate-spin" />
-              ) : (
-                <UsersIcon className="size-3.5" />
-              )}
-            </TraceIcon>
-            <TraceTitle>{title}</TraceTitle>
-            {sub.trace.taskFocus?.title && (
-              <TraceDescription className="truncate text-[11px]">
-                {sub.trace.taskFocus.title}
-              </TraceDescription>
-            )}
-          </TraceLine>
-        </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent className="mt-1 space-y-1.5 border-l pl-4">
-          <ThinkingTrace
-            content={thinkingText}
-            isStreaming={isThinkingStreaming}
-            defaultOpen={false}
-          />
-          {tools.length > 0 && (
-            <Trace>
-              <TraceCollapsible defaultOpen={false}>
-                <TraceCollapsibleTrigger>
-                  <TraceLine className="h-6 text-xs leading-5">
-                    <TraceIcon>
-                      <ListTreeIcon className="size-3.5" />
-                    </TraceIcon>
-                    <TraceTitle>执行详情</TraceTitle>
-                    <TraceDescription className="text-[11px]">
-                      {tools.length} 个工具
-                    </TraceDescription>
-                  </TraceLine>
-                </TraceCollapsibleTrigger>
-                <TraceCollapsibleContent className="mt-1.5 space-y-1.5 border-l pl-4">
-                  <ToolCallList sessionId={sessionId} tools={tools} />
-                </TraceCollapsibleContent>
-              </TraceCollapsible>
-            </Trace>
-          )}
-          {outputText && (
-            <SubagentOutput
-              text={outputText}
-              streaming={!sub.summary && sub.status === "running"}
-            />
-          )}
-        </TraceCollapsibleContent>
-      </TraceCollapsible>
-    </Trace>
+    <SubagentTrace
+      sessionId={sessionId}
+      model={{
+        id: sub.subagentRunId,
+        title: sub.displayName?.trim() || sub.agentName,
+        focusTitle: sub.trace.taskFocus?.title,
+        status: sub.status,
+        thinking: thinkingText,
+        thinkingStreaming: isThinkingStreaming,
+        tools,
+        outputText,
+        outputStreaming: !sub.summary && sub.status === "running",
+      }}
+    />
   );
 }
 

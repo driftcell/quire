@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2Icon, WrenchIcon } from "lucide-react";
+import { Loader2Icon } from "lucide-react";
+import { getToolMeta } from "@/components/chat/toolMeta";
 import { getToolCall } from "@/api/runtime";
 import {
   Trace,
@@ -30,6 +31,8 @@ export interface ToolCallTraceProps {
 
 export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
   const [open, setOpen] = useState(false);
+  const meta = getToolMeta(item.toolName);
+  const Icon = meta.icon;
 
   const detailQuery = useQuery({
     queryKey: ["tool-call", sessionId, item.toolCallId],
@@ -46,20 +49,28 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
         : undefined;
 
   return (
-    <Trace>
+    <Trace
+      data-tool-name={item.toolName}
+      data-tool-status={item.status}
+      data-slot="tool-trace"
+    >
       <TraceCollapsible open={open} onOpenChange={setOpen}>
-        <TraceCollapsibleTrigger>
+        <TraceCollapsibleTrigger showChevron={false}>
           <TraceLine status={lineStatus} className="h-6 text-xs leading-5">
             <TraceIcon>
               {item.status === "running" ? (
                 <Loader2Icon className="size-3.5 animate-spin" />
               ) : (
-                <WrenchIcon className="size-3.5" />
+                <Icon
+                  className={
+                    item.status === "failed"
+                      ? "size-3.5 text-destructive"
+                      : "size-3.5 text-muted-foreground"
+                  }
+                />
               )}
             </TraceIcon>
-            <TraceTitle className="font-mono text-xs">
-              {item.toolName}
-            </TraceTitle>
+            <TraceTitle className="text-xs">{meta.label}</TraceTitle>
             {item.durationMs !== undefined && (
               <TraceDescription className="text-[11px]">
                 {item.durationMs}ms
@@ -69,6 +80,9 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
         </TraceCollapsibleTrigger>
         <TraceCollapsibleContent className="mt-1.5 pl-5">
           <div className="space-y-2 rounded-lg border bg-muted/30 p-2.5 text-xs">
+            <div className="font-mono text-[11px] text-muted-foreground">
+              {item.toolName}
+            </div>
             <div>
               <div className="mb-1 text-[11px] font-medium text-muted-foreground">
                 Input

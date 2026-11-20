@@ -1,4 +1,5 @@
 import type { ToolCallTraceItem } from "@/components/chat/ToolCallTrace";
+import { isVisibleTraceTool } from "@/components/chat/toolMeta";
 import type {
   RunTraceSubagent,
   RunTraceSummary,
@@ -16,7 +17,6 @@ export type ThinkingActivity = {
   text: string;
   isStreaming: boolean;
   isActive: boolean;
-  defaultOpen?: boolean;
   durationMs?: number;
 };
 
@@ -29,7 +29,6 @@ export type ExecutionActivity = {
   kind: "execution";
   tools: ToolCallTraceItem[];
   subagents: ExecutionSubagent[];
-  defaultOpen: boolean;
 };
 
 export type TextActivity = {
@@ -39,12 +38,14 @@ export type TextActivity = {
   isStreaming: boolean;
 };
 
-type ActivityItem = ThinkingActivity | ExecutionActivity | TextActivity;
+export type ActivityItem = ThinkingActivity | ExecutionActivity | TextActivity;
 
 export type ActivityRenderSegment = {
   key: string;
   kind: "activity";
   items: ActivityItem[];
+  isActive: boolean;
+  durationMs?: number;
 };
 
 type TextRenderSegment = {
@@ -65,20 +66,28 @@ export interface SubagentLiveView {
   streamingText: string;
 }
 
-/**
- * Internal orchestration tools never render as their own trace row. The
- * subagent cards below the execution segment already represent their effect,
- * so showing the tool too would duplicate the loading state. A failed
- * `spawn_subagents` call is the exception: keep it visible for debugging.
- */
-export function isVisibleTraceTool(tool: ToolCallTraceItem): boolean {
-  if (tool.toolName === "describe_task") {
-    return false;
-  }
-  if (tool.toolName === "spawn_subagents") {
-    return tool.status === "failed";
-  }
-  return true;
+export interface ActivitySummary {
+  toolCount: number;
+  subagentCount: number;
+  runningSubagents: number;
+  runningTools: number;
+}
+
+export function summarizeActivity(items: ActivityItem[]): ActivitySummary {
+  const tools = items.flatMap((item) =>
+    item.kind === "execution" ? item.tools : [],
+  );
+  const subagents = items.flatMap((item) =>
+    item.kind === "execution" ? item.subagents : [],
+  );
+  return {
+    toolCount: tools.length,
+    subagentCount: subagents.length,
+    runningSubagents: subagents.filter(
+      (entry) => entry.subagent.status === "running",
+    ).length,
+    runningTools: tools.filter((tool) => tool.status === "running").length,
+  };
 }
 
 function joinLiveText(parts: string[]): string {
@@ -226,14 +235,26 @@ export function buildHistoricalSegments(
         key: subagent.subagent_run_id,
         subagent,
       })),
-      defaultOpen: false,
     });
   });
   if (activity.length > 0) {
+    const hasRunningTool = activity.some(
+      (item) =>
+        item.kind === "execution" &&
+        item.tools.some((tool) => tool.status === "running"),
+    );
+    const hasRunningSubagent = activity.some(
+      (item) =>
+        item.kind === "execution" &&
+        item.subagents.some((entry) => entry.subagent.status === "running"),
+    );
     segments.push({
       key: `activity-${activity[0]?.key ?? segments.length}`,
       kind: "activity",
       items: activity,
+      isActive:
+        trace.status === "running" || hasRunningTool || hasRunningSubagent,
+      durationMs: trace.duration_ms ?? undefined,
     });
   }
   tail.forEach((segment, index) => {
@@ -253,7 +274,6 @@ export function buildHistoricalSegments(
 export function buildLiveSegments(
   trace: LiveAgentTrace,
   subagents: LiveSubagentRun[],
-  options?: { defaultCollapsed?: boolean },
 ): RenderSegment[] {
   const lastIndex = trace.segments.length - 1;
   let tailStart = trace.segments.length;
@@ -277,7 +297,6 @@ export function buildLiveSegments(
         text: segment.text,
         isStreaming: trace.isStreaming && isLast,
         isActive: trace.isStreaming && isLast,
-        defaultOpen: options?.defaultCollapsed ? false : undefined,
       });
       return;
     }
@@ -309,14 +328,18 @@ export function buildLiveSegments(
         key: subagent.subagentRunId,
         subagent,
       })),
-      defaultOpen: !options?.defaultCollapsed,
     });
   });
   if (activity.length > 0) {
+    const summary = summarizeActivity(activity);
     segments.push({
       key: `activity-${activity[0]?.key ?? segments.length}`,
       kind: "activity",
       items: activity,
+      isActive:
+        trace.isStreaming ||
+        summary.runningSubagents > 0 ||
+        summary.runningTools > 0,
     });
   }
   tail.forEach((segment, index) => {

@@ -12,7 +12,10 @@ export function SubagentOutput({
   streaming: boolean;
 }) {
   return (
-    <div className={`${CHAT_PROSE} text-xs text-muted-foreground`}>
+    <div
+      data-slot="subagent-output"
+      className={`${CHAT_PROSE} text-xs text-muted-foreground`}
+    >
       <Streamdown
         mode={streaming ? "streaming" : "static"}
         controls={STREAMDOWN_CONTROLS}

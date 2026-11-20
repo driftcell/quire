@@ -4,7 +4,7 @@ import {
   ToolCallTrace,
   type ToolCallTraceItem,
 } from "@/components/chat/ToolCallTrace";
-import { isVisibleTraceTool } from "@/components/chat/traceSegments";
+import { isVisibleTraceTool } from "@/components/chat/toolMeta";
 
 const COLLAPSE_THRESHOLD = 5;
 const VISIBLE_RECENT_TOOLS = 4;
