@@ -1737,6 +1737,15 @@ async fn request_questionnaire(
     Ok(())
 }
 
+fn format_invalid_tool_arguments_error(invalid: &str) -> String {
+    match serde_json::from_str::<Value>(invalid) {
+        Err(err) => {
+            format!("invalid JSON in tool arguments (fix syntax and retry): {err}")
+        }
+        Ok(_) => format!("tool arguments must be a JSON object, got: {invalid}"),
+    }
+}
+
 async fn execute_tool_call(
     tool_map: &BTreeMap<String, DynamicTool>,
     scope: &EventScope,
@@ -1761,9 +1770,9 @@ async fn execute_tool_call(
     });
     let started = Instant::now();
     let outcome = if let Some(invalid) = call.function.invalid_arguments.clone() {
-        Err(ToolExecutionError::invalid_args(format!(
-            "tool arguments were not a JSON object: {invalid}"
-        )))
+        Err(ToolExecutionError::invalid_args(
+            format_invalid_tool_arguments_error(&invalid),
+        ))
     } else if let Some(tool) = tool_map.get(&tool_name) {
         tokio::select! {
             _ = execution.cancellation.cancelled() => {
