@@ -12,7 +12,7 @@ use quire_protocol::{
     Diagnostic, DocId, EphemeralClearEvent, EphemeralPayload, IdAssignment, MarkdownOptions,
     MarkdownProjector, PageChromeConfig, PatchOp, ProtocolError, ReportDocument, ReportDraft,
     Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value,
-    is_valid_css_token_name, lint_document,
+    is_valid_css_token_name, lint_document, short_token,
 };
 use quire_store::{
     ApplyResult, CommitExtras, NewCommentReply, NewCommentThread, SourceUpsert, StoreError,
@@ -27,7 +27,6 @@ use rmcp::{
     tool, tool_router,
 };
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 use crate::{
     auth::RequestContext,
@@ -1527,12 +1526,7 @@ fn parse_revision(value: i64) -> Result<Revision, ErrorData> {
 
 fn generate_doc_id(title: &str) -> Result<DocId, ErrorData> {
     let slug = slugify_title(title);
-    let suffix: String = Uuid::new_v4()
-        .simple()
-        .to_string()
-        .chars()
-        .take(8)
-        .collect();
+    let suffix = short_token(8);
     let prefix: String = slug.chars().take(48).collect();
     DocId::parse(format!("{prefix}-{suffix}")).map_err(protocol_error)
 }

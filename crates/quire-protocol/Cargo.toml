@@ -13,6 +13,7 @@ schemars = { workspace = true, features = ["chrono04"] }
 indexmap.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
+uuid.workspace = true
 
 [lints]
 workspace = true

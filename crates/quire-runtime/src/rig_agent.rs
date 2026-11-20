@@ -12,7 +12,7 @@ use futures::StreamExt;
 use quire_protocol::{
     Block, BlockId, BlockKind, EchartsBlock, EphemeralPayload, EphemeralPreviewEvent,
     PartialBlockPreview, PatchOp, PreviewAnchor, PreviewStatus, chart_data_tables_for_block,
-    chart_requirements, lint_echarts_block, merge_chart_option_patch,
+    chart_requirements, lint_echarts_block, merge_chart_option_patch, short_id,
 };
 use quire_session_protocol::{ContextUsage, MessageRole, QuestionItem};
 use rig_core::{
@@ -607,7 +607,7 @@ async fn preview_echarts_tool(
         }
     };
 
-    let preview_id = format!("chart_{}", uuid::Uuid::new_v4().simple());
+    let preview_id = short_id("chart");
     let preview_block_id = BlockId::parse("chart_preview").map_err(tool_other)?;
     let lint = lint_echarts_block(preview_block_id, &chart);
     let requirements = chart_requirements(&chart);
@@ -1524,7 +1524,7 @@ impl RigModelCore {
         parent: AgentExecution,
         task: SubagentTask,
     ) -> SubagentOutcome {
-        let subagent_run_id = format!("run_sub_{}", uuid::Uuid::new_v4().simple());
+        let subagent_run_id = short_id("run_sub");
         parent_scope.send_raw(ModelStreamEvent::SubagentStarted {
             subagent_run_id: subagent_run_id.clone(),
             agent_name: task.agent_name.clone(),

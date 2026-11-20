@@ -25,6 +25,7 @@ pub mod model;
 pub mod normalize;
 pub mod ops;
 pub mod rank;
+pub mod short_id;
 pub mod table;
 pub(crate) mod text;
 
@@ -73,6 +74,7 @@ pub use ops::{
     apply_operations, apply_operations_in_place, remap_operations_sources, remap_source_references,
 };
 pub use rank::{RankError, rank_after, rank_before, rank_between, try_rank_between};
+pub use short_id::{DEFAULT_SHORT_ID_LEN, short_id, short_token};
 
 /// Validate arbitrary scoped CSS and return an actionable located error.
 pub fn validate_custom_css(css: &str) -> Result<(), ProtocolError> {

@@ -11,14 +11,13 @@ use quire_protocol::{
     Block, BlockId, BlockKind, CommentAuthorType, CommentMessage, CommentStatus, CommentThread,
     DocId, PatchOp, PatchOutcome, Rank, ReportDocument, Revision, SessionId, SourceEntry, SourceId,
     apply_operations_in_place, lint_document, normalize::normalize_document, rank_after,
-    remap_operations_sources, try_rank_between,
+    remap_operations_sources, short_id, try_rank_between,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sqlx::{PgPool, Postgres, Transaction};
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 use tracing::{error, warn};
-use uuid::Uuid;
 
 use crate::{
     error::{InlineWarnings, RevisionConflict, StoreError, ops_to_json},
@@ -951,8 +950,8 @@ impl PgReportStore {
             .map(serde_json::to_value)
             .transpose()?;
         let now = Utc::now();
-        let thread_id = generate_comment_id("th");
-        let message_id = generate_comment_id("msg");
+        let thread_id = short_id("th");
+        let message_id = short_id("msg");
         let status = CommentStatus::Open;
 
         sqlx::query!(
@@ -1114,7 +1113,7 @@ impl PgReportStore {
             .load_comment_thread_in_tx(&mut tx, doc_id, thread_id)
             .await?;
         let now = Utc::now();
-        let message_id = generate_comment_id("msg");
+        let message_id = short_id("msg");
         sqlx::query!(
             r#"INSERT INTO report_comment_messages
                (message_id, doc_id, thread_id, author_type, author, body, created_at)
@@ -1500,10 +1499,6 @@ fn validate_comment_body(body: &str) -> Result<(), StoreError> {
         ));
     }
     Ok(())
-}
-
-fn generate_comment_id(prefix: &str) -> String {
-    format!("{prefix}_{}", Uuid::new_v4().simple())
 }
 
 async fn lock_current_revision(

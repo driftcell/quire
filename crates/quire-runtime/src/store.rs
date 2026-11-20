@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
+use quire_protocol::short_id;
 use quire_session_protocol::{
     ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, PendingQueueItem,
     PendingQueueSource, QuestionAnswer, QuestionItem, ResolvedQuestion, RunTaskFocus,
@@ -13,7 +14,6 @@ use quire_session_protocol::{
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
 use tracing::warn;
-use uuid::Uuid;
 
 use crate::{
     bus::RedisBus,
@@ -106,7 +106,7 @@ impl RuntimeStore {
                 "session title must not be empty".into(),
             ));
         }
-        let session_id = format!("sess_{}", Uuid::new_v4().simple());
+        let session_id = short_id("sess");
         sqlx::query(
             r#"INSERT INTO agent_sessions
                (session_id, title, doc_id, linked_doc_id, kb_branch, status, active_run_status)
@@ -290,7 +290,7 @@ impl RuntimeStore {
                 "message content must not be empty".into(),
             ));
         }
-        let message_id = format!("msg_{}", Uuid::new_v4().simple());
+        let message_id = short_id("msg");
         let attachment_ids = serde_json::to_value(&request.attachment_ids)?;
         let inserted = sqlx::query(
             r#"INSERT INTO agent_messages
@@ -343,7 +343,7 @@ impl RuntimeStore {
         content: &str,
         run_id: &str,
     ) -> RuntimeResult<SessionMessage> {
-        let message_id = format!("msg_{}", Uuid::new_v4().simple());
+        let message_id = short_id("msg");
         let client_msg_id = format!("assistant:{message_id}");
         sqlx::query(
             r#"INSERT INTO agent_messages
@@ -426,7 +426,7 @@ impl RuntimeStore {
             ));
         }
         self.get_session_summary(session_id).await?;
-        let queue_id = format!("q_{}", Uuid::new_v4().simple());
+        let queue_id = short_id("q");
         let attachments = serde_json::to_value(attachment_ids)?;
         let inserted = sqlx::query(
             r#"INSERT INTO session_pending_queue
@@ -586,7 +586,7 @@ impl RuntimeStore {
         client_msg_id: &str,
         run_id: Option<&str>,
     ) -> RuntimeResult<SessionMessage> {
-        let message_id = format!("msg_{}", Uuid::new_v4().simple());
+        let message_id = short_id("msg");
         let inserted = sqlx::query(
             r#"INSERT INTO agent_messages
                (message_id, session_id, client_msg_id, role, content, attachment_ids, run_id)
@@ -624,7 +624,7 @@ impl RuntimeStore {
         tool_call_id: Option<&str>,
         questions: &[QuestionItem],
     ) -> RuntimeResult<PendingQuestion> {
-        let question_id = format!("q_{}", Uuid::new_v4().simple());
+        let question_id = short_id("q");
         let questions_value = serde_json::to_value(questions)?;
         let created_at: DateTime<Utc> = sqlx::query_scalar(
             r#"INSERT INTO agent_questions
@@ -814,7 +814,7 @@ impl RuntimeStore {
         size_bytes: u64,
         storage_path: &str,
     ) -> RuntimeResult<AttachmentMeta> {
-        let attachment_id = format!("att_{}", Uuid::new_v4().simple());
+        let attachment_id = short_id("att");
         sqlx::query(
             r#"INSERT INTO agent_attachments
                (attachment_id, session_id, filename, mime_type, size_bytes, storage_path)
@@ -864,7 +864,7 @@ impl RuntimeStore {
         agent_id: &str,
         model: &str,
     ) -> RuntimeResult<RunRecord> {
-        let run_id = format!("run_{}", Uuid::new_v4().simple());
+        let run_id = short_id("run");
         sqlx::query(
             r#"INSERT INTO agent_runs (run_id, session_id, parent_run_id, agent_id, status, model)
                VALUES ($1, $2, $3, $4, 'running', $5)"#,

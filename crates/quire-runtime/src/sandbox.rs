@@ -12,6 +12,7 @@ use std::{
 };
 
 use async_trait::async_trait;
+use quire_protocol::short_id;
 use secrecy::SecretString;
 use tokio::{runtime::Handle, sync::Mutex};
 use tracing::warn;
@@ -307,7 +308,7 @@ impl LocalSandbox {
 impl SandboxProvider for LocalSandboxProvider {
     async fn create_sandbox(&self, _spec: SandboxSpec) -> Result<Arc<dyn Sandbox>, SandboxError> {
         Ok(Arc::new(LocalSandbox {
-            id: format!("local_{}", uuid::Uuid::new_v4().simple()),
+            id: short_id("local"),
             files: Mutex::new(HashMap::new()),
             destroyed: AtomicBool::new(false),
         }))

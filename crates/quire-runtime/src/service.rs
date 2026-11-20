@@ -10,6 +10,7 @@ use std::{
 use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
+use quire_protocol::{short_id, short_token};
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQuestion, PendingQueueItem,
     PendingQueueSource, QuestionAnswer, QuestionItem, RunTraceSummary, SendMessageRequest,
@@ -89,7 +90,7 @@ impl QuireControl for HttpQuireControl {
                     "title": title,
                     "enable_cover": true,
                     "enable_toc": true,
-                    "idempotency_key": format!("runtime:{}", uuid::Uuid::new_v4().simple()),
+                    "idempotency_key": format!("runtime:{}", short_token(16)),
                 }),
             )
             .await?;
@@ -766,7 +767,7 @@ impl RuntimeService {
             .join(".quire-runtime")
             .join("attachments");
         tokio::fs::create_dir_all(&storage_dir).await?;
-        let path = storage_dir.join(format!("{}-{filename}", uuid::Uuid::new_v4().simple()));
+        let path = storage_dir.join(format!("{}-{filename}", short_token(12)));
         tokio::fs::write(&path, &bytes).await?;
         self.store
             .insert_attachment(
@@ -866,7 +867,7 @@ impl RuntimeService {
 
     /// Persist the full tool input/output and emit live start/finish summaries.
     pub async fn record_tool_call(&self, record: ToolCallRecord) -> RuntimeResult<ToolCallDetail> {
-        let tool_call_id = format!("tc_{}", uuid::Uuid::new_v4().simple());
+        let tool_call_id = short_id("tc");
         let (input_preview, input_truncated) = preview_json(&record.input);
         let (output_preview, output_truncated) = preview_json(&record.output);
         self.emit(

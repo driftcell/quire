@@ -19,7 +19,6 @@ tracing.workspace = true
 chrono.workspace = true
 futures.workspace = true
 indexmap.workspace = true
-uuid.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }
