@@ -609,6 +609,13 @@ pub struct UpdateStyleReceipt {
 #[serde(deny_unknown_fields)]
 pub struct LintParams {
     pub doc_id: String,
+    /// Only report rules matching these codes, names or category prefixes (e.g. `QR2`).
+    #[serde(default)]
+    pub select: Vec<String>,
+    /// Hide suppressible rules matching these codes, names or category prefixes.
+    /// Core contract and safety rules remain visible.
+    #[serde(default)]
+    pub ignore: Vec<String>,
 }
 
 /// Output for `lint_document`. Clean documents return only `{"ok":true,"rev":N}`.

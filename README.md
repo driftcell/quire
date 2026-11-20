@@ -11,7 +11,8 @@ dependency. Rendering and visual preview belong to the external frontend.
 
 | Crate | Purpose |
 | --- | --- |
-| `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, linter, draft parser |
+| `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, lint wire contracts, draft parser |
+| `quire-lint` | Pure, zero-I/O static lint registry and rule engine with layered select/ignore filters |
 | `quire-store` | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher |
 | `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json` |
 | `quire-server` | Axum REST/SSE endpoints and the 19-tool `rmcp` server mounted at `/mcp` |
@@ -158,7 +159,9 @@ INIT -> SCHEMA -> AUTHOR -> VERIFY
 3. Mutate with `apply_operations(doc_id, expected_revision, summary, ops)` or `apply_draft`.
    Parallel writers using disjoint block IDs are automatically rebased by Smart CAS; overlapping
    writes receive a structured conflict with the latest blocks.
-4. Call `lint_document` until errors are zero, then `read_as_markdown` for review.
+4. Call `lint_document` until errors are zero and review warnings. Diagnostics carry `code`,
+   `rule`, `hint` and `suppressible`; only a suppressible rule that genuinely does not apply may be
+   ignored through `PatchBlock.lint_ignore`. Then call `read_as_markdown` for review.
 
 Every tool receipt includes `_next_hint`. Every error carries a structured `hint` with valid block
 IDs, source IDs, enums or exact CSS line/column locations. Apply receipts are deliberately compact
@@ -350,10 +353,11 @@ P90 visual-width heuristic (`CJK = 2.0`, ASCII = 1.0), `fit`/`grow` weights and
 - Table/ECharts/CustomHtml blocks share outer `title`, `numbering` and `note` fields. The server
   computes `表 N` / `图 N` labels and source attribution in `computed.block_framing`; titles must
   never contain manual numbering.
-- ECharts inner `title` is stripped with an `ECHARTS_INNER_TITLE_STRIPPED` warning unless it is a
+- ECharts inner `title` is stripped with a normalization warning unless it is a
   center-positioned KPI; interactive `toolbox` chrome is stripped from static exports.
-  `lint_document` flags `MANUAL_PREFIX_IN_TITLE`, `DUPLICATE_INNER_TITLE`, JS callback strings,
-  invalid series types/indices, missing matrix coordinates and empty data sources.
+  `lint_document` flags manual title numbering, duplicate inner titles, JS callback strings,
+  invalid series types/indices, missing matrix coordinates and empty data sources, and returns a
+  stable `QRxxx` code plus a kebab-case rule name for every diagnostic.
 - ECharts blocks are pure native ECharts 6.0 `option` objects. `option_patch` deep-merges incremental
   edits for `patch_block`; there are no preset or mode abstractions. Native options support `dataset`,
   multi-series Cartesian charts, `matrix`, `radar`, `sankey`/`graph`/`chord`, `beeswarm`,

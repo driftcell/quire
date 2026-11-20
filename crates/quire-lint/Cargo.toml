@@ -1,0 +1,14 @@
+[package]
+name = "quire-lint"
+description = "Quire: pure static lint rules, rule registry and layered ignore filters for report documents"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+quire-protocol.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

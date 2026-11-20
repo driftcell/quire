@@ -59,7 +59,7 @@ pub(crate) const SERIES_TYPES: &[&str] = &[
 ];
 
 /// Merge the base option with `option_patch`.
-pub(crate) fn merged_option(chart: &EchartsBlock) -> Value {
+pub fn merged_option(chart: &EchartsBlock) -> Value {
     let mut value = chart.option.clone();
     if let Some(patch) = &chart.option_patch {
         value = merge_optional_json(Some(&value), patch);
@@ -83,7 +83,7 @@ pub fn merge_chart_option_patch(base: Option<&Value>, patch: &Value) -> Value {
 }
 
 /// Return series entries whether `series` is an array or a single object.
-pub(crate) fn series(option: &Value) -> Vec<&Value> {
+pub fn series(option: &Value) -> Vec<&Value> {
     match option.get("series") {
         Some(Value::Array(items)) => items.iter().collect(),
         Some(value @ Value::Object(_)) => vec![value],
@@ -92,7 +92,7 @@ pub(crate) fn series(option: &Value) -> Vec<&Value> {
 }
 
 /// Treat an object/array JSON value as a list of entries.
-pub(crate) fn entries(value: Option<&Value>) -> Vec<&Value> {
+pub fn entries(value: Option<&Value>) -> Vec<&Value> {
     match value {
         Some(Value::Array(items)) => items.iter().collect(),
         Some(value @ Value::Object(_)) => vec![value],
@@ -105,7 +105,7 @@ pub(crate) fn entries(value: Option<&Value>) -> Vec<&Value> {
 /// Cartesian axes and grids have an implicit default instance, so they may be omitted.
 /// Radar/polar have no implicit component and report zero when absent; callers can use
 /// [`configured_axis_count`] to distinguish "absent" from "one configured instance".
-pub(crate) fn axis_count(option: &Value, key: &str) -> usize {
+pub fn axis_count(option: &Value, key: &str) -> usize {
     configured_axis_count(option, key).unwrap_or({
         if matches!(key, "xAxis" | "yAxis" | "grid") {
             1
@@ -116,7 +116,7 @@ pub(crate) fn axis_count(option: &Value, key: &str) -> usize {
 }
 
 /// Number of explicitly configured coordinate-system instances, or `None` when absent.
-pub(crate) fn configured_axis_count(option: &Value, key: &str) -> Option<usize> {
+pub fn configured_axis_count(option: &Value, key: &str) -> Option<usize> {
     match option.get(key) {
         Some(Value::Array(items)) if !items.is_empty() => Some(items.len()),
         Some(Value::Object(_)) => Some(1),
@@ -125,7 +125,7 @@ pub(crate) fn configured_axis_count(option: &Value, key: &str) -> Option<usize> 
 }
 
 /// Whether a series type is valid ECharts 6.0 or a documented extension series.
-pub(crate) fn is_valid_series_type(kind: &str) -> bool {
+pub fn is_valid_series_type(kind: &str) -> bool {
     SERIES_TYPES.contains(&kind)
 }
 
@@ -138,7 +138,7 @@ pub(crate) fn normalized_title_text(text: &str) -> String {
 }
 
 /// Whether an inner ECharts title repeats the outer block title.
-pub(crate) fn inner_title_duplicates(entry: &Value, outer_title: &str) -> bool {
+pub fn inner_title_duplicates(entry: &Value, outer_title: &str) -> bool {
     let outer = normalized_title_text(outer_title.trim());
     if outer.is_empty() {
         return false;
@@ -153,7 +153,7 @@ pub(crate) fn inner_title_duplicates(entry: &Value, outer_title: &str) -> bool {
 }
 
 /// Center titles are KPI labels inside donut charts, not duplicated chart titles.
-pub(crate) fn is_center_inner_title(entry: &Value) -> bool {
+pub fn is_center_inner_title(entry: &Value) -> bool {
     matches!(
         entry
             .get("top")
@@ -166,7 +166,7 @@ pub(crate) fn is_center_inner_title(entry: &Value) -> bool {
 
 /// A single inner title is allowed as a lightweight subplot label when it is
 /// anchored away from the default top-center position or uses a small font.
-pub(crate) fn is_positioned_or_light_inner_title(entry: &Value) -> bool {
+pub fn is_positioned_or_light_inner_title(entry: &Value) -> bool {
     let positioned = ["left", "right", "bottom"].iter().any(|key| {
         entry
             .get(*key)
@@ -192,7 +192,7 @@ pub(crate) fn is_extension_series_type(kind: &str) -> bool {
 }
 
 /// Whether the merged option contains any non-empty data source.
-pub(crate) fn has_data_source(option: &Value) -> bool {
+pub fn has_data_source(option: &Value) -> bool {
     if series(option).iter().any(|entry| {
         ["data", "links", "edges"]
             .iter()
@@ -261,7 +261,7 @@ pub(crate) fn required_extensions(option: &Value) -> BTreeSet<String> {
 ///
 /// Data payloads (dataset sources, series data/links/edges/nodes, axis categories, names and
 /// display text) are skipped: they are legitimate business strings and never execute as code.
-pub(crate) fn find_js_function_string(value: &Value, path: &str) -> Option<String> {
+pub fn find_js_function_string(value: &Value, path: &str) -> Option<String> {
     match value {
         Value::String(text) if looks_like_js_function(text) => Some(path.to_string()),
         Value::Array(items) => items

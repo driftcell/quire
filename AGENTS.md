@@ -7,7 +7,8 @@ knowledge belongs in `docs/`, decision history belongs in `notes/`.
 
 | Crate | Boundary |
 | --- | --- |
-| `quire-protocol` | Pure synchronous domain protocol: Block AST, patch engine, ranks, citations, Markdown projection, linter, report/session wire types. Zero I/O. |
+| `quire-protocol` | Pure synchronous domain protocol: Block AST, patch engine, ranks, citations, Markdown projection, lint wire contracts, report/session wire types. Zero I/O. |
+| `quire-lint` | Pure synchronous lint rule registry and engine: `QRxxx` codes, select/ignore filters, document/block suppression. Zero I/O, no CLI. |
 | `quire-store` | PostgreSQL persistence, Smart CAS revisions, snapshots, Redis Streams/PubSub. No HTTP or MCP concerns. |
 | `quire-server` | Axum REST/SSE and the `rmcp` MCP server. Must not depend on `rig` or agent-runtime internals. |
 | `quire-session-protocol` | Pure synchronous Session REST/SSE contracts and JSON Schema export. Zero I/O. |

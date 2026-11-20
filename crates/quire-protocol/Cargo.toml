@@ -1,6 +1,6 @@
 [package]
 name = "quire-protocol"
-description = "Quire: frontend-agnostic report block AST, computed layouts, Markdown projection, patch engine and static linter"
+description = "Quire: frontend-agnostic report block AST, computed layouts, Markdown projection, patch engine and lint contracts"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

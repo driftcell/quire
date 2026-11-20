@@ -1211,13 +1211,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             .all(|diagnostic| diagnostic["block_id"] == "b_bad_chart"),
         "blocking errors must be scoped to the written block: {blocking_errors:?}"
     );
-    for code in [
-        "ECHARTS_JS_FUNCTION_STRING",
-        "ECHARTS_SERIES_TYPE_INVALID",
-        "ECHARTS_MATRIX_MISSING",
-        "ECHARTS_INDEX_OUT_OF_RANGE",
-        "ECHARTS_DATA_MISSING",
-    ] {
+    for code in ["QR302", "QR305", "QR308", "QR306", "QR301"] {
         assert!(
             blocking_errors
                 .iter()
@@ -1235,13 +1229,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .iter()
         .filter_map(|diagnostic| diagnostic["code"].as_str())
         .collect();
-    for code in [
-        "ECHARTS_JS_FUNCTION_STRING",
-        "ECHARTS_SERIES_TYPE_INVALID",
-        "ECHARTS_MATRIX_MISSING",
-        "ECHARTS_INDEX_OUT_OF_RANGE",
-        "ECHARTS_DATA_MISSING",
-    ] {
+    for code in ["QR302", "QR305", "QR308", "QR306", "QR301"] {
         assert!(
             bad_chart_codes.contains(&code),
             "missing {code}: {bad_chart_codes:?}"
@@ -1292,8 +1280,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .as_array()
         .unwrap()
         .iter()
-        .find(|diagnostic| diagnostic["code"] == "DANGLING_SOURCE_ID")
-        .ok_or_else(|| anyhow!("missing DANGLING_SOURCE_ID diagnostic"))?;
+        .find(|diagnostic| diagnostic["code"] == "QR101")
+        .ok_or_else(|| anyhow!("missing QR101 diagnostic"))?;
     let hint = dangling["hint"].as_str().unwrap();
     assert!(hint.contains("sec_market"));
     assert!(hint.contains("sec_fin"));

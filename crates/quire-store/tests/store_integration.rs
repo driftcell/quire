@@ -8,9 +8,9 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use quire_protocol::{
-    Block, BlockId, BlockPatch, CommentAuthorType, CommentStatus, CoverConfig, DocId, PatchOp,
-    ReportDocument, Revision, SessionId, SourceEntry, SourceId, TableBlock, TextQuoteSelector,
-    TocConfig,
+    Block, BlockId, BlockPatch, CommentAuthorType, CommentStatus, CoverConfig, DocId, LintConfig,
+    PatchOp, ReportDocument, Revision, SessionId, SourceEntry, SourceId, TableBlock,
+    TextQuoteSelector, TocConfig,
 };
 use quire_store::{NewCommentReply, NewCommentThread, PgReportStore, SourceUpsert, StoreError};
 use sqlx::Row;
@@ -444,6 +444,45 @@ async fn upsert_sources_deduplicates_url_and_normalized_title() {
         .unwrap();
     assert!(loaded.sources.contains_key("src_one"));
     assert!(!loaded.sources.contains_key("src_two"));
+
+    cleanup(&store, &doc_id).await;
+}
+
+#[tokio::test]
+async fn document_lint_config_and_block_ignores_persist() {
+    let store = test_store().await;
+    let doc_id = unique("it-lint-config");
+    let mut doc = document(&doc_id, None, vec![paragraph("intro", "Intro [^sec10]")]);
+    doc.lint.ignore = vec!["QR202".into()];
+    doc.blocks[0].lint_ignore = vec!["QR401".into()];
+    store.create_document(&doc, "lead", None).await.unwrap();
+
+    let loaded = store
+        .get_document(&DocId::parse(&doc_id).expect("doc id"))
+        .await
+        .unwrap();
+    assert_eq!(loaded.lint.ignore, vec!["QR202".to_string()]);
+    assert_eq!(loaded.blocks[0].lint_ignore, vec!["QR401".to_string()]);
+
+    store
+        .apply_operations(
+            &as_doc_id(&doc_id),
+            as_revision(1),
+            "agent",
+            "replace lint config",
+            &[PatchOp::SetLint {
+                lint: LintConfig {
+                    ignore: vec!["QR4".into()],
+                },
+            }],
+        )
+        .await
+        .unwrap();
+    let loaded = store
+        .get_document(&DocId::parse(&doc_id).expect("doc id"))
+        .await
+        .unwrap();
+    assert_eq!(loaded.lint.ignore, vec!["QR4".to_string()]);
 
     cleanup(&store, &doc_id).await;
 }

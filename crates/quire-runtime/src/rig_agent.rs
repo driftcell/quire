@@ -9,10 +9,11 @@ use std::{
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::StreamExt;
+use quire_lint::lint_echarts_block;
 use quire_protocol::{
     Block, BlockId, BlockKind, EchartsBlock, EphemeralPayload, EphemeralPreviewEvent,
     PartialBlockPreview, PatchOp, PreviewAnchor, PreviewStatus, chart_data_tables_for_block,
-    chart_requirements, lint_echarts_block, merge_chart_option_patch, short_id,
+    chart_requirements, merge_chart_option_patch, short_id,
 };
 use quire_session_protocol::{ContextUsage, MessageRole, QuestionItem};
 use rig_core::{

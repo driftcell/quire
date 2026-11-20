@@ -201,6 +201,13 @@
           "$ref": "#/$defs/BlockId",
           "default": "b_pending"
         },
+        "lint_ignore": {
+          "description": "Suppressible lint rules ignored for this block only. Core contract and safety rules\nremain active regardless of this list.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "source_ids": {
           "description": "Citation source IDs attached to the whole block.",
           "type": "array",
@@ -520,6 +527,16 @@
           "format": "uint8",
           "maximum": 255,
           "minimum": 0
+        },
+        "lint_ignore": {
+          "description": "Set the block-level lint ignore list. Empty clears it.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
         },
         "note": {
           "description": "Replace the explanatory footnote. Empty string clears it.",
@@ -1275,6 +1292,7 @@
           ]
         },
         "code": {
+          "description": "Stable rule code, for example `QR202`.",
           "type": "string"
         },
         "hint": {
@@ -1291,8 +1309,16 @@
             "null"
           ]
         },
+        "rule": {
+          "description": "Kebab-case semantic rule name, for example `table-empty-column`.",
+          "type": "string"
+        },
         "severity": {
           "$ref": "#/$defs/Severity"
+        },
+        "suppressible": {
+          "description": "Whether callers may suppress this diagnostic through `LintConfig.ignore` or\n`Block.lint_ignore`. Core contract and safety rules are never suppressible.",
+          "type": "boolean"
         },
         "valid_values": {
           "type": "array",
@@ -1303,9 +1329,11 @@
       },
       "required": [
         "code",
+        "rule",
         "severity",
         "message",
-        "hint"
+        "hint",
+        "suppressible"
       ]
     },
     "DocId": {
@@ -1780,6 +1808,18 @@
         "width_css"
       ]
     },
+    "LintConfig": {
+      "description": "Document-level lint policy. Ignore entries accept a rule code (`QR202`), a semantic rule name\n(`table-empty-column`) or a category prefix (`QR2`). Non-suppressible rules cannot be ignored.",
+      "type": "object",
+      "properties": {
+        "ignore": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "LintReport": {
       "type": "object",
       "properties": {
@@ -1807,6 +1847,12 @@
           "minimum": 0
         },
         "infos": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "suppressed": {
+          "description": "Suppressible diagnostics hidden by document/block/call ignore filters.",
           "type": "integer",
           "format": "uint",
           "minimum": 0
@@ -2199,6 +2245,24 @@
           ]
         },
         {
+          "description": "Replace the complete document lint policy.",
+          "type": "object",
+          "properties": {
+            "lint": {
+              "description": "Complete replacement lint config.",
+              "$ref": "#/$defs/LintConfig"
+            },
+            "type": {
+              "type": "string",
+              "const": "set_lint"
+            }
+          },
+          "required": [
+            "type",
+            "lint"
+          ]
+        },
+        {
           "type": "object",
           "properties": {
             "theme": {
@@ -2450,6 +2514,10 @@
         "doc_id": {
           "$ref": "#/$defs/DocId"
         },
+        "lint": {
+          "$ref": "#/$defs/LintConfig",
+          "default": {}
+        },
         "references": {
           "$ref": "#/$defs/ReferencesConfig",
           "default": {
@@ -2528,6 +2596,10 @@
               "type": "null"
             }
           ]
+        },
+        "lint": {
+          "$ref": "#/$defs/LintConfig",
+          "default": {}
         },
         "references": {
           "$ref": "#/$defs/ReferencesConfig",

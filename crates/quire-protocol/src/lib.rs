@@ -2,8 +2,8 @@
 //!
 //! This crate performs no I/O. It owns the canonical Block AST, deterministic fractional ranks,
 //! declarative patch operations, citation resolution, Markdown projection for agents, table
-//! schema validation and the static linter. Frontend HTML/Tiptap rendering is deliberately out
-//! of scope and lives in the external read-only viewer.
+//! schema validation and lint contracts. The pure rule engine lives in `quire-lint`. Frontend
+//! HTML/Tiptap rendering is deliberately out of scope and lives in the external read-only viewer.
 
 #![forbid(unsafe_code)]
 
@@ -19,7 +19,7 @@ pub mod events;
 pub mod ids;
 pub(crate) mod inline;
 pub(crate) mod json;
-pub mod linter;
+pub mod lint;
 pub mod markdown;
 pub mod model;
 pub mod normalize;
@@ -47,8 +47,12 @@ pub use computed::{
 };
 pub use diff::{BlockDiffEntry, DocumentDiffReport, DocumentMetadataDiff, diff_documents};
 pub use draft::{DraftError, ReportDraft};
+pub use echarts::series as chart_series;
 pub use echarts::{
-    ChartDataTable, chart_data_tables, effective_chart_option, merge_chart_option_patch,
+    ChartDataTable, axis_count, chart_data_tables, configured_axis_count, effective_chart_option,
+    entries, find_js_function_string, has_data_source, inner_title_duplicates,
+    is_center_inner_title, is_positioned_or_light_inner_title, is_valid_series_type,
+    merge_chart_option_patch,
 };
 pub use error::ProtocolError;
 pub use events::{
@@ -57,9 +61,8 @@ pub use events::{
     RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 pub use ids::{BlockId, DocId, Rank, Revision, SessionId, SourceId};
-pub use linter::{
-    Diagnostic, LintReport, LintSummary, Severity, lint_document, lint_echarts_block,
-};
+pub use json::merge_optional_json;
+pub use lint::{Diagnostic, LintConfig, LintReport, LintSummary, Severity};
 pub use markdown::{
     MarkdownError, MarkdownOptions, MarkdownProjector, project_blocks, project_markdown,
     project_section,
@@ -89,8 +92,10 @@ pub fn validate_custom_css(css: &str) -> Result<(), ProtocolError> {
     }
 }
 pub use table::{
-    LeafColumn, TableError, TableShape, display_cell, unknown_row_keys, validate_table,
+    LeafColumn, TableError, TableShape, display_cell, unknown_row_keys, unknown_width_overrides,
+    validate_table,
 };
+pub use text::{CssBraceIssue, css_brace_issue, safe_href};
 #[cfg(test)]
 pub(crate) mod test_support {
     use crate::ids::{BlockId, DocId, Revision, SourceId};

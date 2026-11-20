@@ -14,6 +14,7 @@ use crate::{
     block::{Block, BlockKind, BlockStyle, CellValue, NumberingKind, is_semantic_block_id},
     ids::{BlockId, SourceId},
     json::merge_optional_json,
+    lint::LintConfig,
     model::{CoverConfig, ReferencesConfig, ReportDocument, SourceEntry, ThemeConfig, TocConfig},
     table::validate_table,
 };
@@ -80,6 +81,9 @@ pub struct BlockPatch {
     pub source_ids: Option<Vec<SourceId>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_note: Option<String>,
+    /// Set the block-level lint ignore list. Empty clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lint_ignore: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<BlockStylePatch>,
     /// Replace the ECharts effective option wholesale, clearing any stored `option_patch`.
@@ -123,6 +127,7 @@ impl BlockPatch {
             && self.class_name.is_none()
             && self.source_ids.is_none()
             && self.source_note.is_none()
+            && self.lint_ignore.is_none()
             && self.style.as_ref().is_none_or(BlockStylePatch::is_empty)
             && self.option.is_none()
             && self.option_patch.is_none()
@@ -214,6 +219,11 @@ pub enum PatchOp {
         /// Complete replacement bibliography config.
         references: ReferencesConfig,
     },
+    /// Replace the complete document lint policy.
+    SetLint {
+        /// Complete replacement lint config.
+        lint: LintConfig,
+    },
     SetTheme {
         /// Complete replacement theme config.
         theme: ThemeConfig,
@@ -266,6 +276,7 @@ impl PatchOp {
             Self::SetCover { .. }
             | Self::SetToc { .. }
             | Self::SetReferences { .. }
+            | Self::SetLint { .. }
             | Self::SetTheme { .. }
             | Self::SetSources { .. } => {}
         }
@@ -288,6 +299,7 @@ impl PatchOp {
             | Self::SetCover { .. }
             | Self::SetToc { .. }
             | Self::SetReferences { .. }
+            | Self::SetLint { .. }
             | Self::SetTheme { .. }
             | Self::SetSources { .. } => Vec::new(),
         }
@@ -299,6 +311,7 @@ impl PatchOp {
             Self::SetCover { .. }
                 | Self::SetToc { .. }
                 | Self::SetReferences { .. }
+                | Self::SetLint { .. }
                 | Self::SetTheme { .. }
                 | Self::SetSources { .. }
         )
@@ -575,6 +588,11 @@ fn apply_internal(
                 outcome.metadata_changed = true;
                 applied_ops.push(op.clone());
             }
+            PatchOp::SetLint { lint } => {
+                document.lint = lint.clone();
+                outcome.metadata_changed = true;
+                applied_ops.push(op.clone());
+            }
             PatchOp::SetTheme { theme } => {
                 document.theme = theme.clone();
                 outcome.metadata_changed = true;
@@ -685,6 +703,7 @@ pub fn remap_operations_sources(ops: &mut [PatchOp], mapping: &BTreeMap<SourceId
             | PatchOp::SetCover { .. }
             | PatchOp::SetToc { .. }
             | PatchOp::SetReferences { .. }
+            | PatchOp::SetLint { .. }
             | PatchOp::SetTheme { .. } => {}
         }
     }
@@ -820,6 +839,14 @@ fn apply_block_patch(block: &mut Block, patch: &BlockPatch) -> Result<(), PatchE
         } else {
             Some(note.clone())
         };
+    }
+    if let Some(lint_ignore) = &patch.lint_ignore {
+        block.lint_ignore = lint_ignore
+            .iter()
+            .map(|entry| entry.trim())
+            .filter(|entry| !entry.is_empty())
+            .map(ToString::to_string)
+            .collect();
     }
 
     match &mut block.body {

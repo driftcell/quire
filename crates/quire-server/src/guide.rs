@@ -92,7 +92,8 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
    - Register citations with `upsert_sources`, or pass an inline `sources` map to `apply_operations` / `apply_draft` so registration commits atomically with the blocks. Inline syntax is `[^source_id]`.
 
 4. VERIFY
-   - `lint_document(doc_id)` returns self-healing diagnostics. Fix every error before declaring completion.
+   - `lint_document(doc_id)` returns diagnostics that carry `code`, `rule`, `hint` and `suppressible`. Fix every `error` and review every `warning`.
+   - Only when a diagnostic has `suppressible: true` and the rule genuinely does not apply may you ignore it through `PatchBlock.lint_ignore`. Never use ignore to hide a real problem; core contract and safety rules are never suppressible.
    - `read_as_markdown(doc_id)` gives block anchors, flattened tables and expanded chart data for review.
    - `GET /api/docs/{doc_id}` supplies canonical JSON plus `computed.table_layouts`, `computed.citation_map`, `computed.bibliography`, `computed.toc_tree` to the external frontend.
 
@@ -213,13 +214,13 @@ Rules:
 - `fallback_summary` is mandatory and must state the main numeric takeaway.
 - `option` is the single, required source of truth: always send a complete native ECharts 6.0 option object.
 - ECharts 6.0 supports `dataset` (2D arrays or object rows, multiple datasets), multi-axis Cartesian series, `matrix`, `radar`, `sankey`, `graph`, `chord`, `beeswarm`, `treemap`, `sunburst`, `tree`, `candlestick`, `boxplot`, `heatmap` and extension series such as `wordCloud`, `liquidFill` and `bar3D`. For deterministic multi-column ordering, prefer a two-dimensional `dataset.source` with a header row, or declare explicit `dimensions`; object-row key order is not guaranteed.
-- Formatter strings are allowed and encouraged, for example `"formatter": "{b}: {c} ({d}%)"`. JavaScript callbacks are forbidden: strings containing `function(` or `=>` fail lint with `ECHARTS_JS_FUNCTION_STRING`.
+- Formatter strings are allowed and encouraged, for example `"formatter": "{b}: {c} ({d}%)"`. JavaScript callbacks (`function(` or `=>`) are forbidden; use ECharts formatter template strings instead.
 - Static-report chrome is removed automatically: `toolbox` is stripped during normalization/normalization warnings. Do not design interactions that require it.
 - Indexed series must stay in range: `xAxisIndex`, `yAxisIndex`, `gridIndex`, `datasetIndex`, `polarIndex` and `radarIndex` are validated against their configured arrays; axis-level `gridIndex` is validated too. A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object.
 - Matrix example:
   `{"matrix":{"x":{"data":["A","B"]},"y":{"data":["C","D"]}},"series":[{"type":"custom","coordinateSystem":"matrix","data":[1,2]}]}`.
-  Missing `matrix` reports `ECHARTS_MATRIX_MISSING`; missing `radar`/`polar` components report `ECHARTS_COORDINATE_MISSING`.
-- Every chart needs a real data source: `series[*].data`, `series[*].links`/`edges`, or a non-empty `dataset.source`. Otherwise lint reports `ECHARTS_DATA_MISSING`.
+  A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object; radar/polar series require their matching top-level component.
+- Every chart needs a real data source: `series[*].data`, `series[*].links`/`edges`, or a non-empty `dataset.source`, otherwise reviewers cannot verify the chart.
 - Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge an incremental change. The same patch can update `height`, `title`, `numbering`, `note` and `fallback_summary`.
 - `read_as_markdown(include_chart_data=true)` expands dataset, Cartesian, relation, radar and hierarchy data into tables for reviewers.
 
@@ -259,7 +260,7 @@ SOURCES
 - Citations: inline `[^sec10]`, or block-level `source_ids:["sec10"]`.
 - Inline citations are numbered by first appearance. Bibliography order follows that numbering.
 - `configure_references(doc_id, enabled=true, style="author_year")` switches labels to (Smith, 2025).
-- Invalid source ids produce `DANGLING_SOURCE_ID` with the full valid source_id list.
+- Invalid source ids return the full valid source_id list in the diagnostic hint.
 
 PAGE CHROME
 - `configure_page_chrome(doc_id, header={"left":"{kicker}","center":"","right":"{title}"}, footer={"left":"{authors}","center":"第 {page} 页 / 共 {total} 页","right":"{date}"}, hide_header_on_first_page=true)`.
@@ -340,7 +341,7 @@ OFFLINE DRAFTS
 
 REVIEW LOOP
 1. `read_as_markdown(doc_id, section_heading=...)` for the section under review.
-2. `lint_document(doc_id)`; fix dangling citations, duplicate table keys, unknown row keys, invalid CSS.
+2. `lint_document(doc_id)`; fix every error and review warnings. Diagnostics carry `code`, `rule`, `hint` and `suppressible`; ignore only suppressible diagnostics that genuinely do not apply.
 3. Patch specific blocks via block IDs from the Markdown anchors.
 4. `rollback_revision(doc_id, target_revision)` creates a new monotonic revision; never rewrites history.
 

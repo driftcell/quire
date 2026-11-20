@@ -7,11 +7,11 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use quire_lint::{lint_document, normalize::normalize_document};
 use quire_protocol::{
     Block, BlockId, BlockKind, CommentAuthorType, CommentMessage, CommentStatus, CommentThread,
     DocId, PatchOp, PatchOutcome, Rank, ReportDocument, Revision, SessionId, SourceEntry, SourceId,
-    apply_operations_in_place, lint_document, normalize::normalize_document, rank_after,
-    remap_operations_sources, short_id, try_rank_between,
+    apply_operations_in_place, rank_after, remap_operations_sources, short_id, try_rank_between,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -44,6 +44,7 @@ struct DocRow {
     toc: Value,
     theme: Value,
     references: Value,
+    lint: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -162,6 +163,7 @@ impl PgReportStore {
         let toc = serde_json::to_value(&document.toc)?;
         let theme = serde_json::to_value(&document.theme)?;
         let references = serde_json::to_value(&document.references)?;
+        let lint = serde_json::to_value(&document.lint)?;
 
         let mut tx = self.pool.begin().await?;
         if let Some(key) = idempotency_key
@@ -189,8 +191,8 @@ impl PgReportStore {
 
         let inserted = sqlx::query!(
             r#"INSERT INTO report_documents
-               (doc_id, session_id, idempotency_key, current_rev, cover, toc, theme, "references")
-               VALUES ($1, $2, $3, 1, $4, $5, $6, $7)
+               (doc_id, session_id, idempotency_key, current_rev, cover, toc, theme, "references", lint)
+               VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8)
                RETURNING current_rev"#,
             document.doc_id.as_str(),
             document.session_id.as_ref().map(SessionId::as_str),
@@ -199,6 +201,7 @@ impl PgReportStore {
             toc,
             theme,
             references,
+            lint,
         )
         .fetch_one(&mut *tx)
         .await;
@@ -267,6 +270,9 @@ impl PgReportStore {
             },
             PatchOp::SetReferences {
                 references: document.references.clone(),
+            },
+            PatchOp::SetLint {
+                lint: document.lint.clone(),
             },
             PatchOp::SetTheme {
                 theme: document.theme.clone(),
@@ -1525,7 +1531,7 @@ async fn load_document_in_tx(
     let typed_doc_id = DocId::parse(doc_id)?;
     let row = sqlx::query!(
         r#"SELECT doc_id, session_id, current_rev, cover, toc, theme,
-                  "references" AS "references_json!"
+                  "references" AS "references_json!", lint AS "lint_json!"
            FROM report_documents WHERE doc_id = $1"#,
         doc_id
     )
@@ -1542,6 +1548,7 @@ async fn load_document_in_tx(
         toc: row.toc,
         theme: row.theme,
         references: row.references_json,
+        lint: row.lint_json,
     };
 
     let source_rows = sqlx::query!(
@@ -1590,6 +1597,7 @@ async fn load_document_in_tx(
         sources,
         blocks,
         references: parse_json(doc_row.references, "report_documents.references")?,
+        lint: parse_json(doc_row.lint, "report_documents.lint")?,
     };
     Ok(LoadedDocument { document, ranks })
 }
@@ -2013,14 +2021,15 @@ async fn update_document_row(
     sqlx::query!(
         r#"UPDATE report_documents
            SET current_rev = $2, cover = $3, toc = $4, theme = $5,
-               "references" = $6, updated_at = NOW()
+               "references" = $6, lint = $7, updated_at = NOW()
            WHERE doc_id = $1"#,
         doc_id,
         revision.get(),
         serde_json::to_value(&document.cover)?,
         serde_json::to_value(&document.toc)?,
         serde_json::to_value(&document.theme)?,
-        serde_json::to_value(&document.references)?
+        serde_json::to_value(&document.references)?,
+        serde_json::to_value(&document.lint)?
     )
     .execute(&mut **tx)
     .await?;
@@ -2046,6 +2055,11 @@ pub fn generate_inverse_ops(
     if before.references != after.references {
         ops.push(PatchOp::SetReferences {
             references: before.references.clone(),
+        });
+    }
+    if before.lint != after.lint {
+        ops.push(PatchOp::SetLint {
+            lint: before.lint.clone(),
         });
     }
     if before.theme != after.theme {

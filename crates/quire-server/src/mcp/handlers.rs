@@ -7,12 +7,13 @@ use std::{
 
 use axum::http::request::Parts;
 use indexmap::IndexMap;
+use quire_lint::{LintOptions, lint_document_with_options, normalize::normalize_document};
 use quire_protocol::{
     Block, BlockId, BlockKind, COVER_VARIANTS, CommentAuthorType, CommentStatus, CoverConfig,
     Diagnostic, DocId, EphemeralClearEvent, EphemeralPayload, IdAssignment, MarkdownOptions,
     MarkdownProjector, PageChromeConfig, PatchOp, ProtocolError, ReportDocument, ReportDraft,
     Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value,
-    is_valid_css_token_name, lint_document, short_token,
+    is_valid_css_token_name, short_token,
 };
 use quire_store::{
     ApplyResult, CommitExtras, NewCommentReply, NewCommentThread, SourceUpsert, StoreError,
@@ -1010,9 +1011,15 @@ impl QuireMcpServer {
             .get_document(&doc_id)
             .await
             .map_err(mcp_error)?;
-        let report = lint_document(&document);
+        let report = lint_document_with_options(
+            &document,
+            &LintOptions {
+                select: request.select,
+                ignore: request.ignore,
+            },
+        );
         let rev = document.revision.get();
-        if report.is_clean() {
+        if report.diagnostics.is_empty() && report.summary.suppressed == 0 {
             return Ok(Json(LintReceipt {
                 ok: true,
                 rev,
@@ -1029,8 +1036,8 @@ impl QuireMcpServer {
             )
         } else {
             format!(
-                "0 errors, {} warning(s); review warnings or call read_as_markdown.",
-                report.summary.warnings
+                "0 errors, {} warning(s), {} suppressed; review warnings or call read_as_markdown.",
+                report.summary.warnings, report.summary.suppressed
             )
         };
         Ok(Json(LintReceipt {
@@ -1584,6 +1591,7 @@ fn draft_to_document(
         sources: draft.sources,
         blocks: draft.blocks,
         references: draft.references,
+        lint: draft.lint,
     })
 }
 
@@ -1822,10 +1830,11 @@ impl QuireMcpServer {
             sources,
             blocks: blocks.clone(),
             references: draft.references,
+            lint: draft.lint,
         };
         document.cover.title = title;
         document.cover.enabled = true;
-        let normalization_warnings = quire_protocol::normalize::normalize_document(&mut document);
+        let normalization_warnings = normalize_document(&mut document);
         let result = self
             .state
             .store
@@ -1921,6 +1930,7 @@ impl QuireMcpServer {
             PatchOp::SetReferences {
                 references: draft.references,
             },
+            PatchOp::SetLint { lint: draft.lint },
             replace_op,
         ];
         let result = self

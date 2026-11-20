@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/quire-protocol",
+  "crates/quire-lint",
   "crates/quire-store",
   "crates/quire-server",
   "crates/quire-session-protocol",
@@ -30,6 +31,7 @@ license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 quire-protocol = { path = "crates/quire-protocol" }
+quire-lint = { path = "crates/quire-lint" }
 quire-store = { path = "crates/quire-store" }
 quire-session-protocol = { path = "crates/quire-session-protocol" }
 serde = { version = "1.0", features = ["derive"] }

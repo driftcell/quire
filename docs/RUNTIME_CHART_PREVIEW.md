@@ -3,8 +3,8 @@
 ## Metadata
 
 - **Status:** Settled
-- **Owner Crates:** `quire-protocol`, `quire-runtime`, `web`
-- **Related Notes:** `../notes/runtime_chart_preview_flow.md`
+- **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-runtime`, `web`
+- **Related Notes:** `../notes/runtime_chart_preview_flow.md`, `../notes/quire_lint_registry_split.md`
 
 ## 1. Scope & Non-Goals
 
@@ -21,11 +21,11 @@ no chart preset or mode abstraction.
 
 ### Protocol helpers
 
-`quire-protocol` remains synchronous and I/O-free. The preview tools reuse:
+`quire-protocol` remains synchronous and I/O-free. The preview tools reuse helpers from
+`quire-lint` and `quire-protocol`:
 
-- `lint_echarts_block(block_id, chart)` for isolated chart diagnostics such as
-  `ECHARTS_DATA_MISSING`, `ECHARTS_FALLBACK_EMPTY`, invalid series types/indices and JavaScript
-  callback strings.
+- `quire_lint::lint_echarts_block(block_id, chart)` for isolated chart diagnostics such as missing
+  data, empty fallback summaries, invalid series types/indices and JavaScript callback strings.
 - `effective_chart_option(chart)` for the native `option` deep-merged with `option_patch`.
 - `merge_chart_option_patch(base, patch)` for incremental deep merges (arrays replace, objects merge).
 - `chart_requirements(chart)` and `chart_data_tables_for_block(chart)` for the same map/extension and
@@ -94,7 +94,8 @@ An expired preview returns an actionable error that tells the agent to call `pre
 
 ## 3. Invariants & Verification
 
-- `quire-protocol` performs no I/O and owns all chart merge/validation logic.
+- `quire-protocol` performs no I/O and owns chart merge/validation helpers; `quire-lint` owns the
+  static chart diagnostics.
 - `quire-runtime` talks to `quire-server` only through MCP and HTTP; `quire-server` never depends on
   the runtime.
 - A `preview_id` is valid for exactly 1800 seconds and returns `404` afterwards.

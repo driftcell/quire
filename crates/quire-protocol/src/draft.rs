@@ -34,6 +34,8 @@ pub struct ReportDraft {
     pub blocks: Vec<Block>,
     #[serde(default)]
     pub references: ReferencesConfig,
+    #[serde(default)]
+    pub lint: crate::LintConfig,
 }
 
 #[derive(Debug, Error)]
@@ -81,6 +83,7 @@ impl ReportDraft {
             sources: self.sources,
             blocks: self.blocks,
             references: self.references,
+            lint: self.lint,
         })
     }
 }

@@ -54,6 +54,11 @@ export type Block = {
    */
   id?: string;
   /**
+   * Suppressible lint rules ignored for this block only. Core contract and safety rules
+   * remain active regardless of this list.
+   */
+  lint_ignore?: string[];
+  /**
    * Citation source IDs attached to the whole block.
    */
   source_ids?: SourceId[];
@@ -379,6 +384,11 @@ export interface QuireReportProtocol {
         [k: string]: unknown;
       }
     | {
+        lint: LintConfig2;
+        type: "set_lint";
+        [k: string]: unknown;
+      }
+    | {
         theme: ThemeConfig2;
         type: "set_theme";
         [k: string]: unknown;
@@ -677,6 +687,7 @@ export interface ReportDocument {
   blocks?: Block[];
   cover?: CoverConfig;
   doc_id: DocId;
+  lint?: LintConfig;
   references?: ReferencesConfig;
   /**
    * Monotonic non-negative report revision.
@@ -845,6 +856,14 @@ export interface CoverConfig {
   [k: string]: unknown;
 }
 /**
+ * Document-level lint policy. Ignore entries accept a rule code (`QR202`), a semantic rule name
+ * (`table-empty-column`) or a category prefix (`QR2`). Non-suppressible rules cannot be ignored.
+ */
+export interface LintConfig {
+  ignore?: string[];
+  [k: string]: unknown;
+}
+/**
  * End-of-report bibliography configuration.
  */
 export interface ReferencesConfig {
@@ -966,6 +985,7 @@ export interface ReportDraft {
   blocks?: Block[];
   cover?: CoverConfig1;
   doc_id?: DocId | null;
+  lint?: LintConfig1;
   references?: ReferencesConfig1;
   sources?: {
     [k: string]: SourceEntry;
@@ -1004,6 +1024,14 @@ export interface CoverConfig1 {
    * One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.
    */
   variant?: string;
+  [k: string]: unknown;
+}
+/**
+ * Document-level lint policy. Ignore entries accept a rule code (`QR202`), a semantic rule name
+ * (`table-empty-column`) or a category prefix (`QR2`). Non-suppressible rules cannot be ignored.
+ */
+export interface LintConfig1 {
+  ignore?: string[];
   [k: string]: unknown;
 }
 /**
@@ -1125,6 +1153,9 @@ export interface LintReport {
 }
 export interface Diagnostic {
   block_id?: BlockId | null;
+  /**
+   * Stable rule code, for example `QR202`.
+   */
   code: string;
   /**
    * Actionable next step, including valid IDs/enums when possible.
@@ -1135,13 +1166,26 @@ export interface Diagnostic {
    * JSON-ish path such as `blocks.financials.columns`.
    */
   path?: string | null;
+  /**
+   * Kebab-case semantic rule name, for example `table-empty-column`.
+   */
+  rule: string;
   severity: Severity;
+  /**
+   * Whether callers may suppress this diagnostic through `LintConfig.ignore` or
+   * `Block.lint_ignore`. Core contract and safety rules are never suppressible.
+   */
+  suppressible: boolean;
   valid_values?: string[];
   [k: string]: unknown;
 }
 export interface LintSummary {
   errors: number;
   infos: number;
+  /**
+   * Suppressible diagnostics hidden by document/block/call ignore filters.
+   */
+  suppressed?: number;
   warnings: number;
   [k: string]: unknown;
 }
@@ -1172,6 +1216,10 @@ export interface BlockPatch {
    * Heading level (1..=6).
    */
   level?: number | null;
+  /**
+   * Set the block-level lint ignore list. Empty clears it.
+   */
+  lint_ignore?: string[] | null;
   /**
    * Replace the explanatory footnote. Empty string clears it.
    */
@@ -1307,6 +1355,13 @@ export interface ReferencesConfig2 {
    */
   style?: "numeric" | "author_year";
   title?: string;
+  [k: string]: unknown;
+}
+/**
+ * Complete replacement lint config.
+ */
+export interface LintConfig2 {
+  ignore?: string[];
   [k: string]: unknown;
 }
 /**

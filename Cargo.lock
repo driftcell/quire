@@ -1641,6 +1641,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "quire-lint"
+version = "0.1.0"
+dependencies = [
+ "quire-protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "quire-protocol"
 version = "0.1.0"
 dependencies = [
@@ -1668,6 +1676,7 @@ dependencies = [
  "http",
  "http-body-util",
  "moka",
+ "quire-lint",
  "quire-protocol",
  "quire-session-protocol",
  "redis",
@@ -1705,6 +1714,7 @@ dependencies = [
  "futures",
  "http",
  "indexmap",
+ "quire-lint",
  "quire-protocol",
  "quire-store",
  "reqwest 0.13.5",
@@ -1741,6 +1751,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "indexmap",
+ "quire-lint",
  "quire-protocol",
  "redis",
  "serde",

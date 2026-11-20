@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     block::Block,
     ids::{DocId, Revision, SessionId, SourceId},
+    lint::LintConfig,
 };
 
 /// Default value for fields that are enabled unless explicitly disabled.
@@ -373,6 +374,8 @@ pub struct ReportDocument {
     pub blocks: Vec<Block>,
     #[serde(default)]
     pub references: ReferencesConfig,
+    #[serde(default)]
+    pub lint: LintConfig,
 }
 
 impl ReportDocument {
@@ -388,6 +391,7 @@ impl ReportDocument {
             sources: IndexMap::new(),
             blocks: Vec::new(),
             references: ReferencesConfig::default(),
+            lint: LintConfig::default(),
         }
     }
 

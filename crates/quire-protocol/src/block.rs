@@ -837,6 +837,10 @@ pub struct Block {
     pub source_ids: Vec<SourceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_note: Option<String>,
+    /// Suppressible lint rules ignored for this block only. Core contract and safety rules
+    /// remain active regardless of this list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lint_ignore: Vec<String>,
     #[serde(flatten)]
     pub body: BlockKind,
 }
@@ -862,6 +866,7 @@ impl Block {
             style: BlockStyle::default(),
             source_ids: Vec::new(),
             source_note: None,
+            lint_ignore: Vec::new(),
             body,
         }
     }
