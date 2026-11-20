@@ -27,6 +27,7 @@ enabled: true
 ## 工作规范
 1. 首次创建前调用 `get_protocol_guide("tables_and_charts")` 对齐协议。
 2. **学术三线表规范**：使用递归 `ColumnNode` 树（如按“年度/项目类别/立项数与占比”分组表头），为数值/百分比/排名列显式设置 `data_type`（`number` / `percent` / `currency`）与 `align: "right"`，必要时提供 `summary_rows`（合计/均值/省内均值对标行）。
+   - **6–8 列紧凑对标表默认预设**：叶表头控制在 2–4 字，把 `（项）`、`（%）`、`（万元）` 等单位上提到 `note` 或父级 `ColumnNode`；默认省略 `style.column_widths`，由前端 Water-Filling 自动保护数值列并允许表头两行；仅列数 ≥9 或需要锁定比例时显式配置宽度。
 3. **图表先看后落（`preview_echarts` -> `commit_chart`）**：
    - 编写完整原生 ECharts 6 `option`（纯 JSON，不含 JS 函数字符串）。
    - 多校对标且含“总量 + 增长率/占比”双维度时，优先采用双 Y 轴（柱线结合）或单 `EchartsBlock` 多 `grid` 联动图；高校名称较长时合理配置坐标轴标签换行或水平条形图，防止文字截断。

@@ -140,7 +140,38 @@ TABLE BLOCK EXAMPLE
   "summary_rows": [
     { "region": "Total", "q1": 2000000, "q2": 2450000 }
   ],
-  "style": { "column_widths": { "region": "24%" } }
+  "style": { "keep_together": true }
+}
+
+DEFAULT COMPACT TABLE PRESET (6–8 columns)
+- Keep leaf headers to 2–4 Chinese characters. Move units and scope into `note` or a grouped parent `ColumnNode` (for example parent `2021年` with children `立项` / `经费`), not into every leaf header.
+- Omit `style.column_widths` for 6–8 columns. The frontend Water-Filling allocator keeps numeric cells unbreakable, never squeezes text columns below 72px during compression, and allows headers to wrap to two lines when space is tight. Manually forcing 6–8 widths to sum to 100% often overflows A4.
+- Configure `column_widths` only when leaf columns >= 9 or when a specific locked ratio is required. Explicit widths still work when needed: `"style":{"column_widths":{"region":"24%"}}`.
+- Prefer `keep_together: true` for compact benchmark tables.
+Copyable 7-column preset (no manual widths):
+{
+  "id": "benchmark_2021",
+  "type": "table",
+  "title": "五校科研竞争力对标（2021年）",
+  "numbering": "table",
+  "note": "单位：项、万元；资助率=立项数/申报数×100%；统计口径含面上与青年项目。",
+  "columns": [
+    { "key": "school", "label": "高校", "data_type": "text", "sizing": "grow", "weight": 1.2 },
+    { "label": "2020年", "children": [
+      { "key": "projects_2020", "label": "立项", "data_type": "number" },
+      { "key": "funding_2020", "label": "经费", "data_type": "currency" }
+    ]},
+    { "label": "2021年", "children": [
+      { "key": "projects_2021", "label": "立项", "data_type": "number" },
+      { "key": "funding_2021", "label": "经费", "data_type": "currency" },
+      { "key": "funding_rate", "label": "资助率", "data_type": "percent" },
+      { "key": "growth_rate", "label": "增速", "data_type": "percent" }
+    ]}
+  ],
+  "rows": [
+    { "school": "A校（本校）", "projects_2020": 190, "funding_2020": 15120, "projects_2021": 214, "funding_2021": 18650, "funding_rate": "18.4%", "growth_rate": "12.6%" }
+  ],
+  "style": { "keep_together": true }
 }
 
 Rules:

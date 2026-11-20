@@ -1,10 +1,12 @@
 import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  computeColumnDecimals,
+  formatTableCell,
+} from "@/components/report/tableCellFormat";
 import { computeTableColumnWidths } from "@/components/report/tableSizing";
 import { A4_CONTENT_WIDTH_PX } from "@/components/report/pagination";
 import type {
-  Align,
   CellValue,
-  RichCell,
   TableBlock,
   TableLayout,
 } from "@/contracts/report-protocol";
@@ -18,39 +20,8 @@ export interface TableBlockViewProps {
   containerWidthPx?: number;
 }
 
-function isRichCell(value: CellValue): value is RichCell {
-  return typeof value === "object" && value !== null;
-}
-
 function isCellRecord(value: unknown): value is Record<string, CellValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function formatCell(value: CellValue | undefined): {
-  text: string;
-  align?: Align;
-  className?: string;
-  tooltip?: string;
-} {
-  if (value === undefined || value === null) {
-    return { text: "" };
-  }
-  if (typeof value === "string") {
-    return { text: value };
-  }
-  if (typeof value === "number" || typeof value === "boolean") {
-    return { text: String(value) };
-  }
-  if (isRichCell(value)) {
-    return {
-      text:
-        value.text ?? (value.number !== undefined ? String(value.number) : ""),
-      align: value.align ?? undefined,
-      className: value.class_name ?? undefined,
-      tooltip: value.tooltip ?? undefined,
-    };
-  }
-  return { text: "" };
 }
 
 export const TableBlockView = memo(function TableBlockView({
@@ -64,14 +35,19 @@ export const TableBlockView = memo(function TableBlockView({
   const containerRef = useRef<HTMLDivElement>(null);
   const [measuredWidthPx, setMeasuredWidthPx] = useState<number>();
   const [computedFontFamily, setComputedFontFamily] = useState<string>();
-  const leafCols = layout?.leaf_columns ?? [];
+  const leafCols = useMemo(() => layout?.leaf_columns ?? [], [layout]);
   const headerRows = layout?.header_rows ?? [];
   const allRows = Array.isArray(table.rows) ? table.rows : [];
   const visibleRows = allRows.slice(rowStart, rowEnd);
-  const summaryRows =
-    includeSummary && Array.isArray(table.summary_rows)
-      ? table.summary_rows
-      : [];
+  const allSummaryRows = Array.isArray(table.summary_rows)
+    ? table.summary_rows
+    : [];
+  const summaryRows = includeSummary ? allSummaryRows : [];
+
+  const decimalPrecision = useMemo(
+    () => computeColumnDecimals(table.rows, table.summary_rows, leafCols),
+    [table.rows, table.summary_rows, leafCols],
+  );
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -184,7 +160,10 @@ export const TableBlockView = memo(function TableBlockView({
                 className="border-b border-slate-200/70 even:bg-slate-50/70"
               >
                 {leafCols.map((col) => {
-                  const formatted = formatCell(rowObj[col.key]);
+                  const formatted = formatTableCell(
+                    rowObj[col.key],
+                    decimalPrecision.get(col.key) ?? 0,
+                  );
                   return (
                     <td
                       key={col.key}
@@ -228,7 +207,10 @@ export const TableBlockView = memo(function TableBlockView({
                   }`}
                 >
                   {leafCols.map((col) => {
-                    const formatted = formatCell(rowObj[col.key]);
+                    const formatted = formatTableCell(
+                      rowObj[col.key],
+                      decimalPrecision.get(col.key) ?? 0,
+                    );
                     return (
                       <td
                         key={col.key}

@@ -186,4 +186,59 @@ describe("computeTableColumnWidths", () => {
       expect(pixelWidth(result, index, 682)).toBeGreaterThanOrEqual(52);
     }
   });
+
+  test("keeps an 8-column A4 benchmark table inside 682px without manual widths", () => {
+    const benchmarkTable = table([
+      {
+        school: "A校（本校）",
+        projects2021: 214,
+        funding2021: 18650,
+        rate2021: "18.4%",
+        projects2020: 190,
+        growth: "12.6%",
+        rank: 1,
+        share: "22.1%",
+      },
+      {
+        school: "B校（标杆）",
+        projects2021: 188,
+        funding2021: 16200,
+        rate2021: "16.9%",
+        projects2020: 174,
+        growth: "8.0%",
+        rank: 2,
+        share: "19.4%",
+      },
+      {
+        school: "C校（同梯队）",
+        projects2021: 163,
+        funding2021: 14150,
+        rate2021: "15.2%",
+        projects2020: 151,
+        growth: "7.9%",
+        rank: 3,
+        share: "16.8%",
+      },
+    ]);
+    const benchmarkLayout = layout([
+      leafColumn(0, "school", "高校", "text", "grow", 1.2),
+      leafColumn(1, "projects2021", "2021年（项）", "number"),
+      leafColumn(2, "funding2021", "经费（万元）", "currency"),
+      leafColumn(3, "rate2021", "资助率（%）", "percent"),
+      leafColumn(4, "projects2020", "2020年（项）", "number"),
+      leafColumn(5, "growth", "同比增速（%）", "percent"),
+      leafColumn(6, "rank", "省内排名", "number"),
+      leafColumn(7, "share", "占全省比（%）", "percent"),
+    ]);
+
+    const result = computeTableColumnWidths(
+      benchmarkTable,
+      benchmarkLayout,
+      682,
+    );
+    expect(result.columnCssWidths).toHaveLength(8);
+    expect(result.minTableWidthPx).toBeUndefined();
+    expect(pixelWidth(result, 0, 682)).toBeGreaterThanOrEqual(72);
+    expect(percentSum(result).toFixed(2)).toBe("100.00");
+  });
 });

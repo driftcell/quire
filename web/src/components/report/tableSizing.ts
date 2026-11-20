@@ -148,6 +148,18 @@ function percentile(sortedAsc: number[], p: number): number {
   return sortedAsc[idx] ?? 0;
 }
 
+/** Round to 2 decimals and absorb the residual into the last column so the
+ * rendered percentages add up to exactly 100.00%. */
+function formatPercentWidths(pcts: number[]): string[] {
+  if (pcts.length === 0) return [];
+  const rounded = pcts.map((p) => Math.round(p * 100) / 100);
+  const lastIndex = rounded.length - 1;
+  const sum = rounded.reduce((total, value) => total + value, 0);
+  const last = rounded[lastIndex] ?? 0;
+  rounded[lastIndex] = Math.round((last + (100 - sum)) * 100) / 100;
+  return rounded.map((p) => `${p.toFixed(2)}%`);
+}
+
 /**
  * SOTA pixel-accurate Water-Filling column width allocator.
  * - Uses Canvas 2D text metrics with actual table font & padding.
@@ -216,7 +228,16 @@ export function computeTableColumnWidths(
     const p95CellPx = percentile(cellWidths, 0.95);
 
     const minPx = isAtomic
-      ? Math.max(52, Math.min(240, Math.max(headerPx, maxAtomicPx)))
+      ? Math.max(
+          48,
+          Math.min(
+            240,
+            Math.max(
+              maxAtomicPx,
+              Math.min(headerPx, Math.max(48, Math.ceil(headerPx * 0.56))),
+            ),
+          ),
+        )
       : Math.max(
           48,
           Math.min(140, Math.max(Math.min(headerPx, 110), maxUnbreakablePx)),
@@ -256,8 +277,8 @@ export function computeTableColumnWidths(
   if (flexBounds.length === 0) {
     const total = explicitPctSum > 0 ? explicitPctSum : 100;
     return {
-      columnCssWidths: bounds.map(
-        (b) => `${(((b.explicitPct ?? 0) / total) * 100).toFixed(2)}%`,
+      columnCssWidths: formatPercentWidths(
+        bounds.map((b) => ((b.explicitPct ?? 0) / total) * 100),
       ),
     };
   }
@@ -333,17 +354,20 @@ export function computeTableColumnWidths(
       }
     }
   } else if (surplus < 0) {
-    // Squeeze non-atomic text columns first before touching atomic numeric/badge columns
+    // Squeeze non-atomic text columns first before touching atomic numeric/badge columns.
+    // Keep at least 72px for text columns so the first column never collapses into a
+    // one-character vertical strip.
+    const textFloorPx = (b: ColumnBounds) => Math.min(b.minPx, 72);
     let deficit = -surplus;
     const textCols = flexBounds.filter((b) => !b.atomic);
     const totalShrinkable = textCols.reduce(
-      (sum, b) => sum + Math.max(0, b.minPx - 42),
+      (sum, b) => sum + Math.max(0, b.minPx - textFloorPx(b)),
       0,
     );
     if (totalShrinkable > 0) {
       const shrinkRatio = Math.min(1, deficit / totalShrinkable);
       for (const b of textCols) {
-        const room = Math.max(0, b.minPx - 42);
+        const room = Math.max(0, b.minPx - textFloorPx(b));
         const cut = room * shrinkRatio;
         alloc.set(b.index, b.minPx - cut);
         deficit -= cut;
@@ -378,7 +402,7 @@ export function computeTableColumnWidths(
   }
 
   return {
-    columnCssWidths: pcts.map((p) => `${p.toFixed(2)}%`),
+    columnCssWidths: formatPercentWidths(pcts),
     minTableWidthPx,
   };
 }

@@ -22,6 +22,7 @@ enabled: true
    - 若核心统计口径（对标高校范围、统计年份、项目类别）存在关键歧义，先调用 `ask_user` 明确，绝不臆造高校数据。
 2. **单 Agent 快轨 vs 集群协同路由**：
    - **单 Agent 快轨（1~3 节简报 / 单图单表 / 局部修改）**：由你直接执行“登记 `upsert_sources` -> `preview_echarts` 审图后 `commit_chart` -> `apply_operations` 写三线表与正文 -> `lint_document` 校验”。
+   - 6–8 列紧凑表格默认不传 `style.column_widths`，把单位与统计口径写入 `note` 或分组表头，交给前端 Water-Filling 自动排版；仅列数 ≥9 或需要锁定比例时显式配置。
    - **多 Agent 集群编排（4+ 节综合研报 / 多校多维对标）**：严格按阶段调度 `spawn_subagents`：
      1. **你先建骨架**：写入全篇一级标题锚点（`sec1_h1`, `sec2_h1`...）并统一 `upsert_sources`；
      2. **先派 `analyst` 落表落图**：生成核心对标三线表与经过 `preview_echarts` 验证的 ECharts 图表，获取落库后的图表 `block_id` 与极值结论；
