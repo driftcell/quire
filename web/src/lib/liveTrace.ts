@@ -1,7 +1,12 @@
 import type { ToolCallTraceItem } from "@/components/chat/ToolCallTrace";
 
 export type LiveTraceSegment =
-  | { kind: "thinking"; text: string }
+  | {
+      kind: "thinking";
+      text: string;
+      startedAtMs?: number;
+      durationMs?: number;
+    }
   | {
       kind: "execution";
       tools: ToolCallTraceItem[];
@@ -45,20 +50,47 @@ function replaceLast(
 export function appendThinkingSegment(
   trace: LiveAgentTrace,
   delta: string,
+  startedAtMs?: number,
 ): LiveAgentTrace {
   const last = trace.segments[trace.segments.length - 1];
-  if (last?.kind === "thinking") {
+  if (last?.kind === "thinking" && last.durationMs === undefined) {
     return {
       ...trace,
       segments: replaceLast(trace.segments, {
-        kind: "thinking",
+        ...last,
         text: last.text + delta,
+        startedAtMs: last.startedAtMs ?? startedAtMs,
       }),
     };
   }
   return {
     ...trace,
-    segments: [...trace.segments, { kind: "thinking", text: delta }],
+    segments: [
+      ...trace.segments,
+      { kind: "thinking", text: delta, startedAtMs },
+    ],
+  };
+}
+
+/** Settle the active trailing thinking segment with a server timestamp. */
+export function finishThinkingSegment(
+  trace: LiveAgentTrace,
+  atMs: number,
+): LiveAgentTrace {
+  const last = trace.segments[trace.segments.length - 1];
+  if (
+    last?.kind !== "thinking" ||
+    last.durationMs !== undefined ||
+    last.startedAtMs === undefined
+  ) {
+    return trace;
+  }
+  return {
+    ...trace,
+    segments: replaceLast(trace.segments, {
+      ...last,
+      durationMs: Math.max(0, atMs - last.startedAtMs),
+    }),
   };
 }
 

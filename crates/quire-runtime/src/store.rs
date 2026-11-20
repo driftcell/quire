@@ -1329,6 +1329,8 @@ fn row_to_pending_queue_item(row: &PgRow) -> RuntimeResult<PendingQueueItem> {
 struct RunTraceAccumulator {
     summary: RunTraceSummary,
     started_at: Option<DateTime<Utc>>,
+    active_main_thinking_start: Option<DateTime<Utc>>,
+    active_sub_thinking_start: HashMap<String, DateTime<Utc>>,
 }
 
 fn ensure_run_trace(
@@ -1350,6 +1352,8 @@ fn ensure_run_trace(
             segments: Vec::new(),
         },
         started_at: Some(timestamp),
+        active_main_thinking_start: None,
+        active_sub_thinking_start: HashMap::new(),
     });
     index.insert(run_id.to_string(), position);
     position
@@ -1360,12 +1364,13 @@ fn is_subagent_event(event: &SessionEvent) -> bool {
 }
 
 fn append_thinking_segment(summary: &mut RunTraceSummary, delta: &str) {
-    if let Some(RunTraceSegment::Thinking { text }) = summary.segments.last_mut() {
+    if let Some(RunTraceSegment::Thinking { text, .. }) = summary.segments.last_mut() {
         text.push_str(delta);
         return;
     }
     summary.segments.push(RunTraceSegment::Thinking {
         text: delta.to_string(),
+        duration_ms: None,
     });
 }
 
@@ -1488,6 +1493,7 @@ fn ensure_subagent(summary: &mut RunTraceSummary, event: &SessionEvent) -> Optio
             status: "running".to_string(),
             summary: None,
             thinking: String::new(),
+            thinking_duration_ms: None,
             task_focus: None,
             tools: Vec::new(),
         },
@@ -1496,6 +1502,63 @@ fn ensure_subagent(summary: &mut RunTraceSummary, event: &SessionEvent) -> Optio
 
 fn elapsed_ms(started_at: Option<DateTime<Utc>>, finished_at: DateTime<Utc>) -> Option<u64> {
     started_at.and_then(|start| u64::try_from((finished_at - start).num_milliseconds().max(0)).ok())
+}
+
+impl RunTraceAccumulator {
+    fn settle_main_thinking(&mut self, at: DateTime<Utc>) {
+        let Some(started) = self.active_main_thinking_start.take() else {
+            return;
+        };
+        if let Some(RunTraceSegment::Thinking { duration_ms, .. }) =
+            self.summary.segments.last_mut()
+        {
+            *duration_ms = elapsed_ms(Some(started), at);
+        }
+    }
+
+    fn settle_sub_thinking(&mut self, run_id: &str, at: DateTime<Utc>) {
+        let Some(started) = self.active_sub_thinking_start.remove(run_id) else {
+            return;
+        };
+        let Some(location) =
+            find_subagent_location(&self.summary, |sub| sub.subagent_run_id == run_id)
+        else {
+            return;
+        };
+        let Some(record) = subagent_mut(&mut self.summary, location) else {
+            return;
+        };
+        let elapsed = elapsed_ms(Some(started), at).unwrap_or(0);
+        record.thinking_duration_ms = Some(
+            record
+                .thinking_duration_ms
+                .unwrap_or(0)
+                .saturating_add(elapsed),
+        );
+    }
+}
+
+fn settles_main_thinking(kind: &SessionEventKind) -> bool {
+    matches!(
+        kind,
+        SessionEventKind::TextDelta { .. }
+            | SessionEventKind::ToolCallStarted { .. }
+            | SessionEventKind::SubagentStarted { .. }
+            | SessionEventKind::QuestionnaireRequested { .. }
+            | SessionEventKind::TurnFinished
+            | SessionEventKind::TurnFailed { .. }
+    )
+}
+
+fn settles_sub_thinking(kind: &SessionEventKind) -> bool {
+    matches!(
+        kind,
+        SessionEventKind::ToolCallStarted { .. }
+            | SessionEventKind::TextDelta { .. }
+            | SessionEventKind::SubagentFinished { .. }
+            | SessionEventKind::TurnFinished
+            | SessionEventKind::TurnFailed { .. }
+    )
 }
 
 fn upsert_tool_finished(
@@ -1540,6 +1603,14 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
         };
         let subagent_event = is_subagent_event(event);
 
+        if subagent_event {
+            if settles_sub_thinking(&event.kind) {
+                trace.settle_sub_thinking(&event.run_id, event.timestamp);
+            }
+        } else if settles_main_thinking(&event.kind) {
+            trace.settle_main_thinking(event.timestamp);
+        }
+
         match &event.kind {
             SessionEventKind::TurnStarted => {
                 trace.summary.status = "running".to_string();
@@ -1561,12 +1632,22 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
             }
             SessionEventKind::ThinkingDelta { delta } => {
                 if subagent_event {
+                    trace
+                        .active_sub_thinking_start
+                        .entry(event.run_id.clone())
+                        .or_insert(event.timestamp);
                     if let Some(location) = ensure_subagent(&mut trace.summary, event)
                         && let Some(record) = subagent_mut(&mut trace.summary, location)
                     {
                         record.thinking.push_str(delta);
                     }
                 } else {
+                    if !matches!(
+                        trace.summary.segments.last(),
+                        Some(RunTraceSegment::Thinking { .. })
+                    ) {
+                        trace.active_main_thinking_start = Some(event.timestamp);
+                    }
                     append_thinking_segment(&mut trace.summary, delta);
                 }
             }
@@ -1682,6 +1763,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                             status: "running".to_string(),
                             summary: None,
                             thinking: String::new(),
+                            thinking_duration_ms: None,
                             task_focus: None,
                             tools: Vec::new(),
                         },
@@ -1719,6 +1801,7 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                                 Some(summary.clone())
                             },
                             thinking: String::new(),
+                            thinking_duration_ms: None,
                             task_focus: None,
                             tools: Vec::new(),
                         },
@@ -1885,7 +1968,7 @@ mod tests {
         assert_eq!(trace.status, "completed");
         assert!(trace.duration_ms.is_some());
         assert_eq!(trace.segments.len(), 2);
-        let Some(RunTraceSegment::Thinking { text }) = trace.segments.first() else {
+        let Some(RunTraceSegment::Thinking { text, .. }) = trace.segments.first() else {
             panic!("first segment should be thinking");
         };
         assert_eq!(text, "plan");
@@ -2021,7 +2104,7 @@ mod tests {
         assert_eq!(trace.segments.len(), 6);
         assert!(matches!(
             trace.segments.first(),
-            Some(RunTraceSegment::Thinking { text }) if text == "first thought"
+            Some(RunTraceSegment::Thinking { text, .. }) if text == "first thought"
         ));
         let Some(RunTraceSegment::Execution { tools, .. }) = trace.segments.get(1) else {
             panic!("second segment should be execution");
@@ -2037,7 +2120,7 @@ mod tests {
         ));
         assert!(matches!(
             trace.segments.get(3),
-            Some(RunTraceSegment::Thinking { text }) if text == "second thought"
+            Some(RunTraceSegment::Thinking { text, .. }) if text == "second thought"
         ));
         let Some(RunTraceSegment::Execution { tools, .. }) = trace.segments.get(4) else {
             panic!("fifth segment should be execution");
@@ -2055,6 +2138,192 @@ mod tests {
             trace.segments.get(5),
             Some(RunTraceSegment::Text { text }) if text == "second answer"
         ));
+    }
+
+    #[test]
+    fn thinking_durations_use_event_timestamps_not_run_total() {
+        let base = Utc::now();
+        let event_at = |seq: u64,
+                        run_id: &str,
+                        agent_id: &str,
+                        parent_run_id: Option<&str>,
+                        kind: SessionEventKind,
+                        offset_ms: i64| {
+            let mut event = SessionEvent::new(
+                seq,
+                run_id,
+                agent_id,
+                parent_run_id.map(str::to_string),
+                kind,
+            );
+            event.timestamp = base + chrono::Duration::milliseconds(offset_ms);
+            event
+        };
+
+        let events = vec![
+            event_at(
+                1,
+                "run_duration",
+                "main",
+                None,
+                SessionEventKind::TurnStarted,
+                0,
+            ),
+            event_at(
+                2,
+                "run_duration",
+                "main",
+                None,
+                SessionEventKind::ThinkingDelta {
+                    delta: "plan".into(),
+                },
+                0,
+            ),
+            event_at(
+                3,
+                "run_duration",
+                "main",
+                None,
+                SessionEventKind::ToolCallStarted {
+                    tool_call_id: "tc_main".into(),
+                    tool_name: "apply_operations".into(),
+                    input_preview: "{}".into(),
+                    truncated: false,
+                },
+                4_000,
+            ),
+            event_at(
+                4,
+                "sub_duration",
+                "analyst",
+                Some("run_duration"),
+                SessionEventKind::SubagentStarted {
+                    subagent_run_id: "sub_duration".into(),
+                    agent_name: "analyst".into(),
+                    display_name: None,
+                    task: "analyse".into(),
+                    section_id: None,
+                },
+                5_000,
+            ),
+            event_at(
+                5,
+                "sub_duration",
+                "analyst",
+                Some("run_duration"),
+                SessionEventKind::ThinkingDelta {
+                    delta: "first".into(),
+                },
+                6_000,
+            ),
+            event_at(
+                6,
+                "sub_duration",
+                "analyst",
+                Some("run_duration"),
+                SessionEventKind::ToolCallStarted {
+                    tool_call_id: "tc_sub".into(),
+                    tool_name: "read_blocks".into(),
+                    input_preview: "{}".into(),
+                    truncated: false,
+                },
+                8_000,
+            ),
+            event_at(
+                7,
+                "sub_duration",
+                "analyst",
+                Some("run_duration"),
+                SessionEventKind::ToolCallFinished {
+                    tool_call_id: "tc_sub".into(),
+                    status: "completed".into(),
+                    output_preview: "ok".into(),
+                    truncated: false,
+                    duration_ms: 1_000,
+                },
+                9_000,
+            ),
+            event_at(
+                8,
+                "sub_duration",
+                "analyst",
+                Some("run_duration"),
+                SessionEventKind::ThinkingDelta {
+                    delta: "second".into(),
+                },
+                10_000,
+            ),
+            event_at(
+                9,
+                "sub_duration",
+                "analyst",
+                Some("run_duration"),
+                SessionEventKind::TextDelta {
+                    delta: "answer".into(),
+                },
+                13_000,
+            ),
+            event_at(
+                10,
+                "sub_duration",
+                "analyst",
+                Some("run_duration"),
+                SessionEventKind::SubagentFinished {
+                    subagent_run_id: "sub_duration".into(),
+                    status: "completed".into(),
+                    summary: "done".into(),
+                },
+                14_000,
+            ),
+            event_at(
+                11,
+                "run_duration",
+                "main",
+                None,
+                SessionEventKind::ToolCallFinished {
+                    tool_call_id: "tc_main".into(),
+                    status: "completed".into(),
+                    output_preview: "revision 2".into(),
+                    truncated: false,
+                    duration_ms: 50_000,
+                },
+                54_000,
+            ),
+            event_at(
+                12,
+                "run_duration",
+                "main",
+                None,
+                SessionEventKind::TextDelta {
+                    delta: "final answer".into(),
+                },
+                54_000,
+            ),
+            event_at(
+                13,
+                "run_duration",
+                "main",
+                None,
+                SessionEventKind::TurnFinished,
+                60_000,
+            ),
+        ];
+
+        let traces = aggregate_run_traces(&events);
+        let trace = traces.first().expect("trace");
+        assert_eq!(trace.duration_ms, Some(60_000));
+
+        let Some(RunTraceSegment::Thinking { duration_ms, .. }) = trace.segments.first() else {
+            panic!("first segment should be thinking");
+        };
+        assert_eq!(*duration_ms, Some(4_000));
+        assert_ne!(*duration_ms, trace.duration_ms);
+
+        let Some(RunTraceSegment::Execution { subagents, .. }) = trace.segments.get(1) else {
+            panic!("second segment should be execution");
+        };
+        let subagent = subagents.first().expect("subagent");
+        assert_eq!(subagent.thinking_duration_ms, Some(5_000));
     }
 
     #[test]

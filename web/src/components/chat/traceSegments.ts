@@ -17,6 +17,7 @@ export type ThinkingActivity = {
   text: string;
   isStreaming: boolean;
   isActive: boolean;
+  startedAtMs?: number;
   durationMs?: number;
 };
 
@@ -62,6 +63,8 @@ export type LiveToolTraceItem = ToolCallTraceItem;
 export interface SubagentLiveView {
   thinkingText: string;
   isThinkingStreaming: boolean;
+  thinkingDurationMs?: number;
+  thinkingStartedAtMs?: number;
   tools: LiveToolTraceItem[];
   streamingText: string;
 }
@@ -107,10 +110,17 @@ export function extractSubagentLiveView(
   const thinkingParts: string[] = [];
   const textParts: string[] = [];
   const tools: LiveToolTraceItem[] = [];
+  let thinkingDurationMs = 0;
+  let thinkingStartedAtMs: number | undefined;
 
   for (const segment of trace.segments) {
     if (segment.kind === "thinking") {
       thinkingParts.push(segment.text);
+      if (segment.durationMs !== undefined) {
+        thinkingDurationMs += segment.durationMs;
+      } else {
+        thinkingStartedAtMs = segment.startedAtMs;
+      }
       continue;
     }
     if (segment.kind === "text") {
@@ -128,6 +138,8 @@ export function extractSubagentLiveView(
   return {
     thinkingText: joinLiveText(thinkingParts),
     isThinkingStreaming: trace.isStreaming && lastSegment?.kind === "thinking",
+    thinkingDurationMs: thinkingDurationMs > 0 ? thinkingDurationMs : undefined,
+    thinkingStartedAtMs,
     tools,
     streamingText: joinLiveText(textParts),
   };
@@ -175,10 +187,6 @@ export function buildHistoricalSegments(
   trace: RunTraceSummary,
 ): RenderSegment[] {
   const source = trace.segments ?? [];
-  const lastThinkingIndex = source.reduce(
-    (last, segment, index) => (segment.kind === "thinking" ? index : last),
-    -1,
-  );
   // The trailing text run is the run's visible body. Everything before it is
   // process: thinking, tool calls and any commentary the model emitted between
   // them. Keeping that process in one group makes the text the only divider.
@@ -202,10 +210,7 @@ export function buildHistoricalSegments(
         text: segment.text,
         isStreaming: false,
         isActive: false,
-        durationMs:
-          index === lastThinkingIndex
-            ? (trace.duration_ms ?? undefined)
-            : undefined,
+        durationMs: segment.duration_ms ?? undefined,
       });
       return;
     }
@@ -297,6 +302,8 @@ export function buildLiveSegments(
         text: segment.text,
         isStreaming: trace.isStreaming && isLast,
         isActive: trace.isStreaming && isLast,
+        startedAtMs: segment.startedAtMs,
+        durationMs: segment.durationMs,
       });
       return;
     }

@@ -121,6 +121,7 @@ function ActivitySegment({
                   isStreaming={item.isStreaming}
                   isActive={item.isActive}
                   defaultOpen={false}
+                  startedAtMs={item.startedAtMs}
                   durationMs={item.durationMs}
                 />
               );
@@ -234,8 +235,14 @@ function LiveSubagent({
   sessionId: string;
   sub: LiveSubagentRun;
 }) {
-  const { thinkingText, isThinkingStreaming, tools, streamingText } =
-    extractSubagentLiveView(sub.trace);
+  const {
+    thinkingText,
+    isThinkingStreaming,
+    thinkingDurationMs,
+    thinkingStartedAtMs,
+    tools,
+    streamingText,
+  } = extractSubagentLiveView(sub.trace);
   const outputText =
     sub.summary?.trim() ||
     (sub.status === "running" ? streamingText.trim() : "");
@@ -250,6 +257,8 @@ function LiveSubagent({
         status: sub.status,
         thinking: thinkingText,
         thinkingStreaming: isThinkingStreaming,
+        thinkingStartedAtMs,
+        thinkingDurationMs,
         tools,
         outputText,
         outputStreaming: !sub.summary && sub.status === "running",

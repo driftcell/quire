@@ -21,6 +21,8 @@ export interface SubagentTraceModel {
   status: "running" | "completed" | "failed";
   thinking: string;
   thinkingStreaming: boolean;
+  thinkingStartedAtMs?: number;
+  thinkingDurationMs?: number;
   tools: ToolCallTraceItem[];
   outputText: string;
   outputStreaming: boolean;
@@ -79,6 +81,8 @@ export function SubagentTrace({
             content={model.thinking}
             isStreaming={model.thinkingStreaming}
             defaultOpen={false}
+            startedAtMs={model.thinkingStartedAtMs}
+            durationMs={model.thinkingDurationMs}
           />
           <ToolCallList sessionId={sessionId} tools={model.tools} />
           {model.outputText && (

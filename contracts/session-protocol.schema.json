@@ -390,6 +390,14 @@
         {
           "type": "object",
           "properties": {
+            "duration_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
             "kind": {
               "type": "string",
               "const": "thinking"
@@ -492,6 +500,14 @@
         },
         "thinking": {
           "type": "string"
+        },
+        "thinking_duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
         "tools": {
           "type": "array",

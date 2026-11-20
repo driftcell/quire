@@ -245,6 +245,8 @@ pub struct RunTraceSubagent {
     pub summary: Option<String>,
     pub thinking: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_focus: Option<RunTaskFocus>,
     #[serde(default)]
     pub tools: Vec<RunTraceToolItem>,
@@ -258,6 +260,8 @@ pub struct RunTraceSubagent {
 pub enum RunTraceSegment {
     Thinking {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
     },
     Execution {
         #[serde(default)]

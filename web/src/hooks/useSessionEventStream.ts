@@ -15,6 +15,7 @@ import {
   appendThinkingSegment,
   appendToolSegment,
   emptyLiveTrace,
+  finishThinkingSegment,
   finishToolSegment,
   type LiveAgentTrace,
   type LiveSubagentRun,
@@ -22,6 +23,11 @@ import {
 
 function matchesSubagent(sub: LiveSubagentRun, runId: string): boolean {
   return sub.subagentRunId === runId;
+}
+
+function eventTimestampMs(timestamp: string): number {
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
 export interface ResolvedQuestionEntry {
@@ -123,6 +129,7 @@ export function useSessionEventStream({
       const isSubagentEvent =
         Boolean(ev.parent_run_id) ||
         (ev.agent_id !== "main" && ev.agent_id.length > 0);
+      const eventTs = eventTimestampMs(ev.timestamp);
 
       if (ev.event === "doc_linked") {
         setLiveDocId(ev.doc_id);
@@ -150,14 +157,18 @@ export function useSessionEventStream({
               matchesSubagent(sub, ev.run_id)
                 ? {
                     ...sub,
-                    trace: appendThinkingSegment(sub.trace, ev.delta),
+                    trace: appendThinkingSegment(sub.trace, ev.delta, eventTs),
                   }
                 : sub,
             ),
           );
         } else {
           setLiveMain((prev) =>
-            appendThinkingSegment(prev ?? emptyLiveTrace("main"), ev.delta),
+            appendThinkingSegment(
+              prev ?? emptyLiveTrace("main"),
+              ev.delta,
+              eventTs,
+            ),
           );
         }
       } else if (ev.event === "text_delta") {
@@ -167,15 +178,22 @@ export function useSessionEventStream({
               matchesSubagent(sub, ev.run_id)
                 ? {
                     ...sub,
-                    trace: appendTextSegment(sub.trace, ev.delta),
+                    trace: appendTextSegment(
+                      finishThinkingSegment(sub.trace, eventTs),
+                      ev.delta,
+                    ),
                   }
                 : sub,
             ),
           );
         } else {
-          setLiveMain((prev) =>
-            appendTextSegment(prev ?? emptyLiveTrace("main"), ev.delta),
-          );
+          setLiveMain((prev) => {
+            if (!prev) return prev;
+            return appendTextSegment(
+              finishThinkingSegment(prev, eventTs),
+              ev.delta,
+            );
+          });
         }
       } else if (ev.event === "task_focus") {
         const focus = {
@@ -211,15 +229,22 @@ export function useSessionEventStream({
               matchesSubagent(sub, ev.run_id)
                 ? {
                     ...sub,
-                    trace: appendToolSegment(sub.trace, toolItem),
+                    trace: appendToolSegment(
+                      finishThinkingSegment(sub.trace, eventTs),
+                      toolItem,
+                    ),
                   }
                 : sub,
             ),
           );
         } else {
-          setLiveMain((prev) =>
-            appendToolSegment(prev ?? emptyLiveTrace("main"), toolItem),
-          );
+          setLiveMain((prev) => {
+            if (!prev) return prev;
+            return appendToolSegment(
+              finishThinkingSegment(prev, eventTs),
+              toolItem,
+            );
+          });
         }
       } else if (ev.event === "tool_call_finished") {
         const nextStatus: "completed" | "failed" =
@@ -249,7 +274,12 @@ export function useSessionEventStream({
         }
       } else if (ev.event === "subagent_started") {
         setLiveMain((prev) =>
-          prev ? appendSubagentSegment(prev, ev.subagent_run_id) : prev,
+          prev
+            ? appendSubagentSegment(
+                finishThinkingSegment(prev, eventTs),
+                ev.subagent_run_id,
+              )
+            : prev,
         );
         setLiveSubagents((prev) => [
           ...prev,
@@ -271,7 +301,10 @@ export function useSessionEventStream({
                   ...sub,
                   status: ev.status === "failed" ? "failed" : "completed",
                   summary: ev.summary,
-                  trace: { ...sub.trace, isStreaming: false },
+                  trace: {
+                    ...finishThinkingSegment(sub.trace, eventTs),
+                    isStreaming: false,
+                  },
                 }
               : sub,
           ),
@@ -286,6 +319,9 @@ export function useSessionEventStream({
         });
       } else if (ev.event === "questionnaire_requested") {
         setLiveRunStatus("awaiting_input");
+        setLiveMain((prev) =>
+          prev ? finishThinkingSegment(prev, eventTs) : prev,
+        );
         setLivePendingQuestion({
           question_id: ev.question_id,
           run_id: ev.run_id,
@@ -327,6 +363,15 @@ export function useSessionEventStream({
         });
       } else if (ev.event === "turn_finished") {
         setLiveRunStatus("idle");
+        setLiveMain((prev) =>
+          prev ? finishThinkingSegment(prev, eventTs) : prev,
+        );
+        setLiveSubagents((prev) =>
+          prev.map((sub) => ({
+            ...sub,
+            trace: finishThinkingSegment(sub.trace, eventTs),
+          })),
+        );
         void (async () => {
           await Promise.all([
             queryClient.refetchQueries({
@@ -342,7 +387,17 @@ export function useSessionEventStream({
         void queryClient.invalidateQueries({ queryKey: ["sessions"] });
       } else if (ev.event === "turn_failed") {
         setLiveRunStatus(ev.recoverable ? "interrupted" : "failed");
-        setLiveMain((prev) => (prev ? { ...prev, isStreaming: false } : null));
+        setLiveMain((prev) =>
+          prev
+            ? { ...finishThinkingSegment(prev, eventTs), isStreaming: false }
+            : null,
+        );
+        setLiveSubagents((prev) =>
+          prev.map((sub) => ({
+            ...sub,
+            trace: finishThinkingSegment(sub.trace, eventTs),
+          })),
+        );
         void queryClient.invalidateQueries({
           queryKey: ["session", sessionId],
         });

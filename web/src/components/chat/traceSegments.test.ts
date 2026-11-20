@@ -86,10 +86,10 @@ describe("buildHistoricalSegments", () => {
     const trace: RunTraceSummary = {
       run_id: "run-1",
       status: "completed",
-      duration_ms: 1200,
+      duration_ms: 60000,
       segments: [
         { kind: "thinking", text: "   " },
-        { kind: "thinking", text: "plan" },
+        { kind: "thinking", text: "plan", duration_ms: 4000 },
         { kind: "execution", tools: [], subagents: [subagent("sub-1")] },
         { kind: "text", text: "progress" },
         { kind: "text", text: "final body" },
@@ -108,12 +108,12 @@ describe("buildHistoricalSegments", () => {
     }
     expect(activity.items).toHaveLength(2);
     expect(activity.isActive).toBe(false);
-    expect(activity.durationMs).toBe(1200);
+    expect(activity.durationMs).toBe(60000);
     const thinking = activity.items[0];
     if (thinking?.kind !== "thinking") {
       throw new Error("expected thinking item");
     }
-    expect(thinking.durationMs).toBe(1200);
+    expect(thinking.durationMs).toBe(4000);
     const execution = activity.items[1];
     if (execution?.kind !== "execution") {
       throw new Error("expected execution item");
@@ -219,7 +219,7 @@ describe("buildLiveSegments", () => {
       agentId: "main",
       isStreaming: true,
       segments: [
-        { kind: "thinking", text: "plan" },
+        { kind: "thinking", text: "plan", startedAtMs: 1000 },
         {
           kind: "execution",
           tools: [liveTool],
@@ -247,6 +247,11 @@ describe("buildLiveSegments", () => {
       throw new Error("expected activity segment");
     }
     expect(activity.isActive).toBe(true);
+    const thinking = activity.items[0];
+    if (thinking?.kind !== "thinking") {
+      throw new Error("expected thinking item");
+    }
+    expect(thinking.startedAtMs).toBe(1000);
     const execution = activity.items[1];
     if (execution?.kind !== "execution") {
       throw new Error("expected execution item");
@@ -425,5 +430,22 @@ describe("extractSubagentLiveView", () => {
     expect(view.isThinkingStreaming).toBe(true);
     expect(view.streamingText).toBe("");
     expect(view.tools).toEqual([]);
+  });
+
+  test("sums settled thinking durations and exposes the active start", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "writer",
+      isStreaming: true,
+      segments: [
+        { kind: "thinking", text: "第一段", durationMs: 2000 },
+        { kind: "text", text: "中间输出" },
+        { kind: "thinking", text: "第二段", startedAtMs: 5000 },
+      ],
+    };
+
+    const view = extractSubagentLiveView(trace);
+    expect(view.thinkingDurationMs).toBe(2000);
+    expect(view.thinkingStartedAtMs).toBe(5000);
+    expect(view.isThinkingStreaming).toBe(true);
   });
 });

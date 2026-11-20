@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { BrainIcon, LoaderCircleIcon } from "lucide-react";
 import {
   MessageScroller,
@@ -23,7 +23,9 @@ export interface ThinkingTraceProps {
   isStreaming: boolean;
   isActive?: boolean;
   defaultOpen?: boolean;
-  /** Persisted run duration, used when replaying a historical trace. */
+  /** Server timestamp when this thinking segment started. */
+  startedAtMs?: number;
+  /** Server-settled duration for a completed thinking segment. */
   durationMs?: number;
 }
 
@@ -41,19 +43,23 @@ export function ThinkingTrace({
   isStreaming,
   isActive = false,
   defaultOpen,
+  startedAtMs,
   durationMs,
 }: ThinkingTraceProps) {
   const [open, setOpen] = useState<boolean | undefined>(defaultOpen);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const startedAtRef = useRef<number | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const hasContent = content.trim().length > 0;
   const expanded = open ?? (isStreaming || isActive);
-  const historicalSeconds =
+  const elapsedSeconds =
+    isStreaming && startedAtMs !== undefined
+      ? Math.max(0, Math.floor((nowMs - startedAtMs) / 1000))
+      : 0;
+  const settledSeconds =
     durationMs !== undefined && durationMs > 0
       ? Math.max(1, Math.ceil(durationMs / 1000))
       : 0;
-  const shownSeconds = elapsedSeconds > 0 ? elapsedSeconds : historicalSeconds;
+  const shownSeconds = isStreaming ? elapsedSeconds : settledSeconds;
   const hasDuration = shownSeconds > 0;
   const title = isStreaming
     ? "正在思考"
@@ -62,28 +68,21 @@ export function ThinkingTrace({
       : "思考过程";
 
   useEffect(() => {
-    if (!isStreaming) {
+    if (!isStreaming || startedAtMs === undefined) {
       return undefined;
     }
-    if (startedAtRef.current === null) {
-      startedAtRef.current = Date.now();
-    }
     const timer = window.setInterval(() => {
-      if (startedAtRef.current !== null) {
-        setElapsedSeconds(
-          Math.max(0, Math.floor((Date.now() - startedAtRef.current) / 1000)),
-        );
-      }
+      setNowMs(Date.now());
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [isStreaming]);
+  }, [isStreaming, startedAtMs]);
 
   if (!hasContent) {
     return null;
   }
 
   return (
-    <Trace>
+    <Trace data-slot="thinking-trace" data-duration-ms={durationMs}>
       <TraceCollapsible open={expanded} onOpenChange={setOpen}>
         <TraceCollapsibleTrigger>
           <TraceLine

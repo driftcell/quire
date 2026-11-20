@@ -12,6 +12,7 @@
  */
 export type RunTraceSegment =
   | {
+      duration_ms?: number | null;
       kind: "thinking";
       text: string;
       [k: string]: unknown;
@@ -253,6 +254,7 @@ export interface RunTraceSubagent {
   task: string;
   task_focus?: RunTaskFocus | null;
   thinking: string;
+  thinking_duration_ms?: number | null;
   tools?: RunTraceToolItem[];
   [k: string]: unknown;
 }
