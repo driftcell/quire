@@ -4,6 +4,7 @@ import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
 import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import { StopTurnButton } from "@/components/chat/StopTurnButton";
 import { SubagentTrace } from "@/components/chat/SubagentTrace";
+import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
@@ -25,7 +26,11 @@ import {
   TraceLine,
   TraceTitle,
 } from "@/components/ui/trace";
-import type { RunTraceSummary } from "@/contracts/session-protocol";
+import type {
+  AttachmentMeta,
+  RunTraceSummary,
+  SessionMessage,
+} from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
 function formatActivityDuration(durationMs?: number): string | null {
@@ -223,6 +228,8 @@ export const RenderSegments = memo(function RenderSegments({
   taskFocus,
   onJumpToSection,
   onInterrupt,
+  messageById,
+  attachmentMap,
 }: {
   sessionId: string;
   segments: RenderSegment[];
@@ -230,10 +237,29 @@ export const RenderSegments = memo(function RenderSegments({
   taskFocus?: LiveAgentTrace["taskFocus"];
   onJumpToSection?: (sectionId: string) => void;
   onInterrupt?: () => void | Promise<void>;
+  messageById: ReadonlyMap<string, SessionMessage>;
+  attachmentMap: Map<string, AttachmentMeta>;
 }) {
   return (
     <div className="w-full space-y-1">
       {segments.map((segment) => {
+        if (segment.kind === "user") {
+          const message = messageById.get(segment.messageId);
+          return (
+            <div
+              key={segment.key}
+              data-inline-user-message-id={segment.messageId}
+            >
+              <UserMessageBubble
+                body={message?.content ?? segment.content}
+                commentRefs={message?.comment_refs ?? []}
+                attachmentIds={message?.attachment_ids ?? []}
+                attachmentMap={attachmentMap}
+                onJumpToSection={onJumpToSection}
+              />
+            </div>
+          );
+        }
         if (segment.kind === "text") {
           return (
             <SmoothStreamdown
@@ -264,10 +290,16 @@ export function HistoricalRunTrace({
   sessionId,
   trace,
   questionSlots,
+  messageById,
+  attachmentMap,
+  onJumpToSection,
 }: {
   sessionId: string;
   trace: RunTraceSummary;
   questionSlots?: Map<string, ReactNode>;
+  messageById: ReadonlyMap<string, SessionMessage>;
+  attachmentMap: Map<string, AttachmentMeta>;
+  onJumpToSection?: (sectionId: string) => void;
 }) {
   const segments = buildHistoricalSegments(trace);
   if (segments.length === 0) {
@@ -278,6 +310,9 @@ export function HistoricalRunTrace({
       sessionId={sessionId}
       segments={segments}
       questionSlots={questionSlots}
+      messageById={messageById}
+      attachmentMap={attachmentMap}
+      onJumpToSection={onJumpToSection}
     />
   );
 }
@@ -328,6 +363,8 @@ export function LiveTraceSegments({
   taskFocus,
   onJumpToSection,
   onInterrupt,
+  messageById,
+  attachmentMap,
 }: {
   sessionId: string;
   segments: RenderSegment[];
@@ -335,6 +372,8 @@ export function LiveTraceSegments({
   taskFocus?: LiveAgentTrace["taskFocus"];
   onJumpToSection?: (sectionId: string) => void;
   onInterrupt?: () => void | Promise<void>;
+  messageById: ReadonlyMap<string, SessionMessage>;
+  attachmentMap: Map<string, AttachmentMeta>;
 }) {
   return (
     <RenderSegments
@@ -344,6 +383,8 @@ export function LiveTraceSegments({
       taskFocus={taskFocus}
       onJumpToSection={onJumpToSection}
       onInterrupt={onInterrupt}
+      messageById={messageById}
+      attachmentMap={attachmentMap}
     />
   );
 }

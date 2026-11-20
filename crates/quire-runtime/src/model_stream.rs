@@ -3,6 +3,7 @@
 use std::{collections::VecDeque, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use futures::Stream;
 use quire_session_protocol::{ContextUsage, QuestionItem};
 use serde_json::Value;
@@ -66,6 +67,12 @@ pub enum ModelStreamEvent {
         input: Value,
         output: Value,
         error: Option<String>,
+    },
+    /// A queued user message consumed between tool results and the next model round.
+    UserMessageInjected {
+        message_id: String,
+        content: String,
+        created_at: DateTime<Utc>,
     },
     QuestionnaireRequested {
         tool_call_id: Option<String>,

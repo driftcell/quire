@@ -12,7 +12,6 @@ pub mod citation;
 pub mod comment;
 pub mod computed;
 pub mod diff;
-pub mod draft;
 pub(crate) mod echarts;
 pub mod error;
 pub mod events;
@@ -46,7 +45,6 @@ pub use computed::{
     compute_block_framing, compute_document_meta, compute_table_layout, compute_toc_tree,
 };
 pub use diff::{BlockDiffEntry, DocumentDiffReport, DocumentMetadataDiff, diff_documents};
-pub use draft::{DraftError, ReportDraft};
 pub use echarts::series as chart_series;
 pub use echarts::{
     ChartDataTable, axis_count, chart_data_tables, configured_axis_count, effective_chart_option,

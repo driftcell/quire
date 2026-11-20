@@ -8,7 +8,6 @@ allowed_tools:
   - read_as_markdown
   - read_blocks
   - apply_operations
-  - apply_draft
   - upsert_sources
   - describe_task
   - load_skill

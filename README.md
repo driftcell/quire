@@ -11,11 +11,11 @@ dependency. Rendering and visual preview belong to the external frontend.
 
 | Crate | Purpose |
 | --- | --- |
-| `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, lint wire contracts, draft parser |
+| `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, lint wire contracts |
 | `quire-lint` | Pure, zero-I/O static lint registry and rule engine with layered select/ignore filters |
 | `quire-store` | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher |
 | `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json` |
-| `quire-server` | Axum REST/SSE endpoints and the 19-tool `rmcp` server mounted at `/mcp` |
+| `quire-server` | Axum REST/SSE endpoints and the 18-tool `rmcp` server mounted at `/mcp` |
 | `quire-runtime` | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE |
 
 ## Quickstart
@@ -64,8 +64,8 @@ runtime integration tests directly with `cargo test` requires `TEST_DATABASE_URL
 run against `report_core` because they mutate runtime state.
 
 The E2E test boots the real `quire-server` binary, starts two parallel MCP clients, observes SSE,
-merges an offline draft, self-heals a dangling citation, rolls back and validates `computed`
-frontend metadata.
+runs parallel `apply_operations` batches with Smart CAS rebases, self-heals a dangling citation,
+rolls back and validates `computed` frontend metadata.
 
 ## Environment
 
@@ -76,8 +76,6 @@ frontend metadata.
 | `QUIRE_RW_TOKEN` | — | Bearer token for MCP and mutating admin routes |
 | `QUIRE_RO_TOKEN` | — | Bearer token for read-only frontend routes (RW token also accepted) |
 | `BIND_ADDR` | `0.0.0.0:8080` | HTTP bind address |
-| `QUIRE_WORKSPACE_DIR` | current directory | Root for offline `draft.json` files |
-| `QUIRE_MAX_DRAFT_BYTES` | `5242880` | Draft read limit |
 | `MCP_ALLOWED_HOSTS` | loopback defaults | Comma-separated Host allowlist for `/mcp` |
 | `CORS_ALLOW_ORIGINS` | permissive | Comma-separated browser origins |
 | `SSE_HEARTBEAT_SECS` | `15` | SSE heartbeat interval |
@@ -156,7 +154,7 @@ INIT -> SCHEMA -> AUTHOR -> VERIFY
 1. Send `X-Session-Id` on MCP calls. `GET /api/sessions/{session_id}/events` receives
    `event: doc_created` as soon as `create_report` commits.
 2. Read `get_document_digest`, `read_as_markdown` or `read_blocks` before editing.
-3. Mutate with `apply_operations(doc_id, expected_revision, summary, ops)` or `apply_draft`.
+3. Mutate with `apply_operations(doc_id, expected_revision, summary, ops)`.
    Parallel writers using disjoint block IDs are automatically rebased by Smart CAS; overlapping
    writes receive a structured conflict with the latest blocks.
 4. Call `lint_document` until errors are zero and review warnings. Diagnostics carry `code`,
@@ -171,16 +169,15 @@ document or digest only when the receipt does not answer the question.
 `apply_operations` accepts an optional `sources` map that is upserted in the same transaction as the
 blocks, so a citation can be registered in the same call that references it. Empty or colliding
 block IDs are auto-assigned and reported in `assigned_ids`; clients do not need to invent stable IDs
-for transient drafts.
+for transient blocks.
 
-## MCP tools (19)
+## MCP tools (18)
 
 | Tool | Purpose |
 | --- | --- |
 | `get_protocol_guide` | progressive quickstart/tables/citations/parallel-workflow guidance |
 | `create_report` | create revision 1; idempotency key + `X-Session-Id` discovery |
 | `list_reports` | paginated/filterable report index |
-| `apply_draft` | offline draft ingest with block-ID prefixing and source deduplication |
 | `get_document_digest` | low-token outline + current revision |
 | `read_as_markdown` | full/section/block Markdown projection |
 | `read_blocks` | full protocol JSON for targeted blocks |
@@ -242,9 +239,9 @@ SSE event names: `revision`, `ephemeral_preview`, `agent_presence`, `ephemeral_c
 ```
 
 Presence uses `kind: "presence"` with `actor`, `status` and an optional `section_id`. When the
-streamed block is committed, pass the preview IDs to `apply_operations` (or `apply_draft`) as
-`preview_ids`; the emitted `revision` delta then carries `cleared_preview_ids` so clients remove the
-ephemeral block and apply the committed revision in one frame without flicker.
+streamed block is committed, pass the preview IDs to `apply_operations` as `preview_ids`; the emitted
+`revision` delta then carries `cleared_preview_ids` so clients remove the ephemeral block and apply
+the committed revision in one frame without flicker.
 
 If a commit resolves to a no-op, no revision is produced. The server then emits
 `event: ephemeral_clear` with `{"kind":"clear","preview_ids":[...]}` so clients can remove the
@@ -371,7 +368,7 @@ P90 visual-width heuristic (`CJK = 2.0`, ASCII = 1.0), `fit`/`grow` weights and
   order into a new revision; history is never rewritten.
 - Mutation receipts expose `base_revision`, `rebased`, `rebased_over`, `committed`, and writer-scoped
   `blocking_errors`, so parallel agents can prove a Smart CAS rebase and distinguish committed
-  writes from lint-clean writes. `apply_draft` accepts optional `expected_revision`.
+  writes from lint-clean writes.
 - Redis `XADD` happens after commit while holding a per-document publication lock, so Stream entries
   arrive in exact revision order.
 - The canonical JSON Schema is generated from the Rust types:

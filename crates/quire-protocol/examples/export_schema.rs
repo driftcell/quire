@@ -14,7 +14,7 @@ use quire_protocol::{
     AgentPresenceEvent, ChartDataTable, CommentMessage, CommentThread, CommentUpdatedEvent,
     ComputedDocumentMeta, DocumentDiffReport, DocumentMetadataDiff, EphemeralClearEvent,
     EphemeralPayload, EphemeralPreviewEvent, LintReport, PatchOp, PatchOutcome, ReportDocument,
-    ReportDraft, RevisionDelta, SessionDelta, SyncRequiredDelta,
+    RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 use schemars::JsonSchema;
 
@@ -55,8 +55,6 @@ struct ProtocolContract {
     document_metadata_diff: DocumentMetadataDiff,
     /// Structured ECharts data table projected from a chart block.
     chart_data_table: ChartDataTable,
-    /// Offline authoring draft accepted by `apply_draft`.
-    draft: ReportDraft,
     /// Receipt returned by the in-memory patch engine.
     patch_outcome: PatchOutcome,
     /// Static validation report returned by `lint_document`.

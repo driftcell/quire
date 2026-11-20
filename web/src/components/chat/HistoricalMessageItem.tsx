@@ -3,8 +3,8 @@ import { CopyIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
-import { MessageAttachments } from "@/components/chat/MessageAttachments";
-import { UserCommentRefCards } from "@/components/chat/PendingUserBubble";
+// Shared inline and transcript messages use UserMessageBubble.
+import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import {
   CHAT_PROSE,
   STREAMDOWN_CONTROLS,
@@ -21,7 +21,7 @@ import type {
   RunTraceSummary,
   SessionMessage,
 } from "@/contracts/session-protocol";
-// Structured references are rendered separately from message content.
+// Structured user metadata stays separate from content.
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "numeric",
@@ -105,6 +105,7 @@ export interface HistoricalMessageItemProps {
   trace?: RunTraceSummary;
   questionSlots?: Map<string, ReactNode>;
   onJumpToSection?: (sectionId: string) => void;
+  messageById: ReadonlyMap<string, SessionMessage>;
 }
 
 export const HistoricalMessageItem = memo(function HistoricalMessageItem({
@@ -114,6 +115,7 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
   trace,
   questionSlots,
   onJumpToSection,
+  messageById,
 }: HistoricalMessageItemProps) {
   const msgAttachmentIds = msg.attachment_ids ?? [];
   const sentAt = formatMsgTime(msg.created_at);
@@ -144,27 +146,13 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
             {sentAt.label}
           </time>
         )}
-        <Message align="end" className="items-end">
-          <div className="flex max-w-[85%] flex-col items-end">
-            {userRefs.length > 0 && (
-              <div className="w-full">
-                <UserCommentRefCards
-                  refs={userRefs}
-                  onJumpToSection={onJumpToSection}
-                />
-              </div>
-            )}
-            <MessageAttachments
-              ids={msgAttachmentIds}
-              attachmentMap={attachmentMap}
-            />
-            {userBody.length > 0 && (
-              <div className="w-fit max-w-full rounded-2xl bg-muted px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap text-foreground">
-                {userBody}
-              </div>
-            )}
-          </div>
-        </Message>
+        <UserMessageBubble
+          body={userBody}
+          commentRefs={userRefs}
+          attachmentIds={msgAttachmentIds}
+          attachmentMap={attachmentMap}
+          onJumpToSection={onJumpToSection}
+        />
       </MessageGroup>
     );
   }
@@ -177,6 +165,9 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
             sessionId={sessionId}
             trace={trace}
             questionSlots={questionSlots}
+            messageById={messageById}
+            attachmentMap={attachmentMap}
+            onJumpToSection={onJumpToSection}
           />
         )}
         {!hasTextSegment && (

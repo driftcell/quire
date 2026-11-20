@@ -371,8 +371,7 @@ pub struct PatchOutcome {
     pub deleted_block_ids: Vec<BlockId>,
     pub moved_block_ids: Vec<BlockId>,
     pub affected_block_ids: Vec<BlockId>,
-    /// Map of submitted block IDs to final IDs. `apply_operations` is identity; `apply_draft`
-    /// may prefix collisions.
+    /// Map of submitted block IDs to final IDs. Colliding or empty IDs are auto-assigned.
     pub id_mapping: BTreeMap<BlockId, BlockId>,
     pub metadata_changed: bool,
     pub no_op: bool,

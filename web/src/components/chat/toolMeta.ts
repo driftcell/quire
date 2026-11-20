@@ -34,7 +34,6 @@ const TOOL_META: Record<string, ToolMeta> = {
   read_as_markdown: { label: "读取报告正文", icon: FileTextIcon },
   sandbox_read_file: { label: "读取文件", icon: FileTextIcon },
   apply_operations: { label: "写入报告内容", icon: PenLineIcon },
-  apply_draft: { label: "写入草稿", icon: PenLineIcon },
   sandbox_write_file: { label: "写入文件", icon: PenLineIcon },
   rollback_revision: { label: "回滚报告版本", icon: HistoryIcon },
   preview_echarts: { label: "预渲染图表", icon: BarChart3Icon },

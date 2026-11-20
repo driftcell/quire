@@ -89,7 +89,7 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
    - `expected_revision` enables Smart CAS: disjoint block edits rebase automatically; overlapping edits return conflict details with latest blocks.
    - Successful receipts report `base_revision`, `rebased`, and `rebased_over`. Errors are split into `blocking_errors` (committed but not lint-clean) and non-blocking `inline_warnings`, scoped to the blocks you touched.
    - Patch block text/style/source IDs; use `option_patch` for charts, `append_rows` / `update_cell` for tables.
-   - Register citations with `upsert_sources`, or pass an inline `sources` map to `apply_operations` / `apply_draft` so registration commits atomically with the blocks. Inline syntax is `[^source_id]`.
+   - Register citations with `upsert_sources`, or pass an inline `sources` map to `apply_operations` so registration commits atomically with the blocks. Inline syntax is `[^source_id]`.
 
 4. VERIFY
    - `lint_document(doc_id)` returns diagnostics that carry `code`, `rule`, `hint` and `suppressible`. Fix every `error` and review every `warning`.
@@ -331,13 +331,11 @@ SMART CAS
 - Recovery: re-read digest/Markdown, patch the returned latest block (or re-send expected_revision=current_revision) and retry.
 - A committed write can still have `blocking_errors`; these are lint errors scoped to blocks you touched. Fix them before declaring done.
 
-OFFLINE DRAFTS
-- Sub-agents may write `draft.json` (same ReportDocument JSON shape, optional `doc_id`/`title`).
-- `draft_file_path` must resolve under `QUIRE_WORKSPACE_DIR`; absolute paths inside that root are accepted, paths outside it are rejected.
-- `read_as_markdown(draft_file_path=...)` validates/projects without touching the database.
-- `apply_draft(draft_file_path, target_doc_id, mode="append_section", expected_revision=N)` merges atomically. Omit `expected_revision` to read current, or supply it to make CAS explicit. `append_section` appends after the current last block, not into a specific section; use `apply_operations` with `append_to_section` for section-targeted writes.
-- Empty or colliding block IDs are auto-assigned and returned in `assigned_ids`. Draft receipts also include `base_revision`, `rebased`, `rebased_over`, `blocking_errors`.
-- Source URLs/titles are deduplicated; use `canonical_id_map` for citations.
+ONLINE AUTHORING
+- Every writer mutates the online ReportDocument through `apply_operations`; there is no offline file ingest.
+- Replace a placeholder section with `{"type":"replace_range","start_id":"ch1_placeholder","end_id":"ch1_placeholder","blocks":[...]}` or target a heading with `append_to_section`.
+- Empty or colliding block IDs are auto-assigned and returned in `assigned_ids`.
+- Register sources in the same call with the inline `sources` map; URL/title deduplication commits atomically with the blocks.
 
 REVIEW LOOP
 1. `read_as_markdown(doc_id, section_heading=...)` for the section under review.
@@ -355,17 +353,16 @@ FRONTEND CONTRACT
 - GET /api/docs/{doc_id}/diff?fromRev=A&toRev=B returns structured block-level Added/Removed/Modified entries plus metadata flags.
 - SourceEntry.excerpt carries verbatim evidence; computed.chart_tables carries renderer-ready ECharts data tables grouped by block ID.
 - SSE events: revision, ephemeral_preview, agent_presence, ephemeral_clear, comment_updated, sync_required, plus heartbeat comments.
-- Do not send cursor/presence edits other than optional ephemeral previews. When a previewed block is committed, pass its preview IDs as preview_ids to apply_operations or apply_draft so revision.cleared_preview_ids clears the placeholder atomically. A no-op commit emits ephemeral_clear immediately instead of creating a revision.
+- Do not send cursor/presence edits other than optional ephemeral previews. When a previewed block is committed, pass its preview IDs as preview_ids to apply_operations so revision.cleared_preview_ids clears the placeholder atomically. A no-op commit emits ephemeral_clear immediately instead of creating a revision.
 "##.into(),
         recommended_tools: vec![
-            "apply_draft".into(),
             "apply_operations".into(),
             "get_document_digest".into(),
             "list_comments".into(),
             "reply_comment".into(),
             "rollback_revision".into(),
         ],
-        _next_hint: "Assign disjoint block ID prefixes before launching parallel writers, then merge drafts through apply_draft.".into(),
+        _next_hint: "Assign disjoint block ID prefixes before launching parallel writers, then commit each writer's batch through apply_operations.".into(),
     }
 }
 

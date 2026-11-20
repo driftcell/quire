@@ -93,7 +93,6 @@ Core contract and safety rules survive every ignore layer and are never counted 
   and rollback pipeline.
 - `BlockPatch.lint_ignore` replaces the block list; an empty list clears it. Block data stays inside
   the existing `report_blocks.payload` JSONB.
-- `ReportDraft.lint` is copied into created or merged documents.
 
 ### MCP behavior
 

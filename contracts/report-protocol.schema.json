@@ -39,10 +39,6 @@
       "description": "Non-block metadata flags included in a document diff.",
       "$ref": "#/$defs/DocumentMetadataDiff"
     },
-    "draft": {
-      "description": "Offline authoring draft accepted by `apply_draft`.",
-      "$ref": "#/$defs/ReportDraft"
-    },
     "ephemeral_clear": {
       "description": "SSE `ephemeral_clear` payload for immediate placeholder cleanup.",
       "$ref": "#/$defs/EphemeralClearEvent"
@@ -97,7 +93,6 @@
     "document_diff",
     "document_metadata_diff",
     "chart_data_table",
-    "draft",
     "patch_outcome",
     "lint"
   ],
@@ -2357,7 +2352,7 @@
           }
         },
         "id_mapping": {
-          "description": "Map of submitted block IDs to final IDs. `apply_operations` is identity; `apply_draft`\nmay prefix collisions.",
+          "description": "Map of submitted block IDs to final IDs. Colliding or empty IDs are auto-assigned.",
           "type": "object",
           "additionalProperties": {
             "$ref": "#/$defs/BlockId"
@@ -2598,78 +2593,6 @@
       "required": [
         "doc_id"
       ]
-    },
-    "ReportDraft": {
-      "type": "object",
-      "properties": {
-        "blocks": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/Block"
-          }
-        },
-        "cover": {
-          "$ref": "#/$defs/CoverConfig",
-          "default": {
-            "authors": [],
-            "enabled": false,
-            "title": "",
-            "variant": "classic"
-          }
-        },
-        "doc_id": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/DocId"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "lint": {
-          "$ref": "#/$defs/LintConfig",
-          "default": {}
-        },
-        "references": {
-          "$ref": "#/$defs/ReferencesConfig",
-          "default": {
-            "enabled": true,
-            "page_break_before": true,
-            "style": "numeric",
-            "title": "References"
-          }
-        },
-        "sources": {
-          "type": "object",
-          "additionalProperties": {
-            "$ref": "#/$defs/SourceEntry"
-          }
-        },
-        "theme": {
-          "$ref": "#/$defs/ThemeConfig",
-          "default": {
-            "preset": "default"
-          }
-        },
-        "title": {
-          "description": "Convenience title for agents; copied into `cover.title` when that field is empty.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "toc": {
-          "$ref": "#/$defs/TocConfig",
-          "default": {
-            "enabled": true,
-            "max_depth": 3,
-            "title": "Contents",
-            "variant": "standard"
-          }
-        }
-      }
     },
     "Revision": {
       "description": "Monotonic non-negative report revision.",

@@ -24,6 +24,13 @@ export type RunTraceSegment =
       [k: string]: unknown;
     }
   | {
+      content: string;
+      created_at: string;
+      kind: "user_message";
+      message_id: string;
+      [k: string]: unknown;
+    }
+  | {
       kind: "text";
       text: string;
       [k: string]: unknown;
@@ -162,6 +169,13 @@ export type SessionEvent1 =
     }
   | {
       event: "user_message_added";
+      message_id: string;
+      [k: string]: unknown;
+    }
+  | {
+      content: string;
+      created_at: string;
+      event: "user_message_injected";
       message_id: string;
       [k: string]: unknown;
     }

@@ -1,9 +1,9 @@
 //! End-to-end multi-agent simulation against the compiled Quire server binary.
 //!
 //! Requires live PostgreSQL and Redis (`just up && just migrate`). The test boots the real
-//! binary, exercises MCP tool calls over Streamable HTTP, observes SSE deltas, merges an offline
-//! draft, applies Smart CAS retries, self-heals a dangling citation, rolls back, and verifies the
-//! canonical frontend contract with computed table layouts.
+//! binary, exercises MCP tool calls over Streamable HTTP, observes SSE deltas, runs parallel
+//! `apply_operations` batches with Smart CAS rebases, self-heals a dangling citation, rolls back,
+//! and verifies the canonical frontend contract with computed table layouts.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 
@@ -476,7 +476,6 @@ where
 async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let database_url = database_url();
     let redis_url = redis_url();
-    let workspace = tempfile::tempdir()?;
     let rw_token = unique("rw_token");
     let ro_token = unique("ro_token");
     let mut auth_headers = reqwest::header::HeaderMap::new();
@@ -504,7 +503,6 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .env("AUTO_MIGRATE", "true")
         .env("MCP_JSON_RESPONSE", "true")
         .env("SSE_HEARTBEAT_SECS", "5")
-        .env("QUIRE_WORKSPACE_DIR", workspace.path())
         .env("RUST_LOG", "warn,quire_server=info")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -565,7 +563,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     // 2. Lead agent cold start via MCP.
     let lead = McpClient::connect(http.clone(), &base, &session_id, "lead-orchestrator").await?;
     let tool_names = lead.list_tool_names().await?;
-    assert_eq!(tool_names.len(), 19, "tool names: {tool_names:?}");
+    assert_eq!(tool_names.len(), 18, "tool names: {tool_names:?}");
     for required_tool in [
         "list_comments",
         "add_comment",
@@ -931,72 +929,82 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         "a no-op commit must clear previews through ephemeral_clear, not a revision"
     );
 
-    // 4a. Sub-Agent A: offline draft flow.
-    let draft = json!({
-        "title": "Chapter 1 — Financial Performance",
-        "cover": {"enabled": true, "title": "Chapter 1 — Financial Performance"},
-        "sources": {
-            "sec_fin": {
-                "title": "Audited financial statements",
-                "url": "https://example.com/financials",
-                "authors": ["Grace Hopper"],
-                "date": "2026-02-01"
-            },
-            "sec_market": {
-                "title": "Market Outlook 2026",
-                "url": "https://example.com/market",
-                "authors": ["Katherine Johnson"],
-                "date": "2026-01-15",
-                "excerpt": "Enterprise demand accelerated through Q4."
-            }
+    // 4a. Sub-Agent A: write Chapter 1 directly into the online document.
+    let ch1_blocks = json!([
+        {"id":"ch1_intro","type":"heading","level":2,"text":"Financial Performance"},
+        {"id":"ch1_summary","type":"paragraph","text":"Revenue grew **18%** year over year [^sec_fin], while enterprise demand remained resilient.","source_ids":["sec_fin"]},
+        {
+            "id":"ch1_financials",
+            "type":"table",
+            "caption":"Revenue by segment",
+            "columns":[
+                {"key":"segment","label":"Segment"},
+                {"key":"revenue","label":"Revenue","children":[
+                    {"key":"fy25","label":"FY25","data_type":"currency","sizing":"grow"},
+                    {"key":"fy26","label":"FY26","data_type":"currency","sizing":"grow"}
+                ]}
+            ],
+            "rows":[
+                {"segment":"Enterprise","fy25":1200000,"fy26":1450000},
+                {"segment":"SMB","fy25":600000,"fy26":720000}
+            ],
+            "summary_rows":[
+                {"segment":"Total","fy25":1800000,"fy26":2170000}
+            ],
+            "style":{"column_widths":{"segment":"28%"}}
         },
-        "blocks": [
-            {"id":"ch1_intro","type":"heading","level":2,"text":"Financial Performance"},
-            {"id":"ch1_summary","type":"paragraph","text":"Revenue grew **18%** year over year [^sec_fin], while enterprise demand remained resilient [^sec_market].","source_ids":["sec_fin"]},
-            {
-                "id":"ch1_financials",
-                "type":"table",
-                "caption":"Revenue by segment",
-                "columns":[
-                    {"key":"segment","label":"Segment"},
-                    {"key":"revenue","label":"Revenue","children":[
-                        {"key":"fy25","label":"FY25","data_type":"currency","sizing":"grow"},
-                        {"key":"fy26","label":"FY26","data_type":"currency","sizing":"grow"}
-                    ]}
+        {
+            "id":"ch1_chart",
+            "type":"echarts",
+            "title":"Revenue and margin",
+            "height":340,
+            "option":{
+                "tooltip":{"trigger":"axis"},
+                "grid":{"containLabel":true,"left":12,"right":16,"top":24,"bottom":16},
+                "xAxis":{"type":"category","data":["FY25","FY26"]},
+                "yAxis":[
+                    {"type":"value","name":"Revenue"},
+                    {"type":"value","name":"Margin","max":100}
                 ],
-                "rows":[
-                    {"segment":"Enterprise","fy25":1200000,"fy26":1450000},
-                    {"segment":"SMB","fy25":600000,"fy26":720000}
-                ],
-                "summary_rows":[
-                    {"segment":"Total","fy25":1800000,"fy26":2170000}
-                ],
-                "style":{"column_widths":{"segment":"28%"}}
+                "series":[
+                    {"name":"Revenue","type":"bar","data":[1800000,2170000]},
+                    {"name":"Margin","type":"line","yAxisIndex":1,"data":[61.2,63.4]}
+                ]
             },
-            {
-                "id":"ch1_chart",
-                "type":"echarts",
-                "title":"Revenue and margin",
-                "height":340,
-                "option":{
-                    "tooltip":{"trigger":"axis"},
-                    "grid":{"containLabel":true,"left":12,"right":16,"top":24,"bottom":16},
-                    "xAxis":{"type":"category","data":["FY25","FY26"]},
-                    "yAxis":[
-                        {"type":"value","name":"Revenue"},
-                        {"type":"value","name":"Margin","max":100}
-                    ],
-                    "series":[
-                        {"name":"Revenue","type":"bar","data":[1800000,2170000]},
-                        {"name":"Margin","type":"line","yAxisIndex":1,"data":[61.2,63.4]}
-                    ]
-                },
-                "fallback_summary":"Revenue rose from 1.8M to 2.17M while margin improved from 61.2% to 63.4%."
-            }
-        ]
+            "fallback_summary":"Revenue rose from 1.8M to 2.17M while margin improved from 61.2% to 63.4%."
+        }
+    ]);
+    let ch1_sources = json!({
+        "sec_fin": {
+            "title": "Audited financial statements",
+            "url": "https://example.com/financials",
+            "authors": ["Grace Hopper"],
+            "date": "2026-02-01"
+        }
     });
-    let draft_path = workspace.path().join("ch1_draft.json");
-    tokio::fs::write(&draft_path, serde_json::to_vec_pretty(&draft)?).await?;
+    let blocks_for_a = ch1_blocks;
+    let sources_for_a = ch1_sources;
+
+    // Register the Chapter 2 source first so concurrent writer batches never race on the
+    // source registry. Agent B still verifies upsert_sources deduplication after its block commit.
+    let market_source = lead
+        .call_tool(
+            "upsert_sources",
+            json!({
+                "doc_id": &doc_id,
+                "sources": [{
+                    "id": "sec_market",
+                    "title": "Market Outlook 2026",
+                    "url": "https://example.com/market",
+                    "authors": ["Katherine Johnson"],
+                    "date": "2026-01-15",
+                    "excerpt": "Enterprise demand accelerated through Q4."
+                }]
+            }),
+        )
+        .await?;
+    let revision_for_a = market_source["revision"].as_i64().unwrap();
+    let chapter_base_revision = revision_for_a;
 
     let a_client = McpClient::connect(http.clone(), &base, &session_id, "sub-agent-a").await?;
     let b_client = McpClient::connect(http.clone(), &base, &session_id, "sub-agent-b").await?;
@@ -1004,14 +1012,47 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     let doc_for_b = doc_id.clone();
     let revision_for_b = lead_revision;
 
-    // 4b. Parallel sub-agents: A projects/merges the draft while B concurrently upserts
-    // duplicate-URL sources and appends Chapter 2 with a CustomHtml KPI card.
+    // 4b. Parallel sub-agents: A replaces the Chapter 1 placeholder through apply_operations
+    // while B concurrently appends Chapter 2 with a CustomHtml KPI card from the same stale
+    // revision. Their block edits are disjoint, so Smart CAS must rebase B without a conflict.
     let agent_a = tokio::spawn(async move {
+        let before = a_client
+            .call_tool(
+                "read_as_markdown",
+                json!({
+                    "doc_id": &doc_for_a,
+                    "include_chart_data": true
+                }),
+            )
+            .await?;
+        assert!(
+            before["markdown"]
+                .as_str()
+                .unwrap()
+                .contains("<!-- block:ch1_placeholder | type:heading -->")
+        );
+        let merged = a_client
+            .call_tool(
+                "apply_operations",
+                json!({
+                    "doc_id": &doc_for_a,
+                    "expected_revision": revision_for_a,
+                    "summary": "write chapter 1 financial performance",
+                    "sources": sources_for_a,
+                    "ops": [{
+                        "type": "replace_range",
+                        "start_id": "ch1_placeholder",
+                        "end_id": "ch1_placeholder",
+                        "blocks": blocks_for_a
+                    }]
+                }),
+            )
+            .await?;
         let markdown = a_client
             .call_tool(
                 "read_as_markdown",
                 json!({
-                    "draft_file_path": "ch1_draft.json",
+                    "doc_id": &doc_for_a,
                     "include_chart_data": true
                 }),
             )
@@ -1020,49 +1061,16 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         assert!(markdown_text.contains("<!-- block:ch1_summary | type:paragraph -->"));
         assert!(markdown_text.contains("Revenue / FY25"));
         assert!(markdown_text.contains("| FY25 | 1800000 |"));
-        let merged = a_client
-            .call_tool(
-                "apply_draft",
-                json!({
-                    "draft_file_path": "ch1_draft.json",
-                    "target_doc_id": doc_for_a,
-                    "mode": "replace_range",
-                    "start_block_id": "ch1_placeholder",
-                    "end_block_id": "ch1_placeholder"
-                }),
-            )
-            .await?;
+        assert!(markdown_text.contains("_Chart data: Revenue, Margin (bar, line)_"));
+        assert!(markdown_text.contains("| Category | Revenue | Margin |"));
+        assert!(markdown_text.contains("| FY25 | 1800000 | 61.2 |"));
         Ok::<_, anyhow::Error>((merged, markdown_text.to_string()))
     });
 
     let agent_b = tokio::spawn(async move {
-        // Register sources before appending citations so post-commit lint never sees a
-        // transient dangling source. Agent A still runs concurrently with this sequence.
-        let upsert = b_client
-            .call_tool(
-                "upsert_sources",
-                json!({
-                    "doc_id": doc_for_b,
-                    "sources": [
-                        {
-                            "id": "sec_market",
-                            "title": "Market Outlook 2026",
-                            "url": "https://example.com/market",
-                            "authors": ["Katherine Johnson"],
-                            "date": "2026-01-15",
-                            "excerpt": "Enterprise demand accelerated through Q4."
-                        },
-                        {
-                            "id": "sec_market_duplicate",
-                            "title": "Market Outlook 2026 (mirror)",
-                            "url": "https://example.com/market/",
-                            "authors": ["Katherine Johnson"],
-                            "date": "2026-01-15"
-                        }
-                    ]
-                }),
-            )
-            .await?;
+        // Append Chapter 2 from the stale revision, then re-check source deduplication after the
+        // block commit. The source registry is pre-seeded, so this batch only races on disjoint
+        // block IDs and Smart CAS must rebase it over A's Chapter 1 write.
         let ops = b_client
             .call_tool(
                 "apply_operations",
@@ -1094,34 +1102,59 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                 }),
             )
             .await?;
+        let upsert = b_client
+            .call_tool(
+                "upsert_sources",
+                json!({
+                    "doc_id": doc_for_b,
+                    "sources": [
+                        {
+                            "id": "sec_market",
+                            "title": "Market Outlook 2026",
+                            "url": "https://example.com/market",
+                            "authors": ["Katherine Johnson"],
+                            "date": "2026-01-15",
+                            "excerpt": "Enterprise demand accelerated through Q4."
+                        },
+                        {
+                            "id": "sec_market_duplicate",
+                            "title": "Market Outlook 2026 (mirror)",
+                            "url": "https://example.com/market/",
+                            "authors": ["Katherine Johnson"],
+                            "date": "2026-01-15"
+                        }
+                    ]
+                }),
+            )
+            .await?;
         Ok::<_, anyhow::Error>((upsert, ops))
     });
 
     let (a_result, b_result) = tokio::join!(agent_a, agent_b);
-    let (draft_receipt, offline_markdown) = a_result??;
+    let (chapter_one_receipt, chapter_markdown) = a_result??;
     let (upsert_receipt, ops_receipt) = b_result??;
-    assert!(draft_receipt["new_revision"].as_i64().unwrap() >= lead_revision);
-    assert_eq!(draft_receipt["committed"].as_bool(), Some(true));
-    assert!(draft_receipt["base_revision"].is_number());
-    assert!(draft_receipt["rebased"].is_boolean());
-    assert!(draft_receipt["blocking_errors"].is_array());
+    assert!(chapter_one_receipt["new_revision"].as_i64().unwrap() >= lead_revision);
+    assert_eq!(chapter_one_receipt["committed"].as_bool(), Some(true));
+    assert_eq!(
+        chapter_one_receipt["base_revision"].as_i64(),
+        Some(chapter_base_revision)
+    );
+    assert!(chapter_one_receipt["rebased"].is_boolean());
+    assert!(chapter_one_receipt["blocking_errors"].is_array());
     assert_eq!(ops_receipt["committed"].as_bool(), Some(true));
-    assert!(ops_receipt["base_revision"].is_number());
-    assert!(ops_receipt["rebased"].is_boolean());
-    assert!(ops_receipt["rebased_over"].is_number());
+    assert_eq!(ops_receipt["base_revision"].as_i64(), Some(lead_revision));
+    assert_eq!(ops_receipt["rebased"].as_bool(), Some(true));
+    assert!(ops_receipt["rebased_over"].as_u64().unwrap() >= 1);
     assert!(ops_receipt["blocking_errors"].is_array());
     // Compact apply receipts stay well below ~100 tokens (~4 bytes/token).
     assert!(
-        draft_receipt.to_string().len() < 600,
-        "draft receipt is not compact: {draft_receipt}"
+        chapter_one_receipt.to_string().len() < 600,
+        "chapter receipt is not compact: {chapter_one_receipt}"
     );
     assert!(
         ops_receipt.to_string().len() < 600,
         "operations receipt is not compact: {ops_receipt}"
     );
-    assert!(offline_markdown.contains("_Chart data: Revenue, Margin (bar, line)_"));
-    assert!(offline_markdown.contains("| Category | Revenue | Margin |"));
-    assert!(offline_markdown.contains("| FY25 | 1800000 | 61.2 |"));
     assert_eq!(
         upsert_receipt["canonical_id_map"]["sec_market_duplicate"].as_str(),
         Some("sec_market")
@@ -1547,47 +1580,39 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .await?;
     assert_eq!(lint_final["ok"].as_bool(), Some(true));
 
-    // 10. apply_draft honors explicit expected_revision (no silent retry) but can auto-read
-    // the current revision when expected_revision is omitted.
+    // 10. apply_operations honors explicit expected_revision (no silent retry) and recovers
+    // after a structured overlapping-edit conflict.
     let digest = reviewer
         .call_tool("get_document_digest", json!({"doc_id": doc_id}))
         .await?;
-    let draft_base_revision = digest["digest"]["current_rev"].as_i64().unwrap();
+    let cas_base_revision = digest["digest"]["current_rev"].as_i64().unwrap();
     reviewer
         .call_tool(
             "apply_operations",
             json!({
                 "doc_id": doc_id,
-                "expected_revision": draft_base_revision,
-                "summary": "advance revision before draft CAS test",
+                "expected_revision": cas_base_revision,
+                "summary": "advance revision before CAS conflict test",
                 "ops": [{
                     "type": "patch_block",
                     "block_id": "ch2_summary",
-                    "patch": {"text": "Enterprise demand accelerated in Q4 [^sec_market]. Draft CAS sentinel."}
+                    "patch": {"text": "Enterprise demand accelerated in Q4 [^sec_market]. CAS sentinel."}
                 }]
             }),
         )
         .await?;
-    let draft_path = workspace.path().join("draft_cas_conflict.json");
-    let draft = json!({
-        "blocks": [{
-            "id": "draft_cas_replacement",
-            "type": "paragraph",
-            "text": "Draft CAS replacement paragraph."
-        }]
-    });
-    tokio::fs::write(&draft_path, serde_json::to_vec_pretty(&draft)?).await?;
-    let draft_path = draft_path.to_string_lossy().to_string();
     let explicit_error = reviewer
         .call_tool_error(
-            "apply_draft",
+            "apply_operations",
             json!({
-                "draft_file_path": draft_path,
-                "target_doc_id": doc_id,
-                "mode": "replace_range",
-                "start_block_id": "ch2_summary",
-                "end_block_id": "ch2_summary",
-                "expected_revision": draft_base_revision
+                "doc_id": doc_id,
+                "expected_revision": cas_base_revision,
+                "summary": "overlapping CAS write must conflict",
+                "ops": [{
+                    "type": "patch_block",
+                    "block_id": "ch2_summary",
+                    "patch": {"text": "Conflicting write that must not commit."}
+                }]
             }),
         )
         .await?;
@@ -1596,25 +1621,31 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         Some("REVISION_CONFLICT"),
         "explicit expected_revision must return the conflict: {explicit_error}"
     );
-    let draft_receipt = reviewer
+    let digest = reviewer
+        .call_tool("get_document_digest", json!({"doc_id": doc_id}))
+        .await?;
+    let recovered_revision = digest["digest"]["current_rev"].as_i64().unwrap();
+    let recovered = reviewer
         .call_tool(
-            "apply_draft",
+            "apply_operations",
             json!({
-                "draft_file_path": draft_path,
-                "target_doc_id": doc_id,
-                "mode": "replace_range",
-                "start_block_id": "ch2_summary",
-                "end_block_id": "ch2_summary"
+                "doc_id": doc_id,
+                "expected_revision": recovered_revision,
+                "summary": "recover after CAS conflict",
+                "ops": [{
+                    "type": "patch_block",
+                    "block_id": "ch2_summary",
+                    "patch": {"text": "Enterprise demand accelerated in Q4 [^sec_market]."}
+                }]
             }),
         )
         .await?;
-    assert_eq!(draft_receipt["committed"].as_bool(), Some(true));
-    assert_eq!(draft_receipt["rebased"].as_bool(), Some(false));
-    let lint_after_draft = reviewer
+    assert_eq!(recovered["committed"].as_bool(), Some(true));
+    assert_eq!(recovered["rebased"].as_bool(), Some(false));
+    let lint_after_cas = reviewer
         .call_tool("lint_document", json!({"doc_id": doc_id}))
         .await?;
-    assert_eq!(lint_after_draft["ok"].as_bool(), Some(true));
-    tokio::fs::remove_file(&draft_path).await?;
+    assert_eq!(lint_after_cas["ok"].as_bool(), Some(true));
 
     // 11. Side-channel comments: human review, writer edit/delete, agent addressed, human archive.
     // Comment mutations must never move current_rev, so the writer's expected_revision below
@@ -1887,7 +1918,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         "MCP add_comment must not create a revision"
     );
 
-    final_doc["_test"] = json!({"offline_markdown_chars": offline_markdown.chars().count()});
+    final_doc["_test"] = json!({"chapter_markdown_chars": chapter_markdown.chars().count()});
     println!(
         "E2E complete: doc={doc_id} revisions=1..={final_revision} blocks={}",
         block_ids.len()

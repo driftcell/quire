@@ -46,7 +46,7 @@ pub struct CreateResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplyResult {
     pub new_revision: Revision,
-    /// Revision supplied by the caller (or read immediately before the write for drafts).
+    /// Revision supplied by the caller as the Smart CAS base.
     pub base_revision: Revision,
     /// True when the write landed on top of newer revisions via Smart CAS.
     pub rebased: bool,

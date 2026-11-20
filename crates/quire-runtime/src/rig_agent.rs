@@ -1045,7 +1045,7 @@ where
     Ok(outcomes)
 }
 
-const PREVIEW_TOOLS: &[&str] = &["apply_operations", "apply_draft"];
+const PREVIEW_TOOLS: &[&str] = &["apply_operations"];
 
 #[derive(Clone)]
 pub struct RigModelStreamProvider {
@@ -1466,7 +1466,13 @@ impl RigModelCore {
                     .take_pending_batch(&execution.session_id, &execution.run_id)
                     .await?
             {
-                // Inject the queued user instruction before the next model round.
+                // Route the event through the ordered stream so it is persisted after the tool
+                // result that preceded it, never before.
+                scope.send(ModelStreamEvent::UserMessageInjected {
+                    message_id: batch.message.message_id.clone(),
+                    content: batch.message.content.clone(),
+                    created_at: batch.message.created_at,
+                });
                 messages.push(Message::user(render_stored_user_message(&batch.message)));
             }
         }

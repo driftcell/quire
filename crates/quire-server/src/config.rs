@@ -1,6 +1,6 @@
 //! Quire server configuration.
 
-use std::{env, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{env, net::SocketAddr, time::Duration};
 
 use secrecy::SecretString;
 use thiserror::Error;
@@ -18,9 +18,6 @@ pub struct Config {
     pub allowed_hosts: Vec<String>,
     /// Browser origins allowed to call the read-only API. Empty means permissive (dev default).
     pub cors_allowed_origins: Vec<String>,
-    /// Root directory for offline draft JSON files.
-    pub workspace_dir: PathBuf,
-    pub max_draft_bytes: usize,
     pub sse_heartbeat: Duration,
     pub auto_migrate: bool,
     pub mcp_json_response: bool,
@@ -74,16 +71,6 @@ impl Config {
             .ok()
             .map(|value| split_csv(&value))
             .unwrap_or_default();
-        let workspace_dir = env::var("QUIRE_WORKSPACE_DIR")
-            .map(PathBuf::from)
-            .unwrap_or(env::current_dir().map_err(|error| ConfigError::Invalid {
-                name: "QUIRE_WORKSPACE_DIR",
-                message: error.to_string(),
-            })?);
-        let max_draft_bytes = env::var("QUIRE_MAX_DRAFT_BYTES")
-            .ok()
-            .and_then(|value| value.parse::<usize>().ok())
-            .unwrap_or(5 * 1024 * 1024);
         let sse_heartbeat = env::var("SSE_HEARTBEAT_SECS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -105,8 +92,6 @@ impl Config {
             ro_token,
             allowed_hosts,
             cors_allowed_origins,
-            workspace_dir,
-            max_draft_bytes,
             sse_heartbeat,
             auto_migrate,
             mcp_json_response,

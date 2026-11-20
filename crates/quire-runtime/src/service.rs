@@ -231,6 +231,7 @@ impl PendingQueueCoordinator {
         &self,
         session_id: &str,
         run_id: &str,
+        inject_into_run: bool,
     ) -> RuntimeResult<Option<PendingBatch>> {
         let items = self.store.list_pending_queue(session_id).await?;
         let Some(first) = items.first() else {
@@ -264,18 +265,19 @@ impl PendingQueueCoordinator {
             }
         }
         let client_msg_id = format!("queue:{}", first.queue_id);
-        let (message, _) = self
-            .store
-            .insert_user_message(
-                session_id,
-                &SendMessageRequest {
-                    client_msg_id,
-                    content,
-                    comment_refs,
-                    attachment_ids,
-                },
-            )
-            .await?;
+        let request = SendMessageRequest {
+            client_msg_id,
+            content,
+            comment_refs,
+            attachment_ids,
+        };
+        let (message, _) = if inject_into_run {
+            self.store
+                .insert_injected_user_message(session_id, run_id, &request)
+                .await?
+        } else {
+            self.store.insert_user_message(session_id, &request).await?
+        };
         self.store
             .remove_pending_items(
                 session_id,
@@ -286,17 +288,19 @@ impl PendingQueueCoordinator {
             )
             .await?;
         self.emit_queue_update(session_id).await?;
-        self.store
-            .append_event(
-                session_id,
-                run_id,
-                "queue",
-                None,
-                SessionEventKind::UserMessageAdded {
-                    message_id: message.message_id.clone(),
-                },
-            )
-            .await?;
+        if !inject_into_run {
+            self.store
+                .append_event(
+                    session_id,
+                    run_id,
+                    "queue",
+                    None,
+                    SessionEventKind::UserMessageAdded {
+                        message_id: message.message_id.clone(),
+                    },
+                )
+                .await?;
+        }
         Ok(Some(PendingBatch { message }))
     }
 
@@ -308,7 +312,8 @@ impl PendingQueueCoordinator {
     ) -> RuntimeResult<Option<PendingBatch>> {
         let gate = self.session_gate(session_id).await;
         let _guard = gate.lock_owned().await;
-        self.take_pending_batch_locked(session_id, run_id).await
+        self.take_pending_batch_locked(session_id, run_id, true)
+            .await
     }
 
     async fn emit_queue_update(&self, session_id: &str) -> RuntimeResult<()> {
@@ -802,7 +807,7 @@ impl RuntimeService {
         }
         let Some(batch) = self
             .queue
-            .take_pending_batch_locked(session_id, "queue")
+            .take_pending_batch_locked(session_id, "queue", false)
             .await?
         else {
             return Ok(None);
@@ -1802,6 +1807,26 @@ impl RuntimeService {
                             )
                             .await?;
                         }
+                        Some(Ok(ModelStreamEvent::UserMessageInjected {
+                            message_id,
+                            content,
+                            created_at,
+                        })) => {
+                            let deltas = coalescer.flush_all();
+                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            self.emit(
+                                session_id,
+                                run_id,
+                                "main",
+                                None,
+                                SessionEventKind::UserMessageInjected {
+                                    message_id,
+                                    content,
+                                    created_at,
+                                },
+                            )
+                            .await?;
+                        }
                         Some(Ok(ModelStreamEvent::QuestionnaireRequested {
                             tool_call_id,
                             questions,
@@ -2097,6 +2122,13 @@ impl RuntimeService {
                     },
                 )
                 .await?;
+            }
+            ModelStreamEvent::UserMessageInjected { .. } => {
+                warn!(
+                    session = %session_id,
+                    subagent = %subagent_run_id,
+                    "pending user messages are only injected into the main agent"
+                );
             }
             ModelStreamEvent::QuestionnaireRequested { .. } => {
                 warn!(

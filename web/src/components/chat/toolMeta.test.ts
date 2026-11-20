@@ -77,7 +77,6 @@ describe("getToolMeta", () => {
       "get_protocol_guide",
       "create_report",
       "list_reports",
-      "apply_draft",
       "get_document_digest",
       "read_as_markdown",
       "read_blocks",

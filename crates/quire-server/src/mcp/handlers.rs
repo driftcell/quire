@@ -1,23 +1,19 @@
-//! MCP tool implementations, Smart CAS reload helpers and draft ingestion utilities.
+//! MCP tool implementations, Smart CAS reload helpers and document projections.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashSet},
-    path::Path,
-};
+use std::collections::{BTreeSet, HashSet};
 
 use axum::http::request::Parts;
 use indexmap::IndexMap;
-use quire_lint::{LintOptions, lint_document_with_options, normalize::normalize_document};
+use quire_lint::{LintOptions, lint_document_with_options};
 use quire_protocol::{
     Block, BlockId, BlockKind, COVER_VARIANTS, CommentAuthorType, CommentStatus, CoverConfig,
     Diagnostic, DocId, EphemeralClearEvent, EphemeralPayload, IdAssignment, MarkdownOptions,
-    MarkdownProjector, PageChromeConfig, PatchOp, ProtocolError, ReportDocument, ReportDraft,
-    Revision, Severity, SourceEntry, SourceId, TOC_VARIANTS, is_safe_css_token_value,
-    is_valid_css_token_name, short_token,
+    MarkdownProjector, PageChromeConfig, PatchOp, ProtocolError, ReportDocument, Revision,
+    Severity, SourceId, TOC_VARIANTS, is_safe_css_token_value, is_valid_css_token_name,
+    short_token,
 };
 use quire_store::{
     ApplyResult, CommitExtras, NewCommentReply, NewCommentThread, SourceUpsert, StoreError,
-    merge_source_entries, normalized_source_key,
 };
 use rmcp::{
     ErrorData,
@@ -27,11 +23,10 @@ use rmcp::{
     },
     tool, tool_router,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
     auth::RequestContext,
-    config::Config,
     error::{invalid_params, mcp_error},
     guide::{guide, guide_workflow},
     state::AppState,
@@ -202,153 +197,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 4: apply draft
-    // ---------------------------------------------------------------------
-    #[tool(
-        name = "apply_draft",
-        description = "Ingest an offline draft.json. Auto-prefixes colliding block IDs, deduplicates sources by URL/title, and merges atomically in create_or_replace, append_section or replace_range mode."
-    )]
-    pub async fn apply_draft(
-        &self,
-        Extension(parts): Extension<Parts>,
-        Parameters(request): Parameters<ApplyDraftParams>,
-    ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
-        let draft = self.read_draft(&request.draft_file_path).await?;
-        let actor = RequestContext::from_parts(&parts)
-            .map_err(|error| {
-                invalid_params(error.to_string(), "Check X-Session-Id and X-Actor.", None)
-            })?
-            .actor;
-        let preview_ids = normalize_preview_ids(request.preview_ids)?;
-        let expected_revision = request.expected_revision.map(parse_revision).transpose()?;
-        match request.mode {
-            DraftMode::CreateOrReplace if request.target_doc_id.is_none() => {
-                self.create_from_draft(draft, request.sources, &parts, &actor, &preview_ids)
-                    .await
-            }
-            DraftMode::CreateOrReplace => {
-                let target = parse_doc_id(request.target_doc_id.as_deref().ok_or_else(|| {
-                    invalid_params(
-                        "target_doc_id is required for replace mode",
-                        "Pass the existing doc_id returned by create_report.",
-                        None,
-                    )
-                })?)?;
-                let mut attempt = 0;
-                loop {
-                    match self
-                        .replace_with_draft(
-                            &target,
-                            draft.clone(),
-                            request.sources.clone(),
-                            &actor,
-                            expected_revision,
-                            &preview_ids,
-                        )
-                        .await
-                    {
-                        Ok(receipt) => break Ok(receipt),
-                        Err(error)
-                            if expected_revision.is_none()
-                                && is_retryable_conflict(&error)
-                                && attempt < 3 =>
-                        {
-                            attempt += 1;
-                            continue;
-                        }
-                        Err(error) => break Err(error),
-                    }
-                }
-            }
-            DraftMode::AppendSection => {
-                let target = parse_doc_id(request.target_doc_id.as_deref().ok_or_else(|| {
-                    invalid_params(
-                        "target_doc_id is required for append_section mode",
-                        "Pass the existing doc_id returned by create_report.",
-                        None,
-                    )
-                })?)?;
-                let mut attempt = 0;
-                loop {
-                    match self
-                        .append_draft(
-                            &target,
-                            draft.clone(),
-                            request.sources.clone(),
-                            &actor,
-                            expected_revision,
-                            &preview_ids,
-                        )
-                        .await
-                    {
-                        Ok(receipt) => break Ok(receipt),
-                        Err(error)
-                            if expected_revision.is_none()
-                                && is_retryable_conflict(&error)
-                                && attempt < 3 =>
-                        {
-                            attempt += 1;
-                            continue;
-                        }
-                        Err(error) => break Err(error),
-                    }
-                }
-            }
-            DraftMode::ReplaceRange => {
-                let target = parse_doc_id(request.target_doc_id.as_deref().ok_or_else(|| {
-                    invalid_params(
-                        "target_doc_id is required for replace_range mode",
-                        "Pass the existing doc_id and both range endpoints.",
-                        None,
-                    )
-                })?)?;
-                let start = parse_block_id(&request.start_block_id.ok_or_else(|| {
-                    invalid_params(
-                        "start_block_id is required for replace_range",
-                        "Read get_document_digest and pass the first block ID to replace.",
-                        None,
-                    )
-                })?)?;
-                let end = parse_block_id(&request.end_block_id.ok_or_else(|| {
-                    invalid_params(
-                        "end_block_id is required for replace_range",
-                        "Read get_document_digest and pass the last block ID to replace.",
-                        None,
-                    )
-                })?)?;
-                let mut attempt = 0;
-                loop {
-                    match self
-                        .replace_range_with_draft(
-                            &target,
-                            draft.clone(),
-                            &start,
-                            &end,
-                            request.sources.clone(),
-                            &actor,
-                            expected_revision,
-                            &preview_ids,
-                        )
-                        .await
-                    {
-                        Ok(receipt) => break Ok(receipt),
-                        Err(error)
-                            if expected_revision.is_none()
-                                && is_retryable_conflict(&error)
-                                && attempt < 3 =>
-                        {
-                            attempt += 1;
-                            continue;
-                        }
-                        Err(error) => break Err(error),
-                    }
-                }
-            }
-        }
-    }
-
-    // ---------------------------------------------------------------------
-    // Tool 5: document digest
+    // Tool 4: document digest
     // ---------------------------------------------------------------------
     #[tool(
         name = "get_document_digest",
@@ -378,11 +227,11 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 6: read as markdown
+    // Tool 5: read as markdown
     // ---------------------------------------------------------------------
     #[tool(
         name = "read_as_markdown",
-        description = "Project an online report or offline draft.json into token-efficient Markdown with block anchors, flattened tables, expanded chart data and expanded citations."
+        description = "Project an online report into token-efficient Markdown with block anchors, flattened tables, expanded chart data and expanded citations."
     )]
     pub async fn read_as_markdown(
         &self,
@@ -392,41 +241,13 @@ impl QuireMcpServer {
             include_chart_data: request.include_chart_data.unwrap_or(true),
             include_front_matter: true,
         };
-        let requested_doc_id = request.doc_id.as_deref().map(parse_doc_id).transpose()?;
-        let (source, document) = match (
-            requested_doc_id.as_ref(),
-            request.draft_file_path.as_deref(),
-        ) {
-            (Some(doc_id), None) => (
-                format!("doc:{doc_id}"),
-                self.state
-                    .store
-                    .get_document(doc_id)
-                    .await
-                    .map_err(mcp_error)?,
-            ),
-            (None, Some(path)) => {
-                let draft = self.read_draft(path).await?;
-                (
-                    format!("draft:{path}"),
-                    draft_to_document(draft, "draft-preview")?,
-                )
-            }
-            (Some(_), Some(_)) => {
-                return Err(invalid_params(
-                    "provide either doc_id or draft_file_path, not both",
-                    "Use doc_id for online reports and draft_file_path for offline drafts.",
-                    None,
-                ));
-            }
-            (None, None) => {
-                return Err(invalid_params(
-                    "doc_id or draft_file_path is required",
-                    "Pass doc_id for an online report or a workspace-relative draft path.",
-                    None,
-                ));
-            }
-        };
+        let doc_id = parse_doc_id(&request.doc_id)?;
+        let document = self
+            .state
+            .store
+            .get_document(&doc_id)
+            .await
+            .map_err(mcp_error)?;
         let projector = MarkdownProjector::new(&document, &markdown_options);
         let markdown = if let Some(block_ids) = &request.block_ids {
             let block_ids = parse_block_ids(block_ids)?;
@@ -450,18 +271,12 @@ impl QuireMcpServer {
                 invalid_params(error.to_string(), "Reload the document and retry.", None)
             })?
         };
-        let _next_hint = if request.draft_file_path.is_some() {
-            "If the projection looks right, merge with apply_draft(draft_file_path=..., target_doc_id=...).".to_string()
-        } else {
+        let _next_hint =
             "Patch only blocks that need changes; use the block anchors above as exact IDs."
-                .to_string()
-        };
+                .to_string();
         Ok(Json(ReadMarkdownReceipt {
-            source,
-            doc_id: request
-                .draft_file_path
-                .is_none()
-                .then(|| document.doc_id.to_string()),
+            source: format!("doc:{doc_id}"),
+            doc_id: document.doc_id.to_string(),
             revision: document.revision.get(),
             markdown_chars: markdown.chars().count(),
             markdown,
@@ -470,7 +285,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 7: read blocks
+    // Tool 6: read blocks
     // ---------------------------------------------------------------------
     #[tool(
         name = "read_blocks",
@@ -518,7 +333,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 8: apply operations
+    // Tool 7: apply operations
     // ---------------------------------------------------------------------
     #[tool(
         name = "apply_operations",
@@ -600,7 +415,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 9: rollback
+    // Tool 8: rollback
     // ---------------------------------------------------------------------
     #[tool(
         name = "rollback_revision",
@@ -639,7 +454,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 10: upsert sources
+    // Tool 9: upsert sources
     // ---------------------------------------------------------------------
     #[tool(
         name = "upsert_sources",
@@ -707,7 +522,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 11: set cover
+    // Tool 10: set cover
     // ---------------------------------------------------------------------
     #[tool(
         name = "set_cover",
@@ -744,7 +559,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 12: configure TOC
+    // Tool 11: configure TOC
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_toc",
@@ -805,7 +620,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 13: configure references
+    // Tool 12: configure references
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_references",
@@ -868,7 +683,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 14: configure page chrome
+    // Tool 13: configure page chrome
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_page_chrome",
@@ -920,7 +735,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 15: update style and CSS
+    // Tool 14: update style and CSS
     // ---------------------------------------------------------------------
     #[tool(
         name = "update_style_and_css",
@@ -1307,72 +1122,6 @@ pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> Do
 }
 
 impl QuireMcpServer {
-    async fn read_draft(&self, path: &str) -> Result<ReportDraft, ErrorData> {
-        let bytes = self.read_workspace_file(path).await?;
-        let text = String::from_utf8(bytes).map_err(|error| {
-            invalid_params(
-                format!("draft file is not valid UTF-8: {error}"),
-                "Save draft.json as UTF-8.",
-                None,
-            )
-        })?;
-        ReportDraft::parse(&text).map_err(|error| {
-            invalid_params(
-                error.to_string(),
-                "Draft must be canonical ReportDocument/ReportDraft JSON with a blocks array.",
-                None,
-            )
-        })
-    }
-
-    async fn read_workspace_file(&self, path: &str) -> Result<Vec<u8>, ErrorData> {
-        let config: &Config = &self.state.config;
-        let raw = Path::new(path);
-        let candidate = if raw.is_absolute() {
-            raw.to_path_buf()
-        } else {
-            config.workspace_dir.join(raw)
-        };
-        let workspace = config.workspace_dir.canonicalize().map_err(|error| {
-            invalid_params(
-                format!("workspace directory is unavailable: {error}"),
-                "Set QUIRE_WORKSPACE_DIR to an existing directory.",
-                None,
-            )
-        })?;
-        let canonical = candidate.canonicalize().map_err(|error| {
-            invalid_params(
-                format!("draft file `{path}` not found: {error}"),
-                "Write the draft under QUIRE_WORKSPACE_DIR and pass a relative path.",
-                None,
-            )
-        })?;
-        if !canonical.starts_with(&workspace) {
-            return Err(invalid_params(
-                format!("draft path `{path}` escapes the workspace"),
-                "Only files under QUIRE_WORKSPACE_DIR may be read.",
-                None,
-            ));
-        }
-        let metadata = tokio::fs::metadata(&canonical)
-            .await
-            .map_err(|error| invalid_params(error.to_string(), "Check the draft path.", None))?;
-        if metadata.len() as usize > config.max_draft_bytes {
-            return Err(invalid_params(
-                format!(
-                    "draft file is {} bytes; limit is {}",
-                    metadata.len(),
-                    config.max_draft_bytes
-                ),
-                "Split the draft into smaller chapter files.",
-                None,
-            ));
-        }
-        tokio::fs::read(&canonical)
-            .await
-            .map_err(|error| invalid_params(error.to_string(), "Check file permissions.", None))
-    }
-
     async fn apply_with_reload<F>(
         &self,
         doc_id: &DocId,
@@ -1421,27 +1170,8 @@ impl QuireMcpServer {
     }
 }
 
-fn is_retryable_conflict(error: &ErrorData) -> bool {
-    error
-        .data
-        .as_ref()
-        .and_then(|data| data.get("code"))
-        .and_then(Value::as_str)
-        .is_some_and(|code| matches!(code, "REVISION_CONFLICT" | "REVISION_AHEAD"))
-}
-
 fn touched_blocks(ops: &[PatchOp], assigned: &[IdAssignment]) -> BTreeSet<BlockId> {
     let mut touched: BTreeSet<BlockId> = ops.iter().flat_map(PatchOp::touched_block_ids).collect();
-    touched.extend(
-        assigned
-            .iter()
-            .map(|assignment| assignment.assigned.clone()),
-    );
-    touched
-}
-
-fn touched_draft_blocks(blocks: &[Block], assigned: &[IdAssignment]) -> BTreeSet<BlockId> {
-    let mut touched: BTreeSet<BlockId> = blocks.iter().map(|block| block.id.clone()).collect();
     touched.extend(
         assigned
             .iter()
@@ -1470,46 +1200,6 @@ fn split_scoped_diagnostics(
     scoped
         .into_iter()
         .partition(|diagnostic| diagnostic.severity == Severity::Error)
-}
-
-fn draft_receipt(
-    result: ApplyResult,
-    blocks: &[Block],
-    base_hint: String,
-) -> Json<ApplyDraftReceipt> {
-    let touched = touched_draft_blocks(blocks, &result.outcome.assigned_ids);
-    let (blocking_errors, inline_warnings) =
-        split_scoped_diagnostics(result.inline_warnings, &touched);
-    let _next_hint = if !blocking_errors.is_empty() {
-        format!(
-            "Draft committed as revision {} with {} blocking error(s); fix `blocking_errors`, then lint again.",
-            result.new_revision,
-            blocking_errors.len()
-        )
-    } else if result.outcome.no_op {
-        format!(
-            "Draft was a no-op; no revision was created. Current revision is {}.",
-            result.new_revision
-        )
-    } else if result.rebased {
-        format!(
-            "Draft committed as revision {} after rebasing over {} revision(s) from base {}. {base_hint}",
-            result.new_revision, result.rebased_over, result.base_revision
-        )
-    } else {
-        base_hint
-    };
-    Json(ApplyDraftReceipt {
-        new_revision: result.new_revision.get(),
-        base_revision: result.base_revision.get(),
-        rebased: result.rebased,
-        rebased_over: result.rebased_over,
-        committed: true,
-        assigned_ids: result.outcome.assigned_ids,
-        inline_warnings,
-        blocking_errors,
-        _next_hint,
-    })
 }
 
 /// Map a structured protocol failure into an MCP error that exposes stable recovery fields.
@@ -1588,150 +1278,6 @@ fn slugify_title(input: &str) -> String {
     }
 }
 
-fn draft_to_document(
-    mut draft: ReportDraft,
-    fallback_doc_id: &str,
-) -> Result<ReportDocument, ErrorData> {
-    if draft.cover.title.trim().is_empty()
-        && let Some(title) = draft.title.take()
-    {
-        draft.cover.title = title;
-    }
-    if draft.cover.title.trim().is_empty() {
-        draft.cover.title = "Untitled Report".to_string();
-    }
-    let doc_id = match draft.doc_id {
-        Some(doc_id) => doc_id,
-        None => parse_doc_id(fallback_doc_id)?,
-    };
-    Ok(ReportDocument {
-        doc_id,
-        session_id: None,
-        revision: Revision::ZERO,
-        cover: draft.cover,
-        toc: draft.toc,
-        theme: draft.theme,
-        sources: draft.sources,
-        blocks: draft.blocks,
-        references: draft.references,
-        lint: draft.lint,
-    })
-}
-
-fn merge_sources(
-    existing: &IndexMap<SourceId, SourceEntry>,
-    incoming: &IndexMap<SourceId, SourceEntry>,
-) -> (
-    IndexMap<SourceId, SourceEntry>,
-    BTreeMap<SourceId, SourceId>,
-) {
-    let mut merged = existing.clone();
-    let mut key_to_id: BTreeMap<String, SourceId> = merged
-        .iter()
-        .map(|(id, source)| (normalized_source_key(source), id.clone()))
-        .collect();
-    let mut canonical_map = BTreeMap::new();
-    for (source_id, source) in incoming {
-        let key = normalized_source_key(source);
-        let canonical_id = if let Some(existing_id) = key_to_id.get(&key) {
-            existing_id.clone()
-        } else {
-            source_id.clone()
-        };
-        if canonical_id != *source_id {
-            if let Some(existing_source) = merged.get(&canonical_id).cloned() {
-                let combined = merge_source_entries(&existing_source, source);
-                key_to_id.insert(normalized_source_key(&combined), canonical_id.clone());
-                merged.insert(canonical_id.clone(), combined);
-            }
-            canonical_map.insert(source_id.clone(), canonical_id);
-            continue;
-        }
-        let combined = merged
-            .get(source_id)
-            .map(|existing_source| merge_source_entries(existing_source, source))
-            .unwrap_or_else(|| source.clone());
-        key_to_id.insert(normalized_source_key(&combined), source_id.clone());
-        merged.insert(source_id.clone(), combined);
-        canonical_map.insert(source_id.clone(), source_id.clone());
-    }
-    (merged, canonical_map)
-}
-
-fn rewrite_source_references(block: &mut Block, mapping: &BTreeMap<SourceId, SourceId>) {
-    if mapping.is_empty() {
-        return;
-    }
-    let mut seen = HashSet::new();
-    block.source_ids = block
-        .source_ids
-        .iter()
-        .map(|source_id| {
-            mapping
-                .get(source_id)
-                .cloned()
-                .unwrap_or_else(|| source_id.clone())
-        })
-        .filter(|source_id| seen.insert(source_id.clone()))
-        .collect();
-    let rewrite = |text: &mut String| {
-        for (old, new) in mapping {
-            if old != new {
-                *text = text.replace(&format!("[^{old}]"), &format!("[^{new}]"));
-            }
-        }
-    };
-    match &mut block.body {
-        BlockKind::Heading { text, .. }
-        | BlockKind::Paragraph { text }
-        | BlockKind::Quote { text } => rewrite(text),
-        BlockKind::Table(table) => {
-            if let Some(title) = &mut table.title {
-                rewrite(title);
-            }
-        }
-        BlockKind::Echarts(_) | BlockKind::CustomHtml(_) => {}
-    }
-}
-
-/// Reassign only empty/colliding IDs and report exactly those changes.
-fn unique_block_ids(existing_ids: &HashSet<BlockId>, blocks: &mut [Block]) -> Vec<IdAssignment> {
-    let mut used: HashSet<BlockId> = existing_ids.clone();
-    let mut assignments = Vec::new();
-    for block in blocks {
-        let original = block.id.clone();
-        let pending = original.is_pending();
-        if pending || used.contains(&original) {
-            let prefix = block.block_type();
-            let mut sequence = 1usize;
-            let mut assigned = original.clone();
-            loop {
-                let candidate = format!("b_{prefix}_{sequence}");
-                if candidate.len() <= 64
-                    && let Ok(parsed) = BlockId::parse(candidate)
-                    && !used.contains(&parsed)
-                {
-                    assigned = parsed;
-                    break;
-                }
-                sequence += 1;
-                if sequence > 100_000 {
-                    break;
-                }
-            }
-            block.id = assigned.clone();
-            used.insert(assigned.clone());
-            assignments.push(IdAssignment {
-                requested: (!pending).then_some(original),
-                assigned,
-            });
-        } else {
-            used.insert(original.clone());
-        }
-    }
-    assignments
-}
-
 fn inline_source_upserts(
     sources: Option<IndexMap<SourceId, SourceInput>>,
 ) -> Result<Vec<SourceUpsert>, ErrorData> {
@@ -1782,303 +1328,6 @@ async fn publish_ephemeral_clear(state: &AppState, doc_id: &DocId, preview_ids: 
         .await
     {
         tracing::warn!(%error, %doc_id, "failed to publish ephemeral clear");
-    }
-}
-
-fn draft_source_upserts(
-    draft: &ReportDraft,
-    inline: Option<IndexMap<SourceId, SourceInput>>,
-) -> Result<Vec<SourceUpsert>, ErrorData> {
-    let mut combined: IndexMap<SourceId, SourceEntry> = draft.sources.clone();
-    if let Some(inline) = inline {
-        for (source_id, input) in inline {
-            combined.insert(source_id, input.entry);
-        }
-    }
-    Ok(combined
-        .into_iter()
-        .map(|(source_id, source)| SourceUpsert { source_id, source })
-        .collect())
-}
-
-// The apply_with_reload helper is defined separately below to keep tool signatures tidy.
-impl QuireMcpServer {
-    async fn create_from_draft(
-        &self,
-        draft: ReportDraft,
-        inline_sources: Option<IndexMap<SourceId, SourceInput>>,
-        parts: &Parts,
-        actor: &str,
-        preview_ids: &[String],
-    ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
-        let source_upserts = draft_source_upserts(&draft, inline_sources)?;
-        let combined_sources: IndexMap<SourceId, SourceEntry> = source_upserts
-            .into_iter()
-            .map(|upsert| (upsert.source_id, upsert.source))
-            .collect();
-        let (sources, canonical) = merge_sources(&IndexMap::new(), &combined_sources);
-        let mut blocks = draft.blocks.clone();
-        for block in &mut blocks {
-            rewrite_source_references(block, &canonical);
-        }
-        let existing_ids = HashSet::new();
-        let assigned_ids = unique_block_ids(&existing_ids, &mut blocks);
-        let title = if !draft.cover.title.trim().is_empty() {
-            draft.cover.title.clone()
-        } else {
-            draft
-                .title
-                .clone()
-                .unwrap_or_else(|| "Untitled Report".into())
-        };
-        let doc_id = match draft.doc_id {
-            Some(doc_id) => doc_id,
-            None => generate_doc_id(&title)?,
-        };
-        let session_id = RequestContext::from_parts(parts)
-            .map_err(|error| {
-                invalid_params(error.to_string(), "Use a valid X-Session-Id header.", None)
-            })?
-            .session_id;
-        let mut document = ReportDocument {
-            doc_id: doc_id.clone(),
-            session_id,
-            revision: Revision::ZERO,
-            cover: CoverConfig {
-                title: title.clone(),
-                ..draft.cover
-            },
-            toc: draft.toc,
-            theme: draft.theme,
-            sources,
-            blocks: blocks.clone(),
-            references: draft.references,
-            lint: draft.lint,
-        };
-        document.cover.title = title;
-        document.cover.enabled = true;
-        let normalization_warnings = normalize_document(&mut document);
-        let result = self
-            .state
-            .store
-            .create_document_with_cleared_previews(&document, actor, None, preview_ids.to_vec())
-            .await
-            .map_err(mcp_error)?;
-        let touched = touched_draft_blocks(&blocks, &assigned_ids);
-        let (blocking_errors, inline_warnings) =
-            split_scoped_diagnostics(normalization_warnings, &touched);
-        let revision = result.revision.get();
-        let _next_hint = if blocking_errors.is_empty() {
-            format!(
-                "Draft created report `{}` at revision {}. Run lint_document, then continue at expected_revision={}.",
-                result.doc_id, result.revision, result.revision
-            )
-        } else {
-            format!(
-                "Draft created report `{}` at revision {} with {} blocking error(s); fix `blocking_errors` before continuing.",
-                result.doc_id,
-                result.revision,
-                blocking_errors.len()
-            )
-        };
-        Ok(Json(ApplyDraftReceipt {
-            new_revision: revision,
-            base_revision: 0,
-            rebased: false,
-            rebased_over: 0,
-            committed: true,
-            assigned_ids,
-            inline_warnings,
-            blocking_errors,
-            _next_hint,
-        }))
-    }
-
-    async fn replace_with_draft(
-        &self,
-        target_doc_id: &DocId,
-        draft: ReportDraft,
-        inline_sources: Option<IndexMap<SourceId, SourceInput>>,
-        actor: &str,
-        expected_revision: Option<Revision>,
-        preview_ids: &[String],
-    ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
-        let existing = self
-            .state
-            .store
-            .get_document(target_doc_id)
-            .await
-            .map_err(mcp_error)?;
-        let source_upserts = draft_source_upserts(&draft, inline_sources)?;
-        let blocks = draft.blocks.clone();
-        let replace_op = if existing.blocks.is_empty() {
-            PatchOp::Append {
-                blocks: blocks.clone(),
-            }
-        } else {
-            PatchOp::ReplaceRange {
-                start_id: existing
-                    .blocks
-                    .first()
-                    .map(|block| block.id.clone())
-                    .ok_or_else(|| {
-                        invalid_params(
-                            "document has no blocks to replace",
-                            "Append blocks instead.",
-                            None,
-                        )
-                    })?,
-                end_id: existing
-                    .blocks
-                    .last()
-                    .map(|block| block.id.clone())
-                    .ok_or_else(|| {
-                        invalid_params(
-                            "document has no blocks to replace",
-                            "Append blocks instead.",
-                            None,
-                        )
-                    })?,
-                blocks: blocks.clone(),
-            }
-        };
-        let mut cover = draft.cover.clone();
-        if cover.title.trim().is_empty() {
-            cover.title = existing.cover.title.clone();
-        }
-        let ops = vec![
-            PatchOp::SetCover { cover },
-            PatchOp::SetToc { toc: draft.toc },
-            PatchOp::SetTheme { theme: draft.theme },
-            PatchOp::SetReferences {
-                references: draft.references,
-            },
-            PatchOp::SetLint { lint: draft.lint },
-            replace_op,
-        ];
-        let result = self
-            .state
-            .store
-            .apply_operations_with_extras(
-                target_doc_id,
-                expected_revision.unwrap_or(existing.revision),
-                actor,
-                "replace report from draft",
-                &ops,
-                CommitExtras {
-                    sources: source_upserts,
-                    cleared_preview_ids: preview_ids.to_vec(),
-                },
-            )
-            .await
-            .map_err(mcp_error)?;
-        if result.outcome.no_op {
-            publish_ephemeral_clear(&self.state, target_doc_id, preview_ids).await;
-        }
-        Ok(draft_receipt(
-            result,
-            &blocks,
-            "Run lint_document and read_as_markdown.".to_string(),
-        ))
-    }
-
-    async fn append_draft(
-        &self,
-        target_doc_id: &DocId,
-        draft: ReportDraft,
-        inline_sources: Option<IndexMap<SourceId, SourceInput>>,
-        actor: &str,
-        expected_revision: Option<Revision>,
-        preview_ids: &[String],
-    ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
-        let existing = self
-            .state
-            .store
-            .get_document(target_doc_id)
-            .await
-            .map_err(mcp_error)?;
-        let source_upserts = draft_source_upserts(&draft, inline_sources)?;
-        let blocks = draft.blocks.clone();
-        let ops = vec![PatchOp::Append {
-            blocks: blocks.clone(),
-        }];
-        let result = self
-            .state
-            .store
-            .apply_operations_with_extras(
-                target_doc_id,
-                expected_revision.unwrap_or(existing.revision),
-                actor,
-                "append draft section",
-                &ops,
-                CommitExtras {
-                    sources: source_upserts,
-                    cleared_preview_ids: preview_ids.to_vec(),
-                },
-            )
-            .await
-            .map_err(mcp_error)?;
-        if result.outcome.no_op {
-            publish_ephemeral_clear(&self.state, target_doc_id, preview_ids).await;
-        }
-        Ok(draft_receipt(
-            result,
-            &blocks,
-            "Call lint_document and read_as_markdown.".to_string(),
-        ))
-    }
-
-    // Range drafts genuinely need all coordinates; bundling them into a one-use struct would
-    // make the MCP handler harder to follow.
-    #[allow(clippy::too_many_arguments)]
-    async fn replace_range_with_draft(
-        &self,
-        target_doc_id: &DocId,
-        draft: ReportDraft,
-        start_id: &BlockId,
-        end_id: &BlockId,
-        inline_sources: Option<IndexMap<SourceId, SourceInput>>,
-        actor: &str,
-        expected_revision: Option<Revision>,
-        preview_ids: &[String],
-    ) -> Result<Json<ApplyDraftReceipt>, ErrorData> {
-        let existing = self
-            .state
-            .store
-            .get_document(target_doc_id)
-            .await
-            .map_err(mcp_error)?;
-        let source_upserts = draft_source_upserts(&draft, inline_sources)?;
-        let blocks = draft.blocks.clone();
-        let ops = vec![PatchOp::ReplaceRange {
-            start_id: start_id.clone(),
-            end_id: end_id.clone(),
-            blocks: blocks.clone(),
-        }];
-        let result = self
-            .state
-            .store
-            .apply_operations_with_extras(
-                target_doc_id,
-                expected_revision.unwrap_or(existing.revision),
-                actor,
-                "replace range from draft",
-                &ops,
-                CommitExtras {
-                    sources: source_upserts,
-                    cleared_preview_ids: preview_ids.to_vec(),
-                },
-            )
-            .await
-            .map_err(mcp_error)?;
-        if result.outcome.no_op {
-            publish_ephemeral_clear(&self.state, target_doc_id, preview_ids).await;
-        }
-        Ok(draft_receipt(
-            result,
-            &blocks,
-            format!("Draft replaced range {start_id}..{end_id}. Run lint_document."),
-        ))
     }
 }
 

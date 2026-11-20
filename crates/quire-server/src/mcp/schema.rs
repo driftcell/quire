@@ -134,73 +134,6 @@ impl From<ReportSummary> for ReportSummaryView {
     }
 }
 
-/// Merge strategy for `apply_draft`.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum DraftMode {
-    /// Create a new report, or replace the whole document body.
-    CreateOrReplace,
-    /// Append draft blocks after the current last block.
-    AppendSection,
-    /// Replace an inclusive block-ID range.
-    ReplaceRange,
-}
-
-/// Input for `apply_draft`.
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ApplyDraftParams {
-    /// Path to draft.json. Relative paths resolve under `QUIRE_WORKSPACE_DIR`; absolute paths
-    /// are accepted only when they also resolve inside that workspace.
-    pub draft_file_path: String,
-    /// Existing report to merge into (required except create_or_replace new report).
-    #[serde(default)]
-    pub target_doc_id: Option<String>,
-    /// Optional Smart CAS base revision. Omit to read the current revision; supply a digest's
-    /// `current_rev` to make a concurrent draft merge explicit and inspectable.
-    #[serde(default)]
-    pub expected_revision: Option<i64>,
-    /// Merge strategy.
-    pub mode: DraftMode,
-    /// First block ID to replace (replace_range only).
-    #[serde(default)]
-    pub start_block_id: Option<String>,
-    /// Last block ID to replace (replace_range only).
-    #[serde(default)]
-    pub end_block_id: Option<String>,
-    /// Optional additional sources upserted in the same transaction as the draft blocks.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(with = "Option<BTreeMap<SourceId, SourceInput>>")]
-    pub sources: Option<IndexMap<SourceId, SourceInput>>,
-    /// Ephemeral preview IDs superseded by this draft commit. The emitted revision clears them
-    /// atomically so streamed placeholders are replaced without flicker.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preview_ids: Vec<String>,
-}
-
-/// Output for `apply_draft`.
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct ApplyDraftReceipt {
-    pub new_revision: i64,
-    /// Revision used as the Smart CAS base (0 for a newly created report).
-    pub base_revision: i64,
-    /// True when the draft landed after rebasing over newer committed revisions.
-    pub rebased: bool,
-    /// Number of committed revisions skipped by a successful rebase.
-    pub rebased_over: usize,
-    /// True when the draft was committed; inspect `blocking_errors` before continuing.
-    pub committed: bool,
-    /// Block IDs that were auto-prefixed because they were pending or colliding.
-    pub assigned_ids: Vec<IdAssignment>,
-    /// Non-blocking warnings/info diagnostics scoped to blocks written by this draft.
-    pub inline_warnings: Vec<quire_protocol::Diagnostic>,
-    /// Lint errors scoped to blocks written by this draft. A non-empty list means the write
-    /// committed but the document is not clean yet.
-    pub blocking_errors: Vec<quire_protocol::Diagnostic>,
-    #[serde(rename = "_next_hint")]
-    pub _next_hint: String,
-}
-
 /// Input for `get_document_digest`.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -260,12 +193,8 @@ pub struct DocumentDigest {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadMarkdownParams {
-    /// Existing report ID (mutually exclusive with draft_file_path).
-    #[serde(default)]
-    pub doc_id: Option<String>,
-    /// Workspace-relative offline draft path (mutually exclusive with doc_id).
-    #[serde(default)]
-    pub draft_file_path: Option<String>,
+    /// Existing report ID.
+    pub doc_id: String,
     /// Project one matching heading section.
     #[serde(default)]
     pub section_heading: Option<String>,
@@ -280,9 +209,9 @@ pub struct ReadMarkdownParams {
 /// Output for `read_as_markdown`.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ReadMarkdownReceipt {
-    /// `doc:<id>` for online reports or `draft:<path>` for offline drafts.
+    /// `doc:<id>` source identifier.
     pub source: String,
-    pub doc_id: Option<String>,
+    pub doc_id: String,
     pub revision: i64,
     pub markdown_chars: usize,
     /// Markdown projection with `<!-- block:id | type:... -->` anchors.
@@ -754,14 +683,14 @@ mod tests {
 
     #[test]
     fn valid_params_still_deserialize() {
-        let params: ApplyDraftParams = serde_json::from_value(json!({
-            "draft_file_path": "draft.json",
-            "target_doc_id": "synthetic",
+        let params: ApplyOperationsParams = serde_json::from_value(json!({
+            "doc_id": "synthetic",
             "expected_revision": 7,
-            "mode": "append_section"
+            "summary": "write section",
+            "ops": [{"type": "append", "blocks": []}]
         }))
         .expect("valid params");
-        assert_eq!(params.expected_revision, Some(7));
+        assert_eq!(params.expected_revision, 7);
 
         let reply: ReplyCommentParams = serde_json::from_value(json!({
             "doc_id": "synthetic",

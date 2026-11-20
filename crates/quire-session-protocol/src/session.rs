@@ -296,6 +296,11 @@ pub enum RunTraceSegment {
         #[serde(default)]
         subagents: Vec<RunTraceSubagent>,
     },
+    UserMessage {
+        message_id: String,
+        content: String,
+        created_at: DateTime<Utc>,
+    },
     Text {
         text: String,
     },

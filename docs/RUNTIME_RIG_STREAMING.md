@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_streaming_engine.md`
+- **Related Notes:** `../notes/runtime_rig_streaming_engine.md`, `../notes/pending_user_message_trace_timeline.md`
 
 ## 1. Scope & Non-Goals
 
@@ -45,12 +45,23 @@ Each call is answered with a `Message::tool_results` message, and the next model
 model returns no tool calls. Between the tool results (and any preview images) and the next model
 request, the main-agent loop atomically takes one pending user-message batch under the session gate
 and appends it as a `Message::user`. This lets queued corrections reach the very next model round
-without waiting for the run to end. Subagents and `ask_user` suspensions never consume the queue.
+without waiting for the run to end. The message is inserted with the current `run_id`; its
+`user_message_injected { message_id, content, created_at }` frame is then sent through the same
+ordered model-event stream as tool events, so persistence cannot invert it ahead of the tool result.
+Normal turn-start queue draining instead leaves `run_id` empty and emits `user_message_added`.
+Subagents and `ask_user` suspensions never consume the queue.
 
 At the end of a run, `finish_run` restores the session to `Idle` and the service immediately calls
 `queue_notify.notify_one()`, so the pending-queue loop starts the next turn without waiting for the
-2-second fallback tick. The same coordinator owns dequeue, message persistence, `user_message_added`
-and `pending_queue_updated` events, preventing concurrent consumers from taking one item twice.
+2-second fallback tick. The same coordinator owns dequeue, message persistence and
+`pending_queue_updated` events, preventing concurrent consumers from taking one item twice.
+
+`RunTraceSegment::UserMessage` is the inline counterpart of `user_message_injected`. Persisted session
+events are aggregated by SSE sequence, so refreshed traces retain the exact order: previous
+thinking/execution, inline user message, then new thinking/execution/text. The live SSE handler appends
+the same segment to `liveMain` and closes the preceding activity. Frontend rendering starts a fresh
+activity after the user segment, reuses the standard right-aligned user bubble with full message
+metadata when available, and suppresses only those message IDs from the outer transcript.
 
 Built-in tools (`load_skill`, `read_skill_resource`, `describe_task`, `spawn_subagents`) read skills
 from the session branch. `describe_task` emits `TaskFocus`. `spawn_subagents` reads each child
@@ -80,7 +91,7 @@ Dropping or cancelling the stream stops subagent `JoinSet` work as well.
 
 ### Ephemeral previews
 
-While streamed `apply_operations` / `apply_draft` arguments arrive, `PreviewState` parses the partial
+While streamed `apply_operations` arguments arrive, `PreviewState` parses the partial
 JSON with rig's partial-object parser, extracts block-like objects (heading, paragraph, quote, table,
 echarts, custom_html), and pushes `PartialBlockPreview` frames through `ToolPreviewStreamer`.
 Frames are throttled to 50-80 ms per block and sent to `POST /api/docs/{doc_id}/ephemeral`. The
@@ -98,6 +109,10 @@ formal Quire commit clears the placeholders atomically.
 - Pending queue dequeue is serialized by the per-session gate; queue items are persisted as user
   messages exactly once.
 - A queued user message is injected after tool results and before the next main-agent LLM request.
+- Inline messages carry the active run ID and one `user_message_injected` event; normal turn-start
+  messages use `user_message_added` and do not masquerade as inline activity.
+- Live and refreshed traces share the `UserMessage` boundary: the previous activity is completed and
+  later work starts a new activity. The outer transcript never duplicates an inline message ID.
 - `ask_user` suspension leaves the pending queue untouched.
 - Idle completion notifies the queue loop immediately; the 2-second interval is only a fallback.
 - `context_usage.context_limit` is the resolved provider model limit, not a fixed constant.
@@ -106,9 +121,15 @@ formal Quire commit clears the placeholders atomically.
 Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
 
 - `rig_turn_context_and_task_events_reach_the_persisted_session_contract`
-- `tool_boundary_injects_pending_message_into_same_run`
+- `tool_boundary_injects_pending_message_into_same_run` also asserts persisted trace order
+  `[Execution(tool), UserMessage(inline), Text(next round)]`.
 - `idle_completion_wakes_pending_queue_without_interval_wait`
 - `ask_user_suspension_keeps_pending_queue_untouched`
+
+Browser coverage in `web/e2e/pending-user-message-timeline.js` verifies the same DOM order before
+and after `page.reload()`, exactly one inline user bubble, and two settled activity groups. Frontend
+unit coverage in `web/src/components/chat/traceSegments.test.ts` applies the same boundary to live
+and historical segment builders.
 
 Unit coverage in `crates/quire-runtime/src/rig_agent.rs`:
 

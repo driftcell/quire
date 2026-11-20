@@ -14,6 +14,7 @@ import {
   appendTextSegment,
   appendThinkingSegment,
   appendToolSegment,
+  appendUserMessageSegment,
   emptyLiveTrace,
   finishThinkingSegment,
   finishToolSegment,
@@ -143,9 +144,27 @@ export function useSessionEventStream({
         void queryClient.invalidateQueries({
           queryKey: ["session", sessionId],
         });
+      } else if (ev.event === "user_message_injected") {
+        setLiveMain((prev) =>
+          appendUserMessageSegment(
+            finishThinkingSegment(
+              prev ?? emptyLiveTrace("main", ev.run_id),
+              eventTs,
+            ),
+            ev.message_id,
+            ev.content,
+            ev.created_at,
+          ),
+        );
+        void queryClient.invalidateQueries({
+          queryKey: ["session", sessionId],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["session-traces", sessionId],
+        });
       } else if (ev.event === "turn_started") {
         setLiveRunStatus("running");
-        setLiveMain(emptyLiveTrace("main"));
+        setLiveMain(emptyLiveTrace("main", ev.run_id));
         setLiveSubagents([]);
         void queryClient.invalidateQueries({
           queryKey: ["session", sessionId],
@@ -290,7 +309,7 @@ export function useSessionEventStream({
             task: ev.task,
             sectionId: ev.section_id ?? undefined,
             status: "running",
-            trace: emptyLiveTrace(ev.agent_name),
+            trace: emptyLiveTrace(ev.agent_name, ev.subagent_run_id),
           },
         ]);
       } else if (ev.event === "subagent_finished") {

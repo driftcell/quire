@@ -455,6 +455,26 @@ impl RuntimeStore {
         session_id: &str,
         request: &SendMessageRequest,
     ) -> RuntimeResult<(SessionMessage, bool)> {
+        self.insert_user_message_with_run(session_id, request, None)
+            .await
+    }
+
+    pub async fn insert_injected_user_message(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        request: &SendMessageRequest,
+    ) -> RuntimeResult<(SessionMessage, bool)> {
+        self.insert_user_message_with_run(session_id, request, Some(run_id))
+            .await
+    }
+
+    async fn insert_user_message_with_run(
+        &self,
+        session_id: &str,
+        request: &SendMessageRequest,
+        run_id: Option<&str>,
+    ) -> RuntimeResult<(SessionMessage, bool)> {
         if request.client_msg_id.trim().is_empty() {
             return Err(RuntimeError::InvalidRequest(
                 "client_msg_id must not be empty".into(),
@@ -470,8 +490,8 @@ impl RuntimeStore {
         let comment_refs = serde_json::to_value(&request.comment_refs)?;
         let inserted = sqlx::query(
             r#"INSERT INTO agent_messages
-               (message_id, session_id, client_msg_id, role, content, comment_refs, attachment_ids)
-               VALUES ($1, $2, $3, 'user', $4, $5, $6)
+               (message_id, session_id, client_msg_id, role, content, comment_refs, attachment_ids, run_id)
+               VALUES ($1, $2, $3, 'user', $4, $5, $6, $7)
                ON CONFLICT (session_id, client_msg_id) DO NOTHING
                RETURNING message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at"#,
         )
@@ -481,6 +501,7 @@ impl RuntimeStore {
         .bind(&request.content)
         .bind(comment_refs)
         .bind(attachment_ids)
+        .bind(run_id)
         .fetch_optional(&self.pool)
         .await?;
         if let Some(row) = inserted {
@@ -1745,6 +1766,7 @@ fn settles_main_thinking(kind: &SessionEventKind) -> bool {
         SessionEventKind::TextDelta { .. }
             | SessionEventKind::ToolCallStarted { .. }
             | SessionEventKind::SubagentStarted { .. }
+            | SessionEventKind::UserMessageInjected { .. }
             | SessionEventKind::QuestionnaireRequested { .. }
             | SessionEventKind::TurnFinished
             | SessionEventKind::TurnFailed { .. }
@@ -2014,6 +2036,17 @@ pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSumma
                         },
                     );
                 }
+            }
+            SessionEventKind::UserMessageInjected {
+                message_id,
+                content,
+                created_at,
+            } => {
+                trace.summary.segments.push(RunTraceSegment::UserMessage {
+                    message_id: message_id.clone(),
+                    content: content.clone(),
+                    created_at: *created_at,
+                });
             }
             SessionEventKind::SyncRequired { .. }
             | SessionEventKind::ContextUsage { .. }

@@ -451,6 +451,31 @@
         {
           "type": "object",
           "properties": {
+            "content": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "kind": {
+              "type": "string",
+              "const": "user_message"
+            },
+            "message_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "message_id",
+            "content",
+            "created_at"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "kind": {
               "type": "string",
               "const": "text"
@@ -1269,6 +1294,32 @@
           "required": [
             "event",
             "message_id"
+          ]
+        },
+        {
+          "description": "A queued user message injected between tool results and the next model round.",
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "event": {
+              "type": "string",
+              "const": "user_message_injected"
+            },
+            "message_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "event",
+            "message_id",
+            "content",
+            "created_at"
           ]
         },
         {

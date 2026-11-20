@@ -57,7 +57,16 @@ type TextRenderSegment = {
   isStreaming: boolean;
 };
 
-export type RenderSegment = ActivityRenderSegment | TextRenderSegment;
+export type UserRenderSegment = {
+  key: string;
+  kind: "user";
+  messageId: string;
+  content: string;
+  createdAt: string;
+};
+
+export type RenderSegment =
+  ActivityRenderSegment | UserRenderSegment | TextRenderSegment;
 
 export type LiveToolTraceItem = ToolCallTraceItem;
 
@@ -126,6 +135,9 @@ export function extractSubagentLiveView(
     }
     if (segment.kind === "text") {
       textParts.push(segment.text);
+      continue;
+    }
+    if (segment.kind === "user_message") {
       continue;
     }
     for (const tool of segment.tools) {
@@ -200,7 +212,43 @@ export function buildHistoricalSegments(
 
   const segments: RenderSegment[] = [];
   const activity: ActivityItem[] = [];
+  const flushActivity = (isFinal: boolean) => {
+    if (activity.length === 0) {
+      return;
+    }
+    const hasRunningTool = activity.some(
+      (item) =>
+        item.kind === "execution" &&
+        item.tools.some((tool) => tool.status === "running"),
+    );
+    const hasRunningSubagent = activity.some(
+      (item) =>
+        item.kind === "execution" &&
+        item.subagents.some((entry) => entry.subagent.status === "running"),
+    );
+    segments.push({
+      key: `activity-${activity[0]?.key ?? segments.length}`,
+      kind: "activity",
+      items: [...activity],
+      isActive:
+        isFinal &&
+        (trace.status === "running" || hasRunningTool || hasRunningSubagent),
+      durationMs: isFinal ? (trace.duration_ms ?? undefined) : undefined,
+    });
+    activity.length = 0;
+  };
   head.forEach((segment, index) => {
+    if (segment.kind === "user_message") {
+      flushActivity(false);
+      segments.push({
+        key: `user-${segment.message_id}`,
+        kind: "user",
+        messageId: segment.message_id,
+        content: segment.content,
+        createdAt: segment.created_at,
+      });
+      return;
+    }
     if (segment.kind === "thinking") {
       if (!segment.text.trim()) {
         return;
@@ -243,26 +291,7 @@ export function buildHistoricalSegments(
       })),
     });
   });
-  if (activity.length > 0) {
-    const hasRunningTool = activity.some(
-      (item) =>
-        item.kind === "execution" &&
-        item.tools.some((tool) => tool.status === "running"),
-    );
-    const hasRunningSubagent = activity.some(
-      (item) =>
-        item.kind === "execution" &&
-        item.subagents.some((entry) => entry.subagent.status === "running"),
-    );
-    segments.push({
-      key: `activity-${activity[0]?.key ?? segments.length}`,
-      kind: "activity",
-      items: activity,
-      isActive:
-        trace.status === "running" || hasRunningTool || hasRunningSubagent,
-      durationMs: trace.duration_ms ?? undefined,
-    });
-  }
+  flushActivity(true);
   tail.forEach((segment, index) => {
     if (segment.kind !== "text" || !segment.text.trim()) {
       return;
@@ -291,7 +320,41 @@ export function buildLiveSegments(
 
   const segments: RenderSegment[] = [];
   const activity: ActivityItem[] = [];
+  const flushActivity = (isFinal: boolean) => {
+    if (activity.length === 0) {
+      return;
+    }
+    const summary = summarizeActivity(activity);
+    const hasStreamingThinking = activity.some(
+      (item) => item.kind === "thinking" && item.isActive,
+    );
+    segments.push({
+      key: `activity-${activity[0]?.key ?? segments.length}`,
+      kind: "activity",
+      items: [...activity],
+      // Only the latest live process work owns the unified header. A user
+      // message closes the previous activity and starts a fresh one after it.
+      isActive:
+        isFinal &&
+        (hasStreamingThinking ||
+          summary.runningSubagents > 0 ||
+          summary.runningTools > 0),
+      isLive: isFinal ? trace.isStreaming : false,
+    });
+    activity.length = 0;
+  };
   head.forEach((segment: LiveTraceSegment, index) => {
+    if (segment.kind === "user_message") {
+      flushActivity(false);
+      segments.push({
+        key: `user-${segment.messageId}`,
+        kind: "user",
+        messageId: segment.messageId,
+        content: segment.content,
+        createdAt: segment.createdAt,
+      });
+      return;
+    }
     const isLast = index === lastIndex;
     if (segment.kind === "thinking") {
       if (!segment.text.trim()) {
@@ -338,25 +401,7 @@ export function buildLiveSegments(
       })),
     });
   });
-  if (activity.length > 0) {
-    const summary = summarizeActivity(activity);
-    const hasStreamingThinking = activity.some(
-      (item) => item.kind === "thinking" && item.isActive,
-    );
-    segments.push({
-      key: `activity-${activity[0]?.key ?? segments.length}`,
-      kind: "activity",
-      items: activity,
-      // Only live process work owns the unified header. Once tools, subagents
-      // and thinking have settled, a streaming tail is final body text and the
-      // compact fallback header above the trace takes over.
-      isActive:
-        hasStreamingThinking ||
-        summary.runningSubagents > 0 ||
-        summary.runningTools > 0,
-      isLive: trace.isStreaming,
-    });
-  }
+  flushActivity(true);
   tail.forEach((segment, index) => {
     if (segment.kind !== "text" || !segment.text.trim()) {
       return;

@@ -105,6 +105,29 @@ export function SessionStreamView({
     }
     return map;
   }, [attachments]);
+  const messageById = useMemo(() => {
+    const map = new Map<string, SessionMessage>();
+    for (const message of messages) {
+      map.set(message.message_id, message);
+    }
+    return map;
+  }, [messages]);
+  const inlineUserMessageIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const trace of traces) {
+      for (const segment of trace.segments ?? []) {
+        if (segment.kind === "user_message") {
+          ids.add(segment.message_id);
+        }
+      }
+    }
+    for (const segment of liveMain?.segments ?? []) {
+      if (segment.kind === "user_message") {
+        ids.add(segment.messageId);
+      }
+    }
+    return ids;
+  }, [liveMain, traces]);
   const pendingEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (pendingQueue.length > 0) {
@@ -204,10 +227,10 @@ export function SessionStreamView({
   const visibleMessages = useMemo(() => {
     const persisted = messages.filter(
       (msg) =>
-        msg.role === "user" ||
         msg.role === "assistant" ||
         msg.role === "tool" ||
-        msg.role === "compaction",
+        msg.role === "compaction" ||
+        (msg.role === "user" && !inlineUserMessageIds.has(msg.message_id)),
     );
     const assistantRunIds = new Set(
       persisted
@@ -227,7 +250,7 @@ export function SessionStreamView({
         traceByRunId.has(msg.run_id)
       );
     });
-  }, [messages, questionsByRunId, traceByRunId]);
+  }, [messages, questionsByRunId, traceByRunId, inlineUserMessageIds]);
 
   const lastUserMessageId = useMemo(() => {
     for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
@@ -287,6 +310,9 @@ export function SessionStreamView({
                       sessionId={sessionId}
                       trace={trace}
                       questionSlots={questionSlots}
+                      messageById={messageById}
+                      attachmentMap={attachmentMap}
+                      onJumpToSection={onJumpToSection}
                     />
                   </MessageScrollerItem>
                 );
@@ -304,6 +330,7 @@ export function SessionStreamView({
                     trace={trace}
                     questionSlots={questionSlots}
                     onJumpToSection={onJumpToSection}
+                    messageById={messageById}
                   />
                 </MessageScrollerItem>
               );
@@ -370,6 +397,8 @@ export function SessionStreamView({
                         taskFocus={liveMain.taskFocus}
                         onJumpToSection={onJumpToSection}
                         onInterrupt={onInterrupt}
+                        messageById={messageById}
+                        attachmentMap={attachmentMap}
                       />
                     </MessageContent>
                   </Message>

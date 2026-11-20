@@ -208,7 +208,6 @@ export interface QuireReportProtocol {
   document: ReportDocument;
   document_diff: DocumentDiffReport;
   document_metadata_diff: DocumentMetadataDiff;
-  draft: ReportDraft;
   ephemeral_clear: EphemeralClearEvent;
   /**
    * Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.
@@ -369,27 +368,27 @@ export interface QuireReportProtocol {
         [k: string]: unknown;
       }
     | {
-        cover: CoverConfig2;
+        cover: CoverConfig1;
         type: "set_cover";
         [k: string]: unknown;
       }
     | {
-        toc: TocConfig2;
+        toc: TocConfig1;
         type: "set_toc";
         [k: string]: unknown;
       }
     | {
-        references: ReferencesConfig2;
+        references: ReferencesConfig1;
         type: "set_references";
         [k: string]: unknown;
       }
     | {
-        lint: LintConfig2;
+        lint: LintConfig1;
         type: "set_lint";
         [k: string]: unknown;
       }
     | {
-        theme: ThemeConfig2;
+        theme: ThemeConfig1;
         type: "set_theme";
         [k: string]: unknown;
       }
@@ -997,115 +996,6 @@ export interface DocumentMetadataDiff {
   [k: string]: unknown;
 }
 /**
- * Offline authoring draft accepted by `apply_draft`.
- */
-export interface ReportDraft {
-  blocks?: Block[];
-  cover?: CoverConfig1;
-  doc_id?: DocId | null;
-  lint?: LintConfig1;
-  references?: ReferencesConfig1;
-  sources?: {
-    [k: string]: SourceEntry;
-  };
-  theme?: ThemeConfig1;
-  /**
-   * Convenience title for agents; copied into `cover.title` when that field is empty.
-   */
-  title?: string | null;
-  toc?: TocConfig1;
-  [k: string]: unknown;
-}
-/**
- * Configuration for the generated cover page.
- */
-export interface CoverConfig1 {
-  authors?: string[];
-  /**
-   * Full HTML override for the cover body. When present it replaces the generated cover body.
-   */
-  custom_html?: string | null;
-  /**
-   * Human-readable publication date. Free-form on purpose (for example "Q3 2026").
-   */
-  date?: string | null;
-  enabled?: boolean;
-  /**
-   * Optional key/value metadata rendered on the cover.
-   */
-  meta?: {
-    [k: string]: string;
-  };
-  subtitle?: string | null;
-  title?: string;
-  /**
-   * One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.
-   */
-  variant?: string;
-  [k: string]: unknown;
-}
-/**
- * Document-level lint policy. Ignore entries accept a rule code (`QR202`), a semantic rule name
- * (`table-empty-column`) or a category prefix (`QR2`). Non-suppressible rules cannot be ignored.
- */
-export interface LintConfig1 {
-  ignore?: string[];
-  [k: string]: unknown;
-}
-/**
- * End-of-report bibliography configuration.
- */
-export interface ReferencesConfig1 {
-  enabled?: boolean;
-  page_break_before?: boolean;
-  /**
-   * Bibliographic label style.
-   */
-  style?: "numeric" | "author_year";
-  title?: string;
-  [k: string]: unknown;
-}
-/**
- * Theme configuration. Tokens are CSS custom properties applied to `.report-root`.
- */
-export interface ThemeConfig1 {
-  /**
-   * Arbitrary CSS. It is automatically scoped under `.report-root`.
-   */
-  custom_css?: string;
-  /**
-   * Optional A4 paged header/footer slots with template placeholders.
-   */
-  page_chrome?: PageChromeConfig | null;
-  /**
-   * Built-in preset name. Unknown presets fall back to `default`.
-   */
-  preset?: string;
-  /**
-   * Additional or overriding CSS custom properties, for example `--rpt-primary`.
-   */
-  tokens?: {
-    [k: string]: string;
-  };
-  [k: string]: unknown;
-}
-/**
- * Table-of-contents configuration.
- */
-export interface TocConfig1 {
-  enabled?: boolean;
-  /**
-   * Maximum heading depth to include. Protocol range is 1..=3.
-   */
-  max_depth?: number;
-  title?: string;
-  /**
-   * One of `standard`, `numbered`, `dotted`; unknown values render as standard.
-   */
-  variant?: string;
-  [k: string]: unknown;
-}
-/**
  * SSE `ephemeral_clear` payload for immediate placeholder cleanup.
  */
 export interface EphemeralClearEvent {
@@ -1321,7 +1211,7 @@ export interface CellUpdate {
 /**
  * Complete replacement cover config.
  */
-export interface CoverConfig2 {
+export interface CoverConfig1 {
   authors?: string[];
   /**
    * Full HTML override for the cover body. When present it replaces the generated cover body.
@@ -1349,7 +1239,7 @@ export interface CoverConfig2 {
 /**
  * Complete replacement TOC config.
  */
-export interface TocConfig2 {
+export interface TocConfig1 {
   enabled?: boolean;
   /**
    * Maximum heading depth to include. Protocol range is 1..=3.
@@ -1365,7 +1255,7 @@ export interface TocConfig2 {
 /**
  * Complete replacement bibliography config.
  */
-export interface ReferencesConfig2 {
+export interface ReferencesConfig1 {
   enabled?: boolean;
   page_break_before?: boolean;
   /**
@@ -1378,14 +1268,14 @@ export interface ReferencesConfig2 {
 /**
  * Complete replacement lint config.
  */
-export interface LintConfig2 {
+export interface LintConfig1 {
   ignore?: string[];
   [k: string]: unknown;
 }
 /**
  * Complete replacement theme config.
  */
-export interface ThemeConfig2 {
+export interface ThemeConfig1 {
   /**
    * Arbitrary CSS. It is automatically scoped under `.report-root`.
    */
@@ -1417,8 +1307,7 @@ export interface PatchOutcome {
   assigned_ids: IdAssignment[];
   deleted_block_ids: BlockId[];
   /**
-   * Map of submitted block IDs to final IDs. `apply_operations` is identity; `apply_draft`
-   * may prefix collisions.
+   * Map of submitted block IDs to final IDs. Colliding or empty IDs are auto-assigned.
    */
   id_mapping: {
     [k: string]: BlockId;

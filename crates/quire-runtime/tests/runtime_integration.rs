@@ -39,7 +39,8 @@ use quire_runtime::{
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
-    SendMessageRequest, SessionCommentRef, SessionEvent, SessionEventKind, SessionMessage,
+    RunTraceSegment, SendMessageRequest, SessionCommentRef, SessionEvent, SessionEventKind,
+    SessionMessage,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -3899,8 +3900,49 @@ async fn tool_boundary_injects_pending_message_into_same_run() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event.kind, SessionEventKind::UserMessageAdded { .. }))
+            .any(|event| matches!(event.kind, SessionEventKind::UserMessageInjected { .. }))
     );
+
+    let injected_message = detail
+        .messages
+        .iter()
+        .find(|message| message.content == "排队指令：请补充风险提示。")
+        .expect("injected user message must be persisted");
+    let injected_run_id = injected_message
+        .run_id
+        .as_deref()
+        .expect("inline message must belong to the active run");
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    let trace = traces
+        .iter()
+        .find(|trace| trace.run_id == injected_run_id)
+        .expect("injected run trace");
+    assert_eq!(trace.segments.len(), 3);
+    let Some(RunTraceSegment::Execution { tools, .. }) = trace.segments.first() else {
+        panic!(
+            "tool execution must precede the injected message: {:?}",
+            trace.segments
+        )
+    };
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool.tool_name == "set_session_title")
+    );
+    let Some(RunTraceSegment::UserMessage {
+        message_id,
+        content,
+        ..
+    }) = trace.segments.get(1)
+    else {
+        panic!("injected user message must follow the tool execution")
+    };
+    assert_eq!(message_id, &injected_message.message_id);
+    assert_eq!(content, "排队指令：请补充风险提示。");
+    let Some(RunTraceSegment::Text { text }) = trace.segments.get(2) else {
+        panic!("the next model round must follow the injected message")
+    };
+    assert_eq!(text, "已完成排队消息。");
 
     service.delete_session(&session.session_id).await.unwrap();
     service.kb().delete_agent("main").await.unwrap();
