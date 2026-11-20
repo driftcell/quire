@@ -75,6 +75,30 @@ function pixelWidth(
   return (Number.parseFloat(width) / 100) * container;
 }
 
+const FALLBACK_CJK_PX = 14;
+const FALLBACK_ASCII_PX = 8;
+const CELL_CHROME_PX = 24;
+
+/** Mirror the Canvas-less fallback used by Bun so assertions stay deterministic. */
+function singleLineWidthPx(text: string): number {
+  let units = 0;
+  for (const char of text) {
+    units += char.charCodeAt(0) > 127 ? FALLBACK_CJK_PX : FALLBACK_ASCII_PX;
+  }
+  return units + CELL_CHROME_PX;
+}
+
+function expectAtLeastSingleLine(
+  result: TableSizingResult,
+  index: number,
+  text: string,
+  container = 682,
+): void {
+  expect(pixelWidth(result, index, container)).toBeGreaterThanOrEqual(
+    singleLineWidthPx(text) - 0.05,
+  );
+}
+
 const sampleTable = table([
   {
     school: "浙江大学",
@@ -239,6 +263,142 @@ describe("computeTableColumnWidths", () => {
     expect(result.columnCssWidths).toHaveLength(8);
     expect(result.minTableWidthPx).toBeUndefined();
     expect(pixelWidth(result, 0, 682)).toBeGreaterThanOrEqual(72);
+    expect(percentSum(result).toFixed(2)).toBe("100.00");
+  });
+});
+
+describe("computeTableColumnWidths regression boundaries", () => {
+  test("keeps 7-column qualitative benchmark headers and short enums on one line", () => {
+    const qualitativeTable = table([
+      {
+        school: "浙江海洋大学",
+        region: "浙江·农林类",
+        degree: "博士",
+        rank: 236,
+        goal: "目标双优 · 明确提出",
+        positioning: "应用研究型 · 明确提出",
+        candidate: "是",
+      },
+      {
+        school: "大连海洋大学",
+        region: "辽宁·农林类",
+        degree: "硕士",
+        rank: 296,
+        goal: "目标双优 · 明确提出",
+        positioning: "应用型 · 明确提出",
+        candidate: "是",
+      },
+      {
+        school: "广东海洋大学",
+        region: "广东·农林类",
+        degree: "博士",
+        rank: 298,
+        goal: "目标双一流 · 间接提出",
+        positioning: "教学研究型 · 明确提出",
+        candidate: "是",
+      },
+    ]);
+    const qualitativeLayout = layout([
+      leafColumn(0, "school", "高校", "text", "grow", 1.2),
+      leafColumn(1, "region", "省份·类型", "text"),
+      leafColumn(2, "degree", "学位层级", "text"),
+      leafColumn(3, "rank", "软科排名", "number"),
+      leafColumn(4, "goal", "学校目标（表述清晰度）", "text"),
+      leafColumn(5, "positioning", "办学定位（表述清晰度）", "text"),
+      leafColumn(6, "candidate", "双优候选池", "text"),
+    ]);
+
+    const result = computeTableColumnWidths(
+      qualitativeTable,
+      qualitativeLayout,
+      682,
+    );
+
+    expectAtLeastSingleLine(result, 2, "学位层级");
+    expectAtLeastSingleLine(result, 3, "软科排名");
+    expectAtLeastSingleLine(result, 1, "浙江·农林类");
+    expect(percentSum(result).toFixed(2)).toBe("100.00");
+  });
+
+  test("keeps an 8-column indicator table inside 682px without manual widths", () => {
+    const indicatorTable = table([
+      {
+        indicator: "海洋科学",
+        owner: "学科办",
+        scope: "2021—2025",
+        zjou: 45,
+        nationalRank: 12,
+        dalian: 8,
+        guangdong: 9,
+        jiangsu: 7,
+      },
+      {
+        indicator: "水产",
+        owner: "科研院",
+        scope: "2021—2025",
+        zjou: 51,
+        nationalRank: 9,
+        dalian: 7,
+        guangdong: 10,
+        jiangsu: 8,
+      },
+    ]);
+    const indicatorLayout = layout([
+      leafColumn(0, "indicator", "指标", "text"),
+      leafColumn(1, "owner", "归口", "text"),
+      leafColumn(2, "scope", "统计口径", "text"),
+      leafColumn(3, "zjou", "浙海大", "number"),
+      leafColumn(4, "nationalRank", "全国位次", "number"),
+      leafColumn(5, "dalian", "大连", "number"),
+      leafColumn(6, "guangdong", "广东", "number"),
+      leafColumn(7, "jiangsu", "江苏", "number"),
+    ]);
+
+    const result = computeTableColumnWidths(
+      indicatorTable,
+      indicatorLayout,
+      682,
+    );
+
+    expect(result.columnCssWidths).toHaveLength(8);
+    expect(result.minTableWidthPx).toBeUndefined();
+    expectAtLeastSingleLine(result, 3, "浙海大");
+    expect(percentSum(result).toFixed(2)).toBe("100.00");
+  });
+
+  test("measures zero-padded decimals exactly as rendered", () => {
+    const paddedTable = table([
+      { small: 45, big: 123456 },
+      { small: 51.7, big: 7.2 },
+    ]);
+    const paddedLayout = layout([
+      leafColumn(0, "small", "小值", "number"),
+      leafColumn(1, "big", "大值", "number"),
+    ]);
+
+    const result = computeTableColumnWidths(paddedTable, paddedLayout, 682);
+
+    expectAtLeastSingleLine(result, 0, "45.0");
+    expectAtLeastSingleLine(result, 1, "123456.0");
+  });
+
+  test("converts explicit px column widths against the available width", () => {
+    const pxTable: TableBlock = {
+      ...table([{ metric: "学科", value: 12, note: "A" }]),
+      style: { column_widths: { metric: "136px" } },
+    };
+    const pxLayout = layout([
+      leafColumn(0, "metric", "指标", "text"),
+      leafColumn(1, "value", "数量", "number"),
+      leafColumn(2, "note", "备注", "text"),
+    ]);
+
+    const result = computeTableColumnWidths(pxTable, pxLayout, 682);
+
+    expect(Number.parseFloat(result.columnCssWidths[0] ?? "0")).toBeCloseTo(
+      (136 / 682) * 100,
+      2,
+    );
     expect(percentSum(result).toFixed(2)).toBe("100.00");
   });
 });

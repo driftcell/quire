@@ -1,10 +1,10 @@
 import type {
   CellValue,
   ColumnDataType,
-  RichCell,
   TableBlock,
   TableLayout,
 } from "@/contracts/report-protocol";
+import { computeColumnDecimals, formatTableCell } from "./tableCellFormat";
 import { isRecord } from "@/lib/guards";
 
 export interface TableSizingResult {
@@ -24,6 +24,9 @@ interface ColumnBounds {
 
 const CELL_HORIZONTAL_CHROME_PX = 24; // px-2.5 (20px) + borders + slack
 const BADGE_EXTRA_PX = 18;
+const SHORT_HEADER_SINGLE_LINE_PX = 82;
+const WRAPPED_HEADER_FLOOR_PX = 78;
+const TEXT_COMPRESSION_FLOOR_PX = 78;
 const ATOMIC_TYPES = new Set<ColumnDataType>([
   "number",
   "currency",
@@ -80,44 +83,39 @@ function measureLongestTokenPx(text: string, font: string): number {
   for (const token of tokens) {
     if (!token) continue;
     const w = measureTextWidthPx(token, font);
-    // For long CJK sentences without spaces, allow wrapping at ~4 chars min
-    const effective =
-      /[\u4e00-\u9fff]/.test(token) && token.length > 6
-        ? Math.min(w, 64)
-        : Math.min(w, 130);
+    // Long CJK sentences may wrap at ~4 chars; short words (<= 7 chars)
+    // keep their full single-line width so labels like "浙江·农林类" never
+    // lose a character to an orphan line.
+    const effective = Math.min(
+      w,
+      /[\u4e00-\u9fff]/.test(token) && token.length > 7 ? 64 : 110,
+    );
     if (effective > maxW) maxW = effective;
   }
   return maxW;
-}
-
-function isRichCell(value: CellValue): value is RichCell {
-  return typeof value === "object" && value !== null;
 }
 
 function isCellRecord(value: unknown): value is Record<string, CellValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function extractCellText(value: CellValue | undefined): string {
-  if (value === undefined || value === null) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  if (isRichCell(value)) {
-    return (
-      value.text ?? (value.number !== undefined ? String(value.number) : "")
-    );
-  }
-  return "";
-}
-
-function parsePercent(raw: string | undefined): number | undefined {
+function parseExplicitWidthPct(
+  raw: string | undefined,
+  availablePx: number,
+): number | undefined {
   if (!raw) return undefined;
   const trimmed = raw.trim();
-  if (!trimmed.endsWith("%")) return undefined;
-  const num = Number.parseFloat(trimmed.slice(0, -1));
-  return Number.isFinite(num) && num > 0 ? Math.min(100, num) : undefined;
+  const lower = trimmed.toLowerCase();
+  let pct: number;
+  if (lower.endsWith("%")) {
+    pct = Number.parseFloat(trimmed.slice(0, -1));
+  } else if (lower.endsWith("px")) {
+    const px = Number.parseFloat(trimmed.slice(0, -2));
+    pct = (px / availablePx) * 100;
+  } else {
+    return undefined;
+  }
+  return Number.isFinite(pct) && pct > 0 ? Math.min(100, pct) : undefined;
 }
 
 function readExplicitWidths(
@@ -192,8 +190,12 @@ export function computeTableColumnWidths(
   ];
 
   const explicitWidths = readExplicitWidths(table["style"]);
+  const columnDecimals = computeColumnDecimals(allRows, undefined, leafCols);
   const bounds: ColumnBounds[] = leafCols.map((col, colIdx) => {
-    const explicitPct = parsePercent(explicitWidths?.[col.key]);
+    const explicitPct = parseExplicitWidthPct(
+      explicitWidths?.[col.key],
+      availablePx,
+    );
     const isAtomic = ATOMIC_TYPES.has(col.data_type);
     const extraChrome =
       CELL_HORIZONTAL_CHROME_PX +
@@ -201,7 +203,12 @@ export function computeTableColumnWidths(
 
     const headerPx =
       measureMultilineMaxPx(col.label, headerFont) + CELL_HORIZONTAL_CHROME_PX;
+    const headerFloorPx =
+      headerPx <= SHORT_HEADER_SINGLE_LINE_PX
+        ? headerPx
+        : Math.max(WRAPPED_HEADER_FLOOR_PX, Math.ceil(headerPx * 0.56));
 
+    const decimals = columnDecimals.get(col.key) ?? 0;
     const cellWidths: number[] = [];
     let maxAtomicPx = 0;
     let maxUnbreakablePx = 0;
@@ -212,7 +219,7 @@ export function computeTableColumnWidths(
         : isCellRecord(row)
           ? row[col.key]
           : undefined;
-      const text = extractCellText(rawCell);
+      const text = formatTableCell(rawCell, decimals).text;
       if (!text) continue;
       const w = measureMultilineMaxPx(text, bodyFont) + extraChrome;
       cellWidths.push(w);
@@ -228,22 +235,16 @@ export function computeTableColumnWidths(
     const p95CellPx = percentile(cellWidths, 0.95);
 
     const minPx = isAtomic
-      ? Math.max(
-          48,
-          Math.min(
-            240,
-            Math.max(
-              maxAtomicPx,
-              Math.min(headerPx, Math.max(48, Math.ceil(headerPx * 0.56))),
-            ),
-          ),
-        )
+      ? Math.max(56, Math.min(240, Math.max(headerFloorPx, maxAtomicPx)))
       : Math.max(
-          48,
-          Math.min(140, Math.max(Math.min(headerPx, 110), maxUnbreakablePx)),
+          56,
+          Math.min(
+            140,
+            Math.max(Math.min(headerFloorPx, 110), maxUnbreakablePx),
+          ),
         );
 
-    const maxCapPx = Math.max(minPx, availablePx * 0.46);
+    const maxCapPx = Math.max(minPx, availablePx * 0.38);
     const rawIdeal = isAtomic
       ? Math.max(headerPx, p95CellPx, minPx)
       : Math.max(headerPx, p90CellPx, minPx);
@@ -355,9 +356,10 @@ export function computeTableColumnWidths(
     }
   } else if (surplus < 0) {
     // Squeeze non-atomic text columns first before touching atomic numeric/badge columns.
-    // Keep at least 72px for text columns so the first column never collapses into a
+    // Keep a readable floor so medium/short text columns never collapse into a
     // one-character vertical strip.
-    const textFloorPx = (b: ColumnBounds) => Math.min(b.minPx, 72);
+    const textFloorPx = (b: ColumnBounds) =>
+      Math.min(b.minPx, TEXT_COMPRESSION_FLOOR_PX);
     let deficit = -surplus;
     const textCols = flexBounds.filter((b) => !b.atomic);
     const totalShrinkable = textCols.reduce(

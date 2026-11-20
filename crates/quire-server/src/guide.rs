@@ -143,10 +143,11 @@ TABLE BLOCK EXAMPLE
   "style": { "keep_together": true }
 }
 
-DEFAULT COMPACT TABLE PRESET (6–8 columns)
-- Keep leaf headers to 2–4 Chinese characters. Move units and scope into `note` or a grouped parent `ColumnNode` (for example parent `2021年` with children `立项` / `经费`), not into every leaf header.
-- Omit `style.column_widths` for 6–8 columns. The frontend Water-Filling allocator keeps numeric cells unbreakable, never squeezes text columns below 72px during compression, and allows headers to wrap to two lines when space is tight. Manually forcing 6–8 widths to sum to 100% often overflows A4.
-- Configure `column_widths` only when leaf columns >= 9 or when a specific locked ratio is required. Explicit widths still work when needed: `"style":{"column_widths":{"region":"24%"}}`.
+DEFAULT COMPACT TABLE PRESET (8 columns or fewer)
+- For 8 leaf columns or fewer, omit `style.column_widths` entirely and let the frontend Water-Filling allocator decide. It measures the same formatted cell text the renderer uses (including zero-padded decimals), locks short headers and enumerations to one line, keeps numeric cells unbreakable and retains a 78px floor for text columns during compression. Hand-written narrow percentages are the main cause of vertically squeezed short columns.
+- Add explicit `column_widths` only when leaf columns >= 9 or when a preview confirms a specific locked ratio is required. Both percentages and pixels are accepted: `"style":{"column_widths":{"region":"24%","school":"136px"}}`.
+- Keep leaf headers to 2–5 Chinese characters. Move parenthetical scopes and units (`（表述清晰度）`, `2026 快照，个`) into `note` or a grouped parent `ColumnNode`; do not repeat the same qualifier in every leaf header.
+- Keep status and enumeration values concise (`否（双一流）`, not a full sentence) so short columns can stay on one line.
 - Prefer `keep_together: true` for compact benchmark tables.
 Copyable 7-column preset (no manual widths):
 {
