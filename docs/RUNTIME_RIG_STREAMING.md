@@ -42,8 +42,15 @@ and MCP tools: `"*"` enables every tool, while any other entry matches one tool 
 `TextDelta`/`ThinkingDelta`; the service coalesces only main-agent deltas. When the provider turn
 finishes, the canonical `CompletionResponse.choice` supplies the assistant message and tool calls.
 Each call is answered with a `Message::tool_results` message, and the next model turn runs until the
-model returns no tool calls. There is intentionally no fixed model-turn or subagent-depth cap;
-cancellation is the stop mechanism.
+model returns no tool calls. Between the tool results (and any preview images) and the next model
+request, the main-agent loop atomically takes one pending user-message batch under the session gate
+and appends it as a `Message::user`. This lets queued corrections reach the very next model round
+without waiting for the run to end. Subagents and `ask_user` suspensions never consume the queue.
+
+At the end of a run, `finish_run` restores the session to `Idle` and the service immediately calls
+`queue_notify.notify_one()`, so the pending-queue loop starts the next turn without waiting for the
+2-second fallback tick. The same coordinator owns dequeue, message persistence, `user_message_added`
+and `pending_queue_updated` events, preventing concurrent consumers from taking one item twice.
 
 Built-in tools (`load_skill`, `read_skill_resource`, `describe_task`, `spawn_subagents`) read skills
 from the session branch. `describe_task` emits `TaskFocus`. `spawn_subagents` reads each child
@@ -88,12 +95,20 @@ formal Quire commit clears the placeholders atomically.
 - Main text/thinking deltas are coalesced; subagent deltas retain the child `agent_id` and parent
   run.
 - Tool calls persist complete input and output, with globally unique IDs.
+- Pending queue dequeue is serialized by the per-session gate; queue items are persisted as user
+  messages exactly once.
+- A queued user message is injected after tool results and before the next main-agent LLM request.
+- `ask_user` suspension leaves the pending queue untouched.
+- Idle completion notifies the queue loop immediately; the 2-second interval is only a fallback.
 - `context_usage.context_limit` is the resolved provider model limit, not a fixed constant.
 - Task focus, subagent lifecycle, tool lifecycle, usage and turn completion retain SSE order.
 
 Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
 
 - `rig_turn_context_and_task_events_reach_the_persisted_session_contract`
+- `tool_boundary_injects_pending_message_into_same_run`
+- `idle_completion_wakes_pending_queue_without_interval_wait`
+- `ask_user_suspension_keeps_pending_queue_untouched`
 
 Unit coverage in `crates/quire-runtime/src/rig_agent.rs`:
 

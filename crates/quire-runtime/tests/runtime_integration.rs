@@ -12,9 +12,9 @@ use std::{
     path::Path,
     sync::{
         Arc, OnceLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use base64::Engine as _;
@@ -26,12 +26,14 @@ use quire_protocol::{
 use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
     ModelStreamProvider, ModelTurnRequest, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
-    RuntimeError, RuntimeService, RuntimeStore, ToolCallRecord,
+    RigModelStreamProvider, RuntimeError, RuntimeService, RuntimeStore, ToolCallRecord,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
     mcp_registry::{McpServerInput, McpServerPatch},
+    models::ModelInput,
     preview::ChartPreviewRecord,
+    sandbox::build_sandbox_provider,
     service::PostMessageOutcome,
     store::SessionPatch,
 };
@@ -41,7 +43,7 @@ use quire_session_protocol::{
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tower::ServiceExt;
 
 fn test_lock() -> &'static Mutex<()> {
@@ -505,6 +507,193 @@ impl ModelStreamProvider for FailingStreamProvider {
     ) -> quire_runtime::RuntimeResult<ModelEventStream> {
         Ok(Box::pin(futures::stream::iter(vec![Err(
             RuntimeError::Internal("summary provider failed".into()),
+        )])))
+    }
+}
+
+#[derive(Default)]
+struct MockChatState {
+    request_count: AtomicUsize,
+    requests: Mutex<Vec<Value>>,
+    started: Notify,
+    release: Notify,
+}
+
+fn sse(value: Value) -> String {
+    format!("data: {value}\n\n")
+}
+
+fn response_base(output: Value) -> Value {
+    json!({
+        "id": "resp_mock",
+        "object": "response",
+        "created_at": 0,
+        "status": "completed",
+        "model": "mock-model",
+        "output": output,
+        "tools": []
+    })
+}
+
+fn function_item(title: &str) -> Value {
+    json!({
+        "type": "function_call",
+        "id": "fc_mock",
+        "call_id": "call-title",
+        "name": "set_session_title",
+        "arguments": json!({"title": title}).to_string(),
+        "status": "completed"
+    })
+}
+
+fn message_item(text: &str) -> Value {
+    json!({
+        "type": "message",
+        "id": "msg_mock",
+        "role": "assistant",
+        "status": "completed",
+        "content": [{"type": "output_text", "annotations": [], "logprobs": [], "text": text}]
+    })
+}
+
+fn tool_call_stream() -> Vec<String> {
+    let item = function_item("Queued title");
+    vec![
+        sse(json!({
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": response_base(json!([]))
+        })),
+        sse(json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": 1,
+            "item": {
+                "type": "function_call",
+                "id": "fc_mock",
+                "call_id": "call-title",
+                "name": "set_session_title",
+                "arguments": "",
+                "status": "in_progress"
+            }
+        })),
+        sse(json!({
+            "type": "response.function_call_arguments.delta",
+            "item_id": "fc_mock",
+            "output_index": 0,
+            "content_index": 0,
+            "sequence_number": 2,
+            "delta": item["arguments"]
+        })),
+        sse(json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": 3,
+            "item": item
+        })),
+        sse(json!({
+            "type": "response.completed",
+            "sequence_number": 4,
+            "response": response_base(json!([item]))
+        })),
+    ]
+}
+
+fn text_stream() -> Vec<String> {
+    let text = "已完成排队消息。";
+    let item = message_item(text);
+    vec![
+        sse(json!({
+            "type": "response.created",
+            "sequence_number": 0,
+            "response": response_base(json!([]))
+        })),
+        sse(json!({
+            "type": "response.output_item.added",
+            "output_index": 0,
+            "sequence_number": 1,
+            "item": {
+                "type": "message",
+                "id": "msg_mock",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": []
+            }
+        })),
+        sse(json!({
+            "type": "response.output_text.delta",
+            "item_id": "msg_mock",
+            "output_index": 0,
+            "content_index": 0,
+            "sequence_number": 2,
+            "delta": text
+        })),
+        sse(json!({
+            "type": "response.output_item.done",
+            "output_index": 0,
+            "sequence_number": 3,
+            "item": item
+        })),
+        sse(json!({
+            "type": "response.completed",
+            "sequence_number": 4,
+            "response": response_base(json!([item]))
+        })),
+    ]
+}
+
+async fn mock_chat_completions(
+    axum::extract::State(state): axum::extract::State<Arc<MockChatState>>,
+    axum::Json(body): axum::Json<Value>,
+) -> axum::response::Response {
+    let index = state.request_count.fetch_add(1, Ordering::SeqCst);
+    state.requests.lock().await.push(body);
+    let chunks = if index == 0 {
+        state.started.notify_one();
+        state.release.notified().await;
+        tool_call_stream()
+    } else {
+        text_stream()
+    };
+    let stream = futures::stream::iter(
+        chunks
+            .into_iter()
+            .map(|chunk| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(chunk))),
+    );
+    axum::response::Response::builder()
+        .header("content-type", "text/event-stream")
+        .body(axum::body::Body::from_stream(stream))
+        .unwrap()
+}
+
+#[derive(Clone)]
+struct QuestionnaireGateProvider {
+    started: Arc<Notify>,
+    release: Arc<Notify>,
+}
+
+impl QuestionnaireGateProvider {
+    fn new() -> Self {
+        Self {
+            started: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for QuestionnaireGateProvider {
+    async fn stream_turn(
+        &self,
+        _request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        self.started.notify_one();
+        self.release.notified().await;
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
+            ModelStreamEvent::QuestionnaireRequested {
+                tool_call_id: Some("ask-1".into()),
+                questions: question_items(),
+            },
         )])))
     }
 }
@@ -3456,6 +3645,333 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
         "unbound session error must explain the missing report binding"
     );
     server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tool_boundary_injects_pending_message_into_same_run() {
+    let _guard = test_lock().lock().await;
+    let mock_state = Arc::new(MockChatState::default());
+    let server_state = Arc::clone(&mock_state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            axum::Router::new()
+                .route("/v1/responses", axum::routing::post(mock_chat_completions))
+                .with_state(server_state),
+        )
+        .await
+        .unwrap();
+    });
+
+    let (service, store) = test_service().await;
+    let provider_id = unique("mock-model-provider");
+    service
+        .models()
+        .upsert_provider(ProviderInput {
+            provider_id: provider_id.clone(),
+            name: "Mock OpenAI".into(),
+            protocol: ProviderProtocol::OpenaiCompatible,
+            base_url: format!("http://{address}/v1"),
+            api_key_ref: "test-key".into(),
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    let route_id = unique("mock-model-route");
+    service
+        .models()
+        .upsert_model(ModelInput {
+            id: route_id.clone(),
+            provider_id: provider_id.clone(),
+            model_id: "mock-model".into(),
+            display_name: "Mock Model".into(),
+            context_limit: 32_000,
+            max_output_tokens: Some(1024),
+            supports_reasoning: false,
+            supports_tools: true,
+            supports_vision: false,
+            cost_input: None,
+            cost_output: None,
+            cost_cache_read: None,
+            enabled: true,
+        })
+        .await
+        .unwrap();
+    service
+        .kb()
+        .upsert_agent(
+            "main",
+            "",
+            &route_id,
+            "Mock tool-boundary agent",
+            &["set_session_title".to_string()],
+            true,
+            true,
+        )
+        .await
+        .unwrap();
+    let sandbox_provider = build_sandbox_provider(&service.config().sandbox).unwrap();
+    let provider = RigModelStreamProvider::new(
+        service.kb().clone(),
+        Arc::new(service.models().clone()),
+        Arc::new(service.config().clone()),
+        service.mcp_registry(),
+        sandbox_provider,
+        service.pending_queue(),
+    );
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    service.boot().await.unwrap();
+    let session = service
+        .create_session(&unique("tool-boundary-queue"), None)
+        .await
+        .unwrap();
+
+    let first = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("tool-boundary-first"),
+                content: "先更新标题，再继续回答。".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(first, PostMessageOutcome::Started { .. }));
+    let started =
+        tokio::time::timeout(Duration::from_secs(10), mock_state.started.notified()).await;
+    if started.is_err() {
+        let events = store
+            .list_events(&session.session_id, 0, 100)
+            .await
+            .unwrap();
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        panic!("mock model never received the first request: events={events:?} detail={detail:?}");
+    }
+
+    let queued = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("tool-boundary-queued"),
+                content: "排队指令：请补充风险提示。".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(queued, PostMessageOutcome::Queued { .. }));
+    mock_state.release.notify_one();
+
+    let mut finished = false;
+    for _ in 0..500 {
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        if detail.pending_queue.is_empty()
+            && detail.summary.active_run_status == ActiveRunStatus::Idle
+        {
+            finished = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(finished, "tool-boundary turn did not finish");
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert!(detail.pending_queue.is_empty());
+
+    let requests = mock_state.requests.lock().await;
+    assert!(
+        requests.len() >= 2,
+        "expected a second LLM request after the tool result"
+    );
+    let second_messages = requests[1]["messages"]
+        .as_array()
+        .or_else(|| requests[1]["input"].as_array())
+        .unwrap_or_else(|| panic!("second request messages missing: {}", requests[1]));
+    let tool_index = second_messages
+        .iter()
+        .rposition(|message| message["type"] == "function_call_output")
+        .unwrap_or_else(|| {
+            panic!("second request must contain a tool result: {second_messages:?}")
+        });
+    let injected = second_messages
+        .get(tool_index + 1)
+        .expect("queued message must follow the tool result");
+    assert_eq!(injected["role"], "user");
+    assert_eq!(injected["type"], "message");
+    assert!(
+        injected["content"]
+            .as_array()
+            .is_some_and(|parts| parts.iter().any(|part| {
+                part["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("排队指令：请补充风险提示。"))
+            })),
+        "queued message missing from second request: {injected:?}"
+    );
+
+    let events = store
+        .list_events(&session.session_id, 0, 1_000)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.kind, SessionEventKind::PendingQueueUpdated { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.kind, SessionEventKind::UserMessageAdded { .. }))
+    );
+
+    service.delete_session(&session.session_id).await.unwrap();
+    service.kb().delete_agent("main").await.unwrap();
+    service
+        .models()
+        .delete_provider(&provider_id)
+        .await
+        .unwrap();
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn idle_completion_wakes_pending_queue_without_interval_wait() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let gate = GateStreamProvider::new();
+    let service = service.with_model_stream_provider(Arc::new(gate.clone()));
+    service.boot().await.unwrap();
+    let session = service
+        .create_session(&unique("queue-notify"), Some("runtime-doc"))
+        .await
+        .unwrap();
+
+    let first = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-notify-first"),
+                content: "First gated answer".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(first, PostMessageOutcome::Started { .. }));
+    wait_for_running(&store, &session.session_id).await;
+
+    let queued = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-notify-second"),
+                content: "Immediate follow-up".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(queued, PostMessageOutcome::Queued { .. }));
+
+    let started = Instant::now();
+    gate.release();
+    let mut second_turn_started = false;
+    for _ in 0..300 {
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        let messages = store.list_messages(&session.session_id).await.unwrap();
+        let has_follow_up = messages.iter().any(|message| {
+            message.role == MessageRole::User && message.content == "Immediate follow-up"
+        });
+        if has_follow_up
+            && detail.pending_queue.is_empty()
+            && detail.summary.active_run_status == ActiveRunStatus::Idle
+        {
+            second_turn_started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        second_turn_started,
+        "queued follow-up did not start after completion"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(1_500),
+        "queued follow-up waited for the 2s fallback poll: {:?}",
+        started.elapsed()
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ask_user_suspension_keeps_pending_queue_untouched() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let provider = QuestionnaireGateProvider::new();
+    let service = service.with_model_stream_provider(Arc::new(provider.clone()));
+    service.boot().await.unwrap();
+    let session = service
+        .create_session(&unique("queue-suspended"), Some("runtime-doc"))
+        .await
+        .unwrap();
+
+    let first = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-suspended-first"),
+                content: "Ask me a question".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(first, PostMessageOutcome::Started { .. }));
+    tokio::time::timeout(Duration::from_secs(10), provider.started.notified())
+        .await
+        .expect("questionnaire model never started");
+    let queued = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-suspended-second"),
+                content: "This must wait for the answer".into(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(queued, PostMessageOutcome::Queued { .. }));
+    provider.release.notify_one();
+
+    let mut awaiting = false;
+    for _ in 0..300 {
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        if detail.summary.active_run_status == ActiveRunStatus::AwaitingInput {
+            awaiting = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(awaiting, "run did not enter AwaitingInput");
+    tokio::time::sleep(Duration::from_millis(250)).await;
+
+    let detail = service.session_detail(&session.session_id).await.unwrap();
+    assert!(
+        detail.pending_queue.len() == 1,
+        "suspended queue must not be consumed: {:?}",
+        detail.pending_queue
+    );
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    assert!(
+        !messages.iter().any(|message| {
+            message.role == MessageRole::User && message.content == "This must wait for the answer"
+        }),
+        "queued message was consumed while awaiting user input"
+    );
+    service.delete_session(&session.session_id).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

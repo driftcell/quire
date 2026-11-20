@@ -50,6 +50,7 @@ use crate::{
     models::{ModelRegistry, ProviderProtocol},
     prompt::ContextMessage,
     sandbox::{SandboxExecRequest, SandboxLease, SandboxProvider, sandbox_spec_from_config},
+    service::PendingQueueCoordinator,
     store::SessionPatch,
 };
 
@@ -1057,6 +1058,7 @@ impl RigModelStreamProvider {
         config: Arc<Config>,
         mcp: Arc<McpRegistry>,
         sandbox_provider: Arc<dyn SandboxProvider>,
+        queue: PendingQueueCoordinator,
     ) -> Self {
         Self {
             core: Arc::new(RigModelCore {
@@ -1065,6 +1067,7 @@ impl RigModelStreamProvider {
                 config,
                 mcp,
                 sandbox_provider,
+                queue,
             }),
         }
     }
@@ -1104,6 +1107,7 @@ struct RigModelCore {
     config: Arc<Config>,
     mcp: Arc<McpRegistry>,
     sandbox_provider: Arc<dyn SandboxProvider>,
+    queue: PendingQueueCoordinator,
 }
 
 #[derive(Clone)]
@@ -1454,6 +1458,15 @@ impl RigModelCore {
                 if !parts.is_empty() {
                     messages.push(Message::User { content: parts });
                 }
+            }
+            if !execution.run_id.starts_with("run_sub_")
+                && let Some(batch) = self
+                    .queue
+                    .take_pending_batch(&execution.session_id, &execution.run_id)
+                    .await?
+            {
+                // Inject the queued user instruction before the next model round.
+                messages.push(Message::user(batch.content));
             }
         }
         if let Err(error) = sandbox_lease.close().await {

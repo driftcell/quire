@@ -187,6 +187,143 @@ impl Drop for CompactionFlagGuard {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingBatch {
+    pub message: SessionMessage,
+    pub content: String,
+}
+
+/// Single source of truth for pending-queue dequeue, persistence and event broadcast.
+#[derive(Clone)]
+pub struct PendingQueueCoordinator {
+    store: RuntimeStore,
+    session_gates: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    notify: Arc<Notify>,
+}
+
+impl PendingQueueCoordinator {
+    fn new(store: RuntimeStore) -> Self {
+        Self {
+            store,
+            session_gates: Arc::new(Mutex::new(HashMap::new())),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    async fn session_gate(&self, session_id: &str) -> Arc<Mutex<()>> {
+        let mut gates = self.session_gates.lock().await;
+        gates
+            .entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn notified(&self) {
+        self.notify.notified().await;
+    }
+
+    fn notify_one(&self) {
+        self.notify.notify_one();
+    }
+
+    /// Atomically take the next queue batch while the caller already owns the session gate.
+    pub(crate) async fn take_pending_batch_locked(
+        &self,
+        session_id: &str,
+        run_id: &str,
+    ) -> RuntimeResult<Option<PendingBatch>> {
+        let items = self.store.list_pending_queue(session_id).await?;
+        let Some(first) = items.first() else {
+            return Ok(None);
+        };
+        let mut batch = vec![first.clone()];
+        if first.source == PendingQueueSource::Comment {
+            for item in items.iter().skip(1) {
+                if item.source != PendingQueueSource::Comment {
+                    break;
+                }
+                batch.push(item.clone());
+            }
+        }
+        let content = if batch.len() == 1 {
+            first.content.clone()
+        } else {
+            batch
+                .iter()
+                .map(|item| item.content.clone())
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        };
+        let mut attachment_ids = Vec::new();
+        for item in &batch {
+            for attachment_id in &item.attachment_ids {
+                if !attachment_ids.contains(attachment_id) {
+                    attachment_ids.push(attachment_id.clone());
+                }
+            }
+        }
+        let client_msg_id = format!("queue:{}", first.queue_id);
+        let (message, _) = self
+            .store
+            .insert_user_message(
+                session_id,
+                &SendMessageRequest {
+                    client_msg_id,
+                    content: content.clone(),
+                    attachment_ids,
+                },
+            )
+            .await?;
+        self.store
+            .remove_pending_items(
+                session_id,
+                &batch
+                    .iter()
+                    .map(|item| item.queue_id.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await?;
+        self.emit_queue_update(session_id).await?;
+        self.store
+            .append_event(
+                session_id,
+                run_id,
+                "queue",
+                None,
+                SessionEventKind::UserMessageAdded {
+                    message_id: message.message_id.clone(),
+                },
+            )
+            .await?;
+        Ok(Some(PendingBatch { message, content }))
+    }
+
+    /// Acquire the session gate and take one pending batch.
+    pub(crate) async fn take_pending_batch(
+        &self,
+        session_id: &str,
+        run_id: &str,
+    ) -> RuntimeResult<Option<PendingBatch>> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
+        self.take_pending_batch_locked(session_id, run_id).await
+    }
+
+    async fn emit_queue_update(&self, session_id: &str) -> RuntimeResult<()> {
+        let items = self.store.list_pending_queue(session_id).await?;
+        self.store
+            .append_event(
+                session_id,
+                "queue",
+                "system",
+                None,
+                SessionEventKind::PendingQueueUpdated { items },
+            )
+            .await?;
+        Ok(())
+    }
+}
+
 #[derive(Clone)]
 pub struct RuntimeService {
     store: RuntimeStore,
@@ -196,8 +333,7 @@ pub struct RuntimeService {
     runs: RunRegistry,
     config: Arc<Config>,
     model_stream: Arc<dyn ModelStreamProvider>,
-    session_gates: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
-    queue_notify: Arc<Notify>,
+    queue: PendingQueueCoordinator,
 }
 
 impl RuntimeService {
@@ -208,6 +344,7 @@ impl RuntimeService {
         config: Arc<Config>,
     ) -> Self {
         let mcp = Arc::new(McpRegistry::new(store.clone(), config.master_key.clone()));
+        let queue = PendingQueueCoordinator::new(store.clone());
         Self {
             store,
             kb,
@@ -216,8 +353,7 @@ impl RuntimeService {
             runs: RunRegistry::default(),
             config,
             model_stream: Arc::new(StubStreamProvider),
-            session_gates: Arc::new(Mutex::new(HashMap::new())),
-            queue_notify: Arc::new(Notify::new()),
+            queue,
         }
     }
 
@@ -255,6 +391,11 @@ impl RuntimeService {
         &self.config
     }
 
+    /// Shared queue coordinator used by the idle drain loop and in-run tool boundaries.
+    pub fn pending_queue(&self) -> PendingQueueCoordinator {
+        self.queue.clone()
+    }
+
     pub fn runs(&self) -> &RunRegistry {
         &self.runs
     }
@@ -276,7 +417,7 @@ impl RuntimeService {
         let mut interval = tokio::time::interval(Duration::from_secs(2));
         loop {
             tokio::select! {
-                _ = self.queue_notify.notified() => {}
+                _ = self.queue.notified() => {}
                 _ = interval.tick() => {}
             }
             let sessions = match self.store.list_sessions_with_pending_queue().await {
@@ -361,11 +502,7 @@ impl RuntimeService {
     }
 
     async fn session_gate(&self, session_id: &str) -> Arc<Mutex<()>> {
-        let mut gates = self.session_gates.lock().await;
-        gates
-            .entry(session_id.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(())))
-            .clone()
+        self.queue.session_gate(session_id).await
     }
 
     pub async fn post_message(
@@ -632,16 +769,7 @@ impl RuntimeService {
     }
 
     async fn emit_queue_update(&self, session_id: &str) -> RuntimeResult<()> {
-        let items = self.store.list_pending_queue(session_id).await?;
-        self.emit(
-            session_id,
-            "queue",
-            "system",
-            None,
-            SessionEventKind::PendingQueueUpdated { items },
-        )
-        .await?;
-        Ok(())
+        self.queue.emit_queue_update(session_id).await
     }
 
     async fn drain_pending_locked(
@@ -656,60 +784,15 @@ impl RuntimeService {
         if self.store.latest_running_run(session_id).await?.is_some() {
             return Ok(None);
         }
-        let items = self.store.list_pending_queue(session_id).await?;
-        let Some(first) = items.first() else {
+        let Some(batch) = self
+            .queue
+            .take_pending_batch_locked(session_id, "queue")
+            .await?
+        else {
             return Ok(None);
         };
-        let mut batch = vec![first.clone()];
-        if first.source == PendingQueueSource::Comment {
-            for item in items.iter().skip(1) {
-                if item.source != PendingQueueSource::Comment {
-                    break;
-                }
-                batch.push(item.clone());
-            }
-        }
-        let content = if batch.len() == 1 {
-            first.content.clone()
-        } else {
-            batch
-                .iter()
-                .map(|item| item.content.clone())
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        };
-        let mut attachment_ids = Vec::new();
-        for item in &batch {
-            for attachment_id in &item.attachment_ids {
-                if !attachment_ids.contains(attachment_id) {
-                    attachment_ids.push(attachment_id.clone());
-                }
-            }
-        }
-        let client_msg_id = format!("queue:{}", first.queue_id);
-        let (message, _) = self
-            .store
-            .insert_user_message(
-                session_id,
-                &SendMessageRequest {
-                    client_msg_id,
-                    content: content.clone(),
-                    attachment_ids,
-                },
-            )
-            .await?;
-        self.store
-            .remove_pending_items(
-                session_id,
-                &batch
-                    .iter()
-                    .map(|item| item.queue_id.clone())
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
-        self.emit_queue_update(session_id).await?;
         let run_id = self
-            .spawn_turn_for_message(session_id, &message.message_id, content)
+            .start_turn_for_stored_message(session_id, &batch.message.message_id, batch.content)
             .await?;
         Ok(Some(run_id))
     }
@@ -1343,6 +1426,18 @@ impl RuntimeService {
         Ok(run_id)
     }
 
+    async fn start_turn_for_stored_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        content: String,
+    ) -> RuntimeResult<String> {
+        self.maybe_auto_compact(session_id, Some(message_id)).await;
+        let (run_id, token) = self.prepare_turn(session_id).await?;
+        self.launch_turn(session_id, &run_id, content, token);
+        Ok(run_id)
+    }
+
     async fn spawn_turn_for_message(
         &self,
         session_id: &str,
@@ -1385,7 +1480,7 @@ impl RuntimeService {
                 }
                 let session = self.store.get_session_summary(session_id).await?;
                 if session.active_run_status != ActiveRunStatus::AwaitingInput {
-                    self.queue_notify.notify_waiters();
+                    self.queue.notify_one();
                 }
                 Ok(())
             }
