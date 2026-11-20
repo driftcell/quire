@@ -93,7 +93,7 @@ export function SessionChatPane({
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
       <div className="min-h-0 flex-1">
         {isLoading ? (
-          <div className="h-full overflow-y-auto px-4">
+          <div className="no-scrollbar h-full overflow-y-auto px-4">
             <div className="mx-auto max-w-3xl space-y-4 py-6">
               <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
               <Skeleton className="h-24 w-5/6 rounded-2xl" />

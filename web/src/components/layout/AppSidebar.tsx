@@ -202,7 +202,7 @@ export function AppSidebar() {
         </Button>
       </SidebarHeader>
 
-      <SidebarContent className="overscroll-contain px-1 pt-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <SidebarContent className="no-scrollbar overscroll-contain px-1 pt-2">
         {groups.map((group) => (
           <SidebarGroup key={group.key} className="py-1">
             <SidebarGroupLabel className="px-3 text-[11px] font-medium text-muted-foreground/70">

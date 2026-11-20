@@ -87,7 +87,7 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
               <div className="mb-1 text-[11px] font-medium text-muted-foreground">
                 Input
               </div>
-              <pre className="max-h-40 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
+              <pre className="no-scrollbar max-h-40 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
                 {detailQuery.data
                   ? JSON.stringify(detailQuery.data.input, null, 2)
                   : item.inputPreview}
@@ -98,7 +98,7 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
                 <div className="mb-1 text-[11px] font-medium text-muted-foreground">
                   Output
                 </div>
-                <pre className="max-h-48 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
+                <pre className="no-scrollbar max-h-48 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
                   {detailQuery.data
                     ? JSON.stringify(detailQuery.data.output, null, 2)
                     : item.outputPreview}

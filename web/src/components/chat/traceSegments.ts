@@ -46,6 +46,7 @@ export type ActivityRenderSegment = {
   kind: "activity";
   items: ActivityItem[];
   isActive: boolean;
+  isLive?: boolean;
   durationMs?: number;
 };
 
@@ -339,14 +340,21 @@ export function buildLiveSegments(
   });
   if (activity.length > 0) {
     const summary = summarizeActivity(activity);
+    const hasStreamingThinking = activity.some(
+      (item) => item.kind === "thinking" && item.isActive,
+    );
     segments.push({
       key: `activity-${activity[0]?.key ?? segments.length}`,
       kind: "activity",
       items: activity,
+      // Only live process work owns the unified header. Once tools, subagents
+      // and thinking have settled, a streaming tail is final body text and the
+      // compact fallback header above the trace takes over.
       isActive:
-        trace.isStreaming ||
+        hasStreamingThinking ||
         summary.runningSubagents > 0 ||
         summary.runningTools > 0,
+      isLive: trace.isStreaming,
     });
   }
   tail.forEach((segment, index) => {

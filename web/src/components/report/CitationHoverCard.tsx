@@ -84,7 +84,7 @@ export function CitationHoverCard({
               <XIcon className="size-3.5" />
             </button>
           </div>
-          <div className="max-h-72 divide-y overflow-y-auto overscroll-contain">
+          <div className="no-scrollbar max-h-72 divide-y overflow-y-auto overscroll-contain">
             {refs.map((ref) => {
               const domain = sourceDomain(ref.url);
               return (

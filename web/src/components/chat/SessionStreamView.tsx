@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
-import { CompassIcon, SparklesIcon, SquareIcon } from "lucide-react";
+import { CompassIcon, SparklesIcon } from "lucide-react";
 import {
   HistoricalRunTrace,
   LiveTraceSegments,
@@ -7,6 +7,8 @@ import {
 import { HistoricalMessageItem } from "@/components/chat/HistoricalMessageItem";
 import { PendingUserBubble } from "@/components/chat/PendingUserBubble";
 import { QuestionCard } from "@/components/chat/QuestionCard";
+import { StopTurnButton } from "@/components/chat/StopTurnButton";
+import { buildLiveSegments } from "@/components/chat/traceSegments";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
   MessageScroller,
@@ -115,6 +117,14 @@ export function SessionStreamView({
     }
     return map;
   }, [traces]);
+
+  const liveSegments = useMemo(
+    () => (liveMain ? buildLiveSegments(liveMain, liveSubagents) : []),
+    [liveMain, liveSubagents],
+  );
+  const hasActiveLiveActivity = liveSegments.some(
+    (segment) => segment.kind === "activity" && segment.isActive,
+  );
 
   const allQuestionCards = useMemo(() => {
     const byId = new Map<
@@ -299,8 +309,11 @@ export function SessionStreamView({
                 <MessageGroup>
                   <Message align="start">
                     <MessageContent className="w-full gap-1">
-                      {liveMain.isStreaming && (
-                        <div className="flex h-6 w-full items-center justify-between gap-2 text-xs leading-5 text-muted-foreground">
+                      {liveMain.isStreaming && !hasActiveLiveActivity && (
+                        <div
+                          data-live-focus-fallback="true"
+                          className="flex h-6 w-full items-center justify-between gap-2 text-xs leading-5 text-muted-foreground"
+                        >
                           <button
                             type="button"
                             onClick={() => {
@@ -323,16 +336,7 @@ export function SessionStreamView({
                             )}
                           </button>
                           {onInterrupt && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                void onInterrupt();
-                              }}
-                              className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium text-destructive/85 transition-colors hover:bg-destructive/10 hover:text-destructive"
-                            >
-                              <SquareIcon className="size-2.5 fill-current" />
-                              <span>停止</span>
-                            </button>
+                            <StopTurnButton onInterrupt={onInterrupt} />
                           )}
                         </div>
                       )}
@@ -356,9 +360,11 @@ export function SessionStreamView({
 
                       <LiveTraceSegments
                         sessionId={sessionId}
-                        trace={liveMain}
-                        subagents={liveSubagents}
+                        segments={liveSegments}
                         questionSlots={questionSlots}
+                        taskFocus={liveMain.taskFocus}
+                        onJumpToSection={onJumpToSection}
+                        onInterrupt={onInterrupt}
                       />
                     </MessageContent>
                   </Message>

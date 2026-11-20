@@ -103,7 +103,7 @@ function DocumentPage() {
         </header>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20">
+      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain bg-muted/20">
         {docQuery.isLoading && (
           <div className="mx-auto max-w-[760px] space-y-4 px-5 py-10">
             <Skeleton className="h-9 w-2/3" />

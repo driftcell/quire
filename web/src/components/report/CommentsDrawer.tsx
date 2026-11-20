@@ -235,7 +235,7 @@ export function CommentsPanel({
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-3">
+        <div className="no-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-3">
           {filtered.length === 0 ? (
             <div className="py-12 text-center text-xs text-muted-foreground">
               {filter === "open"
@@ -536,7 +536,7 @@ export function CommentsPanel({
               修订对比 r{diffRange?.fromRev}→r{diffRange?.toRev}
             </DialogTitle>
           </DialogHeader>
-          <div className="max-h-[60vh] space-y-3 overflow-y-auto text-xs">
+          <div className="no-scrollbar max-h-[60vh] space-y-3 overflow-y-auto text-xs">
             {diffQuery.isLoading && (
               <div className="py-8 text-center text-muted-foreground">
                 正在加载版本差异...

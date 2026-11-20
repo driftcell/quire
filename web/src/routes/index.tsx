@@ -114,7 +114,7 @@ function HomePage() {
           )}
 
           <div className="w-full max-w-2xl">
-            <div className="suggestion-fade-x mb-3 overflow-hidden [scrollbar-width:none] motion-reduce:overflow-x-auto [&::-webkit-scrollbar]:hidden">
+            <div className="suggestion-fade-x no-scrollbar mb-3 overflow-hidden motion-reduce:overflow-x-auto">
               <div className="suggestion-marquee flex w-max hover:[animation-play-state:paused] active:[animation-play-state:paused] has-[:focus-visible]:[animation:none] motion-reduce:animate-none">
                 {[0, 1].map((copy) => (
                   <div

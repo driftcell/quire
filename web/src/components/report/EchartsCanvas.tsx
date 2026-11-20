@@ -389,7 +389,7 @@ export const EchartsCanvas = memo(function EchartsCanvas({
           <DialogHeader className="pr-8">
             <DialogTitle>{dialogTitle}</DialogTitle>
           </DialogHeader>
-          <div className="max-h-[60vh] space-y-4 overflow-auto pr-1">
+          <div className="no-scrollbar max-h-[60vh] space-y-4 overflow-auto pr-1">
             {chartTables.map((tbl, idx) => (
               <div key={`${tbl.title}-${idx}`} className="space-y-1.5">
                 <div className="text-xs font-medium text-slate-500">

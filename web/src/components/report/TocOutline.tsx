@@ -272,7 +272,7 @@ export function TocOutline({
             </span>
           )}
         </div>
-        <div className="max-h-80 overflow-y-auto overscroll-contain">
+        <div className="no-scrollbar max-h-80 overflow-y-auto overscroll-contain">
           <TocBranch
             nodes={nodes}
             depth={0}

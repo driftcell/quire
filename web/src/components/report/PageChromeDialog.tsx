@@ -122,7 +122,7 @@ export function PageChromeDialog({
       >
         <Settings2Icon className="size-4" />
       </DialogTrigger>
-      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="no-scrollbar max-h-[88vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>分页页眉与页脚</DialogTitle>
           <DialogDescription>

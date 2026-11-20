@@ -96,7 +96,7 @@ export function SessionReportPane({
         </button>
       )}
 
-      <div className="flex-1 overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="no-scrollbar flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
         <ReportViewer
           document={document}
           computed={computed}

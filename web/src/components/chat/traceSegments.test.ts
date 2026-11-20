@@ -267,6 +267,35 @@ describe("buildLiveSegments", () => {
     expect(body.isStreaming).toBe(true);
   });
 
+  test("settles activity while only the final body is streaming", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "main",
+      isStreaming: true,
+      segments: [
+        { kind: "thinking", text: "plan", durationMs: 1200 },
+        {
+          kind: "execution",
+          tools: [tool("call-1")],
+          subagentRunIds: [],
+        },
+        { kind: "text", text: "final body" },
+      ],
+    };
+
+    const segments = buildLiveSegments(trace, []);
+    expect(segments).toHaveLength(2);
+    const activity = segmentAt(segments, 0);
+    if (activity.kind !== "activity") {
+      throw new Error("expected activity segment");
+    }
+    expect(activity.isActive).toBe(false);
+    const body = segmentAt(segments, 1);
+    if (body.kind !== "text") {
+      throw new Error("expected text segment");
+    }
+    expect(body.isStreaming).toBe(true);
+  });
+
   test("hides orchestration tools and keeps the live subagent card", () => {
     const trace: LiveAgentTrace = {
       agentId: "main",

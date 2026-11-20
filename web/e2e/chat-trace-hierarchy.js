@@ -255,7 +255,8 @@ async (page) => {
     ),
   ];
 
-  const statusEvents = [    event(1, "run-status", "main", { event: "turn_started" }),
+  const statusEvents = [
+    event(1, "run-status", "main", { event: "turn_started" }),
     event(2, "run-status", "main", {
       event: "thinking_delta",
       delta: "检查报告工具结果。",
@@ -558,6 +559,41 @@ async (page) => {
     "running activity did not expand",
   );
 
+  const liveHeaderCount = await page
+    .locator('[data-activity-trigger], [data-live-focus-fallback="true"]')
+    .count();
+  assert(
+    liveHeaderCount === 1,
+    `expected exactly one live process header, got ${liveHeaderCount}`,
+  );
+  const fallbackHeaderCount = await page
+    .locator('[data-live-focus-fallback="true"]')
+    .count();
+  assert(
+    fallbackHeaderCount === 0,
+    "fallback task-focus row duplicated the active activity header",
+  );
+  const activeStopCount = await page.locator('[data-slot="stop-turn"]').count();
+  assert(
+    activeStopCount === 1,
+    `expected exactly one active stop button, got ${activeStopCount}`,
+  );
+  const stopNestedInTrigger = await page
+    .locator('[data-slot="stop-turn"]')
+    .first()
+    .evaluate((element) => element.closest("[data-activity-trigger]") !== null);
+  assert(
+    !stopNestedInTrigger,
+    "stop button must be a sibling of the collapse trigger, not nested inside it",
+  );
+  const activeHeaderText = (
+    await page.locator("[data-activity-trigger]").first().innerText()
+  ).replace(/\s+/g, " ");
+  assert(
+    activeHeaderText.includes("梳理报告结构"),
+    `active header missing task focus title: ${activeHeaderText}`,
+  );
+
   const runningActivity = page.locator('[data-slot="activity"]').first();
   const runningText = (await runningActivity.innerText()).replace(/\s+/g, " ");
   assert(
@@ -608,15 +644,32 @@ async (page) => {
   );
 
   results.streaming = {
-    title: (await page.locator("[data-activity-trigger]").first().innerText()).replace(
-      /\s+/g,
-      " ",
-    ),
+    title: (
+      await page.locator("[data-activity-trigger]").first().innerText()
+    ).replace(/\s+/g, " "),
     toolLabels: ["读取报告内容", "预渲染图表", "查看可用子代理"],
     hiddenTools: ["spawn_subagents", "describe_task"],
     subagents: ["撰写第 1 章现状", "绘制对标图表"],
     toolIcons: mainReadIcons,
+    liveHeaderCount,
+    fallbackHeaderCount,
+    activeStopCount,
+    stopNestedInTrigger,
   };
+
+  const runningTrigger = page.locator("[data-activity-trigger]").first();
+  await runningTrigger.click();
+  await waitForExpanded(
+    "[data-activity-trigger]",
+    "false",
+    "running activity did not collapse on click",
+  );
+  await runningTrigger.click();
+  await waitForExpanded(
+    "[data-activity-trigger]",
+    "true",
+    "running activity did not expand again on click",
+  );
 
   await page.goto(`${web}/sessions/${finishedId}`);
   await page.locator("[data-activity-trigger]").first().waitFor({
@@ -721,6 +774,16 @@ async (page) => {
   };
 
   await page.goto(`${web}/sessions/${statusId}`);
+  const statusTrigger = page.locator("[data-activity-trigger]").first();
+  await statusTrigger.waitFor({ state: "visible", timeout: 15000 });
+  if ((await statusTrigger.getAttribute("aria-expanded")) !== "true") {
+    await statusTrigger.click();
+    await waitForExpanded(
+      "[data-activity-trigger]",
+      "true",
+      "settled status activity did not expand on click",
+    );
+  }
   await page.locator('[data-tool-name="read_blocks"]').first().waitFor({
     state: "visible",
     timeout: 15000,
@@ -783,6 +846,16 @@ async (page) => {
     smoothText,
     { timeout: 15000 },
   );
+  const smoothFallbackCount = await page
+    .locator('[data-live-focus-fallback="true"]')
+    .count();
+  const smoothActiveCount = await page
+    .locator('[data-slot="activity"][data-active="true"]')
+    .count();
+  assert(
+    smoothFallbackCount === 1 && smoothActiveCount === 0,
+    `streaming body fallback header mismatch: fallback=${smoothFallbackCount} active=${smoothActiveCount}`,
+  );
   const thinkingTrigger = page
     .locator(
       '[data-slot="thinking-trace"] [data-slot="trace-collapsible-trigger"]',
@@ -830,6 +903,8 @@ async (page) => {
     animatedSpans: smoothMetrics.animatedSpans,
     autoScrolled: smoothMetrics.atBottom,
     consoleErrors: 0,
+    fallbackHeaderCount: smoothFallbackCount,
+    activeActivityCount: smoothActiveCount,
   };
 
   return {
@@ -839,4 +914,4 @@ async (page) => {
     runtime,
     results,
   };
-}
+};

@@ -113,7 +113,7 @@ export function ThinkingTrace({
             scrollEdgeThreshold={24}
           >
             <MessageScroller className="max-h-32">
-              <MessageScrollerViewport className="scroll-fade pr-2 text-xs leading-5 text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <MessageScrollerViewport className="scroll-fade pr-2 text-xs leading-5 text-muted-foreground">
                 <MessageScrollerContent className="gap-0">
                   <MessageScrollerItem messageId="thinking-content">
                     <div className="whitespace-pre-wrap break-words">

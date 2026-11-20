@@ -35,7 +35,7 @@ function MessageScrollerViewport({
     <MessageScrollerPrimitive.Viewport
       data-slot="message-scroller-viewport"
       className={cn(
-        "min-h-0 flex-1 overflow-y-auto overscroll-contain",
+        "no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain",
         className,
       )}
       {...props}
