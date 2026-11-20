@@ -8,6 +8,11 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import type { ActiveRunStatus } from "@/contracts/session-protocol";
 
@@ -84,19 +89,29 @@ export function SessionWorkspaceLayout({
         }
       >
         {!isMobile && (
-          <button
-            type="button"
-            title={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            aria-label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            onClick={toggleSidebar}
-            className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-          >
-            {leftSidebarOpen ? (
-              <ChevronLeftIcon className="size-3.5" />
-            ) : (
-              <ChevronRightIcon className="size-3.5" />
-            )}
-          </button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={
+                    leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"
+                  }
+                  onClick={toggleSidebar}
+                  className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+                />
+              }
+            >
+              {leftSidebarOpen ? (
+                <ChevronLeftIcon className="size-3.5" />
+              ) : (
+                <ChevronRightIcon className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipContent>
+              {leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            </TooltipContent>
+          </Tooltip>
         )}
         {!hasReportData ? (
           chatPane

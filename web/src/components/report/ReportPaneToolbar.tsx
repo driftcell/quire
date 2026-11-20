@@ -10,6 +10,12 @@ import { PageChromeDialog } from "@/components/report/PageChromeDialog";
 import { TocOutline } from "@/components/report/TocOutline";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
   CommentThread,
   PageChromeConfig,
@@ -86,40 +92,66 @@ export function ReportPaneToolbar({
           onJumpToSection={onJumpToSection}
         />
 
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          aria-label="批注列表"
-          className="relative"
-          onClick={onShowComments}
-        >
-          <MessageSquareQuoteIcon className="size-4" />
-          {openCommentsCount > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
-              {openCommentsCount}
-            </span>
-          )}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-sm"
+                variant="ghost"
+                aria-label="批注列表"
+                className="relative"
+                onClick={onShowComments}
+              />
+            }
+          >
+            <MessageSquareQuoteIcon className="size-4" />
+            {openCommentsCount > 0 && (
+              <span className="absolute -top-0.5 -right-0.5 flex size-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white tabular-nums">
+                {openCommentsCount}
+              </span>
+            )}
+          </TooltipTrigger>
+          <TooltipContent>批注列表</TooltipContent>
+        </Tooltip>
 
-        <Link
-          to="/docs/$docId/print"
-          params={{ docId }}
-          target="_blank"
-          rel="noreferrer"
-          aria-label="导出 PDF / 打印视图"
-          title="导出 PDF / 打印视图"
-          className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
-        >
-          <PrinterIcon className="size-4" />
-        </Link>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Link
+                to="/docs/$docId/print"
+                params={{ docId }}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="导出 PDF / 打印视图"
+                className={buttonVariants({
+                  variant: "ghost",
+                  size: "icon-sm",
+                })}
+              />
+            }
+          >
+            <PrinterIcon className="size-4" />
+          </TooltipTrigger>
+          <TooltipContent>导出 PDF / 打印视图</TooltipContent>
+        </Tooltip>
 
-        <div className="flex items-center rounded-lg border bg-muted/40 p-0.5">
-          <Button
-            type="button"
-            size="xs"
-            variant={viewMode === "continuous" ? "default" : "ghost"}
-            onClick={() => onViewModeChange("continuous")}
+        <ToggleGroup
+          multiple={false}
+          value={[viewMode]}
+          onValueChange={(values) => {
+            const next = values[0];
+            if (next === "continuous" || next === "paged") {
+              onViewModeChange(next);
+            }
+          }}
+          spacing={0}
+          className="rounded-lg border bg-muted/40 p-0.5"
+        >
+          <ToggleGroupItem
+            value="continuous"
+            size="sm"
+            className="h-6 min-w-0 rounded-[min(var(--radius-md),10px)] px-2 text-xs aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
           >
             <ScrollTextIcon
               className={`size-3.5 ${compactViewToggle ? "@min-[560px]:mr-1" : "mr-1"}`}
@@ -129,12 +161,11 @@ export function ReportPaneToolbar({
             >
               连续
             </span>
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant={viewMode === "paged" ? "default" : "ghost"}
-            onClick={() => onViewModeChange("paged")}
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="paged"
+            size="sm"
+            className="h-6 min-w-0 rounded-[min(var(--radius-md),10px)] px-2 text-xs aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
           >
             <BookOpenIcon
               className={`size-3.5 ${compactViewToggle ? "@min-[560px]:mr-1" : "mr-1"}`}
@@ -144,8 +175,8 @@ export function ReportPaneToolbar({
             >
               分页
             </span>
-          </Button>
-        </div>
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
     </div>
   );

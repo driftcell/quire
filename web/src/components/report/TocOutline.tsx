@@ -1,7 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { ListTreeIcon, RotateCcwIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type {
   CommentThread,
   TocConfig,
@@ -126,71 +133,73 @@ function TocInlineControls({
         <span className="text-[11px] font-medium text-muted-foreground">
           内嵌目录
         </span>
-        <button
-          type="button"
-          role="switch"
-          aria-checked={config.enabled}
+        <Switch
+          size="sm"
+          checked={config.enabled}
+          onCheckedChange={(checked) => update({ enabled: checked })}
           aria-label="在报告封面下方显示内嵌目录"
-          onClick={() => update({ enabled: !config.enabled })}
-          className="inline-flex items-center gap-1.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <span
-            aria-hidden="true"
-            className={`relative h-3.5 w-6 rounded-full transition-colors ${
-              config.enabled ? "bg-emerald-500" : "bg-muted-foreground/30"
-            }`}
-          >
-            <span
-              className={`absolute top-0.5 size-2.5 rounded-full bg-white shadow-xs transition-transform ${
-                config.enabled ? "translate-x-3" : "translate-x-0.5"
-              }`}
-            />
-          </span>
-          <span>{config.enabled ? "已开启" : "已关闭"}</span>
-        </button>
+        />
       </div>
 
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted-foreground">层级深度</span>
-        <div className="flex items-center rounded-md border bg-muted/40 p-0.5">
+        <ToggleGroup
+          multiple={false}
+          value={[String(config.max_depth)]}
+          onValueChange={(values) => {
+            const selected = values[0];
+            if (!selected) return;
+            const depth = Number(selected);
+            if (depth === 1 || depth === 2 || depth === 3) {
+              update({ max_depth: depth });
+            }
+          }}
+          spacing={0}
+          className="rounded-md border bg-muted/40 p-0.5"
+        >
           {TOC_MAX_DEPTH_OPTIONS.map((depth) => (
-            <button
+            <ToggleGroupItem
               key={depth}
-              type="button"
-              aria-pressed={config.max_depth === depth}
-              onClick={() => update({ max_depth: depth })}
-              className={`rounded px-1.5 py-0.5 text-[10px] tabular-nums transition-colors ${
-                config.max_depth === depth
-                  ? "bg-background font-medium text-foreground shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              value={String(depth)}
+              size="sm"
+              className="h-5 min-w-0 rounded-sm px-1.5 py-0.5 text-[10px] tabular-nums aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
             >
               {depth}级
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       </div>
 
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] text-muted-foreground">目录样式</span>
-        <div className="flex items-center gap-0.5 rounded-md border bg-muted/40 p-0.5">
+        <ToggleGroup
+          multiple={false}
+          value={[config.variant]}
+          onValueChange={(values) => {
+            const selected = values[0];
+            if (
+              selected === "standard" ||
+              selected === "numbered" ||
+              selected === "dotted"
+            ) {
+              update({ variant: selected });
+            }
+          }}
+          spacing={0}
+          className="rounded-md border bg-muted/40 p-0.5"
+        >
           {TOC_VARIANT_OPTIONS.map((option) => (
-            <button
+            <ToggleGroupItem
               key={option.value}
-              type="button"
+              value={option.value}
               title={option.description}
-              aria-pressed={config.variant === option.value}
-              onClick={() => update({ variant: option.value })}
-              className={`rounded px-1.5 py-0.5 text-[10px] transition-colors ${
-                config.variant === option.value
-                  ? "bg-background font-medium text-foreground shadow-xs"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              size="sm"
+              className="h-5 min-w-0 rounded-sm px-1.5 py-0.5 text-[10px] aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
             >
               {option.label}
-            </button>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       </div>
 
       <div className="flex items-center justify-between gap-2">
@@ -221,33 +230,7 @@ export function TocOutline({
   placement = "bottom",
 }: TocOutlineProps) {
   const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
   const resolvedToc = useTocConfig(docId, toc, isPaged);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (
-        target instanceof Node &&
-        containerRef.current &&
-        !containerRef.current.contains(target)
-      ) {
-        setOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setOpen(false);
-      }
-    };
-    window.addEventListener("mousedown", handlePointerDown);
-    window.addEventListener("keydown", handleKeyDown);
-    return () => {
-      window.removeEventListener("mousedown", handlePointerDown);
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [open]);
 
   if (nodes.length === 0) {
     return null;
@@ -261,55 +244,52 @@ export function TocOutline({
     }
   }
 
-  const popoverPosClass =
-    placement === "top"
-      ? "bottom-full left-1/2 mb-2 -translate-x-1/2"
-      : "top-full right-0 mt-1.5";
-
   return (
-    <div ref={containerRef} className="relative">
-      <Button
-        type="button"
-        size="icon-sm"
-        variant={open ? "secondary" : "ghost"}
-        aria-label="报告目录与协作雷达"
-        aria-expanded={open}
-        onClick={() => setOpen((prev) => !prev)}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <Button
+            type="button"
+            size="icon-sm"
+            variant={open ? "secondary" : "ghost"}
+            aria-label="文档目录大纲"
+          />
+        }
       >
         <ListTreeIcon className="size-4" />
-      </Button>
-      {open && (
-        <div
-          className={`bg-popover text-popover-foreground absolute z-50 w-72 rounded-xl border p-3 shadow-lg ${popoverPosClass}`}
-        >
-          <div className="mb-2 flex items-center justify-between text-xs font-semibold">
-            <span>目录大纲与写作状态</span>
-            {activeActorsBySection.size > 0 && (
-              <span className="inline-flex items-center gap-1 text-[10px] font-normal text-emerald-600 dark:text-emerald-400">
-                <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                实时协作中
-              </span>
-            )}
-          </div>
-          <div className="max-h-80 overflow-y-auto overscroll-contain">
-            <TocBranch
-              nodes={nodes}
-              depth={0}
-              activeActorsBySection={activeActorsBySection}
-              commentsByBlock={commentsByBlock}
-              onJump={(blockId) => {
-                onJumpToSection(blockId);
-                setOpen(false);
-              }}
-            />
-          </div>
-          <TocInlineControls
-            docId={docId}
-            config={resolvedToc}
-            isPaged={isPaged}
+      </PopoverTrigger>
+      <PopoverContent
+        side={placement === "top" ? "top" : "bottom"}
+        align="end"
+        className="w-72 p-3"
+      >
+        <div className="mb-2 flex items-center justify-between text-xs font-semibold">
+          <span>目录大纲与写作状态</span>
+          {activeActorsBySection.size > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-normal text-emerald-600 dark:text-emerald-400">
+              <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+              实时协作中
+            </span>
+          )}
+        </div>
+        <div className="max-h-80 overflow-y-auto overscroll-contain">
+          <TocBranch
+            nodes={nodes}
+            depth={0}
+            activeActorsBySection={activeActorsBySection}
+            commentsByBlock={commentsByBlock}
+            onJump={(blockId) => {
+              onJumpToSection(blockId);
+              setOpen(false);
+            }}
           />
         </div>
-      )}
-    </div>
+        <TocInlineControls
+          docId={docId}
+          config={resolvedToc}
+          isPaged={isPaged}
+        />
+      </PopoverContent>
+    </Popover>
   );
 }
