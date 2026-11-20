@@ -20,7 +20,10 @@ import type {
   CommentThread,
   TextQuoteSelector,
 } from "@/contracts/report-protocol";
-import type { PendingQueueItem } from "@/contracts/session-protocol";
+import type {
+  PendingQueueItem,
+  SessionCommentRef,
+} from "@/contracts/session-protocol";
 import { bearerHeaders, getAuthTokens } from "@/lib/auth";
 import type { EchartsBlock } from "@/lib/document";
 import { isRecord } from "@/lib/guards";
@@ -502,13 +505,14 @@ export function updateSessionQueueItem(
   sessionId: string,
   queueId: string,
   content: string,
+  commentRefs: SessionCommentRef[],
 ): Promise<PendingQueueItem> {
   return runtimeFetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/queue/${encodeURIComponent(queueId)}`,
     (raw) => decodeWith(raw, isPendingQueueItem, "pending queue item"),
     {
       method: "PATCH",
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, comment_refs: commentRefs }),
     },
   );
 }

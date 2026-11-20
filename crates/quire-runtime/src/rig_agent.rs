@@ -41,6 +41,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::{
+    comment_refs::render_stored_user_message,
     config::Config,
     error::{RuntimeError, RuntimeResult},
     kb::KbService,
@@ -1466,7 +1467,7 @@ impl RigModelCore {
                     .await?
             {
                 // Inject the queued user instruction before the next model round.
-                messages.push(Message::user(batch.content));
+                messages.push(Message::user(render_stored_user_message(&batch.message)));
             }
         }
         if let Err(error) = sandbox_lease.close().await {

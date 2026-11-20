@@ -24,6 +24,7 @@ import type {
   PendingQuestion,
   QuestionAnswer,
   RunTraceSummary,
+  SessionCommentRef,
   SessionMessage,
 } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
@@ -66,7 +67,11 @@ export interface SessionStreamViewProps {
   onJumpToSection?: (sectionId: string) => void;
   pendingQueue?: PendingQueueItem[];
   busyQueueIds?: ReadonlySet<string>;
-  onEditPending?: (queueId: string, content: string) => Promise<void>;
+  onEditPending?: (
+    queueId: string,
+    content: string,
+    commentRefs: SessionCommentRef[],
+  ) => Promise<void>;
   onRecallPending?: (item: PendingQueueItem) => Promise<void>;
   onDeletePending?: (queueId: string) => Promise<void>;
   onInterrupt?: () => Promise<void>;

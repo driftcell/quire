@@ -21,7 +21,7 @@ import type {
   RunTraceSummary,
   SessionMessage,
 } from "@/contracts/session-protocol";
-import { parseCommentRefs } from "@/lib/commentRefXml";
+// Structured references are rendered separately from message content.
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "numeric",
@@ -117,8 +117,7 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
 }: HistoricalMessageItemProps) {
   const msgAttachmentIds = msg.attachment_ids ?? [];
   const sentAt = formatMsgTime(msg.created_at);
-  const parsedUserContent =
-    msg.role === "user" ? parseCommentRefs(msg.content) : null;
+  const userCommentRefs = msg.comment_refs ?? [];
   const hasTextSegment =
     trace?.segments?.some(
       (segment) => segment.kind === "text" && segment.text.trim().length > 0,
@@ -132,8 +131,8 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
     msg.content.trim().length > 0 ? msg.content : textSegmentContent;
 
   if (msg.role === "user") {
-    const userRefs = parsedUserContent?.refs ?? [];
-    const userBody = parsedUserContent?.body ?? msg.content;
+    const userRefs = userCommentRefs;
+    const userBody = msg.content;
     return (
       <MessageGroup className="gap-1">
         {sentAt && (

@@ -25,7 +25,7 @@ description: 高等教育与科研发展研报（高校学科规划、国自然/
 ## 二、路由判定：何时走单 Agent 快轨 vs 何时启动集群
 
 - **单 Agent 快轨（`main` 直接执行）**：
-  - 用户仅要求生成 1~3 个章节的专项简报、单表/单图分析，或对现有报告进行批注修订（`<quire_comment_ref>`）。
+  - 用户仅要求生成 1~3 个章节的专项简报、单表/单图分析，或对现有报告进行批注修订。
   - 执行顺序：`get_protocol_guide("quickstart")` -> `create_report` -> `upsert_sources` -> `preview_echarts` & `commit_chart` -> `apply_operations`（三线表与正文） -> `set_cover` & `configure_page_chrome` -> `lint_document` -> 交付。
 - **多 Agent 集群模式（`main` 调度 `analyst` / `writer` / `designer` / `reviewer`）**：
   - 用户要求生成 4 个及以上章节的综合调研报告、多校多维度对标报告或学科建设规划书。

@@ -8,8 +8,8 @@ use quire_session_protocol::{
     ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, PendingQueueItem,
     PendingQueueSource, QuestionAnswer, QuestionItem, ResolvedQuestion, RunTaskFocus,
     RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
-    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
-    ToolCallDetail,
+    SessionCommentRef, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
+    SessionStatus, SessionSummary, ToolCallDetail,
 };
 use serde_json::Value;
 use sqlx::{PgPool, Row, postgres::PgRow};
@@ -17,6 +17,7 @@ use tracing::warn;
 
 use crate::{
     bus::RedisBus,
+    comment_refs::validate_user_payload,
     compaction::CompactionState,
     error::{RuntimeError, RuntimeResult},
 };
@@ -395,9 +396,9 @@ impl RuntimeStore {
         let client_msg_id = format!("compaction:{message_id}");
         sqlx::query(
             r#"INSERT INTO agent_messages
-               (message_id, session_id, client_msg_id, role, content, attachment_ids, run_id, created_at)
+               (message_id, session_id, client_msg_id, role, content, comment_refs, attachment_ids, run_id, created_at)
                VALUES (
-                   $1, $2, $3, 'compaction', $4, '[]'::jsonb, NULL,
+                   $1, $2, $3, 'compaction', $4, '[]'::jsonb, '[]'::jsonb, NULL,
                    COALESCE(
                        (SELECT created_at - INTERVAL '1 microsecond'
                         FROM agent_messages WHERE message_id = $5),
@@ -459,24 +460,26 @@ impl RuntimeStore {
                 "client_msg_id must not be empty".into(),
             ));
         }
-        if request.content.trim().is_empty() {
-            return Err(RuntimeError::InvalidRequest(
-                "message content must not be empty".into(),
-            ));
-        }
+        validate_user_payload(
+            &request.content,
+            &request.comment_refs,
+            &request.attachment_ids,
+        )?;
         let message_id = short_id("msg");
         let attachment_ids = serde_json::to_value(&request.attachment_ids)?;
+        let comment_refs = serde_json::to_value(&request.comment_refs)?;
         let inserted = sqlx::query(
             r#"INSERT INTO agent_messages
-               (message_id, session_id, client_msg_id, role, content, attachment_ids)
-               VALUES ($1, $2, $3, 'user', $4, $5)
+               (message_id, session_id, client_msg_id, role, content, comment_refs, attachment_ids)
+               VALUES ($1, $2, $3, 'user', $4, $5, $6)
                ON CONFLICT (session_id, client_msg_id) DO NOTHING
-               RETURNING message_id, session_id, role, content, attachment_ids, run_id, created_at"#,
+               RETURNING message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at"#,
         )
         .bind(&message_id)
         .bind(session_id)
         .bind(&request.client_msg_id)
         .bind(&request.content)
+        .bind(comment_refs)
         .bind(attachment_ids)
         .fetch_optional(&self.pool)
         .await?;
@@ -484,7 +487,7 @@ impl RuntimeStore {
             return Ok((row_to_message(&row)?, true));
         }
         let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, attachment_ids, run_id, created_at
+            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
                FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
         )
         .bind(session_id)
@@ -501,7 +504,7 @@ impl RuntimeStore {
         client_msg_id: &str,
     ) -> RuntimeResult<Option<SessionMessage>> {
         let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, attachment_ids, run_id, created_at
+            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
                FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
         )
         .bind(session_id)
@@ -532,7 +535,7 @@ impl RuntimeStore {
         .execute(&self.pool)
         .await?;
         let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, attachment_ids, run_id, created_at
+            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
                FROM agent_messages WHERE message_id = $1"#,
         )
         .bind(&message_id)
@@ -543,7 +546,7 @@ impl RuntimeStore {
 
     pub async fn list_messages(&self, session_id: &str) -> RuntimeResult<Vec<SessionMessage>> {
         let rows = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, attachment_ids, run_id, created_at
+            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
                FROM agent_messages WHERE session_id = $1
                ORDER BY created_at ASC, message_id ASC"#,
         )
@@ -568,7 +571,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Vec<PendingQueueItem>> {
         self.get_session_summary(session_id).await?;
         let rows = sqlx::query(
-            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+            r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
                FROM session_pending_queue
                WHERE session_id = $1
                ORDER BY sequence ASC"#,
@@ -585,6 +588,7 @@ impl RuntimeStore {
         session_id: &str,
         client_msg_id: &str,
         content: &str,
+        comment_refs: &[SessionCommentRef],
         source: PendingQueueSource,
         thread_id: Option<&str>,
         attachment_ids: &[String],
@@ -594,25 +598,23 @@ impl RuntimeStore {
                 "pending queue client_msg_id must not be empty".into(),
             ));
         }
-        if content.trim().is_empty() {
-            return Err(RuntimeError::InvalidRequest(
-                "pending queue content must not be empty".into(),
-            ));
-        }
+        validate_user_payload(content, comment_refs, attachment_ids)?;
         self.get_session_summary(session_id).await?;
         let queue_id = short_id("q");
         let attachments = serde_json::to_value(attachment_ids)?;
+        let comment_refs = serde_json::to_value(comment_refs)?;
         let inserted = sqlx::query(
             r#"INSERT INTO session_pending_queue
-               (queue_id, session_id, client_msg_id, content, source, thread_id, attachment_ids)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               (queue_id, session_id, client_msg_id, content, comment_refs, source, thread_id, attachment_ids)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                ON CONFLICT (session_id, client_msg_id) DO NOTHING
-               RETURNING queue_id, session_id, content, source, thread_id, attachment_ids, created_at"#,
+               RETURNING queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at"#,
         )
         .bind(&queue_id)
         .bind(session_id)
         .bind(client_msg_id)
         .bind(content)
+        .bind(comment_refs)
         .bind(source.as_str())
         .bind(thread_id)
         .bind(attachments)
@@ -622,7 +624,7 @@ impl RuntimeStore {
             return row_to_pending_queue_item(&row);
         }
         let row = sqlx::query(
-            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+            r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
                FROM session_pending_queue
                WHERE session_id = $1 AND client_msg_id = $2"#,
         )
@@ -639,21 +641,37 @@ impl RuntimeStore {
         session_id: &str,
         queue_id: &str,
         content: &str,
+        comment_refs: &[SessionCommentRef],
     ) -> RuntimeResult<PendingQueueItem> {
-        if content.trim().is_empty() {
+        let existing = self.get_pending_queue_item(session_id, queue_id).await?;
+        let attachment_ids = existing
+            .as_ref()
+            .map(|item| item.attachment_ids.as_slice())
+            .unwrap_or(&[]);
+        validate_user_payload(content, comment_refs, attachment_ids)?;
+        if let Some(item) = existing
+            && item.source == PendingQueueSource::Comment
+            && (comment_refs.len() != 1
+                || comment_refs
+                    .first()
+                    .map(|comment_ref| comment_ref.thread_id.as_str())
+                    != item.thread_id.as_deref())
+        {
             return Err(RuntimeError::InvalidRequest(
-                "pending queue content must not be empty".into(),
+                "a comment queue item must keep exactly one matching comment reference".into(),
             ));
         }
+        let comment_refs = serde_json::to_value(comment_refs)?;
         let row = sqlx::query(
             r#"UPDATE session_pending_queue
-               SET content = $3
+               SET content = $3, comment_refs = $4
                WHERE session_id = $1 AND queue_id = $2
-               RETURNING queue_id, session_id, content, source, thread_id, attachment_ids, created_at"#,
+               RETURNING queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at"#,
         )
         .bind(session_id)
         .bind(queue_id)
         .bind(content)
+        .bind(comment_refs)
         .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| {
@@ -670,7 +688,7 @@ impl RuntimeStore {
         queue_id: &str,
     ) -> RuntimeResult<Option<PendingQueueItem>> {
         let row = sqlx::query(
-            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+            r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
                FROM session_pending_queue
                WHERE session_id = $1 AND queue_id = $2"#,
         )
@@ -687,7 +705,7 @@ impl RuntimeStore {
         thread_id: &str,
     ) -> RuntimeResult<Option<PendingQueueItem>> {
         let row = sqlx::query(
-            r#"SELECT queue_id, session_id, content, source, thread_id, attachment_ids, created_at
+            r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
                FROM session_pending_queue
                WHERE session_id = $1 AND thread_id = $2 AND source = 'comment'
                ORDER BY sequence DESC
@@ -766,7 +784,7 @@ impl RuntimeStore {
                (message_id, session_id, client_msg_id, role, content, attachment_ids, run_id)
                VALUES ($1, $2, $3, $4, $5, '[]'::jsonb, $6)
                ON CONFLICT (session_id, client_msg_id) DO NOTHING
-               RETURNING message_id, session_id, role, content, attachment_ids, run_id, created_at"#,
+               RETURNING message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at"#,
         )
         .bind(&message_id)
         .bind(session_id)
@@ -780,7 +798,7 @@ impl RuntimeStore {
             return row_to_message(&row);
         }
         let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, attachment_ids, run_id, created_at
+            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
                FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
         )
         .bind(session_id)
@@ -1485,6 +1503,7 @@ fn row_to_message(row: &PgRow) -> RuntimeResult<SessionMessage> {
         role: MessageRole::parse(&role_raw)
             .ok_or_else(|| RuntimeError::Internal(format!("invalid message role `{role_raw}`")))?,
         content: row.try_get("content")?,
+        comment_refs: serde_json::from_value(row.try_get("comment_refs")?).unwrap_or_default(),
         attachment_ids: serde_json::from_value(attachment_ids).unwrap_or_default(),
         run_id: row.try_get("run_id")?,
         created_at: row.try_get("created_at")?,
@@ -1498,6 +1517,7 @@ fn row_to_pending_queue_item(row: &PgRow) -> RuntimeResult<PendingQueueItem> {
         queue_id: row.try_get("queue_id")?,
         session_id: row.try_get("session_id")?,
         content: row.try_get("content")?,
+        comment_refs: serde_json::from_value(row.try_get("comment_refs")?).unwrap_or_default(),
         source: PendingQueueSource::parse(&source_raw).ok_or_else(|| {
             RuntimeError::Internal(format!("invalid pending queue source `{source_raw}`"))
         })?,

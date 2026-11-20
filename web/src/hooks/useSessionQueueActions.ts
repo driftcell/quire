@@ -4,10 +4,10 @@ import { toast } from "sonner";
 import { deleteSessionQueueItem, updateSessionQueueItem } from "@/api/runtime";
 import type {
   PendingQueueItem,
+  SessionCommentRef,
   SessionDetail,
 } from "@/contracts/session-protocol";
 import { errorMessage } from "@/lib/errors";
-import { parseCommentRefs, type CommentRefPayload } from "@/lib/commentRefXml";
 
 export interface UseSessionQueueActionsOptions {
   sessionId: string;
@@ -24,7 +24,7 @@ export function useSessionQueueActions({
 }: UseSessionQueueActionsOptions) {
   const queryClient = useQueryClient();
   const [pendingCommentRefs, setPendingCommentRefs] = useState<
-    CommentRefPayload[]
+    SessionCommentRef[]
   >([]);
   const [composerPrefill, setComposerPrefill] = useState<{
     key: string;
@@ -73,12 +73,17 @@ export function useSessionQueueActions({
   );
 
   const handleUpdateQueueItem = useCallback(
-    async (queueId: string, content: string) => {
+    async (
+      queueId: string,
+      content: string,
+      commentRefs: SessionCommentRef[],
+    ) => {
       await runQueueAction(queueId, async () => {
         const updated = await updateSessionQueueItem(
           sessionId,
           queueId,
           content,
+          commentRefs,
         );
         queryClient.setQueryData<SessionDetail>(
           ["session", sessionId],
@@ -102,22 +107,22 @@ export function useSessionQueueActions({
       await runQueueAction(item.queue_id, async () => {
         await deleteSessionQueueItem(sessionId, item.queue_id);
         removePendingQueueItemLocal(item.queue_id);
-        const parsed = parseCommentRefs(item.content);
+        const commentRefs = item.comment_refs ?? [];
         if (item.source === "comment") {
           setPendingCommentRefs([]);
           setComposerPrefill({
             key: item.queue_id,
             text:
-              parsed.refs
+              commentRefs
                 .map((ref) => ref.comment)
                 .filter(Boolean)
-                .join("\n\n") || parsed.body,
+                .join("\n\n") || item.content,
           });
         } else {
-          setPendingCommentRefs(parsed.refs);
+          setPendingCommentRefs(commentRefs);
           setComposerPrefill({
             key: item.queue_id,
-            text: parsed.refs.length > 0 ? parsed.body : item.content,
+            text: item.content,
           });
         }
         showChat();

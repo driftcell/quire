@@ -12,6 +12,6 @@ pub use session::{
     ActiveRunStatus, AttachmentMeta, ContextUsage, CreateSessionRequest, MessageRole,
     PendingQuestion, PendingQueueItem, PendingQueueSource, QuestionAnswer, QuestionItem,
     QuestionOption, ResolvedQuestion, RunTaskFocus, RunTraceSegment, RunTraceSubagent,
-    RunTraceSummary, RunTraceToolItem, SendMessageRequest, SessionDetail, SessionMessage,
-    SessionStatus, SessionSummary, ToolCallDetail,
+    RunTraceSummary, RunTraceToolItem, SendMessageRequest, SessionCommentRef, SessionDetail,
+    SessionMessage, SessionStatus, SessionSummary, ToolCallDetail, UpdatePendingMessageRequest,
 };

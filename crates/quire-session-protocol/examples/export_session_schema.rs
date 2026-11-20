@@ -9,7 +9,7 @@ use std::{fs, path::Path};
 use quire_session_protocol::{
     AttachmentMeta, CreateSessionRequest, PendingQuestion, QuestionAnswer, QuestionItem,
     QuestionOption, RunTraceSummary, SendMessageRequest, SessionDetail, SessionEvent,
-    SessionMessage, SessionSummary, ToolCallDetail,
+    SessionMessage, SessionSummary, ToolCallDetail, UpdatePendingMessageRequest,
 };
 use schemars::JsonSchema;
 
@@ -24,6 +24,7 @@ struct SessionProtocolContract {
     attachment_meta: AttachmentMeta,
     create_session_request: CreateSessionRequest,
     send_message_request: SendMessageRequest,
+    update_pending_message_request: UpdatePendingMessageRequest,
     tool_call_detail: ToolCallDetail,
     question_option: QuestionOption,
     question_item: QuestionItem,

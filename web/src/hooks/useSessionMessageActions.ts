@@ -4,6 +4,7 @@ import { answerQuestion, postMessage, uploadAttachment } from "@/api/runtime";
 import type {
   PendingQuestion,
   QuestionAnswer,
+  SessionCommentRef,
   SessionDetail,
 } from "@/contracts/session-protocol";
 import { randomUuid } from "@/lib/uuid";
@@ -28,8 +29,11 @@ export function useSessionMessageActions({
   const queryClient = useQueryClient();
   const [isAnsweringQuestion, setIsAnsweringQuestion] = useState(false);
 
-  const handleSend = async (text: string, files: File[]) => {
-    const content = text || `请处理已上传的 ${files.length} 个附件。`;
+  const handleSend = async (
+    text: string,
+    files: File[],
+    commentRefs: SessionCommentRef[],
+  ) => {
     const attachmentIds: string[] = [];
     for (const file of files) {
       const uploaded = await uploadAttachment(sessionId, file);
@@ -37,7 +41,8 @@ export function useSessionMessageActions({
     }
     const response = await postMessage(sessionId, {
       client_msg_id: `msg_${randomUuid()}`,
-      content,
+      content: text,
+      comment_refs: commentRefs,
       attachment_ids: attachmentIds,
     });
     // Insert the persisted row under its stable server ID. A temporary

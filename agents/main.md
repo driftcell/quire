@@ -22,4 +22,4 @@ enabled: true
    - **分章并行**：并行派多个 `writer`（严格隔离 `block_id` 前缀），传入对应图表 `block_id` 与 `source_id` 撰稿；
    - **装帧与独立审校**：并行派 `designer` 配置封面/目录/页眉页脚，`reviewer` 加载 `review-rubric.md` 执行四类审查；
    - **终审合龙**：根据 `reviewer` 命中的修订清单定点修补，确认 `lint_document` 零 error 后交付。
-3. **批注修订（`<quire_comment_ref>`）**：先 `read_blocks`，仅在批注指明范围内修订，随后 `reply_comment(..., mark_addressed=true, addressed_rev=最新版本)`。
+3. **批注修订**：先 `read_blocks`，仅在批注指明范围内修订，随后 `reply_comment(..., mark_addressed=true, addressed_rev=最新版本)`。

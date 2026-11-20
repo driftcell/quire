@@ -41,6 +41,9 @@
     },
     "tool_call_detail": {
       "$ref": "#/$defs/ToolCallDetail"
+    },
+    "update_pending_message_request": {
+      "$ref": "#/$defs/UpdatePendingMessageRequest"
     }
   },
   "required": [
@@ -51,6 +54,7 @@
     "attachment_meta",
     "create_session_request",
     "send_message_request",
+    "update_pending_message_request",
     "tool_call_detail",
     "question_option",
     "question_item",
@@ -211,6 +215,12 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "comment_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionCommentRef"
           }
         },
         "content": {
@@ -619,6 +629,12 @@
         "client_msg_id": {
           "type": "string"
         },
+        "comment_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionCommentRef"
+          }
+        },
         "content": {
           "type": "string"
         }
@@ -627,6 +643,61 @@
       "required": [
         "client_msg_id",
         "content"
+      ]
+    },
+    "SessionCommentRef": {
+      "description": "Immutable send-time snapshot of a report comment handed to the agent.",
+      "type": "object",
+      "properties": {
+        "anchor_blocks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "anchor_snapshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "block_id": {
+          "type": "string"
+        },
+        "comment": {
+          "type": "string"
+        },
+        "end_block_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end_quote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "thread_id",
+        "block_id",
+        "status",
+        "comment"
       ]
     },
     "SessionDetail": {
@@ -1264,6 +1335,12 @@
             "type": "string"
           }
         },
+        "comment_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionCommentRef"
+          }
+        },
         "content": {
           "type": "string"
         },
@@ -1438,6 +1515,25 @@
         "status",
         "duration_ms",
         "created_at"
+      ]
+    },
+    "UpdatePendingMessageRequest": {
+      "type": "object",
+      "properties": {
+        "comment_refs": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SessionCommentRef"
+          }
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "content"
       ]
     }
   }

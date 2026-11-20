@@ -4,12 +4,12 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-store`, `quire-server`, `quire-runtime`, `web`
-- **Related Notes:** `../notes/runtime_comment_review_workflow.md`, `../notes/cross_block_annotation_ranges.md`
+- **Related Notes:** `../notes/runtime_comment_review_workflow.md`, `../notes/cross_block_annotation_ranges.md`, `../notes/structured_session_comment_refs.md`
 
 ## 1. Scope & Non-Goals
 
 This document governs the session-workspace comment workflow: browser-to-runtime write proxying,
-cross-block text/media selection, XML comment references in user messages, non-modal review UI, AI
+cross-block text/media selection, structured comment references in user messages, non-modal review UI, AI
 handoff and addressed/archived transitions.
 
 Comments remain revision-free side-channel data on `quire-server`. The canonical `CommentThread`
@@ -62,40 +62,61 @@ Migration `0003_cross_block_comments.sql` adds `end_block_id` and `anchor_blocks
 `end_block_id` and every entry in `anchor_blocks` no longer exist. A block-ID filter matches any
 anchor in the range, not just the start block.
 
-### XML comment reference protocol
+### Structured comment reference protocol
 
-Messages that hand comments to the agent start with one or more blocks:
+`quire-session-protocol` defines `SessionCommentRef` as an immutable send-time snapshot with
+`thread_id`, `block_id`, optional `end_block_id`, ordered `anchor_blocks`, `status`, optional start/end
+quotes, optional `anchor_snapshot` and the review `comment`. `SendMessageRequest`, `SessionMessage`
+and `PendingQueueItem` carry an ordered `comment_refs` array. `content` contains only the user's
+natural-language instruction; it may be empty when references or attachments are present. Required
+reference fields must be non-empty and a message cannot contain duplicate thread IDs.
 
-```xml
-<quire_comment_ref thread_id="ct_..." block_id="sec2_p3" end_block_id="chart_1"
-                   anchor_blocks="sec2_p3,tbl_1,chart_1" status="open">
-  <quote>selected source text (optional)</quote>
-  <end_quote>selected end text (optional)</end_quote>
-  <anchor_snapshot>selected source text … [表格: Metrics] … End text</anchor_snapshot>
-  <comment>review comment body</comment>
-</quire_comment_ref>
+```json
+{
+  "content": "Handle these comments together",
+  "comment_refs": [
+    {
+      "thread_id": "ct_1",
+      "block_id": "sec2_p3",
+      "end_block_id": "chart_1",
+      "anchor_blocks": ["sec2_p3", "tbl_1", "chart_1"],
+      "status": "open",
+      "quote": "selected source text",
+      "end_quote": "selected end text",
+      "anchor_snapshot": "selected source text … [表格: Metrics] … End text",
+      "comment": "review comment body"
+    }
+  ]
+}
 ```
 
-Single-block references omit the optional attributes/elements and remain fully supported.
-`serializeCommentRefs(refs, userText)` escapes `&`, `<`, `>`, `"` and `'`, places all reference
-blocks first, and appends the user instruction below. `parseCommentRefs(content)` extracts every
-valid block, unescapes text, and returns the remaining body. If any block is malformed (missing
-required attribute, comment, closing tag or quote close), the parser returns the original message
-with no refs and never throws.
+Runtime migration `0006_session_comment_refs.sql` adds `comment_refs JSONB NOT NULL DEFAULT '[]'`
+to `agent_messages` and `session_pending_queue`. Queue edits replace `content` and `comment_refs`
+together while preserving attachments, source and the queue row's thread ID. Consecutive queued
+comment items still form one user message: their references are flattened in FIFO order, non-empty
+content is joined with blank lines and attachment IDs are deduplicated. Historical XML payloads are
+outside this clean contract and are not parsed or migrated.
 
-The XML is stored inside the normal user message content. No database schema change is required, so
-freshly sent and replayed messages follow the same rendering path.
+`quire-runtime/src/comment_refs.rs` is the single model-input projection. Ordinary messages remain
+unchanged. Messages with references or attachments become one JSON object containing `instruction`
+plus the non-empty `comment_refs` and/or `attachment_ids`, serialized with `serde_json`; the same
+projection covers new turns, queued batches, retry, history and compaction. The current turn is
+removed from stored history by `message_id`, not by matching content. Comment-only, attachment-only
+and combined messages therefore remain model-visible even with empty content.
 
 ### Composer and message stream
 
 `PromptComposer` accepts `pendingCommentRefs`. Chips above the textarea show `#block_id` and a short
-comment summary; clicking a chip removes that reference. On send, the composer serializes the refs
-with the current text and any quoted snippet, then clears the refs only after a successful send.
+comment summary; clicking a chip removes that reference. On send, the composer passes the current
+text, files and structured refs separately, then clears the refs only after a successful send. The
+frontend never synthesizes fallback instructions for empty text: attachments render as attachment
+cards, comments as reference cards, and only runtime adds metadata to the model prompt.
 
-`SessionStreamView` parses user messages before rendering. Reference blocks become compact cards
-showing block ID, status, optional quote and comment; clicking a card jumps to the report block. The
-remaining body is rendered as the normal user bubble, and an empty body does not create an empty
-paragraph. Live sends and history replay therefore render identically.
+`SessionStreamView` reads `SessionMessage.comment_refs` directly. References become compact cards
+showing block ID, status, optional quote and comment; clicking a card jumps to the report block.
+`content` is rendered as the normal user bubble, and an empty body does not create an empty
+paragraph. Pending messages use the same structured fields for editing, recall and deletion. Live
+sends and history replay therefore render identically without an XML codec.
 
 ### Non-modal review workspace
 
@@ -135,22 +156,26 @@ preventing the native blue selection film while preserving text selection around
 
 ### Agent loop
 
-`agents/main.md` instructs the lead agent to parse `<quire_comment_ref>` blocks, read the referenced
-block, edit only that scope, then call `reply_comment(..., mark_addressed=true, addressed_rev=N)`
-with a change summary. Agents never archive threads; humans confirm archive in the panel.
+The runtime sends the JSON envelope as the ordinary user message; agent definitions stay decoupled
+from its wire shape. The lead agent follows the format-independent review workflow: read referenced
+blocks, edit only the requested scope, then call `reply_comment(..., mark_addressed=true,
+addressed_rev=N)` with a change summary. Agents never archive threads; humans confirm archive in the
+panel.
 
 ## 3. Invariants & Verification
 
 - The browser never receives or stores `QUIRE_RW_TOKEN`.
 - Unbound sessions return a clear `400` instead of writing to an arbitrary document.
 - Upstream proxy errors never include the runtime token.
-- Valid XML references round-trip through serialize/parse, including `<>&"'`, multi-block
-  attributes, end quotes and snapshots; malformed XML degrades to plain text without throwing.
+- Structured references round-trip through REST, JSONB and session responses; duplicate thread IDs
+  and empty required fields are rejected.
 - Cross-block `anchor_blocks` are stored in document order; partial anchor survival keeps
   `anchor_detached=false` until every anchor is deleted.
 - Text highlighting never mutates report DOM; tables and media keep their rendered structure.
 - Media nodes remain `user-select: none`; text selection is still available around them.
-- Live-sent and replayed messages use the same parser and card rendering.
+- Live-sent and replayed messages use the same typed fields and card rendering.
+- Comment-only, attachment-only and combined messages may have empty `content`; the frontend does
+  not synthesize instructions, and runtime preserves all metadata in its JSON model projection.
 - The comment panel is non-modal; the A4 report remains in the DOM while it is open.
 - Only addressed threads expose `确认归档`; only humans archive.
 - Verification: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,

@@ -11,19 +11,18 @@ import { Textarea } from "@/components/ui/textarea";
 import type {
   AttachmentMeta,
   PendingQueueItem,
+  SessionCommentRef,
 } from "@/contracts/session-protocol";
 import {
-  editableCommentRefText,
-  parseCommentRefs,
-  updateCommentRefContent,
-  type CommentRefPayload,
-} from "@/lib/commentRefXml";
+  pendingMessageDraftForEdit,
+  updatePendingMessageDraft,
+} from "@/lib/commentRefs";
 
 export function UserCommentRefCards({
   refs,
   onJumpToSection,
 }: {
-  refs: CommentRefPayload[];
+  refs: SessionCommentRef[];
   onJumpToSection?: (sectionId: string) => void;
 }) {
   return (
@@ -66,11 +65,16 @@ export function PendingUserBubble({
   attachmentMap: Map<string, AttachmentMeta>;
   isBusy?: boolean;
   onJumpToSection?: (sectionId: string) => void;
-  onEdit?: (queueId: string, content: string) => Promise<void>;
+  onEdit?: (
+    queueId: string,
+    content: string,
+    commentRefs: SessionCommentRef[],
+  ) => Promise<void>;
   onRecall?: (item: PendingQueueItem) => Promise<void>;
   onDelete?: (queueId: string) => Promise<void>;
 }) {
-  const parsed = parseCommentRefs(item.content);
+  const commentRefs = item.comment_refs ?? [];
+  const body = item.content;
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -82,7 +86,7 @@ export function PendingUserBubble({
   }, [editing]);
 
   const startEditing = () => {
-    setDraft(editableCommentRefText(item.content));
+    setDraft(pendingMessageDraftForEdit(item.content, commentRefs));
     setEditing(true);
   };
 
@@ -91,7 +95,12 @@ export function PendingUserBubble({
     if (!trimmed || !onEdit || isBusy) {
       return;
     }
-    await onEdit(item.queue_id, updateCommentRefContent(item.content, trimmed));
+    const updated = updatePendingMessageDraft(
+      item.content,
+      commentRefs,
+      trimmed,
+    );
+    await onEdit(item.queue_id, updated.content, updated.comment_refs);
     setEditing(false);
   };
 
@@ -112,10 +121,10 @@ export function PendingUserBubble({
             isBusy ? "opacity-60" : ""
           }`}
         >
-          {parsed.refs.length > 0 && (
+          {commentRefs.length > 0 && (
             <div className="w-full">
               <UserCommentRefCards
-                refs={parsed.refs}
+                refs={commentRefs}
                 onJumpToSection={onJumpToSection}
               />
             </div>
@@ -169,9 +178,9 @@ export function PendingUserBubble({
               </div>
             </div>
           ) : (
-            (parsed.refs.length === 0 || parsed.body.length > 0) && (
+            (commentRefs.length === 0 || body.length > 0) && (
               <div className="w-fit max-w-full rounded-2xl border border-dashed border-border/80 bg-muted/50 px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap text-foreground/85">
-                {parsed.refs.length > 0 ? parsed.body : item.content}
+                {commentRefs.length > 0 ? body : item.content}
               </div>
             )
           )}

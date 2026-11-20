@@ -38,11 +38,8 @@ import {
 import type {
   ActiveRunStatus,
   ContextUsage,
+  SessionCommentRef,
 } from "@/contracts/session-protocol";
-import {
-  serializeCommentRefs,
-  type CommentRefPayload,
-} from "@/lib/commentRefXml";
 import { errorMessage } from "@/lib/errors";
 import { selectionRangeLabel } from "@/components/report/reportSelection";
 
@@ -66,13 +63,17 @@ export interface PromptComposerProps {
   compacting?: boolean;
   contextUsage?: ContextUsage;
   quotedSnippet?: QuotedChatSnippet | null;
-  pendingCommentRefs?: CommentRefPayload[];
+  pendingCommentRefs?: SessionCommentRef[];
   prefill?: { key: string; text: string } | null;
   onClearQuote?: () => void;
   onRemoveCommentRef?: (threadId: string) => void;
   onClearCommentRefs?: () => void;
   disabled?: boolean;
-  onSend: (text: string, files: File[]) => Promise<void>;
+  onSend: (
+    text: string,
+    files: File[],
+    commentRefs: SessionCommentRef[],
+  ) => Promise<void>;
   onRetry?: () => Promise<void>;
   onCompact?: () => Promise<void>;
 }
@@ -191,15 +192,11 @@ export function PromptComposer({
     const baseText = quotedSnippet
       ? `> 引用（${quoteRange}${coveredBlocks}）：${quotedSnippet.exact}\n\n${currentText}`
       : currentText;
-    const payloadText =
-      currentRefs.length > 0
-        ? serializeCommentRefs(currentRefs, baseText)
-        : baseText;
     try {
       setText("");
       setFiles([]);
       onClearQuote?.();
-      await onSend(payloadText, currentFiles);
+      await onSend(baseText, currentFiles, currentRefs);
       if (currentRefs.length > 0) {
         onClearCommentRefs?.();
       }

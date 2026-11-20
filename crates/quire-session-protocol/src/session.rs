@@ -103,6 +103,26 @@ pub struct AttachmentMeta {
     pub size_bytes: u64,
 }
 
+/// Immutable send-time snapshot of a report comment handed to the agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCommentRef {
+    pub thread_id: String,
+    pub block_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_block_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchor_blocks: Vec<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_quote: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor_snapshot: Option<String>,
+    pub comment: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextUsage {
     pub input_tokens: u64,
@@ -143,6 +163,8 @@ pub struct PendingQueueItem {
     pub queue_id: String,
     pub session_id: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comment_refs: Vec<SessionCommentRef>,
     pub source: PendingQueueSource,
     /// Comment thread that produced this item, when `source` is `comment`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +180,8 @@ pub struct SessionMessage {
     pub session_id: String,
     pub role: MessageRole,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comment_refs: Vec<SessionCommentRef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachment_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -363,7 +387,17 @@ pub struct SendMessageRequest {
     pub client_msg_id: String,
     pub content: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comment_refs: Vec<SessionCommentRef>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachment_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct UpdatePendingMessageRequest {
+    pub content: String,
+    #[serde(default)]
+    pub comment_refs: Vec<SessionCommentRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -416,6 +450,7 @@ mod tests {
                 session_id: "sess_1".into(),
                 role: MessageRole::User,
                 content: "Draft chapter 1".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
                 run_id: None,
                 created_at: now,
@@ -449,6 +484,36 @@ mod tests {
         assert_eq!(json["pending_question"]["question_id"], "q_1");
         let decoded: SessionDetail = serde_json::from_value(json).unwrap();
         assert_eq!(decoded, detail);
+    }
+
+    #[test]
+    fn structured_comment_refs_roundtrip_and_default() {
+        let comment_ref = SessionCommentRef {
+            thread_id: "ct_1".into(),
+            block_id: "block_1".into(),
+            end_block_id: Some("block_2".into()),
+            anchor_blocks: vec!["block_1".into(), "block_2".into()],
+            status: "open".into(),
+            quote: Some("quoted text".into()),
+            end_quote: None,
+            anchor_snapshot: Some("quoted text … [表格: Metrics]".into()),
+            comment: "Revise this scope".into(),
+        };
+        let request = SendMessageRequest {
+            client_msg_id: "msg_client_1".into(),
+            content: String::new(),
+            comment_refs: vec![comment_ref],
+            attachment_ids: Vec::new(),
+        };
+        let json = serde_json::to_value(&request).unwrap();
+        assert_eq!(json["comment_refs"][0]["thread_id"], "ct_1");
+        assert!(json["content"].as_str().is_some_and(str::is_empty));
+        let decoded: SendMessageRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, request);
+
+        let update: UpdatePendingMessageRequest =
+            serde_json::from_value(serde_json::json!({"content": "edited"})).unwrap();
+        assert!(update.comment_refs.is_empty());
     }
 
     #[test]

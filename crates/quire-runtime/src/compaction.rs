@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use quire_session_protocol::{MessageRole, SessionMessage};
 
-use crate::prompt::ContextMessage;
+use crate::{comment_refs::render_stored_user_message, prompt::ContextMessage};
 
 pub const COMPACTION_TIMEOUT_SECS: u64 = 120;
 
@@ -78,7 +78,11 @@ pub fn assemble_context_history(
     }
 
     for message in messages.iter().skip(start) {
-        if !is_context_role(message.role) || message.content.trim().is_empty() {
+        if !is_context_role(message.role)
+            || (message.content.trim().is_empty()
+                && message.comment_refs.is_empty()
+                && message.attachment_ids.is_empty())
+        {
             continue;
         }
         history.push(ContextMessage {
@@ -87,7 +91,7 @@ pub fn assemble_context_history(
             } else {
                 message.role
             },
-            content: message.content.clone(),
+            content: render_stored_user_message(message),
         });
     }
 
@@ -116,6 +120,7 @@ mod tests {
             session_id: "sess_test".into(),
             role,
             content: content.into(),
+            comment_refs: Vec::new(),
             attachment_ids: Vec::new(),
             run_id: None,
             created_at: Utc::now(),
@@ -149,6 +154,54 @@ mod tests {
         assert_eq!(state_message.role, MessageRole::System);
         assert!(state_message.content.contains("doc_1"));
         assert!(state_message.content.contains("42"));
+    }
+
+    #[test]
+    fn comment_only_messages_remain_in_model_history() {
+        let mut comment_only = message("comment", MessageRole::User, "");
+        comment_only
+            .comment_refs
+            .push(quire_session_protocol::SessionCommentRef {
+                thread_id: "ct_1".into(),
+                block_id: "block_1".into(),
+                end_block_id: None,
+                anchor_blocks: Vec::new(),
+                status: "open".into(),
+                quote: None,
+                end_quote: None,
+                anchor_snapshot: None,
+                comment: "Revise this paragraph".into(),
+            });
+
+        let history = assemble_context_history(
+            &[comment_only],
+            &CompactionState::default(),
+            Some("doc_1"),
+            42,
+        );
+        assert_eq!(history.len(), 2);
+        let projected: serde_json::Value =
+            serde_json::from_str(&history[0].content).unwrap_or_default();
+        assert_eq!(projected["instruction"], "");
+        assert_eq!(projected["comment_refs"][0]["thread_id"], "ct_1");
+    }
+
+    #[test]
+    fn attachment_only_messages_remain_in_model_history() {
+        let mut attachment_only = message("attachment", MessageRole::User, "");
+        attachment_only.attachment_ids.push("att_1".into());
+
+        let history = assemble_context_history(
+            &[attachment_only],
+            &CompactionState::default(),
+            Some("doc_1"),
+            42,
+        );
+        assert_eq!(history.len(), 2);
+        let projected: serde_json::Value =
+            serde_json::from_str(&history[0].content).unwrap_or_default();
+        assert_eq!(projected["instruction"], "");
+        assert_eq!(projected["attachment_ids"][0], "att_1");
     }
 
     #[test]

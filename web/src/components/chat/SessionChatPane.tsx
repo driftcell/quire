@@ -12,10 +12,10 @@ import type {
   PendingQuestion,
   QuestionAnswer,
   RunTraceSummary,
+  SessionCommentRef,
   SessionMessage,
 } from "@/contracts/session-protocol";
 import type { ResolvedQuestionEntry } from "@/hooks/useSessionEventStream";
-import type { CommentRefPayload } from "@/lib/commentRefXml";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
 export interface SessionChatPaneProps {
@@ -38,7 +38,11 @@ export interface SessionChatPaneProps {
   onJumpToSection: (sectionId: string) => void;
   pendingQueue: PendingQueueItem[];
   busyQueueIds?: ReadonlySet<string>;
-  onEditPending: (queueId: string, content: string) => Promise<void>;
+  onEditPending: (
+    queueId: string,
+    content: string,
+    commentRefs: SessionCommentRef[],
+  ) => Promise<void>;
   onRecallPending: (item: PendingQueueItem) => Promise<void>;
   onDeletePending: (queueId: string) => Promise<void>;
   onInterrupt: () => Promise<void>;
@@ -46,12 +50,16 @@ export interface SessionChatPaneProps {
   compacting?: boolean;
   contextUsage?: ContextUsage;
   quotedSnippet: QuotedChatSnippet | null;
-  pendingCommentRefs: CommentRefPayload[];
+  pendingCommentRefs: SessionCommentRef[];
   prefill: { key: string; text: string } | null;
   onClearQuote: () => void;
   onRemoveCommentRef: (threadId: string) => void;
   onClearCommentRefs: () => void;
-  onSend: (text: string, files: File[]) => Promise<void>;
+  onSend: (
+    text: string,
+    files: File[],
+    commentRefs: SessionCommentRef[],
+  ) => Promise<void>;
   onRetry: () => Promise<void>;
   onCompact: () => Promise<void>;
 }

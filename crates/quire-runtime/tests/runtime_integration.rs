@@ -39,7 +39,7 @@ use quire_runtime::{
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
-    SendMessageRequest, SessionEvent, SessionEventKind, SessionMessage,
+    SendMessageRequest, SessionCommentRef, SessionEvent, SessionEventKind, SessionMessage,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -102,6 +102,20 @@ fn unique(prefix: &str) -> String {
             .unwrap()
             .as_nanos()
     )
+}
+
+fn comment_ref(thread_id: &str, comment: &str) -> SessionCommentRef {
+    SessionCommentRef {
+        thread_id: thread_id.into(),
+        block_id: format!("b_{thread_id}"),
+        end_block_id: None,
+        anchor_blocks: Vec::new(),
+        status: "open".into(),
+        quote: None,
+        end_quote: None,
+        anchor_snapshot: None,
+        comment: comment.into(),
+    }
 }
 
 async fn mock_mcp_tools_list(axum::Json(body): axum::Json<Value>) -> axum::Json<Value> {
@@ -898,6 +912,7 @@ async fn client_message_id_is_idempotent_and_does_not_duplicate_runs() {
     let request = SendMessageRequest {
         client_msg_id: unique("client-msg"),
         content: "Draft an executive summary".into(),
+        comment_refs: Vec::new(),
         attachment_ids: Vec::new(),
     };
     let first = service
@@ -947,6 +962,54 @@ async fn client_message_id_is_idempotent_and_does_not_duplicate_runs() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn structured_comment_refs_roundtrip_and_replay() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("structured-comment"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    let snapshot = comment_ref("ct_structured", "Revise only this paragraph");
+    let request = SendMessageRequest {
+        client_msg_id: unique("structured-comment-request"),
+        content: "Handle the referenced comment".into(),
+        comment_refs: vec![snapshot.clone()],
+        attachment_ids: Vec::new(),
+    };
+
+    let first = service
+        .post_message(&session.session_id, &request)
+        .await
+        .unwrap();
+    let first = match first {
+        PostMessageOutcome::Started { message, .. } => message,
+        other => panic!("expected started message, got {other:?}"),
+    };
+    assert_eq!(first.content, "Handle the referenced comment");
+    assert_eq!(first.comment_refs, vec![snapshot.clone()]);
+    wait_for_idle(&store, &session.session_id).await;
+
+    let second = service
+        .post_message(&session.session_id, &request)
+        .await
+        .unwrap();
+    let second = match second {
+        PostMessageOutcome::Replayed { message } => message,
+        other => panic!("expected replayed message, got {other:?}"),
+    };
+    assert_eq!(second.message_id, first.message_id);
+    assert_eq!(second.comment_refs, vec![snapshot.clone()]);
+
+    let stored = store
+        .find_message_by_client_id(&session.session_id, &request.client_msg_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.comment_refs, vec![snapshot]);
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn post_message_broadcasts_user_message_added_before_turn_started() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
@@ -960,6 +1023,7 @@ async fn post_message_broadcasts_user_message_added_before_turn_started() {
             &SendMessageRequest {
                 client_msg_id: unique("message-event"),
                 content: "Broadcast this message".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -1542,6 +1606,7 @@ async fn models_registry_imports_catalog_and_routes_context_limit() {
     let request = SendMessageRequest {
         client_msg_id: unique("model-msg"),
         content: "Use the registered model".into(),
+        comment_refs: Vec::new(),
         attachment_ids: Vec::new(),
     };
     service
@@ -1595,6 +1660,7 @@ async fn knowledge_update_is_injected_once_and_synced_version_advances() {
     let request = SendMessageRequest {
         client_msg_id: unique("kb-msg"),
         content: "Run one turn".into(),
+        comment_refs: Vec::new(),
         attachment_ids: Vec::new(),
     };
     service
@@ -1663,6 +1729,7 @@ async fn compaction_reuses_prefix_and_preserves_pending_state() {
             &session.session_id,
             "compact:queue",
             "queued follow-up",
+            &[],
             PendingQueueSource::User,
             None,
             &[],
@@ -1975,6 +2042,7 @@ async fn automatic_compaction_excludes_the_new_user_message_from_the_anchor() {
             &SendMessageRequest {
                 client_msg_id: unique("compact-auto:new"),
                 content: new_content.into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -2051,6 +2119,7 @@ async fn streaming_tokens_are_coalesced_and_flushed_before_tool_and_turn_events(
     let request = SendMessageRequest {
         client_msg_id: unique("coalesce-msg"),
         content: "Stream fifty fragments".into(),
+        comment_refs: Vec::new(),
         attachment_ids: Vec::new(),
     };
     service
@@ -2555,6 +2624,7 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
             &SendMessageRequest {
                 client_msg_id: unique("mcp-message"),
                 content: "Run the admin MCP observation check".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -2776,6 +2846,7 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
             &SendMessageRequest {
                 client_msg_id: unique("rig-context-message"),
                 content: "Use the full rig context".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -2902,6 +2973,7 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
             &SendMessageRequest {
                 client_msg_id: unique("ask-user-answer-start"),
                 content: "Start the questionnaire".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3025,6 +3097,7 @@ async fn ask_user_skip_marks_skipped_and_continues() {
             &SendMessageRequest {
                 client_msg_id: unique("ask-user-skip-start"),
                 content: "Ask me something optional".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3110,6 +3183,7 @@ async fn new_message_dismisses_pending_question_and_starts_a_new_turn() {
             &SendMessageRequest {
                 client_msg_id: unique("ask-user-dismiss-start"),
                 content: "Ask a question first".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3734,6 +3808,7 @@ async fn tool_boundary_injects_pending_message_into_same_run() {
             &SendMessageRequest {
                 client_msg_id: unique("tool-boundary-first"),
                 content: "先更新标题，再继续回答。".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3757,6 +3832,7 @@ async fn tool_boundary_injects_pending_message_into_same_run() {
             &SendMessageRequest {
                 client_msg_id: unique("tool-boundary-queued"),
                 content: "排队指令：请补充风险提示。".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3854,6 +3930,7 @@ async fn idle_completion_wakes_pending_queue_without_interval_wait() {
             &SendMessageRequest {
                 client_msg_id: unique("queue-notify-first"),
                 content: "First gated answer".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3868,6 +3945,7 @@ async fn idle_completion_wakes_pending_queue_without_interval_wait() {
             &SendMessageRequest {
                 client_msg_id: unique("queue-notify-second"),
                 content: "Immediate follow-up".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3923,6 +4001,7 @@ async fn ask_user_suspension_keeps_pending_queue_untouched() {
             &SendMessageRequest {
                 client_msg_id: unique("queue-suspended-first"),
                 content: "Ask me a question".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3938,6 +4017,7 @@ async fn ask_user_suspension_keeps_pending_queue_untouched() {
             &SendMessageRequest {
                 client_msg_id: unique("queue-suspended-second"),
                 content: "This must wait for the answer".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -3992,6 +4072,7 @@ async fn running_session_queues_messages_and_drains_after_turn() {
             &SendMessageRequest {
                 client_msg_id: unique("queue-first"),
                 content: "First turn".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -4006,6 +4087,7 @@ async fn running_session_queues_messages_and_drains_after_turn() {
             &SendMessageRequest {
                 client_msg_id: unique("queue-second"),
                 content: "Second turn".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -4023,6 +4105,7 @@ async fn running_session_queues_messages_and_drains_after_turn() {
             &SendMessageRequest {
                 client_msg_id: unique("queue-third"),
                 content: "Third turn".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -4041,15 +4124,18 @@ async fn running_session_queues_messages_and_drains_after_turn() {
         2
     );
 
+    let edited_ref = comment_ref("ct_queue_edit", "Edited queued comment");
     let patched = service
         .update_pending_message(
             &session.session_id,
             &second_item.queue_id,
             "Edited second turn",
+            std::slice::from_ref(&edited_ref),
         )
         .await
         .unwrap();
     assert_eq!(patched.content, "Edited second turn");
+    assert_eq!(patched.comment_refs, vec![edited_ref]);
     assert!(
         service
             .delete_pending_message(&session.session_id, &third_item.queue_id)
@@ -4140,11 +4226,13 @@ async fn comment_creation_auto_triggers_a_turn() {
     assert!(
         messages.iter().any(|message| {
             message.role == MessageRole::User
-                && message.content.contains("<quire_comment_ref")
-                && message.content.contains("ct_proxy")
-                && message.content.contains("tighten this paragraph")
+                && message.content.is_empty()
+                && message.comment_refs.iter().any(|comment_ref| {
+                    comment_ref.thread_id == "ct_proxy"
+                        && comment_ref.comment == "Please tighten this paragraph."
+                })
         }),
-        "comment creation must auto-submit an XML comment reference"
+        "comment creation must auto-submit a structured comment reference"
     );
     server.abort();
 }
@@ -4192,9 +4280,11 @@ async fn addressed_comment_reply_auto_triggers_agent() {
     assert!(
         messages.iter().any(|message| {
             message.role == MessageRole::User
-                && message.content.contains("<quire_comment_ref")
-                && message.content.contains("ct_proxy")
-                && message.content.contains("Use a different chart")
+                && message.content.is_empty()
+                && message.comment_refs.iter().any(|comment_ref| {
+                    comment_ref.thread_id == "ct_proxy"
+                        && comment_ref.comment == "Use a different chart"
+                })
         }),
         "replying to an addressed comment must re-submit it to the agent"
     );
@@ -4245,10 +4335,11 @@ async fn open_comment_reply_also_triggers_agent() {
     assert!(
         messages.iter().any(|message| {
             message.role == MessageRole::User
-                && message
-                    .content
-                    .contains("More context while the agent is working")
-                && message.content.contains("ct_proxy")
+                && message.content.is_empty()
+                && message.comment_refs.iter().any(|comment_ref| {
+                    comment_ref.thread_id == "ct_proxy"
+                        && comment_ref.comment == "More context while the agent is working"
+                })
         }),
         "follow-up replies on open threads must also reach the agent"
     );
@@ -4289,6 +4380,7 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
             &SendMessageRequest {
                 client_msg_id: unique("comment-queue-first"),
                 content: "Start the long turn".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -4358,7 +4450,7 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
     assert!(
         !messages
             .iter()
-            .any(|message| message.content.contains("<quire_comment_ref")),
+            .any(|message| !message.comment_refs.is_empty()),
         "deleting a queued comment must not leave an agent trigger behind"
     );
     service.delete_session(&session.session_id).await.unwrap();
@@ -4382,6 +4474,7 @@ async fn consecutive_queued_comments_merge_into_one_message() {
             &SendMessageRequest {
                 client_msg_id: unique("comment-merge-first"),
                 content: "Start the long turn".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -4394,11 +4487,8 @@ async fn consecutive_queued_comments_merge_into_one_message() {
         ("ct_a", "First queued comment"),
         ("ct_b", "Second queued comment"),
     ] {
-        let content = format!(
-            "<quire_comment_ref thread_id=\"{thread_id}\" block_id=\"b_{thread_id}\" status=\"open\">\n  <comment>{comment}</comment>\n</quire_comment_ref>"
-        );
         let outcome = service
-            .post_comment_message(&session.session_id, thread_id, &content)
+            .post_comment_message(&session.session_id, comment_ref(thread_id, comment))
             .await
             .unwrap();
         let item = match outcome {
@@ -4432,13 +4522,33 @@ async fn consecutive_queued_comments_merge_into_one_message() {
         .iter()
         .filter(|message| {
             message.role == MessageRole::User
-                && message.content.contains("ct_a")
-                && message.content.contains("ct_b")
+                && message
+                    .comment_refs
+                    .iter()
+                    .any(|comment_ref| comment_ref.thread_id == "ct_a")
+                && message
+                    .comment_refs
+                    .iter()
+                    .any(|comment_ref| comment_ref.thread_id == "ct_b")
         })
         .collect();
     assert_eq!(merged.len(), 1, "consecutive comments must be merged");
-    assert!(merged[0].content.contains("First queued comment"));
-    assert!(merged[0].content.contains("Second queued comment"));
+    let merged = merged.first();
+    assert_eq!(merged.map(|message| message.comment_refs.len()), Some(2));
+    assert_eq!(
+        merged.and_then(|message| message
+            .comment_refs
+            .first()
+            .map(|item| item.comment.as_str())),
+        Some("First queued comment")
+    );
+    assert_eq!(
+        merged.and_then(|message| message
+            .comment_refs
+            .get(1)
+            .map(|item| item.comment.as_str())),
+        Some("Second queued comment")
+    );
     service.delete_session(&session.session_id).await.unwrap();
 }
 
@@ -4459,6 +4569,7 @@ async fn repeated_comment_follow_ups_update_the_pending_item() {
             &SendMessageRequest {
                 client_msg_id: unique("comment-follow-up-dedupe-first"),
                 content: "Start the long turn".into(),
+                comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
             },
         )
@@ -4468,11 +4579,7 @@ async fn repeated_comment_follow_ups_update_the_pending_item() {
     wait_for_running(&store, &session.session_id).await;
 
     let first = service
-        .post_comment_message(
-            &session.session_id,
-            "ct_same",
-            "<quire_comment_ref thread_id=\"ct_same\" block_id=\"b_same\"><comment>First note</comment></quire_comment_ref>",
-        )
+        .post_comment_message(&session.session_id, comment_ref("ct_same", "First note"))
         .await
         .unwrap();
     let first_item = match first {
@@ -4482,9 +4589,8 @@ async fn repeated_comment_follow_ups_update_the_pending_item() {
     let second = service
         .post_comment_reply_message(
             &session.session_id,
-            "ct_same",
             "msg_reply_two",
-            "<quire_comment_ref thread_id=\"ct_same\" block_id=\"b_same\"><comment>Latest note</comment></quire_comment_ref>",
+            comment_ref("ct_same", "Latest note"),
         )
         .await
         .unwrap();
@@ -4498,8 +4604,9 @@ async fn repeated_comment_follow_ups_update_the_pending_item() {
         .await
         .unwrap();
     assert_eq!(queue.len(), 1, "a follow-up must update, not duplicate");
-    assert!(queue[0].content.contains("Latest note"));
-    assert!(!queue[0].content.contains("First note"));
+    assert!(queue[0].content.is_empty());
+    assert_eq!(queue[0].comment_refs.len(), 1);
+    assert_eq!(queue[0].comment_refs[0].comment, "Latest note");
 
     gate.release();
     for _ in 0..300 {

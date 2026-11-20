@@ -194,6 +194,7 @@ export interface QuireSessionProtocol {
   session_message: SessionMessage;
   session_summary: SessionSummary;
   tool_call_detail: ToolCallDetail;
+  update_pending_message_request: UpdatePendingMessageRequest;
   [k: string]: unknown;
 }
 export interface AttachmentMeta {
@@ -286,7 +287,22 @@ export interface RunTraceToolItem {
 export interface SendMessageRequest {
   attachment_ids?: string[];
   client_msg_id: string;
+  comment_refs?: SessionCommentRef[];
   content: string;
+}
+/**
+ * Immutable send-time snapshot of a report comment handed to the agent.
+ */
+export interface SessionCommentRef {
+  anchor_blocks?: string[];
+  anchor_snapshot?: string | null;
+  block_id: string;
+  comment: string;
+  end_block_id?: string | null;
+  end_quote?: string | null;
+  quote?: string | null;
+  status: string;
+  thread_id: string;
 }
 export interface SessionDetail {
   active_run_status: ActiveRunStatus;
@@ -339,6 +355,7 @@ export interface ContextUsage {
 }
 export interface SessionMessage {
   attachment_ids?: string[];
+  comment_refs?: SessionCommentRef[];
   content: string;
   created_at: string;
   message_id: string;
@@ -352,6 +369,7 @@ export interface SessionMessage {
  */
 export interface PendingQueueItem {
   attachment_ids?: string[];
+  comment_refs?: SessionCommentRef[];
   content: string;
   created_at: string;
   queue_id: string;
@@ -420,4 +438,8 @@ export interface ToolCallDetail {
   tool_call_id: string;
   tool_name: string;
   [k: string]: unknown;
+}
+export interface UpdatePendingMessageRequest {
+  comment_refs?: SessionCommentRef[];
+  content: string;
 }

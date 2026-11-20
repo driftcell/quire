@@ -14,8 +14,8 @@ use quire_protocol::{short_id, short_token};
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQuestion, PendingQueueItem,
     PendingQueueSource, QuestionAnswer, QuestionItem, RunTraceSummary, SendMessageRequest,
-    SessionDetail, SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary,
-    ToolCallDetail,
+    SessionCommentRef, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
+    SessionStatus, SessionSummary, ToolCallDetail,
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
@@ -25,6 +25,7 @@ use tracing::warn;
 
 use crate::{
     bus::InterruptCommand,
+    comment_refs::render_stored_user_message,
     compaction::{
         COMPACTION_INSTRUCTION, COMPACTION_MODE_MESSAGE, COMPACTION_TIMEOUT_SECS,
         assemble_context_history, estimate_context_tokens, validate_compaction_summary,
@@ -190,7 +191,6 @@ impl Drop for CompactionFlagGuard {
 #[derive(Debug, Clone)]
 pub(crate) struct PendingBatch {
     pub message: SessionMessage,
-    pub content: String,
 }
 
 /// Single source of truth for pending-queue dequeue, persistence and event broadcast.
@@ -245,15 +245,16 @@ impl PendingQueueCoordinator {
                 batch.push(item.clone());
             }
         }
-        let content = if batch.len() == 1 {
-            first.content.clone()
-        } else {
-            batch
-                .iter()
-                .map(|item| item.content.clone())
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        };
+        let content = batch
+            .iter()
+            .map(|item| item.content.trim())
+            .filter(|content| !content.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let comment_refs = batch
+            .iter()
+            .flat_map(|item| item.comment_refs.clone())
+            .collect::<Vec<_>>();
         let mut attachment_ids = Vec::new();
         for item in &batch {
             for attachment_id in &item.attachment_ids {
@@ -269,7 +270,8 @@ impl PendingQueueCoordinator {
                 session_id,
                 &SendMessageRequest {
                     client_msg_id,
-                    content: content.clone(),
+                    content,
+                    comment_refs,
                     attachment_ids,
                 },
             )
@@ -295,7 +297,7 @@ impl PendingQueueCoordinator {
                 },
             )
             .await?;
-        Ok(Some(PendingBatch { message, content }))
+        Ok(Some(PendingBatch { message }))
     }
 
     /// Acquire the session gate and take one pending batch.
@@ -520,11 +522,11 @@ impl RuntimeService {
     pub async fn post_comment_message(
         &self,
         session_id: &str,
-        thread_id: &str,
-        content: &str,
+        comment_ref: SessionCommentRef,
     ) -> RuntimeResult<PostMessageOutcome> {
+        let thread_id = comment_ref.thread_id.clone();
         let client_msg_id = format!("comment:{thread_id}");
-        self.post_comment_message_with_id(session_id, thread_id, &client_msg_id, content)
+        self.post_comment_message_with_id(session_id, &thread_id, &client_msg_id, comment_ref)
             .await
     }
 
@@ -534,12 +536,12 @@ impl RuntimeService {
     pub async fn post_comment_reply_message(
         &self,
         session_id: &str,
-        thread_id: &str,
         reply_message_id: &str,
-        content: &str,
+        comment_ref: SessionCommentRef,
     ) -> RuntimeResult<PostMessageOutcome> {
+        let thread_id = comment_ref.thread_id.clone();
         let client_msg_id = format!("comment:{thread_id}:{reply_message_id}");
-        self.post_comment_message_with_id(session_id, thread_id, &client_msg_id, content)
+        self.post_comment_message_with_id(session_id, &thread_id, &client_msg_id, comment_ref)
             .await
     }
 
@@ -548,11 +550,17 @@ impl RuntimeService {
         session_id: &str,
         thread_id: &str,
         client_msg_id: &str,
-        content: &str,
+        comment_ref: SessionCommentRef,
     ) -> RuntimeResult<PostMessageOutcome> {
+        if comment_ref.thread_id != thread_id {
+            return Err(RuntimeError::InvalidRequest(
+                "comment reference thread_id must match the comment queue thread".into(),
+            ));
+        }
         let request = SendMessageRequest {
             client_msg_id: client_msg_id.to_string(),
-            content: content.to_string(),
+            content: String::new(),
+            comment_refs: vec![comment_ref],
             attachment_ids: Vec::new(),
         };
         self.post_message_with_source(
@@ -601,7 +609,12 @@ impl RuntimeService {
         {
             let item = self
                 .store
-                .update_pending_message(session_id, &existing.queue_id, &request.content)
+                .update_pending_message(
+                    session_id,
+                    &existing.queue_id,
+                    &request.content,
+                    &request.comment_refs,
+                )
                 .await?;
             self.emit_queue_update(session_id).await?;
             if !active && !awaiting_input {
@@ -616,6 +629,7 @@ impl RuntimeService {
                     session_id,
                     &request.client_msg_id,
                     &request.content,
+                    &request.comment_refs,
                     source,
                     thread_id,
                     &request.attachment_ids,
@@ -647,8 +661,9 @@ impl RuntimeService {
             .await?;
         }
         let message_id = message.message_id.clone();
+        let model_input = render_stored_user_message(&message);
         let run_id = self
-            .spawn_turn_for_message(session_id, &message_id, request.content.clone())
+            .spawn_turn_for_message(session_id, &message_id, model_input)
             .await?;
         Ok(PostMessageOutcome::Started { message, run_id })
     }
@@ -665,12 +680,13 @@ impl RuntimeService {
         session_id: &str,
         queue_id: &str,
         content: &str,
+        comment_refs: &[SessionCommentRef],
     ) -> RuntimeResult<PendingQueueItem> {
         let gate = self.session_gate(session_id).await;
         let _guard = gate.lock_owned().await;
         let item = self
             .store
-            .update_pending_message(session_id, queue_id, content)
+            .update_pending_message(session_id, queue_id, content, comment_refs)
             .await?;
         self.emit_queue_update(session_id).await?;
         Ok(item)
@@ -791,8 +807,9 @@ impl RuntimeService {
         else {
             return Ok(None);
         };
+        let model_input = render_stored_user_message(&batch.message);
         let run_id = self
-            .start_turn_for_stored_message(session_id, &batch.message.message_id, batch.content)
+            .start_turn_for_stored_message(session_id, &batch.message.message_id, model_input)
             .await?;
         Ok(Some(run_id))
     }
@@ -968,8 +985,9 @@ impl RuntimeService {
                 "session has no user message to retry".into(),
             ));
         };
+        let model_input = render_stored_user_message(last_user);
         let _ = self
-            .spawn_turn(session_id, last_user.content.clone())
+            .start_turn_for_stored_message(session_id, &last_user.message_id, model_input)
             .await?;
         self.store.get_session_detail(session_id).await
     }
@@ -1404,6 +1422,7 @@ impl RuntimeService {
         session_id: &str,
         run_id: &str,
         content: String,
+        current_message_id: Option<String>,
         token: CancellationToken,
     ) {
         let service = self.clone();
@@ -1411,7 +1430,13 @@ impl RuntimeService {
         let session_id = session_id.to_string();
         tokio::spawn(async move {
             if let Err(error) = service
-                .run_turn(&session_id, &run_id, &content, token)
+                .run_turn(
+                    &session_id,
+                    &run_id,
+                    &content,
+                    current_message_id.as_deref(),
+                    token,
+                )
                 .await
             {
                 warn!(%error, %session_id, run_id, "agent turn failed");
@@ -1422,7 +1447,7 @@ impl RuntimeService {
     async fn spawn_turn(&self, session_id: &str, content: String) -> RuntimeResult<String> {
         self.maybe_auto_compact(session_id, None).await;
         let (run_id, token) = self.prepare_turn(session_id).await?;
-        self.launch_turn(session_id, &run_id, content, token);
+        self.launch_turn(session_id, &run_id, content, None, token);
         Ok(run_id)
     }
 
@@ -1434,7 +1459,13 @@ impl RuntimeService {
     ) -> RuntimeResult<String> {
         self.maybe_auto_compact(session_id, Some(message_id)).await;
         let (run_id, token) = self.prepare_turn(session_id).await?;
-        self.launch_turn(session_id, &run_id, content, token);
+        self.launch_turn(
+            session_id,
+            &run_id,
+            content,
+            Some(message_id.to_string()),
+            token,
+        );
         Ok(run_id)
     }
 
@@ -1460,7 +1491,13 @@ impl RuntimeService {
         {
             warn!(%error, %session_id, %run_id, "failed to broadcast user message");
         }
-        self.launch_turn(session_id, &run_id, content, token);
+        self.launch_turn(
+            session_id,
+            &run_id,
+            content,
+            Some(message_id.to_string()),
+            token,
+        );
         Ok(run_id)
     }
 
@@ -1469,9 +1506,12 @@ impl RuntimeService {
         session_id: &str,
         run_id: &str,
         content: &str,
+        current_message_id: Option<&str>,
         token: CancellationToken,
     ) -> RuntimeResult<()> {
-        let result = self.execute_turn(session_id, run_id, content, &token).await;
+        let result = self
+            .execute_turn(session_id, run_id, content, current_message_id, &token)
+            .await;
         self.runs.remove(run_id).await;
         match result {
             Ok(()) => {
@@ -1513,21 +1553,23 @@ impl RuntimeService {
         session_id: &str,
         run_id: &str,
         content: &str,
+        current_message_id: Option<&str>,
         token: &CancellationToken,
     ) -> RuntimeResult<()> {
         let session = self.store.get_session_summary(session_id).await?;
         let (pinned, synced_version) = self.ensure_pinned_prompt(session_id).await?;
         let kb_version = self.kb.current_version().await?;
         let state = self.store.compaction_state(session_id).await?;
-        let messages = self.store.list_messages(session_id).await?;
-        let mut history =
-            assemble_context_history(&messages, &state, session.doc_id.as_deref(), synced_version);
-        if let Some(index) = history
-            .iter()
-            .rposition(|message| message.role == MessageRole::User && message.content == content)
+        let mut messages = self.store.list_messages(session_id).await?;
+        if let Some(message_id) = current_message_id
+            && let Some(index) = messages
+                .iter()
+                .rposition(|message| message.message_id == message_id)
         {
-            history.remove(index);
+            messages.remove(index);
         }
+        let history =
+            assemble_context_history(&messages, &state, session.doc_id.as_deref(), synced_version);
         let context = build_resume_context(&pinned, &history, content, kb_version, synced_version);
         if token.is_cancelled() {
             return Ok(());

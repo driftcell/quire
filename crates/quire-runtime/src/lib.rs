@@ -4,6 +4,7 @@
 
 pub mod admin_mcp;
 pub mod bus;
+pub mod comment_refs;
 pub mod compaction;
 pub mod config;
 pub mod control;

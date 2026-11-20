@@ -17,8 +17,8 @@ use futures::Stream;
 use quire_protocol::{CommentStatus, CommentThread, TextQuoteSelector, short_id};
 use quire_session_protocol::{
     AttachmentMeta, CreateSessionRequest, PendingQueueItem, QuestionAnswer, RunTraceSummary,
-    SendMessageRequest, SessionDetail, SessionEvent, SessionEventKind, SessionSummary,
-    ToolCallDetail,
+    SendMessageRequest, SessionCommentRef, SessionDetail, SessionEvent, SessionEventKind,
+    SessionSummary, ToolCallDetail, UpdatePendingMessageRequest,
 };
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -497,11 +497,7 @@ struct SessionCommentStatusRequest {
     status: String,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SessionQueueUpdateRequest {
-    content: String,
-}
+// Queue updates use the shared session wire contract.
 
 #[derive(Debug)]
 struct CommentProxyError {
@@ -565,11 +561,8 @@ async fn create_session_comment(
         }),
     )
     .await?;
-    let content = comment_ref_message(&thread);
-    if let Err(error) = service
-        .post_comment_message(&session_id, &thread.thread_id, &content)
-        .await
-    {
+    let comment_ref = session_comment_ref(&thread);
+    if let Err(error) = service.post_comment_message(&session_id, comment_ref).await {
         tracing::warn!(%error, %session_id, thread_id = %thread.thread_id, "failed to auto-trigger comment review");
     }
     Ok(Json(thread))
@@ -598,9 +591,9 @@ async fn reply_session_comment(
     if thread.status != CommentStatus::Archived
         && let Some(reply) = thread.messages.last()
     {
-        let content = comment_ref_message_with_body(&thread, &reply.body);
+        let comment_ref = session_comment_ref_with_body(&thread, &reply.body);
         if let Err(error) = service
-            .post_comment_reply_message(&session_id, &thread.thread_id, &reply.message_id, &content)
+            .post_comment_reply_message(&session_id, &reply.message_id, comment_ref)
             .await
         {
             tracing::warn!(
@@ -669,10 +662,15 @@ async fn list_session_queue(
 async fn update_session_queue_item(
     State(service): State<RuntimeService>,
     Path((session_id, queue_id)): Path<(String, String)>,
-    Json(request): Json<SessionQueueUpdateRequest>,
+    Json(request): Json<UpdatePendingMessageRequest>,
 ) -> RuntimeResult<Json<PendingQueueItem>> {
     service
-        .update_pending_message(&session_id, &queue_id, &request.content)
+        .update_pending_message(
+            &session_id,
+            &queue_id,
+            &request.content,
+            &request.comment_refs,
+        )
         .await
         .map(Json)
 }
@@ -711,67 +709,34 @@ async fn session_comment_doc_id(
         })
 }
 
-fn escape_xml(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
-fn comment_ref_message(thread: &CommentThread) -> String {
+fn session_comment_ref(thread: &CommentThread) -> SessionCommentRef {
     let comment = thread
         .messages
         .first()
         .map(|message| message.body.as_str())
         .unwrap_or_default();
-    comment_ref_message_with_body(thread, comment)
+    session_comment_ref_with_body(thread, comment)
 }
 
-fn comment_ref_message_with_body(thread: &CommentThread, comment: &str) -> String {
-    let mut content = format!(
-        "<quire_comment_ref thread_id=\"{}\" block_id=\"{}\" status=\"{}\"",
-        escape_xml(&thread.thread_id),
-        escape_xml(thread.block_id.as_str()),
-        escape_xml(thread.status.as_str()),
-    );
-    if let Some(end_block_id) = &thread.end_block_id {
-        content.push_str(&format!(
-            " end_block_id=\"{}\"",
-            escape_xml(end_block_id.as_str())
-        ));
-    }
-    if thread.anchor_blocks.len() > 1 {
-        let anchors = thread
+fn session_comment_ref_with_body(thread: &CommentThread, comment: &str) -> SessionCommentRef {
+    SessionCommentRef {
+        thread_id: thread.thread_id.clone(),
+        block_id: thread.block_id.as_str().to_string(),
+        end_block_id: thread
+            .end_block_id
+            .as_ref()
+            .map(|block_id| block_id.as_str().to_string()),
+        anchor_blocks: thread
             .anchor_blocks
             .iter()
-            .map(|block_id| escape_xml(block_id.as_str()))
-            .collect::<Vec<_>>()
-            .join(",");
-        content.push_str(&format!(" anchor_blocks=\"{anchors}\""));
+            .map(|block_id| block_id.as_str().to_string())
+            .collect(),
+        status: thread.status.as_str().to_string(),
+        quote: thread.quote.as_ref().map(|quote| quote.exact.clone()),
+        end_quote: thread.end_quote.as_ref().map(|quote| quote.exact.clone()),
+        anchor_snapshot: thread.anchor_snapshot.clone(),
+        comment: comment.to_string(),
     }
-    content.push('>');
-    if let Some(quote) = &thread.quote {
-        content.push_str(&format!("\n  <quote>{}</quote>", escape_xml(&quote.exact)));
-    }
-    if let Some(end_quote) = &thread.end_quote {
-        content.push_str(&format!(
-            "\n  <end_quote>{}</end_quote>",
-            escape_xml(&end_quote.exact)
-        ));
-    }
-    if let Some(snapshot) = &thread.anchor_snapshot {
-        content.push_str(&format!(
-            "\n  <anchor_snapshot>{}</anchor_snapshot>",
-            escape_xml(snapshot)
-        ));
-    }
-    content.push_str(&format!(
-        "\n  <comment>{}</comment>\n</quire_comment_ref>",
-        escape_xml(comment)
-    ));
-    content
 }
 
 async fn forward_comment_delete(

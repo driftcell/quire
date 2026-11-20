@@ -3,6 +3,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon } from "lucide-react";
 import { toast } from "sonner";
 import { createSession, postMessage, uploadAttachment } from "@/api/runtime";
+import type { SessionCommentRef } from "@/contracts/session-protocol";
 import { PromptComposer } from "@/components/chat/PromptComposer";
 import { BrandSigil } from "@/components/layout/BrandSigil";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,11 @@ function HomePage() {
   const isMobile = useIsMobile();
   const { open: leftSidebarOpen, toggleSidebar } = useSidebar();
 
-  const startConversation = async (text: string, files: File[]) => {
+  const startConversation = async (
+    text: string,
+    files: File[],
+    commentRefs: SessionCommentRef[] = [],
+  ) => {
     try {
       const session = await createSession({
         title: deriveSessionTitle(text),
@@ -50,7 +55,8 @@ function HomePage() {
       }
       await postMessage(session.session_id, {
         client_msg_id: `msg_${randomUuid()}`,
-        content: text || `请分析已上传的 ${files.length} 个附件并生成报告。`,
+        content: text,
+        comment_refs: commentRefs,
         attachment_ids: attachmentIds,
       });
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
