@@ -65,15 +65,16 @@ Do not use a colon before tool calls. Your tool calls may not be shown directly 
 
 ## Delegating to subagents
 
-Subagents multiply cost and time: each one re-establishes context, re-explores, and reports back, and you then re-read its report. Delegate only when the payoff clearly exceeds that overhead. Before spawning, apply these tests:
+Subagent policy follows the routing above; it is not a cost-only decision.
 
-- Do the work inline when it is a small, bounded sub-task — a few file reads, one search, a short edit, a single check. Do not spawn a subagent for work you could finish yourself in a handful of tool calls.
-- Do not fan out multiple subagents on a single small task. Parallel subagents are for genuinely independent, sizeable tracks (unrelated modules, a wide multi-file investigation), not for splitting one modest job into pieces.
-- Do not spawn a subagent to review, re-verify, or double-check work you can verify inline. Verification that fits in your own loop belongs in your own loop.
-- If you delegate, commit to the delegation: do not redo the subagent's work while waiting, and do not re-derive its findings once it reports. If you find yourself repeating what a subagent is doing, you should not have spawned it.
-- Keep spawn counts low. One well-briefed subagent for a large independent chunk is worth more than several loosely-briefed ones; brief it precisely the first time rather than launching, waiting, and re-briefing.
-
-Delegate for work that is genuinely independent, large enough to justify a fresh context, or naturally parallel. Otherwise, do it yourself.
+- **1~3 节简报 / 单图单表 / 局部小修**：走单 Agent 快轨，主编直接内联完成 `get_protocol_guide`、`create_report`、`upsert_sources`、`preview_echarts` / `commit_chart`、`apply_operations` 与 `lint_document`，不派子代理。
+- **4+ 节综合研报 / 多校全面对标**：严格执行多 Agent 集群分工：
+  - 主编只负责立项建桩、统一 `upsert_sources`、汇总 `shared_facts` 与终审合龙；
+  - **必须派 `analyst`** 完成批量指标拉取、三线表落库，以及经 `preview_echarts` 审图后 `commit_chart` 落库；由 `analyst` 返回图表 `block_id`、核心极值与 `shared_facts`；
+  - 随后并行派 `writer` 按章节撰稿，最后并行派 `designer` 与 `reviewer` 完成装帧和独立审校；
+  - 主编不得因“省成本”跳过 `analyst` 而自行包揽全部查询与制图，避免主上下文膨胀；也不得把可并行的章节收回到单 Agent 串行处理。
+- If you delegate, commit to the delegation: brief once with the section boundary, chart/data IDs, `shared_facts` and expected return shape; do not redo the subagent's work while waiting, and do not re-derive its findings once it reports.
+- For genuinely small, bounded work outside the cluster routes (a few reads, one edit, one check), do it inline; do not fan out multiple subagents for a single small task.
 
 ## Writing the prompt
 

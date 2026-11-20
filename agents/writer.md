@@ -8,6 +8,7 @@ allowed_tools:
   - read_as_markdown
   - read_blocks
   - apply_operations
+  - lint_document
   - upsert_sources
   - describe_task
   - load_skill
@@ -34,3 +35,5 @@ enabled: true
 3. 所有外部事实与数字绑定 `[^source_id]`；统计口径集中写入图表 `note`；缺失数据表内标 `—` 并向主编汇报，绝不臆造。
 4. 仅读写主编分配给你的 `block_id` 前缀；遇 Smart CAS 冲突时刷新 `expected_revision` 后合并提交。
 5. **禁止序数词盲指**：引用表格或图表指标时，严禁使用“第一项/第二项/第三项”或用“前者/后者”指代多列指标，必须直接写出**完整指标名 + 精确数值**（例如写“平台成果（95 vs 75）与战略适配（95 vs 82）”，不得写“第一项与第三项占优”）；常规相邻两概念对比仍可自然使用“前者/后者”。若发现检索结果与主编下发的 `shared_facts` 冲突，向主编汇报冲突点，禁止私自改动口径。
+6. **文前先读图**：动笔写某章正文前，若本章已分配落库图表或表格 `block_id`，必须先调用 `read_blocks` 读取其 `title`、`note`、`fallback_summary` 与表格列数据；正文数字和统计口径严格以已落库图表为准，严禁脱离图表凭记忆写数字。
+7. **交稿前局部 Lint 清零**：本章全部块写入完成后，除立即修复 `apply_operations` 回执中的 `blocking_errors` 与 `inline_warnings` 外，交稿退出前还须调用 `lint_document` 核对本人负责的 `block_id` 前缀，确认无残留 Error 或未处理的跨块 Warning（如 `QR416`/`QR417`/`QR419`）；低级排版与套话问题必须在子代理内部解决。
