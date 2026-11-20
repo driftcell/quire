@@ -839,6 +839,745 @@ fn structure_and_text_rules_are_detected() {
 }
 
 #[test]
+fn qr412_detects_strong_ai_cliches() {
+    for (id, text, phrase) in [
+        ("summary", "综上所述，项目进展顺利。", "综上所述"),
+        ("noting", "值得注意的是，数据仍有缺口。", "值得注意的是"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        let report = lint_document(&document);
+        let diagnostic = finding(&report, "QR412");
+        assert_eq!(diagnostic.severity, Severity::Warning);
+        assert!(diagnostic.suppressible);
+        assert!(
+            diagnostic.message.contains(phrase),
+            "{}",
+            diagnostic.message
+        );
+        assert!(
+            diagnostic.hint.contains("effect size"),
+            "{}",
+            diagnostic.hint
+        );
+    }
+}
+
+#[test]
+fn qr412_detects_process_disclaimer_and_extreme_cliches() {
+    for (id, text, phrase) in [
+        (
+            "process-limit",
+            "受篇幅所限，本文只讨论核心指标。",
+            "受篇幅所限",
+        ),
+        ("online-search", "经联网检索，相关数据如下。", "经联网检索"),
+        ("bottom-logic", "底层逻辑在于资源配置。", "底层逻辑"),
+        ("granularity", "提升数据颗粒度。", "颗粒度"),
+        ("spearman", "采用Spearman相关系数分析。", "Spearman相关系数"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        let report = lint_document(&document);
+        let diagnostic = finding(&report, "QR412");
+        assert!(
+            diagnostic.message.contains(phrase),
+            "{}",
+            diagnostic.message
+        );
+    }
+}
+
+#[test]
+fn qr412_counts_new_b_class_words_by_distinct_density() {
+    let mut single = doc();
+    single
+        .blocks
+        .push(paragraph("single", "显著提升是当前的主要判断。"));
+    assert!(!has_code(&lint_document(&single), "QR412"));
+
+    let mut pair = doc();
+    pair.blocks.push(paragraph("pair", "显著提升、稳中有进。"));
+    assert!(has_code(&lint_document(&pair), "QR412"));
+
+    let mut transition_pair = doc();
+    transition_pair
+        .blocks
+        .push(paragraph("transition-pair", "与此同时，总体平稳。"));
+    assert!(has_code(&lint_document(&transition_pair), "QR412"));
+}
+
+#[test]
+fn qr412_requires_two_distinct_jargon_words() {
+    let mut single = doc();
+    single
+        .blocks
+        .push(paragraph("single", "高质量发展需要长期投入。"));
+    assert!(
+        !has_code(&lint_document(&single), "QR412"),
+        "one jargon word must not cross the density threshold"
+    );
+
+    let mut dense = doc();
+    dense
+        .blocks
+        .push(paragraph("dense", "双轮驱动、精准赋能与闭环机制共同推进。"));
+    let report = lint_document(&dense);
+    let diagnostic = finding(&report, "QR412");
+    assert!(diagnostic.message.contains("双轮驱动"));
+    assert!(diagnostic.message.contains("赋能"));
+    assert!(diagnostic.message.contains("闭环"));
+}
+
+#[test]
+fn qr412_masks_quoted_proper_nouns_and_skips_quotes() {
+    let mut titles = doc();
+    titles.blocks.push(paragraph(
+        "title",
+        "《“双一流”高质量发展意见》提出新的建设任务。",
+    ));
+    titles.blocks.push(paragraph(
+        "quoted",
+        "“生态环境保护与海洋生态修复”是长期任务。",
+    ));
+    titles.blocks.push(paragraph(
+        "code",
+        "`in conclusion` 与 [链接](https://example.com/in-conclusion) 只是示例。",
+    ));
+    titles
+        .blocks
+        .push(paragraph("ascii-quoted", "\"in conclusion\" 是引文。"));
+    titles
+        .blocks
+        .push(paragraph("corner-quoted", "「综上所述」是引文。"));
+    titles
+        .blocks
+        .push(paragraph("quoted-strong", "“受篇幅所限”只是引文。"));
+    titles
+        .blocks
+        .push(paragraph("strong-title", "《受篇幅所限》是文件原文。"));
+    titles
+        .blocks
+        .push(paragraph("development-title", "《高质量发展》是政策文件。"));
+    let report = lint_document(&titles);
+    assert!(
+        !has_code(&report, "QR412"),
+        "quoted titles, inline code and link targets must be masked: {:?}",
+        report.diagnostics
+    );
+
+    let mut quote = doc();
+    quote.blocks.push(Block::quote(
+        bid("external-quote"),
+        "综上所述，双轮驱动与精准赋能形成闭环。",
+    ));
+    assert!(
+        !has_code(&lint_document(&quote), "QR412"),
+        "external quotations must not be scanned as authored prose"
+    );
+
+    let mut heading_only = doc();
+    heading_only
+        .blocks
+        .push(heading("heading-cliche", 1, "综上所述"));
+    assert!(
+        !has_code(&lint_document(&heading_only), "QR412"),
+        "headings must not be scanned as prose"
+    );
+}
+
+#[test]
+fn qr412_exempts_ecological_compounds() {
+    let mut document = doc();
+    document.blocks.push(paragraph(
+        "ecology",
+        "生态环境保护与海洋生态修复是重点，双轮驱动同样重要。",
+    ));
+    let report = lint_document(&document);
+    assert!(
+        !has_code(&report, "QR412"),
+        "ecological compounds must not count as jargon: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn qr413_flags_long_prose_without_evidence() {
+    let text = "数".repeat(130);
+    let mut document = doc();
+    document.blocks.push(paragraph("long", text.as_str()));
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR413");
+    assert_eq!(diagnostic.severity, Severity::Info);
+    assert!(diagnostic.suppressible);
+    assert!(
+        diagnostic.hint.contains("already retrieved by tools"),
+        "{}",
+        diagnostic.hint
+    );
+
+    let mut dated = doc();
+    let dated_text = format!("{text}2025年");
+    dated.blocks.push(paragraph("dated", dated_text.as_str()));
+    assert!(!has_code(&lint_document(&dated), "QR413"));
+
+    let mut cited = doc();
+    let cited_text = format!("{text}[^src_1]");
+    cited.blocks.push(paragraph("cited", cited_text.as_str()));
+    assert!(!has_code(&lint_document(&cited), "QR413"));
+
+    let mut titled = doc();
+    let titled_text = format!("{text}《政策文件》");
+    titled
+        .blocks
+        .push(paragraph("titled", titled_text.as_str()));
+    assert!(!has_code(&lint_document(&titled), "QR413"));
+}
+
+#[test]
+fn qr414_detects_mechanical_templates() {
+    let mut connectives = doc();
+    connectives.blocks.push(paragraph(
+        "connectives",
+        "首先明确目标，其次分解任务，最后跟踪结果。",
+    ));
+    assert!(has_code(&lint_document(&connectives), "QR414"));
+
+    let mut single_contrast = doc();
+    single_contrast.blocks.push(paragraph(
+        "single-contrast",
+        "一方面看规模，另一方面看结构。",
+    ));
+    assert!(
+        !has_code(&lint_document(&single_contrast), "QR414"),
+        "one contrast pair must remain unflagged"
+    );
+
+    let mut repeated_contrast = doc();
+    for index in 1..=3 {
+        let id = format!("contrast-{index}");
+        repeated_contrast
+            .blocks
+            .push(paragraph(id.as_str(), "一方面看规模，另一方面看结构。"));
+    }
+    let report = lint_document(&repeated_contrast);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR414")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("contrast-3")));
+
+    let mut bullets = doc();
+    bullets.blocks.push(paragraph(
+        "bullets",
+        "- **目标**：明确方向\n- **路径**：分解任务\n- **保障**：跟踪结果",
+    ));
+    assert!(has_code(&lint_document(&bullets), "QR414"));
+
+    let mut numbered_bullets = doc();
+    numbered_bullets.blocks.push(paragraph(
+        "numbered-bullets",
+        "1. **目标**：明确方向\n2. **路径**：分解任务\n3. **保障**：跟踪结果",
+    ));
+    assert!(has_code(&lint_document(&numbered_bullets), "QR414"));
+}
+
+#[test]
+fn qr415_requires_more_than_one_contrast_hit() {
+    let mut single = doc();
+    single
+        .blocks
+        .push(paragraph("single", "并非规模扩张，而是结构优化。"));
+    assert!(
+        !has_code(&lint_document(&single), "QR415"),
+        "one contrast sentence must remain unflagged"
+    );
+}
+
+#[test]
+fn qr415_detects_repeated_contrast_patterns() {
+    let mut dense = doc();
+    dense.blocks.push(paragraph(
+        "dense",
+        "不是规模问题，而是结构问题；不是速度问题，而是质量问题。",
+    ));
+    let report = lint_document(&dense);
+    let diagnostic = finding(&report, "QR415");
+    assert!(diagnostic.message.contains("不是…而是…"));
+    assert!(diagnostic.hint.contains("core fact"), "{}", diagnostic.hint);
+
+    let mut speech = doc();
+    speech.blocks.push(paragraph(
+        "speech",
+        "不是说规模不重要，而是说结构更关键；不是说速度不重要，而是说质量更关键。",
+    ));
+    let report = lint_document(&speech);
+    assert!(finding(&report, "QR415").message.contains("不是说…而是说…"));
+
+    let mut document_hits = doc();
+    for index in 1..=3 {
+        let id = format!("third-{index}");
+        document_hits.blocks.push(paragraph(
+            id.as_str(),
+            "与其说速度决定成败，不如说结构决定长期表现。",
+        ));
+    }
+    let report = lint_document(&document_hits);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR415")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("third-3")));
+}
+
+#[test]
+fn qr415_respects_gap_and_sentence_boundaries() {
+    let mut too_far = doc();
+    let far_text = format!("不是{}而是结构优化。", "数".repeat(46));
+    too_far.blocks.push(paragraph("too-far", far_text.as_str()));
+    assert!(
+        !has_code(&lint_document(&too_far), "QR415"),
+        "a gap over 45 characters must not match"
+    );
+
+    let mut cross_sentence = doc();
+    cross_sentence
+        .blocks
+        .push(paragraph("cross-sentence", "不是规模问题。而是结构问题。"));
+    assert!(
+        !has_code(&lint_document(&cross_sentence), "QR415"),
+        "contrast phrases split by a sentence boundary must not match"
+    );
+}
+
+#[test]
+fn qr415_detects_hedging_words() {
+    for text in [
+        "某种程度上，这项政策仍需观察。",
+        "需要强调的是，数据口径尚未统一。",
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph("strong", text));
+        assert!(
+            has_code(&lint_document(&document), "QR415"),
+            "strong hedge `{text}` must trigger"
+        );
+    }
+
+    let mut single_light = doc();
+    single_light
+        .blocks
+        .push(paragraph("single-light", "总体来看，进展顺利。"));
+    assert!(!has_code(&lint_document(&single_light), "QR415"));
+
+    let mut light_pair = doc();
+    light_pair
+        .blocks
+        .push(paragraph("light-pair", "总体来看，诚然存在一些困难。"));
+    let report = lint_document(&light_pair);
+    let diagnostic = finding(&report, "QR415");
+    assert!(diagnostic.message.contains("总体来看"));
+    assert!(diagnostic.message.contains("诚然"));
+}
+
+#[test]
+fn qr415_masks_quotes_and_skips_quote_blocks() {
+    let mut document = doc();
+    document.blocks.push(paragraph(
+        "quoted",
+        "“不是规模问题，而是结构问题；某种程度上需要观察。”",
+    ));
+    document.blocks.push(paragraph(
+        "book",
+        "《不是规模问题，而是结构问题》提供了另一种表述。",
+    ));
+    document.blocks.push(Block::quote(
+        bid("external-quote"),
+        "不是规模问题，而是结构问题；某种程度上需要观察。",
+    ));
+    assert!(
+        !has_code(&lint_document(&document), "QR415"),
+        "quoted and external contrast/hedging language must be masked"
+    );
+}
+
+#[test]
+fn qr415_can_be_block_ignored() {
+    let mut document = doc();
+    let mut block = paragraph(
+        "ignored",
+        "不是规模问题，而是结构问题；不是速度问题，而是质量问题。",
+    );
+    block.lint_ignore = vec!["QR415".into()];
+    document.blocks.push(block);
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR415"), "{:?}", report.diagnostics);
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
+fn qr412_qr413_qr414_can_be_block_ignored() {
+    let mut cliche = doc();
+    let mut cliche_block = paragraph("cliche", "综上所述，项目进展顺利。");
+    cliche_block.lint_ignore = vec!["QR412".into()];
+    cliche.blocks.push(cliche_block);
+    let report = lint_document(&cliche);
+    assert!(!has_code(&report, "QR412"), "{:?}", report.diagnostics);
+    assert!(report.summary.suppressed >= 1);
+
+    let long_text = "数".repeat(130);
+    let mut evidence = doc();
+    let mut evidence_block = paragraph("evidence", long_text.as_str());
+    evidence_block.lint_ignore = vec!["QR413".into()];
+    evidence.blocks.push(evidence_block);
+    let report = lint_document(&evidence);
+    assert!(!has_code(&report, "QR413"), "{:?}", report.diagnostics);
+    assert!(report.summary.suppressed >= 1);
+
+    let mut template = doc();
+    let mut template_block = paragraph("template", "首先明确目标，其次分解任务，最后跟踪结果。");
+    template_block.lint_ignore = vec!["QR414".into()];
+    template.blocks.push(template_block);
+    let report = lint_document(&template);
+    assert!(!has_code(&report, "QR414"), "{:?}", report.diagnostics);
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
+fn qr316_flags_dense_pie_and_category_axis_labels() {
+    let pie_eight = (0..8)
+        .map(|index| serde_json::json!({"name": format!("S{index}"), "value": index + 1}))
+        .collect::<Vec<_>>();
+    let mut pie = doc();
+    pie.blocks.push(chart_named(
+        "pie-8",
+        serde_json::json!({"series": [{"type": "pie", "data": pie_eight}]}),
+    ));
+    let report = lint_document(&pie);
+    let diagnostic = finding(&report, "QR316");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert!(
+        diagnostic.message.contains("8 slices"),
+        "{}",
+        diagnostic.message
+    );
+    assert_eq!(
+        diagnostic.path.as_deref(),
+        Some("blocks[0].option.series[0].data")
+    );
+
+    let pie_seven = (0..7)
+        .map(|index| serde_json::json!({"name": format!("S{index}"), "value": index + 1}))
+        .collect::<Vec<_>>();
+    let mut seven = doc();
+    seven.blocks.push(chart_named(
+        "pie-7",
+        serde_json::json!({"series": [{"type": "pie", "data": pie_seven}]}),
+    ));
+    assert!(!has_code(&lint_document(&seven), "QR316"));
+
+    let labels: Vec<String> = (0..12).map(|index| format!("类别{index}")).collect();
+    let mut dense_axis = doc();
+    dense_axis.blocks.push(chart_named(
+        "dense-axis",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": labels},
+            "yAxis": {"type": "value"},
+            "series": [{"type": "bar", "data": vec![1; 12]}]
+        }),
+    ));
+    let report = lint_document(&dense_axis);
+    let diagnostic = finding(&report, "QR316");
+    assert!(diagnostic.message.contains("12 category labels"));
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].option.xAxis"));
+
+    let labels: Vec<String> = (0..12).map(|index| format!("类别{index}")).collect();
+    let rotated = chart_named(
+        "rotated",
+        serde_json::json!({
+            "xAxis": {
+                "type": "category",
+                "data": labels,
+                "axisLabel": {"rotate": 30}
+            },
+            "yAxis": {"type": "value"},
+            "series": [{"type": "bar", "data": vec![1; 12]}]
+        }),
+    );
+    let mut rotated_doc = doc();
+    rotated_doc.blocks.push(rotated);
+    assert!(!has_code(&lint_document(&rotated_doc), "QR316"));
+
+    let labels: Vec<String> = (0..12).map(|index| format!("类别{index}")).collect();
+    let interval = chart_named(
+        "interval",
+        serde_json::json!({
+            "xAxis": {
+                "type": "category",
+                "data": labels,
+                "axisLabel": {"interval": 1}
+            },
+            "yAxis": {"type": "value"},
+            "series": [{"type": "bar", "data": vec![1; 12]}]
+        }),
+    );
+    let mut interval_doc = doc();
+    interval_doc.blocks.push(interval);
+    assert!(!has_code(&lint_document(&interval_doc), "QR316"));
+
+    let labels: Vec<String> = (0..15).map(|index| format!("类别{index}")).collect();
+    let horizontal = chart_named(
+        "horizontal",
+        serde_json::json!({
+            "xAxis": {"type": "value"},
+            "yAxis": {"type": "category", "data": labels},
+            "series": [{"type": "bar", "data": vec![1; 15]}]
+        }),
+    );
+    let mut horizontal_doc = doc();
+    horizontal_doc.blocks.push(horizontal);
+    assert!(
+        !has_code(&lint_document(&horizontal_doc), "QR316"),
+        "yAxis category labels belong to horizontal bars and must not be checked"
+    );
+
+    let mut ignored = chart_named(
+        "ignored-pie",
+        serde_json::json!({"series": [{"type": "pie", "data": (0..8).map(|index| serde_json::json!({"name": format!("S{index}"), "value": index + 1})).collect::<Vec<_>>()}]}),
+    );
+    ignored.lint_ignore = vec!["QR316".into()];
+    let mut ignored_doc = doc();
+    ignored_doc.blocks.push(ignored);
+    let report = lint_document(&ignored_doc);
+    assert!(!has_code(&report, "QR316"));
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
+fn qr416_flags_third_consecutive_visual_only() {
+    let mut two = doc();
+    two.blocks.push(table(
+        "table-1",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    ));
+    two.blocks.push(chart_named(
+        "chart-1",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    ));
+    assert!(!has_code(&lint_document(&two), "QR416"));
+
+    let mut three = doc();
+    three.blocks.push(heading("h-a", 2, "Dataset A"));
+    three.blocks.push(table(
+        "table-2",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    ));
+    three.blocks.push(heading("h-b", 3, "Dataset B"));
+    three.blocks.push(chart_named(
+        "chart-2",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    ));
+    three.blocks.push(heading("h-c", 3, "Dataset C"));
+    let mut third = custom_html("<div>KPI</div>", "KPI");
+    third.id = bid("html-3");
+    three.blocks.push(third);
+    let report = lint_document(&three);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR416")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("html-3")));
+
+    let mut reset = doc();
+    reset.blocks.push(table(
+        "table-3",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    ));
+    reset.blocks.push(chart_named(
+        "chart-3",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    ));
+    reset.blocks.push(paragraph(
+        "analysis",
+        "The table and chart show a 18% increase.",
+    ));
+    reset.blocks.push(chart_named(
+        "chart-4",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    ));
+    assert!(!has_code(&lint_document(&reset), "QR416"));
+
+    let mut quote_reset = doc();
+    quote_reset.blocks.push(table(
+        "table-4",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    ));
+    quote_reset.blocks.push(chart_named(
+        "chart-5",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    ));
+    quote_reset
+        .blocks
+        .push(Block::quote(bid("quote-reset"), "Analytical takeaway."));
+    quote_reset.blocks.push(chart_named(
+        "chart-6",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    ));
+    assert!(!has_code(&lint_document(&quote_reset), "QR416"));
+}
+
+#[test]
+fn qr417_flags_walls_of_text_and_long_prose_runs() {
+    let wall = "数".repeat(450);
+    let mut single = doc();
+    single.blocks.push(paragraph("wall", wall.as_str()));
+    let report = lint_document(&single);
+    let diagnostic = finding(&report, "QR417");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert!(
+        diagnostic.message.contains("450-char"),
+        "{}",
+        diagnostic.message
+    );
+
+    let long_url = format!("https://example.com/{}", "very-long-path".repeat(20));
+    let mut linked = String::new();
+    for _ in 0..20 {
+        linked.push_str("[链接](");
+        linked.push_str(&long_url);
+        linked.push_str(")[^src_1]");
+    }
+    let mut links = doc();
+    links.blocks.push(paragraph("links", linked.as_str()));
+    assert!(
+        !has_code(&lint_document(&links), "QR417"),
+        "long URLs and citation keys must not inflate the prose length"
+    );
+
+    let mut listed = "数".repeat(460);
+    listed.push_str("\n- 第一条\n- 第二条");
+    let mut list_doc = doc();
+    list_doc.blocks.push(paragraph("listed", listed.as_str()));
+    assert!(!has_code(&lint_document(&list_doc), "QR417"));
+
+    let mut run = doc();
+    let paragraph_text = "数".repeat(200);
+    for index in 1..=5 {
+        let id = format!("run-{index}");
+        run.blocks
+            .push(paragraph(id.as_str(), paragraph_text.as_str()));
+    }
+    let report = lint_document(&run);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR417")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("run-5")));
+}
+
+#[test]
+fn qr418_flags_generic_and_counting_headings() {
+    let mut generic = doc();
+    generic
+        .blocks
+        .push(heading("generic-zh", 2, "一、总结与展望"));
+    assert!(has_code(&lint_document(&generic), "QR418"));
+
+    let mut english = doc();
+    english.blocks.push(heading("generic-en", 2, "Overview"));
+    assert!(has_code(&lint_document(&english), "QR418"));
+
+    let mut counting = doc();
+    counting.blocks.push(heading("counting", 2, "三大核心维度"));
+    assert!(has_code(&lint_document(&counting), "QR418"));
+
+    let mut h1 = doc();
+    h1.blocks.push(heading("h1-generic", 1, "概述"));
+    assert!(!has_code(&lint_document(&h1), "QR418"));
+
+    let mut concrete = doc();
+    concrete
+        .blocks
+        .push(heading("concrete", 2, "三大驱动力：政策、算力与场景"));
+    assert!(
+        !has_code(&lint_document(&concrete), "QR418"),
+        "a counting heading with a concrete colon suffix must be exempt"
+    );
+}
+
+#[test]
+fn qr316_qr416_qr417_qr418_can_be_ignored_at_block_and_document_level() {
+    let mut document = doc();
+    let mut dense = chart_named(
+        "dense",
+        serde_json::json!({"series": [{"type": "pie", "data": (0..8).map(|index| serde_json::json!({"name": format!("S{index}"), "value": index + 1})).collect::<Vec<_>>()}]}),
+    );
+    dense.lint_ignore = vec!["QR316".into()];
+    document.blocks.push(dense);
+    let mut visual_a = table(
+        "visual-a",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    );
+    visual_a.lint_ignore = vec!["QR416".into()];
+    document.blocks.push(visual_a);
+    let mut visual_b = chart_named(
+        "visual-b",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    );
+    visual_b.lint_ignore = vec!["QR416".into()];
+    document.blocks.push(visual_b);
+    let mut visual_c = custom_html("<div>KPI</div>", "KPI");
+    visual_c.id = bid("visual-c");
+    visual_c.lint_ignore = vec!["QR416".into()];
+    document.blocks.push(visual_c);
+    let mut wall = paragraph("wall", "数".repeat(450).as_str());
+    wall.lint_ignore = vec!["QR417".into()];
+    document.blocks.push(wall);
+    let mut heading_block = heading("generic-heading", 2, "概述");
+    heading_block.lint_ignore = vec!["QR418".into()];
+    document.blocks.push(heading_block);
+
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR316"));
+    assert!(!has_code(&report, "QR416"));
+    assert!(!has_code(&report, "QR417"));
+    assert!(!has_code(&report, "QR418"));
+    assert!(report.summary.suppressed >= 4, "{:?}", report.summary);
+
+    document.lint.ignore = vec![
+        "QR316".into(),
+        "QR416".into(),
+        "QR417".into(),
+        "QR418".into(),
+    ];
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR316"));
+    assert!(!has_code(&report, "QR416"));
+    assert!(!has_code(&report, "QR417"));
+    assert!(!has_code(&report, "QR418"));
+}
+
+#[test]
 fn qr201_water_filling_does_not_flag_tables_that_fit_total_width() {
     let mut document = doc();
     let mut columns = vec![ColumnNode::leaf("metric", "指标名称")];

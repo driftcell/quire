@@ -33,6 +33,7 @@ use crate::{
 };
 
 use super::QuireMcpServer;
+use super::lint_hint;
 use super::schema::*;
 
 #[tool_router(router = tool_router, vis = "pub(crate)")]
@@ -378,29 +379,15 @@ impl QuireMcpServer {
         let touched = touched_blocks(&request.ops, &result.outcome.assigned_ids);
         let (blocking_errors, inline_warnings) =
             split_scoped_diagnostics(result.inline_warnings, &touched);
-        let _next_hint = if !blocking_errors.is_empty() {
-            format!(
-                "Committed as revision {} with {} blocking error(s). Fix `blocking_errors`, then lint again and continue at expected_revision={}.",
-                result.new_revision,
-                blocking_errors.len(),
-                result.new_revision
-            )
-        } else if result.outcome.no_op {
-            format!(
-                "Batch was a no-op; no revision was created. Current revision is {}.",
-                result.new_revision
-            )
-        } else if result.rebased {
-            format!(
-                "Committed as revision {} after rebasing over {} revision(s) from base {}. Continue at expected_revision={}.",
-                result.new_revision, result.rebased_over, result.base_revision, result.new_revision
-            )
-        } else {
-            format!(
-                "Call lint_document, then continue at expected_revision={}.",
-                result.new_revision
-            )
-        };
+        let _next_hint = lint_hint::apply_operations_next_hint(
+            result.new_revision.get(),
+            &blocking_errors,
+            &inline_warnings,
+            result.outcome.no_op,
+            result.rebased,
+            result.rebased_over,
+            result.base_revision.get(),
+        );
         Ok(Json(ApplyOperationsReceipt {
             new_revision: result.new_revision.get(),
             base_revision: result.base_revision.get(),
@@ -850,17 +837,7 @@ impl QuireMcpServer {
             }));
         }
         let ok = !report.has_errors();
-        let _next_hint = if report.has_errors() {
-            format!(
-                "Fix {} error(s) using each diagnostic's path and hint.",
-                report.summary.errors
-            )
-        } else {
-            format!(
-                "0 errors, {} warning(s), {} suppressed; review warnings or call read_as_markdown.",
-                report.summary.warnings, report.summary.suppressed
-            )
-        };
+        let _next_hint = lint_hint::lint_document_next_hint(&report);
         Ok(Json(LintReceipt {
             ok,
             rev,

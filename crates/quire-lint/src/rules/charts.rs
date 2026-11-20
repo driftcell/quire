@@ -145,6 +145,7 @@ fn check_chart(
     }
 
     let option = effective_chart_option(chart);
+    check_dense_labels(engine, block, &option, index);
     let has_matrix = option.get("matrix").is_some_and(|value| !value.is_null());
     for (axis_key, axis_path) in [("xAxis", "xAxis"), ("yAxis", "yAxis")] {
         let grid_count = i64::try_from(axis_count(&option, "grid")).unwrap_or(i64::MAX);
@@ -295,6 +296,133 @@ fn check_chart(
             Some(format!("blocks[{index}].option")),
         );
     }
+}
+
+struct DenseLabelFinding {
+    message: String,
+    hint: &'static str,
+    path: String,
+}
+
+fn check_dense_labels(
+    engine: &mut Engine<'_>,
+    block: &quire_protocol::Block,
+    option: &Value,
+    index: usize,
+) {
+    let Some(finding) = dense_pie_labels(option, index, &block.id)
+        .or_else(|| dense_x_axis_labels(option, index, &block.id))
+    else {
+        return;
+    };
+    engine.report(
+        RuleId::EchartsDenseLabelsOverlap,
+        finding.message,
+        finding.hint,
+        Some(block.id.clone()),
+        Some(finding.path),
+    );
+}
+
+fn dense_pie_labels(option: &Value, index: usize, block_id: &BlockId) -> Option<DenseLabelFinding> {
+    let series_is_array = option.get("series").is_some_and(Value::is_array);
+    for (series_index, series) in chart_series(option).into_iter().enumerate() {
+        if series.get("type").and_then(Value::as_str) != Some("pie") {
+            continue;
+        }
+        let Some(data) = series.get("data").and_then(Value::as_array) else {
+            continue;
+        };
+        if data.len() <= 7 {
+            continue;
+        }
+        let path = if series_is_array {
+            format!("blocks[{index}].option.series[{series_index}].data")
+        } else {
+            format!("blocks[{index}].option.series.data")
+        };
+        return Some(DenseLabelFinding {
+            message: format!(
+                "chart `{block_id}` pie series has {} slices (> 7), which causes label crowding",
+                data.len()
+            ),
+            hint: "In `series.data`, merge the smallest tail slices into '其他' (Other) so the pie has <= 7 slices, or switch to a horizontal bar chart; keep every retained category visible and do not drop data merely to satisfy the check.",
+            path,
+        });
+    }
+    None
+}
+
+fn dense_x_axis_labels(
+    option: &Value,
+    index: usize,
+    block_id: &BlockId,
+) -> Option<DenseLabelFinding> {
+    let axis_is_array = option.get("xAxis").is_some_and(Value::is_array);
+    for (axis_index, axis) in entries(option.get("xAxis")).into_iter().enumerate() {
+        let Some(data) = axis.get("data").and_then(Value::as_array) else {
+            continue;
+        };
+        if data.is_empty() {
+            continue;
+        }
+        let category_axis = axis.get("type").and_then(Value::as_str) == Some("category")
+            || axis.get("type").is_none();
+        if !category_axis {
+            continue;
+        }
+        let label_count = data.len();
+        let total_chars = data
+            .iter()
+            .filter_map(axis_label_text)
+            .map(|label| label.chars().count())
+            .sum::<usize>();
+        let average_chars = total_chars as f64 / label_count as f64;
+        let dense = label_count >= 10 || (label_count >= 8 && average_chars >= 6.0);
+        if !dense {
+            continue;
+        }
+        let axis_label = axis.get("axisLabel");
+        let rotate_handled = axis_label
+            .and_then(|label| label.get("rotate"))
+            .is_some_and(axis_label_handled);
+        let interval_handled = axis_label
+            .and_then(|label| label.get("interval"))
+            .is_some_and(axis_label_handled);
+        if rotate_handled || interval_handled {
+            continue;
+        }
+        let path = if axis_is_array {
+            format!("blocks[{index}].option.xAxis[{axis_index}]")
+        } else {
+            format!("blocks[{index}].option.xAxis")
+        };
+        return Some(DenseLabelFinding {
+            message: format!(
+                "chart `{block_id}` xAxis has {label_count} category labels without rotation or interval"
+            ),
+            hint: "On `xAxis.axisLabel`, set `rotate: 30` (or `45`) or a non-zero `interval`, or move categories to `yAxis` as a horizontal bar; keep every category readable and do not hide labels merely to satisfy the check.",
+            path,
+        });
+    }
+    None
+}
+
+fn axis_label_text(value: &Value) -> Option<&str> {
+    value
+        .as_str()
+        .or_else(|| value.get("value").and_then(Value::as_str))
+}
+
+fn axis_label_handled(value: &Value) -> bool {
+    if let Some(number) = value.as_f64() {
+        return number != 0.0;
+    }
+    if let Some(text) = value.as_str() {
+        return text.eq_ignore_ascii_case("auto")
+            || text.trim().parse::<f64>().is_ok_and(|number| number != 0.0);
+    }
+    false
 }
 
 /// ECharts 6 default theme palette, used when a chart omits `option.color`.

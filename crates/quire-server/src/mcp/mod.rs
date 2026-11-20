@@ -13,6 +13,7 @@ use rmcp::{
 use crate::state::AppState;
 
 mod handlers;
+mod lint_hint;
 mod schema;
 
 pub use schema::*;

@@ -67,6 +67,41 @@ Category ranges:
 | `QR4xx` | Structure and text quality | Suppressible, including placeholder errors |
 | `QR5xx` | CSS/HTML/theme/cover/TOC | `QR501` non-suppressible; other style advisories suppressible |
 
+### AI-slop prose checks
+
+`QR412`-`QR415` analyze only `BlockKind::Paragraph`; headings are too short to judge and `Quote`
+blocks are treated as external quotations. Before matching, the prose module masks inline code,
+Markdown link targets, inline citations and `《...》` / `“...”` / `"..."` / `「...」` spans with spaces,
+so policy titles and quoted proper nouns cannot become false positives. `QR412` requires one strong
+cliché from mechanical transitions, process/disclaimer leakage, extreme internet jargon or
+untranslated statistical names, or at least two distinct empty-jargon words (with ecological
+compounds such as `生态环境` exempt); `QR413` requires a long paragraph with no digits, citations or book titles;
+`QR414` detects ordered mechanical connectives, the third and later `一方面/另一方面` contrast pair,
+or three or more empty bold-list headings. `QR415` counts sentence-bounded contrast pairs whose gap is
+1-45 characters, plus strong hedging phrases or two distinct light hedging phrases in one paragraph.
+
+### Layout rhythm and chart readability
+
+`QR316` protects ECharts label legibility. A pie/donut series with more than seven slices is dense;
+on `xAxis` category labels, ten or more labels, or eight or more labels averaging at least six
+visible characters, is dense unless `axisLabel.rotate` is non-zero or `axisLabel.interval` is
+non-zero/`auto`. `yAxis` categories are intentionally exempt because horizontal bars own a row per
+label.
+
+`QR416` counts consecutive Table/ECharts/CustomHtml blocks. Empty text and headings do not reset the
+streak; a non-empty Paragraph or Quote does. The third visual block in a streak reports once, so two
+complementary visuals remain allowed.
+
+`QR417` measures prose after replacing Markdown links with their anchor text and removing citations
+and code markers. A paragraph of 450+ visible characters without a newline-delimited list is a wall
+of text; five or more consecutive non-list paragraphs totaling 1000+ characters also report at the
+threshold. Headings, tables, charts, custom HTML, quotes and list paragraphs reset the run.
+
+`QR418` only inspects headings at level 2 or deeper. It strips common manual numbering and
+punctuation, then flags exact generic headings (`概述`, `Overview`, etc.) and counting shells such as
+`三大核心维度`. A counting heading with a colon followed by at least six characters, or a long title
+with concrete data/entities, is exempt.
+
 ### Matching and filter layers
 
 `rule_matches_token` accepts:
@@ -104,6 +139,21 @@ The protocol guide does not enumerate rule codes. It states the writing constrai
 verify loop: fix every `error`, review `warning`, and ignore only diagnostics whose payload says
 `suppressible: true` when the rule genuinely does not apply.
 
+### Hint orchestration
+
+`crates/quire-server/src/mcp/lint_hint.rs` turns diagnostics into one deterministic `_next_hint`.
+Priority tiers are: errors, structural/chart/table/citation warnings, macro layout warnings
+(`QR417`/`QR418`), prose warnings (`QR412`-`QR415`), then info. Diagnostics are grouped by
+`block_id` (or `document`), codes are deduplicated and tier-sorted, groups are ordered by tier,
+diagnostic count and block ID, and only the first five groups expand with a `(+N more block(s))`
+tail. A warning rule touching more than three blocks adds a `lint_document(select=[...])` suggestion.
+
+`apply_operations` now distinguishes three outcomes: blocking errors, inline warnings on edited
+blocks, and a clean batch. The warning branch asks for one `UpdateBlock` batch before continuing
+instead of blindly advancing the revision. `lint_document` uses the same grouped projection for its
+error and warning hints. Individual rule hints follow a three-part shape: target field/block, minimal
+repair action, and an anti-cheat guardrail (no synonym replacement; no invented numbers or sources).
+
 ## 3. Invariants & Verification
 
 - `quire-lint` has no CLI and no I/O dependencies.
@@ -111,6 +161,15 @@ verify loop: fix every `error`, review `warning`, and ignore only diagnostics wh
 - `QR001`-`QR008`, `QR101`, `QR107`, `QR301`-`QR304` and `QR501` are never suppressible.
 - Prefix, name and code matching produce the same rule set as the registry.
 - `summary.suppressed` counts each suppressible diagnostic hidden once.
+- Prose checks skip headings and quotations, mask quoted proper nouns before matching, and never
+  report a single B-class jargon word as `QR412`.
+- Contrast tics are sentence-bounded and require a 1-45 character gap; a single contrast sentence or
+  a single light hedging phrase does not report `QR415`.
+- Dense chart labels report at most once per chart; `QR416` reports only the third visual in a run;
+  `QR417` never double-reports a block that already breached the single-paragraph wall limit;
+  `QR418` skips level-1 headings and numbering-only prefixes.
+- Hint groups are deterministic, merged by block, capped at five expanded groups, and preserve tier
+  order; `apply_operations` never advances past inline warnings without naming the affected blocks.
 - Document and block ignore policies survive reload, revision updates and rollback.
 - The full gate passes:
 

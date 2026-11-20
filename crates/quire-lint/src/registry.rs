@@ -40,6 +40,7 @@ pub enum RuleId {
     EchartsToolboxStripped,
     EchartsEntityColorInconsistent,
     EchartsPaletteInconsistent,
+    EchartsDenseLabelsOverlap,
     PlaceholderTextLeak,
     HeadingLevelJump,
     HeadingEmptySection,
@@ -51,6 +52,13 @@ pub enum RuleId {
     EmptyHeading,
     EmptyDocument,
     ManualTitleNumbering,
+    ClichePhraseDensity,
+    LowEvidenceProse,
+    TemplateParallelProse,
+    ContrastAndHedgingTics,
+    ConsecutiveVisualsWithoutProse,
+    WallOfTextParagraph,
+    BoringOrCountingHeading,
     CssSyntaxError,
     CustomHtmlExternalResource,
     CustomHtmlFixedOverflow,
@@ -153,6 +161,7 @@ define_rules! {
     EchartsToolboxStripped = "QR313", "echarts-toolbox-stripped", Warning, true;
     EchartsEntityColorInconsistent = "QR314", "echarts-entity-color-inconsistent", Warning, true;
     EchartsPaletteInconsistent = "QR315", "echarts-palette-inconsistent", Warning, true;
+    EchartsDenseLabelsOverlap = "QR316", "echarts-dense-labels-overlap", Warning, true;
 
     PlaceholderTextLeak = "QR401", "placeholder-text-leak", Error, true;
     HeadingLevelJump = "QR402", "heading-level-jump", Warning, true;
@@ -165,6 +174,13 @@ define_rules! {
     EmptyHeading = "QR409", "empty-heading", Warning, true;
     EmptyDocument = "QR410", "empty-document", Warning, true;
     ManualTitleNumbering = "QR411", "manual-title-numbering", Warning, true;
+    ClichePhraseDensity = "QR412", "cliche-phrase-density", Warning, true;
+    LowEvidenceProse = "QR413", "low-evidence-prose", Info, true;
+    TemplateParallelProse = "QR414", "template-parallel-prose", Warning, true;
+    ContrastAndHedgingTics = "QR415", "contrast-and-hedging-tics", Warning, true;
+    ConsecutiveVisualsWithoutProse = "QR416", "consecutive-visuals-without-prose", Warning, true;
+    WallOfTextParagraph = "QR417", "wall-of-text-paragraph", Warning, true;
+    BoringOrCountingHeading = "QR418", "boring-or-counting-heading", Warning, true;
 
     CssSyntaxError = "QR501", "css-syntax-error", Error, false;
     CustomHtmlExternalResource = "QR502", "custom-html-external-resource", Warning, true;
