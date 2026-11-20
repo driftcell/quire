@@ -58,6 +58,13 @@ fn table(
     )
 }
 
+fn with_table_note(mut block: Block, note: &str) -> Block {
+    if let BlockKind::Table(ref mut table) = block.body {
+        table.note = Some(note.into());
+    }
+    block
+}
+
 fn row(pairs: &[(&str, CellValue)]) -> BTreeMap<String, CellValue> {
     pairs
         .iter()
@@ -280,6 +287,63 @@ fn citation_and_source_rules_are_detected() {
     );
     unsafe_url.blocks.push(paragraph("body", "Text [^unsafe]."));
     assert!(has_code(&lint_document(&unsafe_url), "QR106"));
+}
+
+#[test]
+fn qr108_flags_low_authority_source_domains() {
+    let mut document = doc();
+    document.sources.insert(
+        sid("baike"),
+        SourceEntry {
+            url: Some("https://www.Baike.Baidu.com:443/item/高校".into()),
+            ..SourceEntry::new("百科")
+        },
+    );
+    document.blocks.push(paragraph("cite", "资料 [^baike]。"));
+
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR108");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert!(diagnostic.block_id.is_none());
+    assert_eq!(diagnostic.path.as_deref(), Some("sources.baike.url"));
+    assert!(diagnostic.message.contains("baike.baidu.com"));
+    assert!(diagnostic.hint.contains(".gov.cn"));
+
+    let mut subdomain = doc();
+    subdomain.sources.insert(
+        sid("sohu"),
+        SourceEntry {
+            url: Some("https://news.sohu.com/a".into()),
+            ..SourceEntry::new("搜狐")
+        },
+    );
+    subdomain.blocks.push(paragraph("cite", "资料 [^sohu]。"));
+    assert!(has_code(&lint_document(&subdomain), "QR108"));
+
+    let mut safe = doc();
+    safe.sources.insert(
+        sid("gov"),
+        SourceEntry {
+            url: Some("https://www.gov.cn/zhengce".into()),
+            ..SourceEntry::new("国务院")
+        },
+    );
+    safe.sources.insert(
+        sid("evil"),
+        SourceEntry {
+            url: Some("https://baike.baidu.com.evil.com/item".into()),
+            ..SourceEntry::new("仿冒")
+        },
+    );
+    safe.blocks
+        .push(paragraph("cite", "资料 [^gov] 与 [^evil]。"));
+    assert!(!has_code(&lint_document(&safe), "QR108"));
+
+    document.lint.ignore = vec!["QR108".into()];
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR108"));
+    assert!(report.summary.suppressed >= 1);
 }
 
 #[test]
@@ -557,6 +621,214 @@ fn table_layout_rules_are_detected() {
         ],
     ));
     assert!(has_code(&lint_document(&units), "QR205"));
+}
+
+#[test]
+fn qr206_validates_single_integer_summary_rows() {
+    fn columns() -> Vec<ColumnNode> {
+        vec![
+            ColumnNode::leaf("name", "名称"),
+            ColumnNode::leaf("count", "数量"),
+        ]
+    }
+
+    fn rows(total: i64) -> Vec<BTreeMap<String, CellValue>> {
+        vec![
+            row(&[
+                ("name", CellValue::text("甲")),
+                ("count", CellValue::text("1,200")),
+            ]),
+            row(&[
+                ("name", CellValue::text("乙")),
+                ("count", CellValue::Integer(300)),
+            ]),
+            row(&[
+                ("name", CellValue::text("合计")),
+                ("count", CellValue::Integer(total)),
+            ]),
+        ]
+    }
+
+    let mut correct = doc();
+    correct
+        .blocks
+        .push(table("correct", None, columns(), rows(1_500)));
+    assert!(!has_code(&lint_document(&correct), "QR206"));
+
+    let mut wrong = doc();
+    wrong
+        .blocks
+        .push(table("wrong", None, columns(), rows(1_501)));
+    let report = lint_document(&wrong);
+    let diagnostic = finding(&report, "QR206");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].rows[2].count"));
+    assert!(diagnostic.message.contains("is `1501`"));
+    assert!(diagnostic.message.contains("sum to `1500`"));
+    assert!(diagnostic.hint.contains("to `1500`"));
+
+    let mut placeholder = doc();
+    placeholder.blocks.push(table(
+        "placeholder",
+        None,
+        columns(),
+        vec![
+            row(&[
+                ("name", CellValue::text("甲")),
+                ("count", CellValue::text("—")),
+            ]),
+            row(&[
+                ("name", CellValue::text("乙")),
+                ("count", CellValue::Integer(5)),
+            ]),
+            row(&[
+                ("name", CellValue::text("合计")),
+                ("count", CellValue::Integer(5)),
+            ]),
+        ],
+    ));
+    assert!(!has_code(&lint_document(&placeholder), "QR206"));
+
+    let mut rounded = doc();
+    rounded.blocks.push(with_table_note(
+        table("rounded", None, columns(), rows(1_501)),
+        "四舍五入保留整数",
+    ));
+    assert!(!has_code(&lint_document(&rounded), "QR206"));
+
+    let mut average = doc();
+    let mut average_rows = rows(1_501);
+    if let Some(last) = average_rows.last_mut() {
+        last.insert("name".into(), CellValue::text("平均值"));
+    }
+    average
+        .blocks
+        .push(table("average", None, columns(), average_rows));
+    assert!(!has_code(&lint_document(&average), "QR206"));
+
+    let mut ignored = table("ignored", None, columns(), rows(1_501));
+    ignored.lint_ignore = vec!["QR206".into()];
+    let mut ignored_document = doc();
+    ignored_document.blocks.push(ignored);
+    let report = lint_document(&ignored_document);
+    assert!(!has_code(&report, "QR206"));
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
+fn qr206_validates_composite_integer_summary_rows() {
+    fn columns() -> Vec<ColumnNode> {
+        vec![
+            ColumnNode::leaf("name", "名称"),
+            ColumnNode::leaf("counts", "项目/经费"),
+        ]
+    }
+
+    let mut slash = doc();
+    slash.blocks.push(table(
+        "slash",
+        None,
+        columns(),
+        vec![
+            row(&[
+                ("name", CellValue::text("甲")),
+                ("counts", CellValue::text("3531 / 934")),
+            ]),
+            row(&[
+                ("name", CellValue::text("乙")),
+                ("counts", CellValue::text("3000 / 900")),
+            ]),
+            row(&[
+                ("name", CellValue::text("总计")),
+                ("counts", CellValue::text("6532 / 1835")),
+            ]),
+        ],
+    ));
+    let report = lint_document(&slash);
+    let diagnostic = finding(&report, "QR206");
+    assert!(diagnostic.message.contains("is `6532 / 1835`"));
+    assert!(diagnostic.message.contains("sum to `6531 / 1834`"));
+    assert!(diagnostic.hint.contains("to `6531 / 1834`"));
+
+    let mut slash_correct = doc();
+    slash_correct.blocks.push(table(
+        "slash-correct",
+        None,
+        columns(),
+        vec![
+            row(&[
+                ("name", CellValue::text("甲")),
+                ("counts", CellValue::text("3531 / 934")),
+            ]),
+            row(&[
+                ("name", CellValue::text("乙")),
+                ("counts", CellValue::text("3000 / 900")),
+            ]),
+            row(&[
+                ("name", CellValue::text("总计")),
+                ("counts", CellValue::text("6531 / 1834")),
+            ]),
+        ],
+    ));
+    assert!(!has_code(&lint_document(&slash_correct), "QR206"));
+
+    let mut middle_dot = doc();
+    middle_dot.blocks.push(table(
+        "middle-dot",
+        None,
+        columns(),
+        vec![
+            row(&[
+                ("name", CellValue::text("甲")),
+                ("counts", CellValue::text("8·27·35")),
+            ]),
+            row(&[
+                ("name", CellValue::text("乙")),
+                ("counts", CellValue::text("2·3·5")),
+            ]),
+            row(&[
+                ("name", CellValue::text("合计")),
+                ("counts", CellValue::text("10·31·40")),
+            ]),
+        ],
+    ));
+    let report = lint_document(&middle_dot);
+    let diagnostic = finding(&report, "QR206");
+    assert!(diagnostic.message.contains("is `10·31·40`"));
+    assert!(diagnostic.message.contains("sum to `10·30·40`"));
+    assert!(diagnostic.hint.contains("to `10·30·40`"));
+}
+
+#[test]
+fn qr206_validates_full_width_composite_separator() {
+    let mut document = doc();
+    document.blocks.push(table(
+        "full-width",
+        None,
+        vec![
+            ColumnNode::leaf("name", "名称"),
+            ColumnNode::leaf("counts", "项目／经费"),
+        ],
+        vec![
+            row(&[
+                ("name", CellValue::text("甲")),
+                ("counts", CellValue::text("5／7")),
+            ]),
+            row(&[
+                ("name", CellValue::text("乙")),
+                ("counts", CellValue::text("1／2")),
+            ]),
+            row(&[
+                ("name", CellValue::text("合计")),
+                ("counts", CellValue::text("7／9")),
+            ]),
+        ],
+    ));
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR206");
+    assert!(diagnostic.message.contains("is `7／9`"));
+    assert!(diagnostic.message.contains("sum to `6／9`"));
 }
 
 #[test]
@@ -1494,6 +1766,144 @@ fn qr317_flags_unguarded_line_end_labels() {
 }
 
 #[test]
+fn qr318_flags_small_integer_axes_without_min_interval() {
+    let mut document = doc();
+    document.blocks.push(chart_named(
+        "small-int",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": ["A", "B", "C"]},
+            "yAxis": {"type": "value"},
+            "series": [{"type": "bar", "data": [0, 1, 2]}]
+        }),
+    ));
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR318");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert!(diagnostic.message.contains("max 2"));
+    assert!(diagnostic.message.contains("yAxis"));
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].option.yAxis"));
+    assert!(diagnostic.hint.contains("minInterval"));
+
+    let mut line = doc();
+    line.blocks.push(chart_named(
+        "small-line",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": ["A", "B"]},
+            "yAxis": {"type": "value"},
+            "series": [{"type": "line", "data": [1, 2]}]
+        }),
+    ));
+    assert!(has_code(&lint_document(&line), "QR318"));
+
+    for (id, y_axis) in [
+        (
+            "min-interval-one",
+            serde_json::json!({"type": "value", "minInterval": 1}),
+        ),
+        (
+            "interval-one",
+            serde_json::json!({"type": "value", "interval": 1}),
+        ),
+        (
+            "min-interval-two",
+            serde_json::json!({"type": "value", "minInterval": 2}),
+        ),
+    ] {
+        let mut fixed = doc();
+        fixed.blocks.push(chart_named(
+            id,
+            serde_json::json!({
+                "xAxis": {"type": "category", "data": ["A", "B", "C"]},
+                "yAxis": y_axis,
+                "series": [{"type": "bar", "data": [0, 1, 2]}]
+            }),
+        ));
+        assert!(!has_code(&lint_document(&fixed), "QR318"), "{id}");
+    }
+
+    for (id, data) in [
+        ("decimal", serde_json::json!([0.5, 1])),
+        ("large", serde_json::json!([1, 16])),
+    ] {
+        let mut skipped = doc();
+        skipped.blocks.push(chart_named(
+            id,
+            serde_json::json!({
+                "xAxis": {"type": "category", "data": ["A", "B"]},
+                "yAxis": {"type": "value"},
+                "series": [{"type": "bar", "data": data}]
+            }),
+        ));
+        assert!(!has_code(&lint_document(&skipped), "QR318"), "{id}");
+    }
+
+    let mut dual_axis = doc();
+    dual_axis.blocks.push(chart_named(
+        "dual-axis",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": ["A", "B"]},
+            "yAxis": [{"type": "value"}, {"type": "value"}],
+            "series": [{"type": "bar", "data": [1, 2]}]
+        }),
+    ));
+    assert!(!has_code(&lint_document(&dual_axis), "QR318"));
+
+    let mut pie = doc();
+    pie.blocks.push(chart_named(
+        "pie",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": ["A", "B"]},
+            "yAxis": {"type": "value"},
+            "series": [{"type": "pie", "data": [1, 2]}]
+        }),
+    ));
+    assert!(!has_code(&lint_document(&pie), "QR318"));
+
+    let mut polar = doc();
+    polar.blocks.push(chart_named(
+        "polar",
+        serde_json::json!({
+            "polar": {},
+            "xAxis": {"type": "category", "data": ["A", "B"]},
+            "yAxis": {"type": "value"},
+            "series": [{"type": "bar", "data": [1, 2]}]
+        }),
+    ));
+    assert!(!has_code(&lint_document(&polar), "QR318"));
+
+    let mut horizontal = doc();
+    horizontal.blocks.push(chart_named(
+        "horizontal",
+        serde_json::json!({
+            "xAxis": {"type": "value"},
+            "yAxis": {"type": "category", "data": ["A", "B"]},
+            "series": [{"type": "bar", "data": [1, 2]}]
+        }),
+    ));
+    let report = lint_document(&horizontal);
+    assert_eq!(
+        finding(&report, "QR318").path.as_deref(),
+        Some("blocks[0].option.xAxis")
+    );
+
+    let mut ignored = chart_named(
+        "ignored",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": ["A", "B"]},
+            "yAxis": {"type": "value"},
+            "series": [{"type": "bar", "data": [1, 2]}]
+        }),
+    );
+    ignored.lint_ignore = vec!["QR318".into()];
+    let mut ignored_document = doc();
+    ignored_document.blocks.push(ignored);
+    let report = lint_document(&ignored_document);
+    assert!(!has_code(&report, "QR318"));
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
 fn qr416_flags_third_consecutive_visual_only() {
     let mut two = doc();
     two.blocks.push(table(
@@ -1717,6 +2127,96 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
     }
     let report = lint_document(&ignored);
     assert!(!has_code(&report, "QR419"), "{:?}", report.diagnostics);
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
+fn qr420_flags_redundant_note_prefixes() {
+    let notes = [
+        "注：数据来源为教育部。",
+        "注: 数据来源为教育部。",
+        "表注：统计口径为2025年。",
+        "表注: 统计口径为2025年。",
+        "图注：数据来自学校官网。",
+        "图注: 数据来自学校官网。",
+        "Note: source is the Ministry of Education.",
+        "note: source is the Ministry of Education.",
+    ];
+
+    let mut flagged = doc();
+    for (index, note) in notes.iter().enumerate() {
+        let id = format!("note-{index}");
+        flagged.blocks.push(with_table_note(
+            table(
+                id.as_str(),
+                None,
+                vec![ColumnNode::leaf("a", "A")],
+                vec![row(&[("a", CellValue::text("x"))])],
+            ),
+            note,
+        ));
+    }
+    let report = lint_document(&flagged);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR420")
+        .collect();
+    assert_eq!(hits.len(), notes.len(), "{:?}", report.diagnostics);
+    assert!(hits.iter().all(|diagnostic| diagnostic.suppressible
+        && diagnostic.message.contains("redundant `注：` prefix")));
+    assert_eq!(
+        hits.first()
+            .and_then(|diagnostic| diagnostic.path.as_deref()),
+        Some("blocks[0].note")
+    );
+
+    let mut chart = chart_named(
+        "chart-note",
+        serde_json::json!({"series": [{"type": "bar", "data": [1, 2]}]}),
+    );
+    if let BlockKind::Echarts(ref mut chart_block) = chart.body {
+        chart_block.note = Some("图注：数据来自学校官网。".into());
+    }
+    let mut chart_document = doc();
+    chart_document.blocks.push(chart);
+    let report = lint_document(&chart_document);
+    assert_eq!(
+        finding(&report, "QR420").path.as_deref(),
+        Some("blocks[0].note")
+    );
+
+    let mut clean = doc();
+    clean.blocks.push(with_table_note(
+        table(
+            "clean-note",
+            None,
+            vec![ColumnNode::leaf("a", "A")],
+            vec![row(&[("a", CellValue::text("x"))])],
+        ),
+        "数据来源：教育部。",
+    ));
+    let mut html = custom_html("<div>KPI</div>", "KPI");
+    if let BlockKind::CustomHtml(ref mut custom) = html.body {
+        custom.note = Some("注：不计入合计。".into());
+    }
+    clean.blocks.push(html);
+    assert!(!has_code(&lint_document(&clean), "QR420"));
+
+    let mut ignored = with_table_note(
+        table(
+            "ignored-note",
+            None,
+            vec![ColumnNode::leaf("a", "A")],
+            vec![row(&[("a", CellValue::text("x"))])],
+        ),
+        "注：可忽略。",
+    );
+    ignored.lint_ignore = vec!["QR420".into()];
+    let mut ignored_document = doc();
+    ignored_document.blocks.push(ignored);
+    let report = lint_document(&ignored_document);
+    assert!(!has_code(&report, "QR420"));
     assert!(report.summary.suppressed >= 1);
 }
 

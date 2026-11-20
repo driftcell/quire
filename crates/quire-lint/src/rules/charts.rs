@@ -147,6 +147,7 @@ fn check_chart(
     let option = effective_chart_option(chart);
     check_dense_labels(engine, block, &option, index);
     check_line_end_labels(engine, block, &option, index);
+    check_integer_axis_interval(engine, block, &option, index);
     let has_matrix = option.get("matrix").is_some_and(|value| !value.is_null());
     for (axis_key, axis_path) in [("xAxis", "xAxis"), ("yAxis", "yAxis")] {
         let grid_count = i64::try_from(axis_count(&option, "grid")).unwrap_or(i64::MAX);
@@ -467,6 +468,131 @@ fn check_line_end_labels(
         Some(block.id.clone()),
         Some(format!("blocks[{index}].option.series")),
     );
+}
+
+fn check_integer_axis_interval(
+    engine: &mut Engine<'_>,
+    block: &quire_protocol::Block,
+    option: &Value,
+    index: usize,
+) {
+    let series = chart_series(option);
+    if series.is_empty()
+        || !series.iter().all(|entry| {
+            matches!(
+                entry.get("type").and_then(Value::as_str),
+                Some("bar" | "line")
+            )
+        })
+    {
+        return;
+    }
+    if option.get("polar").is_some_and(|value| !value.is_null())
+        || option.get("radar").is_some_and(|value| !value.is_null())
+        || series.iter().any(|entry| {
+            matches!(
+                entry.get("coordinateSystem").and_then(Value::as_str),
+                Some("polar" | "radar")
+            )
+        })
+    {
+        return;
+    }
+
+    let x_axes = entries(option.get("xAxis"));
+    let y_axes = entries(option.get("yAxis"));
+    if x_axes.len() != 1 || y_axes.len() != 1 {
+        return;
+    }
+    let Some(x_axis) = x_axes.first() else {
+        return;
+    };
+    let Some(y_axis) = y_axes.first() else {
+        return;
+    };
+    let (axis_name, axis) = if is_category_axis(x_axis) && !is_category_axis(y_axis) {
+        ("yAxis", *y_axis)
+    } else if is_category_axis(y_axis) && !is_category_axis(x_axis) {
+        ("xAxis", *x_axis)
+    } else {
+        return;
+    };
+
+    let numbers = series_numbers(&series);
+    if numbers.len() < 2
+        || numbers
+            .iter()
+            .any(|value| *value < 0.0 || value.fract() != 0.0)
+    {
+        return;
+    }
+    let max_val = numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if !(1.0..=15.0).contains(&max_val) || axis_interval_is_handled(axis) {
+        return;
+    }
+
+    engine.report(
+        RuleId::EchartsIntegerAxisMinInterval,
+        format!(
+            "chart `{}` plots small integer counts (max {max_val}) without `minInterval: 1` on `{axis_name}`",
+            block.id
+        ),
+        format!(
+            "On `{axis_name}`, set `\"minInterval\": 1` so ECharts does not render fractional axis ticks (like 0.5 or 2.4) for integer count data."
+        ),
+        Some(block.id.clone()),
+        Some(format!("blocks[{index}].option.{axis_name}")),
+    );
+}
+
+fn is_category_axis(axis: &Value) -> bool {
+    axis.get("type").and_then(Value::as_str) == Some("category")
+        || axis.get("data").is_some_and(Value::is_array)
+}
+
+fn axis_interval_is_handled(axis: &Value) -> bool {
+    axis.get("minInterval")
+        .and_then(Value::as_f64)
+        .is_some_and(is_positive_integer)
+        || axis
+            .get("interval")
+            .and_then(Value::as_f64)
+            .is_some_and(is_positive_integer)
+}
+
+fn is_positive_integer(value: f64) -> bool {
+    value >= 1.0 && value.fract() == 0.0
+}
+
+fn series_numbers(series: &[&Value]) -> Vec<f64> {
+    let mut numbers = Vec::new();
+    for entry in series {
+        if let Some(data) = entry.get("data") {
+            collect_numbers(data, &mut numbers);
+        }
+    }
+    numbers
+}
+
+fn collect_numbers(value: &Value, numbers: &mut Vec<f64>) {
+    match value {
+        Value::Number(number) => {
+            if let Some(value) = number.as_f64() {
+                numbers.push(value);
+            }
+        }
+        Value::Object(object) => {
+            if let Some(value) = object.get("value") {
+                collect_numbers(value, numbers);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_numbers(item, numbers);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn axis_label_handled(value: &Value) -> bool {

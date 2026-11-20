@@ -24,6 +24,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
     check_inline_syntax(document, engine);
     check_consecutive_visuals(document, engine);
     check_boring_headings(document, engine);
+    check_duplicate_note_prefix(document, engine);
 }
 
 fn check_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
@@ -476,6 +477,46 @@ fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
             Some(format!("blocks[{index}].text")),
         );
     }
+}
+
+fn check_duplicate_note_prefix(document: &ReportDocument, engine: &mut Engine<'_>) {
+    for (index, block) in document.blocks.iter().enumerate() {
+        let note = match &block.body {
+            BlockKind::Table(table) => table.note.as_deref(),
+            BlockKind::Echarts(chart) => chart.note.as_deref(),
+            _ => None,
+        };
+        let Some(note) = note else {
+            continue;
+        };
+        if !has_redundant_note_prefix(note) {
+            continue;
+        }
+        engine.report(
+            RuleId::DuplicateNotePrefix,
+            format!(
+                "{} `{}` note starts with a redundant `注：` prefix",
+                block.block_type(),
+                block.id
+            ),
+            "In `note` via apply_operations (UpdateBlock) or preview_echarts, strip the leading `注：` / `图注：` / `表注：` prefix because the report renderer prepends `注：` automatically.",
+            Some(block.id.clone()),
+            Some(format!("blocks[{index}].note")),
+        );
+    }
+}
+
+fn has_redundant_note_prefix(note: &str) -> bool {
+    let trimmed = note.trim_start();
+    trimmed.starts_with("注：")
+        || trimmed.starts_with("注:")
+        || trimmed.starts_with("表注：")
+        || trimmed.starts_with("表注:")
+        || trimmed.starts_with("图注：")
+        || trimmed.starts_with("图注:")
+        || trimmed
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Note:"))
 }
 
 pub(super) fn normalize_heading_text(text: &str) -> &str {

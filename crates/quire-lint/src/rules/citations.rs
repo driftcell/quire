@@ -457,6 +457,19 @@ fn check_sources(document: &ReportDocument, engine: &mut Engine<'_>) {
         else {
             continue;
         };
+        if let Some(host) = url_host(url)
+            && low_authority_domain(&host).is_some()
+        {
+            engine.report(
+                RuleId::LowAuthoritySourceDomain,
+                format!(
+                    "source `{source_id}` uses low-authority aggregator/wiki domain `{host}`"
+                ),
+                "In `upsert_sources`, replace wiki or self-media aggregator URLs with primary `.gov.cn`, `.edu.cn`, official statistical communiqué, or authoritative state media sources; add `QR108` to `document.lint.ignore` only if the aggregator itself is the subject.",
+                None,
+                Some(format!("sources.{source_id}.url")),
+            );
+        }
         if safe_href(url).is_none() {
             engine.report(
                 RuleId::SourceUrlUnsafe,
@@ -492,6 +505,46 @@ fn source_ids(document: &ReportDocument) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+const LOW_AUTHORITY_DOMAINS: &[&str] = &[
+    "baike.baidu.com",
+    "baijiahao.baidu.com",
+    "toutiao.com",
+    "sohu.com",
+    "163.com",
+    "zhihu.com",
+    "csdn.net",
+    "jianshu.com",
+    "360doc.com",
+    "bilibili.com",
+    "weibo.com",
+    "xiaohongshu.com",
+];
+
+fn low_authority_domain(host: &str) -> Option<&'static str> {
+    LOW_AUTHORITY_DOMAINS.iter().copied().find(|domain| {
+        host == *domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    })
+}
+
+fn url_host(url: &str) -> Option<String> {
+    let (_, rest) = url.trim().split_once("://")?;
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split_once(']').map(|(host, _)| host)?
+    } else {
+        authority.split(':').next().unwrap_or(authority)
+    };
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(host.as_str());
+    (!host.is_empty()).then(|| host.to_string())
 }
 
 fn has_numeric_claim(text: &str) -> bool {

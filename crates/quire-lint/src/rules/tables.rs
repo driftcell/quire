@@ -25,6 +25,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
         check_constant_columns(engine, block, table, &shape, index);
         check_a4_width(engine, block, table, &shape, index);
         check_numeric_units(engine, block, table, &shape, index);
+        check_summary_row(engine, block, table, &shape, index);
     }
 }
 
@@ -298,6 +299,156 @@ fn check_numeric_units(
             Some(format!("blocks[{index}].rows.{}", leaf.key)),
         );
     }
+}
+
+fn check_summary_row(
+    engine: &mut Engine<'_>,
+    block: &quire_protocol::Block,
+    table: &TableBlock,
+    shape: &TableShape,
+    index: usize,
+) {
+    if table.rows.len() < 3 {
+        return;
+    }
+    let Some(last_row) = table.rows.last() else {
+        return;
+    };
+    let Some(first_leaf) = shape.leaves.first() else {
+        return;
+    };
+    let Some(first_cell) = last_row.get(&first_leaf.key) else {
+        return;
+    };
+    let first_text = display_cell(first_cell, first_leaf.data_type);
+    let first_text = first_text.trim();
+    let is_summary = first_text.contains("合计") || first_text.contains("总计");
+    if !is_summary || first_text.contains("平均") || first_text.contains("均值") {
+        return;
+    }
+    if table
+        .note
+        .as_deref()
+        .is_some_and(|note| note.contains("四舍五入"))
+    {
+        return;
+    }
+
+    let last_row_idx = table.rows.len().saturating_sub(1);
+    for leaf in shape.leaves.iter().skip(1) {
+        let finding = single_integer_mismatch(table, &leaf.key)
+            .or_else(|| composite_integer_mismatch(table, &leaf.key));
+        let Some((actual, expected)) = finding else {
+            continue;
+        };
+        engine.report(
+            RuleId::TableSummaryRowMismatch,
+            format!(
+                "table `{}` summary row column `{}` is `{actual}`, but rows sum to `{expected}`",
+                block.id, leaf.key
+            ),
+            format!(
+                "In this Table via apply_operations (UpdateBlock), update summary row column `{}` to `{expected}` (or verify the individual row figures above it).",
+                leaf.key
+            ),
+            Some(block.id.clone()),
+            Some(format!(
+                "blocks[{index}].rows[{last_row_idx}].{}",
+                leaf.key
+            )),
+        );
+    }
+}
+
+fn single_integer_mismatch(table: &TableBlock, key: &str) -> Option<(String, String)> {
+    let last = table.rows.last()?;
+    let actual = parse_integer_cell(&last.get(key)?.display_text(), false)?;
+    let mut expected: i128 = 0;
+    for row in table.rows.iter().take(table.rows.len().saturating_sub(1)) {
+        let value = parse_integer_cell(&row.get(key)?.display_text(), true)?;
+        expected = expected.checked_add(value)?;
+    }
+    (actual != expected).then(|| (actual.to_string(), expected.to_string()))
+}
+
+fn composite_integer_mismatch(table: &TableBlock, key: &str) -> Option<(String, String)> {
+    ['/', '／', '·']
+        .into_iter()
+        .find_map(|separator| composite_with_separator(table, key, separator))
+}
+
+fn composite_with_separator(
+    table: &TableBlock,
+    key: &str,
+    separator: char,
+) -> Option<(String, String)> {
+    let last = table.rows.last()?;
+    let actual = parse_integer_parts(&last.get(key)?.display_text(), separator)?;
+    let width = actual.len();
+    if !(2..=4).contains(&width) {
+        return None;
+    }
+    let mut expected = vec![0i128; width];
+    for row in table.rows.iter().take(table.rows.len().saturating_sub(1)) {
+        let parts = parse_integer_parts(&row.get(key)?.display_text(), separator)?;
+        if parts.len() != width {
+            return None;
+        }
+        for (sum, part) in expected.iter_mut().zip(parts) {
+            *sum = (*sum).checked_add(part)?;
+        }
+    }
+    (expected != actual).then(|| {
+        (
+            join_integer_parts(&actual, separator),
+            join_integer_parts(&expected, separator),
+        )
+    })
+}
+
+fn parse_integer_parts(text: &str, separator: char) -> Option<Vec<i128>> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = trimmed.split(separator).map(str::trim).collect();
+    if !(2..=4).contains(&parts.len()) {
+        return None;
+    }
+    let mut values = Vec::with_capacity(parts.len());
+    for part in parts {
+        values.push(parse_integer_cell(part, false)?);
+    }
+    Some(values)
+}
+
+fn join_integer_parts(parts: &[i128], separator: char) -> String {
+    let glue = if separator == '/' {
+        format!(" {separator} ")
+    } else {
+        separator.to_string()
+    };
+    parts
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(&glue)
+}
+
+fn parse_integer_cell(text: &str, allow_placeholder: bool) -> Option<i128> {
+    let trimmed = text.trim();
+    if allow_placeholder && matches!(trimmed, "" | "-" | "—") {
+        return Some(0);
+    }
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized: String = trimmed
+        .chars()
+        .filter(|ch| !matches!(ch, ',' | '，'))
+        .collect();
+    let value = normalized.parse::<i128>().ok()?;
+    (value >= 0).then_some(value)
 }
 
 fn display_width(text: &str) -> usize {

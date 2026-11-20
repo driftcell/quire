@@ -20,11 +20,13 @@ pub enum RuleId {
     SourceTitleEmpty,
     SourceUrlUnsafe,
     MalformedCitationSyntax,
+    LowAuthoritySourceDomain,
     TableColumnTooNarrow,
     TableEmptyColumn,
     TableConstantColumn,
     TableTooWideForA4,
     TableNumericUnitInconsistent,
+    TableSummaryRowMismatch,
     EchartsDataMissing,
     EchartsJsFunction,
     EchartsOptionMissing,
@@ -42,6 +44,7 @@ pub enum RuleId {
     EchartsPaletteInconsistent,
     EchartsDenseLabelsOverlap,
     EchartsLineEndLabelStyle,
+    EchartsIntegerAxisMinInterval,
     PlaceholderTextLeak,
     HeadingLevelJump,
     HeadingEmptySection,
@@ -61,6 +64,7 @@ pub enum RuleId {
     WallOfTextParagraph,
     BoringOrCountingHeading,
     DenseProseRunNeedsVisual,
+    DuplicateNotePrefix,
     CssSyntaxError,
     CustomHtmlExternalResource,
     CustomHtmlFixedOverflow,
@@ -141,12 +145,14 @@ define_rules! {
     SourceTitleEmpty = "QR105", "source-title-empty", Warning, true;
     SourceUrlUnsafe = "QR106", "source-url-unsafe", Warning, true;
     MalformedCitationSyntax = "QR107", "malformed-citation-syntax", Error, false;
+    LowAuthoritySourceDomain = "QR108", "low-authority-source-domain", Warning, true;
 
     TableColumnTooNarrow = "QR201", "table-column-too-narrow", Warning, true;
     TableEmptyColumn = "QR202", "table-empty-column", Warning, true;
     TableConstantColumn = "QR203", "table-constant-column", Warning, true;
     TableTooWideForA4 = "QR204", "table-too-wide-for-a4", Warning, true;
     TableNumericUnitInconsistent = "QR205", "table-numeric-unit-inconsistent", Warning, true;
+    TableSummaryRowMismatch = "QR206", "table-summary-row-mismatch", Warning, true;
 
     EchartsDataMissing = "QR301", "echarts-data-missing", Error, false;
     EchartsJsFunction = "QR302", "echarts-js-function", Error, false;
@@ -165,6 +171,7 @@ define_rules! {
     EchartsPaletteInconsistent = "QR315", "echarts-palette-inconsistent", Warning, true;
     EchartsDenseLabelsOverlap = "QR316", "echarts-dense-labels-overlap", Warning, true;
     EchartsLineEndLabelStyle = "QR317", "echarts-line-end-label-style", Warning, true;
+    EchartsIntegerAxisMinInterval = "QR318", "echarts-integer-axis-min-interval", Warning, true;
 
     PlaceholderTextLeak = "QR401", "placeholder-text-leak", Error, true;
     HeadingLevelJump = "QR402", "heading-level-jump", Warning, true;
@@ -185,6 +192,7 @@ define_rules! {
     WallOfTextParagraph = "QR417", "wall-of-text-paragraph", Warning, true;
     BoringOrCountingHeading = "QR418", "boring-or-counting-heading", Warning, true;
     DenseProseRunNeedsVisual = "QR419", "dense-prose-run-needs-visual", Warning, true;
+    DuplicateNotePrefix = "QR420", "duplicate-note-prefix", Warning, true;
 
     CssSyntaxError = "QR501", "css-syntax-error", Error, false;
     CustomHtmlExternalResource = "QR502", "custom-html-external-resource", Warning, true;

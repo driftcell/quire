@@ -67,6 +67,20 @@ Category ranges:
 | `QR4xx` | Structure and text quality | Suppressible, including placeholder errors |
 | `QR5xx` | CSS/HTML/theme/cover/TOC | `QR501` non-suppressible; other style advisories suppressible |
 
+### Source and table integrity
+
+`QR108` parses each non-empty source URL, ignores case, port and a leading `www.`, and reports exact
+or subdomain matches for the known wiki/self-media aggregator list (`baike.baidu.com`,
+`baijiahao.baidu.com`, `toutiao.com`, `sohu.com`, `163.com`, `zhihu.com`, `csdn.net`, `jianshu.com`,
+`360doc.com`, `bilibili.com`, `weibo.com`, `xiaohongshu.com`). Diagnostics are document-scoped and
+do not flag lookalike domains such as `baike.baidu.com.evil.com`.
+
+`QR206` verifies a final `合计`/`总计` row when the table has at least three rows and its note does
+not declare `四舍五入`. Every non-first column is checked as a non-negative integer sum (thousands
+commas allowed; empty/`-`/`—` count as zero in data rows) or as a fixed-width 2-4 part composite
+separated by `/`, `／` or `·`. Each mismatched column reports once, and the hint carries the exact
+expected value so the model can copy it without mental arithmetic.
+
 ### AI-slop prose checks
 
 `QR412`-`QR415` analyze only `BlockKind::Paragraph`; headings are too short to judge and `Quote`
@@ -94,6 +108,12 @@ label.
 `endLabel.textBorderWidth: 0` to avoid white-background double-stroke ghosting. Two or more line
 series with end labels also need a top-level or series-level `labelLayout.hideOverlap: true` guard.
 
+`QR318` targets Cartesian bar/line charts whose series contain at least two non-negative integer
+values with a maximum in `1..=15`. When exactly one axis is categorical, the numeric axis must set a
+positive integer `minInterval` or `interval`; otherwise ECharts may draw fractional ticks such as
+`0.5` or `2.4`. The check reports once and points at `option.xAxis` or `option.yAxis`. Polar/radar
+charts, mixed series types and dual numeric axes are exempt.
+
 `QR416` counts consecutive Table/ECharts/CustomHtml blocks. Empty text and headings do not reset the
 streak; a non-empty Paragraph or Quote does. The third visual block in a streak reports once, so two
 complementary visuals remain allowed.
@@ -112,6 +132,10 @@ or a long title with concrete data/entities, is exempt.
 resets on a new H1/H2 and after any Table/ECharts/CustomHtml, and does not let H3-H6 split a prose run.
 Four or more non-visual paragraphs (or non-empty quotes) totaling 1000+ visible characters in a
 non-exempt section report once. `导论`、`引言`、`前言`、`结语`、`总结`、`摘要` sections are exempt.
+
+`QR420` flags Table and ECharts notes whose trimmed start begins with `注：`, `注:`, `表注：`,
+`表注:`, `图注：`, `图注:` or `Note:`/`note:`. The renderer already prepends `注：`, so keeping the
+prefix produces `注：注：` in the PDF. CustomHtml notes are outside this rule.
 
 ### Matching and filter layers
 
@@ -178,9 +202,13 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
 - Contrast tics are sentence-bounded and require a 1-45 character gap; a single contrast sentence or
   a single light hedging phrase does not report `QR415`.
 - Dense chart labels report at most once per chart; line end-label checks fire at most once per chart;
+  `QR318` only fires on a single numeric axis with 2+ non-negative integer values and max `1..=15`;
   `QR416` reports only the third visual in a run; `QR417` never double-reports a block that already
   breached the single-paragraph wall limit; `QR418` skips level-1 headings and numbering-only
-  prefixes; `QR419` reports once per non-exempt H2 prose run.
+  prefixes; `QR419` reports once per non-exempt H2 prose run; `QR420` only inspects Table/ECharts
+  notes.
+- `QR108` matches hosts exactly or as subdomains, so lookalike domains do not report;
+  `QR206` reports at most once per mismatched column and carries the expected sum in its hint.
 - Hint groups are deterministic, merged by block, capped at five expanded groups, and preserve tier
   order; `apply_operations` never advances past inline warnings without naming the affected blocks.
 - Document and block ignore policies survive reload, revision updates and rollback.
