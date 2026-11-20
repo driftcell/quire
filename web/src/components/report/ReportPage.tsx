@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { EphemeralPreviewCard } from "@/components/report/EphemeralPreviewCard";
 import { ReportBlockItem } from "@/components/report/ReportBlockItem";
 import { ScaledPage } from "@/components/report/ScaledPage";
 import {
@@ -29,7 +28,7 @@ export interface ReportPageProps {
   showFooter: boolean;
   pageScale: number;
   plain: boolean;
-  items: MixedRenderItem[];
+  items: Array<Extract<MixedRenderItem, { kind: "slice" }>>;
   cover: ReactNode;
   toc: ReactNode;
   bibliography: ReactNode;
@@ -114,25 +113,19 @@ export function ReportPage({
             {toc}
             {items.map((item) => (
               <div key={item.key}>
-                {item.preview ? (
-                  <EphemeralPreviewCard preview={item.preview} />
-                ) : item.slice ? (
-                  <ReportBlockItem
-                    slice={item.slice}
-                    isPaged
-                    printMode={printMode}
-                    showChartTools={showChartTools}
-                    computed={computed}
-                    bibliographyById={bibliographyById}
-                    commentCount={
-                      openCountByBlock.get(item.slice.block.id) ?? 0
-                    }
-                    blockQuotes={quotesByBlock.get(item.slice.block.id)}
-                    onCitationClick={onCitationClick}
-                    onOpenCommentForBlock={onOpenCommentForBlock}
-                    onOpenCommentThread={onOpenCommentThread}
-                  />
-                ) : null}
+                <ReportBlockItem
+                  slice={item.slice}
+                  isPaged
+                  printMode={printMode}
+                  showChartTools={showChartTools}
+                  computed={computed}
+                  bibliographyById={bibliographyById}
+                  commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
+                  blockQuotes={quotesByBlock.get(item.slice.block.id)}
+                  onCitationClick={onCitationClick}
+                  onOpenCommentForBlock={onOpenCommentForBlock}
+                  onOpenCommentThread={onOpenCommentThread}
+                />
               </div>
             ))}
             {bibliography}

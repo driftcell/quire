@@ -4,7 +4,6 @@ import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentP
 import type { QuoteHighlight } from "@/components/report/InlineMarkdown";
 import {
   buildMixedItems,
-  mixPreviewsIntoPages,
   type MixedRenderItem,
 } from "@/components/report/ephemeralPreviewMix";
 import { ReportBibliography } from "@/components/report/ReportBibliography";
@@ -134,9 +133,13 @@ export function ReportViewer({
         : [],
     [ephemeralPreviews],
   );
+  // NOTE: Ephemeral streaming previews are intentionally restricted to continuous mode.
+  // Paged mode relies on pixel-exact A4 box packing; mixing live streaming preview cards
+  // into A4 pages triggers expensive re-layout/jank and overflows fixed page heights.
+  // Do not re-enable ephemeral previews in paged mode.
   const visiblePreviews = useMemo(
-    () => (suppressChrome ? [] : previewList),
-    [previewList, suppressChrome],
+    () => (suppressChrome || isPaged ? [] : previewList),
+    [isPaged, previewList, suppressChrome],
   );
 
   const layoutSignature = useMemo(
@@ -228,10 +231,16 @@ export function ReportViewer({
 
   const blockPageMap = useMemo(() => buildBlockPageMap(pages), [pages]);
 
-  const pagedMixedItems = useMemo(() => {
+  const pagedItems = useMemo(() => {
     if (!isPaged) return [];
-    return mixPreviewsIntoPages(pages, visiblePreviews, document.blocks);
-  }, [isPaged, pages, visiblePreviews, document.blocks]);
+    return pages.map((page) =>
+      page.items.map((slice, idx) => ({
+        kind: "slice" as const,
+        key: `${slice.block.id}-${slice.rowStart ?? 0}-${idx}`,
+        slice,
+      })),
+    );
+  }, [isPaged, pages]);
 
   const visiblePages = useMemo(() => {
     const entries = pages.map((page, pageIdx) => ({ page, pageIdx }));
@@ -372,9 +381,9 @@ export function ReportViewer({
           {renderToc(blockPageMap)}
           {continuousItems.map((item: MixedRenderItem) => (
             <div key={item.key}>
-              {item.preview ? (
+              {item.kind === "preview" ? (
                 <EphemeralPreviewCard preview={item.preview} />
-              ) : item.slice ? (
+              ) : (
                 <ReportBlockItem
                   slice={item.slice}
                   isPaged={false}
@@ -388,7 +397,7 @@ export function ReportViewer({
                   onOpenCommentForBlock={onOpenCommentForBlock}
                   onOpenCommentThread={onOpenCommentThread}
                 />
-              ) : null}
+              )}
             </div>
           ))}
           {renderBibliography()}
@@ -407,7 +416,7 @@ export function ReportViewer({
               showFooter={showFooter}
               pageScale={pageScale}
               plain={suppressChrome}
-              items={pagedMixedItems[pageIdx] ?? []}
+              items={pagedItems[pageIdx] ?? []}
               cover={
                 page.includeCover ? (
                   <ReportCover cover={document.cover} />
