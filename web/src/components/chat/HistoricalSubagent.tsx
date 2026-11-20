@@ -28,7 +28,7 @@ export function HistoricalSubagent({
   );
   return (
     <Trace>
-      <TraceCollapsible defaultOpen>
+      <TraceCollapsible defaultOpen={false}>
         <TraceCollapsibleTrigger>
           <TraceLine
             className="h-6 text-xs leading-5"

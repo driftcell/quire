@@ -332,7 +332,7 @@ function LiveSubagent({
   const title = sub.displayName?.trim() || sub.agentName;
   return (
     <Trace>
-      <TraceCollapsible defaultOpen>
+      <TraceCollapsible defaultOpen={false}>
         <TraceCollapsibleTrigger>
           <TraceLine
             className="h-6 text-xs leading-5"

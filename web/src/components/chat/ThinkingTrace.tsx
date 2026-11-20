@@ -52,6 +52,12 @@ export function ThinkingTrace({
       ? Math.max(1, Math.ceil(durationMs / 1000))
       : 0;
   const shownSeconds = elapsedSeconds > 0 ? elapsedSeconds : historicalSeconds;
+  const hasDuration = shownSeconds > 0;
+  const title = isStreaming
+    ? "正在思考"
+    : hasDuration
+      ? "思考用时"
+      : "思考过程";
 
   useEffect(() => {
     if (!isStreaming) {
@@ -115,8 +121,8 @@ export function ThinkingTrace({
                 <BrainIcon className="size-3.5" />
               )}
             </TraceIcon>
-            <TraceTitle>{isStreaming ? "正在思考" : "思考用时"}</TraceTitle>
-            {shownSeconds > 0 && (
+            <TraceTitle>{title}</TraceTitle>
+            {hasDuration && (
               <TraceDescription className="tabular-nums">
                 {formatDurationSeconds(shownSeconds)}
               </TraceDescription>
