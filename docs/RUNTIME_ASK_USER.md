@@ -101,7 +101,7 @@ Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
 - `ask_user_skip_marks_skipped_and_continues`
 - `new_message_dismisses_pending_question_and_starts_a_new_turn`
 
-Unit coverage in `crates/quire-runtime/src/rig_agent.rs`:
+Unit coverage in `crates/quire-runtime/src/rig_agent/mod.rs`:
 
 - `ask_user_emits_questionnaire_and_pauses_the_run`
 

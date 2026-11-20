@@ -107,7 +107,7 @@ raw auth token reference.
 - Auth token refs are encrypted/masked in HTTP and Admin MCP receipts.
 - Server/tool mutations publish cache invalidation.
 
-Unit coverage in `crates/quire-runtime/src/mcp_registry.rs` and `rig_agent.rs`:
+Unit coverage in `crates/quire-runtime/src/mcp_registry.rs` and `rig_agent/builtin_tools.rs`:
 
 - `tool_patterns_support_prefix_suffix_and_multi_segment_wildcards`
 - `scoped_wildcards_never_cross_server_boundaries`

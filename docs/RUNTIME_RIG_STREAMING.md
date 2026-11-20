@@ -14,6 +14,19 @@ ephemeral preview streaming and cancellation. It does not govern Quire report MC
 report block Smart CAS, or provider credential storage, which are owned by `quire-server`,
 `quire-store` and `quire-protocol`.
 
+### Module layout
+
+`crates/quire-runtime/src/rig_agent/` is split by responsibility without changing the public
+`rig_agent` exports:
+
+- `mod.rs`: `RigModelStreamProvider`, `RigModelCore`, `AgentExecution`, `EventScope`, the main turn
+  loop, stream-event mapping and pending-queue injection.
+- `preview_stream.rs`: streamed `apply_operations` argument parsing, preview throttling/transport,
+  anchor inference and preview-ID injection.
+- `subagents.rs`: `SubagentTask`, `SubagentOutcome`, `spawn_subagents` and the subagent lifecycle.
+- `builtin_tools.rs`: built-in tool schemas/implementations, allow-list matching and credential/URL
+  redaction helpers.
+
 ## 2. Canonical Design & Contract
 
 ### Turn request
@@ -170,7 +183,7 @@ asserts the hydrated timers continue from the server clocks before the terminal 
 Frontend unit coverage in `web/src/components/chat/traceSegments.test.ts` applies the same boundary
 to live and historical segment builders.
 
-Unit coverage in `crates/quire-runtime/src/rig_agent.rs`:
+Unit coverage in `crates/quire-runtime/src/rig_agent/{mod.rs,preview_stream.rs,builtin_tools.rs,subagents.rs}`:
 
 - `describe_task` schema advertises the status title, detail and section parameters
 - partial `apply_operations` argument block extraction

@@ -41,7 +41,7 @@ is not a runtime setting and is not interchangeable with `SANDBOX_FC_API_KEY`.
 
 ### rig tools and lifecycle
 
-`RigModelStreamProvider::new` receives an `Arc<dyn SandboxProvider>`. `rig_agent.rs` adds four
+`RigModelStreamProvider::new` receives an `Arc<dyn SandboxProvider>`. `rig_agent/builtin_tools.rs` adds four
 allow-listed built-ins, with the same wildcard, event persistence and cancellation behavior as
 other runtime tools:
 
