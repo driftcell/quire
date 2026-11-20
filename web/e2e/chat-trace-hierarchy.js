@@ -74,8 +74,12 @@ async (page) => {
     summary,
   });
 
+  const runningStartedAt = new Date(Date.now() - 12_000).toISOString();
   const runningEvents = [
-    event(1, "run-live", "main", { event: "turn_started" }),
+    {
+      ...event(1, "run-live", "main", { event: "turn_started" }),
+      timestamp: runningStartedAt,
+    },
     event(2, "run-live", "main", {
       event: "task_focus",
       title: "梳理报告结构",
@@ -673,7 +677,7 @@ async (page) => {
       const text =
         document.querySelector('[data-live-elapsed="true"]')?.textContent ?? "";
       const match = text.match(/(\d+)秒/);
-      return match !== null && Number(match[1]) >= 1;
+      return match !== null && Number(match[1]) >= 10;
     },
     undefined,
     { timeout: 5000 },
@@ -692,8 +696,8 @@ async (page) => {
   );
   const liveHeaderBox = await liveHeader.boundingBox();
   assert(
-    liveHeaderBox !== null && Math.round(liveHeaderBox.height) === 24,
-    `live header height is not stable: ${JSON.stringify(liveHeaderBox)}`,
+    liveHeaderBox !== null && Math.round(liveHeaderBox.height) >= 28,
+    `live header height is below min-h-7: ${JSON.stringify(liveHeaderBox)}`,
   );
 
   const runningActivity = page.locator(
@@ -811,6 +815,10 @@ async (page) => {
   assert(
     (await page.locator('[data-slot="stop-turn"]').count()) === 1,
     "stop button did not remain stable after detail toggling",
+  );
+  assert(
+    consoleErrors.length === 0,
+    `detail toggle produced browser errors: ${consoleErrors.join(" | ")}`,
   );
 
   await page.goto(`${web}/sessions/${finishedId}`);

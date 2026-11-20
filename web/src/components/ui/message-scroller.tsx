@@ -50,7 +50,7 @@ function MessageScrollerContent({
   return (
     <MessageScrollerPrimitive.Content
       data-slot="message-scroller-content"
-      className={cn("flex flex-col gap-4", className)}
+      className={cn("flex flex-col gap-4 [overflow-anchor:none]", className)}
       {...props}
     />
   );

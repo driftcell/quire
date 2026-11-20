@@ -23,6 +23,8 @@ export type LiveTraceSegment =
 export interface LiveAgentTrace {
   agentId: string;
   runId?: string;
+  /** Server `turn_started` timestamp used as the stable run clock across refreshes. */
+  startedAtMs?: number;
   segments: LiveTraceSegment[];
   taskFocus?: { title: string; detail?: string; sectionId?: string };
   isStreaming: boolean;
@@ -42,13 +44,26 @@ export interface LiveSubagentRun {
 export function emptyLiveTrace(
   agentId: string,
   runId?: string,
+  startedAtMs?: number,
 ): LiveAgentTrace {
   return {
     agentId,
     runId,
+    startedAtMs,
     segments: [],
     isStreaming: true,
   };
+}
+
+/** Fill a missing run clock without replacing an earlier server timestamp. */
+export function ensureLiveTraceStarted(
+  trace: LiveAgentTrace,
+  startedAtMs?: number,
+): LiveAgentTrace {
+  if (trace.startedAtMs !== undefined || startedAtMs === undefined) {
+    return trace;
+  }
+  return { ...trace, startedAtMs };
 }
 
 function replaceLast(

@@ -3,6 +3,7 @@ import {
   appendTextSegment,
   appendThinkingSegment,
   emptyLiveTrace,
+  ensureLiveTraceStarted,
   finishThinkingSegment,
 } from "./liveTrace";
 
@@ -34,6 +35,24 @@ describe("live thinking timestamps", () => {
       throw new Error("expected second thinking segment");
     }
     expect(second.startedAtMs).toBe(5_000);
+  });
+
+  test("keeps the turn_started clock across incremental events", () => {
+    let trace = emptyLiveTrace("main", "run-1", 10_000);
+    expect(trace.startedAtMs).toBe(10_000);
+
+    trace = appendThinkingSegment(trace, "plan", 10_500);
+    trace = appendTextSegment(finishThinkingSegment(trace, 11_000), "answer");
+    expect(trace.startedAtMs).toBe(10_000);
+  });
+
+  test("fills a missing clock without overwriting an earlier timestamp", () => {
+    let trace = emptyLiveTrace("main", "run-1");
+    trace = ensureLiveTraceStarted(trace, 9_000);
+    expect(trace.startedAtMs).toBe(9_000);
+
+    trace = ensureLiveTraceStarted(trace, 12_000);
+    expect(trace.startedAtMs).toBe(9_000);
   });
 
   test("ignores settlement after text has replaced the active segment", () => {

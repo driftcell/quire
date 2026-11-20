@@ -64,7 +64,7 @@ function LiveRunHeader({
   return (
     <div
       data-live-header="true"
-      className="sticky top-0 z-10 flex h-6 w-full items-center justify-between gap-1 bg-background/95 py-1 text-xs leading-5 text-muted-foreground backdrop-blur-xs"
+      className="sticky top-0 z-10 flex min-h-7 w-full items-center justify-between gap-1 bg-background/95 py-1 text-xs leading-5 text-muted-foreground backdrop-blur-xs"
     >
       <button
         type="button"
@@ -139,8 +139,9 @@ function LiveRunSection({
   attachmentMap: Map<string, AttachmentMeta>;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(true);
-  const [startedAt] = useState(() => Date.now());
-  const [now, setNow] = useState(startedAt);
+  const [fallbackStartedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(fallbackStartedAt);
+  const startedAt = trace.startedAtMs ?? fallbackStartedAt;
 
   useEffect(() => {
     const interval = trace.isStreaming
