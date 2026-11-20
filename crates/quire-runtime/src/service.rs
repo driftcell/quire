@@ -798,7 +798,7 @@ impl RuntimeService {
                 "QUIRE_RW_TOKEN is not configured on quire-runtime".into(),
             ));
         }
-        let response = reqwest::Client::new()
+        let response = crate::http_client::timed_client(Duration::from_secs(30))
             .delete(format!(
                 "{}/api/docs/{}/comments/{}",
                 self.config.quire_base_url.trim_end_matches('/'),

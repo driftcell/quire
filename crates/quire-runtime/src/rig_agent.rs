@@ -191,7 +191,7 @@ impl ToolPreviewStreamer {
     ) -> Self {
         let block_id = block_id.into();
         Self {
-            http: reqwest::Client::new(),
+            http: crate::http_client::timed_client(Duration::from_secs(30)),
             base_url: base_url.into().trim_end_matches('/').to_string(),
             token,
             doc_id: doc_id.into(),
@@ -380,6 +380,19 @@ fn tool_other(error: impl std::fmt::Display) -> ToolExecutionError {
 const MAX_TOOL_CODE_BYTES: usize = 256 * 1024;
 const MAX_TOOL_FILE_BYTES: usize = 256 * 1024;
 const MAX_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+const DEFAULT_SUBAGENT_TIMEOUT_SECS: u64 = 360;
+
+fn subagent_timeout() -> Duration {
+    std::env::var("QUIRE_SUBAGENT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or(
+            Duration::from_secs(DEFAULT_SUBAGENT_TIMEOUT_SECS),
+            Duration::from_secs,
+        )
+}
 
 fn bounded_tool_text(text: String) -> (String, bool) {
     if text.len() <= MAX_TOOL_OUTPUT_BYTES {
@@ -1558,9 +1571,9 @@ impl RigModelCore {
                     _ = execution.cancellation.cancelled() => {
                         return Ok(final_text);
                     }
-                    item = stream.next() => {
+                    item = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()) => {
                         match item {
-                            Some(Ok(Item::Event(event))) => {
+                            Ok(Some(Ok(Item::Event(event)))) => {
                                 if handle_stream_event(
                                     &event,
                                     &scope,
@@ -1571,9 +1584,15 @@ impl RigModelCore {
                                     streamed_text = true;
                                 }
                             }
-                            Some(Ok(Item::Unknown(_))) => {}
-                            Some(Err(error)) => return Err(model_provider_error(error)),
-                            None => break,
+                            Ok(Some(Ok(Item::Unknown(_)))) => {}
+                            Ok(Some(Err(error))) => return Err(model_provider_error(error)),
+                            Ok(None) => break,
+                            Err(_) => {
+                                return Err(RuntimeError::Internal(format!(
+                                    "model stream idle timeout after {}s",
+                                    STREAM_IDLE_TIMEOUT.as_secs()
+                                )));
+                            }
                         }
                     }
                 }
@@ -1804,8 +1823,10 @@ impl RigModelCore {
             task: task.task.clone(),
             section_id: task.section_id.clone(),
         });
-        let result = async {
-            if parent.cancellation.is_cancelled() {
+        let subagent_cancellation = parent.cancellation.child_token();
+        let mut timed_out = false;
+        let result = match tokio::time::timeout(subagent_timeout(), async {
+            if subagent_cancellation.is_cancelled() {
                 return Err(RuntimeError::InvalidRequest("run cancelled".into()));
             }
             let definition = self
@@ -1829,29 +1850,45 @@ impl RigModelCore {
                 doc_id: parent.doc_id.clone(),
                 session_id: parent.session_id.clone(),
                 run_id: subagent_run_id.clone(),
-                cancellation: parent.cancellation.clone(),
+                cancellation: subagent_cancellation.clone(),
             };
             let scope = parent_scope.child(subagent_run_id.clone(), task.agent_name.clone());
             let outcome = self
                 .run_turn(execution, vec![Message::user(task.task.clone())], scope)
                 .await?;
             Ok::<String, RuntimeError>(outcome)
-        }
-        .await;
-        let (status, summary) = match result {
-            Ok(_) if parent_scope.cancellation.is_cancelled() => {
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                timed_out = true;
+                subagent_cancellation.cancel();
+                Err(RuntimeError::Internal("subagent timed out".into()))
+            }
+        };
+        let (status, summary) = if timed_out {
+            if parent_scope.cancellation.is_cancelled() {
                 ("cancelled".to_string(), "cancelled".to_string())
+            } else {
+                ("failed".to_string(), "subagent timed out".to_string())
             }
-            Ok(summary) if summary.trim().is_empty() => {
-                ("completed".to_string(), "completed".to_string())
+        } else {
+            match result {
+                Ok(_) if parent_scope.cancellation.is_cancelled() => {
+                    ("cancelled".to_string(), "cancelled".to_string())
+                }
+                Ok(summary) if summary.trim().is_empty() => {
+                    ("completed".to_string(), "completed".to_string())
+                }
+                Ok(summary) => ("completed".to_string(), summary),
+                Err(RuntimeError::InvalidRequest(message))
+                    if parent_scope.cancellation.is_cancelled() || message == "run cancelled" =>
+                {
+                    ("cancelled".to_string(), "cancelled".to_string())
+                }
+                Err(error) => ("failed".to_string(), error.to_string()),
             }
-            Ok(summary) => ("completed".to_string(), summary),
-            Err(RuntimeError::InvalidRequest(message))
-                if parent_scope.cancellation.is_cancelled() || message == "run cancelled" =>
-            {
-                ("cancelled".to_string(), "cancelled".to_string())
-            }
-            Err(error) => ("failed".to_string(), error.to_string()),
         };
         parent_scope.send_raw(ModelStreamEvent::SubagentFinished {
             subagent_run_id,
@@ -2334,41 +2371,85 @@ fn extract_preview_blocks(arguments: &Value) -> Vec<PreviewBlock> {
     blocks
 }
 
+fn parse_preview_block_id(raw: Option<&str>) -> Option<BlockId> {
+    raw.map(str::trim)
+        .filter(|raw| !raw.is_empty())
+        .and_then(|raw| BlockId::parse(raw.to_string()).ok())
+}
+
 fn infer_operation_anchor(
     object: &serde_json::Map<String, Value>,
     inherited: &PreviewAnchor,
 ) -> PreviewAnchor {
     let op_name = object.get("op").and_then(Value::as_str);
-    if let Some(section_id) = object
-        .get("section_id")
-        .and_then(Value::as_str)
-        .and_then(|raw| BlockId::parse(raw.to_string()).ok())
-    {
-        return PreviewAnchor::AppendToSection { section_id };
+    if op_name == Some("append_to_section") || object.contains_key("section_id") {
+        if let Some(section_id) =
+            parse_preview_block_id(object.get("section_id").and_then(Value::as_str))
+        {
+            return PreviewAnchor::AppendToSection { section_id };
+        }
+        return inherited.clone();
     }
-    if op_name == Some("replace_block")
-        && let Some(block_id) = object
-            .get("block_id")
-            .and_then(Value::as_str)
-            .and_then(|raw| BlockId::parse(raw.to_string()).ok())
-    {
-        return PreviewAnchor::ReplaceBlock { block_id };
+    if op_name == Some("insert_after") {
+        if let Some(block_id) = parse_preview_block_id(
+            object
+                .get("target_id")
+                .or_else(|| object.get("after_id"))
+                .or_else(|| object.get("after_block_id"))
+                .and_then(Value::as_str),
+        ) {
+            return PreviewAnchor::AfterBlock { block_id };
+        }
+        return inherited.clone();
     }
-    if let Some(block_id) = object
-        .get("after_id")
-        .or_else(|| object.get("after_block_id"))
-        .and_then(Value::as_str)
-        .and_then(|raw| BlockId::parse(raw.to_string()).ok())
-    {
-        return PreviewAnchor::AfterBlock { block_id };
+    if op_name == Some("insert_before") {
+        if let Some(block_id) = parse_preview_block_id(
+            object
+                .get("target_id")
+                .or_else(|| object.get("before_id"))
+                .or_else(|| object.get("before_block_id"))
+                .and_then(Value::as_str),
+        ) {
+            return PreviewAnchor::BeforeBlock { block_id };
+        }
+        return inherited.clone();
     }
-    if let Some(block_id) = object
-        .get("before_id")
-        .or_else(|| object.get("before_block_id"))
-        .and_then(Value::as_str)
-        .and_then(|raw| BlockId::parse(raw.to_string()).ok())
-    {
-        return PreviewAnchor::BeforeBlock { block_id };
+    if matches!(
+        op_name,
+        Some("patch_block" | "replace_block" | "update_block")
+    ) {
+        if let Some(block_id) =
+            parse_preview_block_id(object.get("block_id").and_then(Value::as_str))
+        {
+            return PreviewAnchor::ReplaceBlock { block_id };
+        }
+        return inherited.clone();
+    }
+    if op_name == Some("replace_range") {
+        if let Some(block_id) =
+            parse_preview_block_id(object.get("start_id").and_then(Value::as_str))
+        {
+            return PreviewAnchor::ReplaceBlock { block_id };
+        }
+        return inherited.clone();
+    }
+    if op_name.is_none() {
+        if let Some(block_id) = parse_preview_block_id(
+            object
+                .get("after_id")
+                .or_else(|| object.get("after_block_id"))
+                .and_then(Value::as_str),
+        ) {
+            return PreviewAnchor::AfterBlock { block_id };
+        }
+        if let Some(block_id) = parse_preview_block_id(
+            object
+                .get("before_id")
+                .or_else(|| object.get("before_block_id"))
+                .and_then(Value::as_str),
+        ) {
+            return PreviewAnchor::BeforeBlock { block_id };
+        }
     }
     inherited.clone()
 }
@@ -2385,17 +2466,42 @@ fn collect_preview_blocks(
     }
     match value {
         Value::Object(object) => {
+            let op_name = object.get("op").and_then(Value::as_str);
             let next_anchor = infer_operation_anchor(object, anchor);
-            if let Some(block) = preview_block(object, &next_anchor) {
-                let key = block
-                    .block_id
-                    .clone()
-                    .unwrap_or_else(|| format!("{}:{}", block.block_type, blocks.len()));
-                if seen.insert(key) {
-                    blocks.push(block);
+            let patch_op = matches!(
+                op_name,
+                Some("patch_block" | "replace_block" | "update_block")
+            );
+            let mut consumed_patch = false;
+            if patch_op && let Some(Value::Object(patch)) = object.get("patch") {
+                let mut merged = patch.clone();
+                if !merged.contains_key("id")
+                    && let Some(block_id) = object.get("block_id")
+                {
+                    merged.insert("id".to_string(), block_id.clone());
                 }
+                if !merged.contains_key("type")
+                    && let Some(block_type) = object.get("type")
+                {
+                    merged.insert("type".to_string(), block_type.clone());
+                }
+                if let Some(block) = preview_block(&merged, &next_anchor) {
+                    push_preview_block(block, blocks, seen);
+                }
+                consumed_patch = true;
             }
-            for child in object.values() {
+            if let Some(block) = preview_block(object, &next_anchor) {
+                push_preview_block(block, blocks, seen);
+            }
+            let chained_insert = matches!(op_name, Some("insert_after" | "insert_before"));
+            for (key, child) in object {
+                if key == "patch" && consumed_patch {
+                    continue;
+                }
+                if chained_insert && key == "blocks" {
+                    collect_chained_insert_blocks(child, depth + 1, &next_anchor, blocks, seen);
+                    continue;
+                }
                 collect_preview_blocks(child, depth + 1, &next_anchor, blocks, seen);
             }
         }
@@ -2405,6 +2511,47 @@ fn collect_preview_blocks(
             }
         }
         _ => {}
+    }
+}
+
+fn collect_chained_insert_blocks(
+    value: &Value,
+    depth: usize,
+    anchor: &PreviewAnchor,
+    blocks: &mut Vec<PreviewBlock>,
+    seen: &mut BTreeSet<String>,
+) {
+    if depth > 8 {
+        return;
+    }
+    let Value::Array(values) = value else {
+        collect_preview_blocks(value, depth, anchor, blocks, seen);
+        return;
+    };
+    let mut chain_anchor = anchor.clone();
+    for child in values {
+        collect_preview_blocks(child, depth + 1, &chain_anchor, blocks, seen);
+        let previous_id = child
+            .as_object()
+            .and_then(|object| object.get("id"))
+            .and_then(Value::as_str);
+        if let Some(block_id) = parse_preview_block_id(previous_id) {
+            chain_anchor = PreviewAnchor::AfterBlock { block_id };
+        }
+    }
+}
+
+fn push_preview_block(
+    block: PreviewBlock,
+    blocks: &mut Vec<PreviewBlock>,
+    seen: &mut BTreeSet<String>,
+) {
+    let key = block
+        .block_id
+        .clone()
+        .unwrap_or_else(|| format!("{}:{}", block.block_type, blocks.len()));
+    if seen.insert(key) {
+        blocks.push(block);
     }
 }
 
@@ -2836,6 +2983,79 @@ mod tests {
         assert_eq!(block.block_id.as_deref(), Some("q3-revenue"));
         assert_eq!(block.block_type, "paragraph");
         assert_eq!(block.text.as_deref(), Some("Revenue grew"));
+    }
+
+    #[test]
+    fn preview_anchors_follow_patch_ops_and_chain_inserted_blocks() {
+        let arguments = json!({
+            "ops": [
+                {
+                    "op": "insert_after",
+                    "target_id": "sec3_h1",
+                    "blocks": [
+                        {"id": "sec3_p1", "type": "paragraph", "text": "hello"},
+                        {"id": "sec3_p2", "type": "paragraph", "text": "world"}
+                    ]
+                },
+                {
+                    "op": "patch_block",
+                    "block_id": "sec2_p1",
+                    "patch": {"text": "updated"}
+                }
+            ]
+        });
+        let blocks = extract_preview_blocks(&arguments);
+        assert_eq!(blocks.len(), 3);
+        assert_eq!(blocks[0].block_id.as_deref(), Some("sec3_p1"));
+        assert_eq!(
+            blocks[0].anchor,
+            PreviewAnchor::AfterBlock {
+                block_id: BlockId::parse("sec3_h1").expect("valid target")
+            }
+        );
+        assert_eq!(blocks[1].block_id.as_deref(), Some("sec3_p2"));
+        assert_eq!(
+            blocks[1].anchor,
+            PreviewAnchor::AfterBlock {
+                block_id: BlockId::parse("sec3_p1").expect("valid previous block")
+            }
+        );
+        assert_eq!(blocks[2].block_id.as_deref(), Some("sec2_p1"));
+        assert_eq!(
+            blocks[2].anchor,
+            PreviewAnchor::ReplaceBlock {
+                block_id: BlockId::parse("sec2_p1").expect("valid patch target")
+            }
+        );
+        assert_eq!(blocks[2].text.as_deref(), Some("updated"));
+    }
+
+    #[test]
+    fn preview_anchor_chains_insert_before_blocks_in_forward_order() {
+        let arguments = json!({
+            "ops": [{
+                "op": "insert_before",
+                "target_id": "sec3_p3",
+                "blocks": [
+                    {"id": "sec3_p1", "type": "paragraph", "text": "first"},
+                    {"id": "sec3_p2", "type": "paragraph", "text": "second"}
+                ]
+            }]
+        });
+        let blocks = extract_preview_blocks(&arguments);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(
+            blocks[0].anchor,
+            PreviewAnchor::BeforeBlock {
+                block_id: BlockId::parse("sec3_p3").expect("valid target")
+            }
+        );
+        assert_eq!(
+            blocks[1].anchor,
+            PreviewAnchor::AfterBlock {
+                block_id: BlockId::parse("sec3_p1").expect("valid previous block")
+            }
+        );
     }
 
     #[test]

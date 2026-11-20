@@ -21,6 +21,17 @@ function paragraph(id: string): ReportBlock {
   return { id, type: "paragraph", text: id };
 }
 
+function tableBlock(id: string, rowCount: number): ReportBlock {
+  return {
+    id,
+    type: "table",
+    columns: [],
+    rows: Array.from({ length: rowCount }, (_, index) => ({
+      name: `row-${index}`,
+    })),
+  };
+}
+
 function measurements(
   overrides: Partial<PageMeasurements> = {},
 ): PageMeasurements {
@@ -266,6 +277,42 @@ describe("paginateBlocks heading keep-with-next", () => {
       "h2",
       "next",
     ]);
+  });
+});
+
+describe("paginateBlocks table widow row guard", () => {
+  test("moves one row from a 17-row slice to avoid a 1-row continuation", () => {
+    const pages = paginateBlocks(
+      [tableBlock("wide-table", 18)],
+      measurements({
+        blockHeights: { "wide-table": 600 },
+        tableMeasurements: {
+          "wide-table": {
+            theadHeight: 40,
+            tfootHeight: 20,
+            rowHeights: Array.from({ length: 18 }, () => 20),
+            chromeHeight: 125,
+          },
+        },
+      }),
+      500,
+    );
+
+    expect(pages).toHaveLength(2);
+    expect(pageAt(pages, 0).items[0]).toMatchObject({
+      rowStart: 0,
+      rowEnd: 16,
+      totalRows: 18,
+      continuation: false,
+      includeSummary: false,
+    });
+    expect(pageAt(pages, 1).items[0]).toMatchObject({
+      rowStart: 16,
+      rowEnd: 18,
+      totalRows: 18,
+      continuation: true,
+      includeSummary: true,
+    });
   });
 });
 

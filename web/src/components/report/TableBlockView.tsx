@@ -24,6 +24,24 @@ function isCellRecord(value: unknown): value is Record<string, CellValue> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const NUMERIC_DATA_TYPES = new Set(["number", "currency", "percent"]);
+const SHORT_NUMERIC_TOKEN = /^[+-]?\d[\d,，]*(?:\.\d+)?%?$/;
+const COMPOSITE_NUMERIC_TOKEN =
+  /^\d+(?:\.\d+)?(?:\s*[/／·]\s*\d+(?:\.\d+)?)+%?$/;
+
+function keepCellOnOneLine(text: string, dataType: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return false;
+  }
+  if (NUMERIC_DATA_TYPES.has(dataType)) {
+    return true;
+  }
+  return (
+    SHORT_NUMERIC_TOKEN.test(trimmed) || COMPOSITE_NUMERIC_TOKEN.test(trimmed)
+  );
+}
+
 export const TableBlockView = memo(function TableBlockView({
   table,
   layout,
@@ -164,12 +182,16 @@ export const TableBlockView = memo(function TableBlockView({
                     rowObj[col.key],
                     decimalPrecision.get(col.key) ?? 0,
                   );
+                  const keepTogether = keepCellOnOneLine(
+                    formatted.text,
+                    col.data_type,
+                  );
                   return (
                     <td
                       key={col.key}
                       title={formatted.tooltip}
                       style={{ textAlign: formatted.align ?? col.align }}
-                      className={`px-3 py-2 text-[13px] leading-5 break-words tabular-nums text-slate-700 ${formatted.className ?? ""}`}
+                      className={`px-3 py-2 text-[13px] leading-5 tabular-nums text-slate-700 ${keepTogether ? "whitespace-nowrap" : "break-words"} ${formatted.className ?? ""}`}
                     >
                       {col.data_type === "badge" && formatted.text ? (
                         <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap">
@@ -211,11 +233,15 @@ export const TableBlockView = memo(function TableBlockView({
                       rowObj[col.key],
                       decimalPrecision.get(col.key) ?? 0,
                     );
+                    const keepTogether = keepCellOnOneLine(
+                      formatted.text,
+                      col.data_type,
+                    );
                     return (
                       <td
                         key={col.key}
                         style={{ textAlign: formatted.align ?? col.align }}
-                        className="px-3 py-2 text-[13px] leading-5 break-words tabular-nums text-slate-900"
+                        className={`px-3 py-2 text-[13px] leading-5 tabular-nums text-slate-900 ${keepTogether ? "whitespace-nowrap" : "break-words"}`}
                       >
                         {formatted.text}
                       </td>

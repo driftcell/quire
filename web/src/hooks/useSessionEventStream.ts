@@ -22,6 +22,7 @@ import {
   finishThinkingSegment,
   finishToolSegment,
   hydrateActiveRun,
+  mergeHydratedSubagents,
   type LiveAgentTrace,
   type LiveSubagentRun,
 } from "@/lib/liveTrace";
@@ -109,17 +110,9 @@ export function useSessionEventStream({
         activeSubagentTraces,
         isStreaming,
       );
-      setLiveSubagents((previous) => {
-        const byId = new Map(
-          previous.map((subagent) => [subagent.subagentRunId, subagent]),
-        );
-        for (const subagent of hydrated.subagents) {
-          if (!byId.has(subagent.subagentRunId)) {
-            byId.set(subagent.subagentRunId, subagent);
-          }
-        }
-        return Array.from(byId.values());
-      });
+      setLiveSubagents((previous) =>
+        mergeHydratedSubagents(previous, hydrated.subagents),
+      );
       hydratedRunIdRef.current = runId;
       return;
     }

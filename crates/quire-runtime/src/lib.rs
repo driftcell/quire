@@ -11,6 +11,7 @@ pub mod control;
 pub mod delta;
 pub mod error;
 pub mod http;
+pub(crate) mod http_client;
 pub mod kb;
 pub mod mcp_client;
 pub mod mcp_registry;

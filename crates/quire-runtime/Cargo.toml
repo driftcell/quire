@@ -40,6 +40,7 @@ base64.workspace = true
 ring.workspace = true
 rig-core.workspace = true
 rig-rmcp.workspace = true
+rig-reqwest = "0.46"
 rmcp.workspace = true
 http.workspace = true
 reqwest = { workspace = true, features = ["multipart", "stream"] }

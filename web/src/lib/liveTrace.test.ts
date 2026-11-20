@@ -12,6 +12,7 @@ import {
   hydrateActiveRun,
   liveSubagentFromSummary,
   liveTraceFromSummary,
+  mergeHydratedSubagents,
 } from "./liveTrace";
 
 describe("live thinking timestamps", () => {
@@ -236,5 +237,29 @@ describe("active run hydration", () => {
     expect(hydrated.main.startedAtMs).toBe(Date.parse(startedAt));
     expect(hydrated.subagents).toHaveLength(1);
     expect(hydrated.subagents[0]?.subagentRunId).toBe("sub-1");
+  });
+
+  test("accepts a terminal snapshot for a locally running subagent", () => {
+    const running = liveSubagentFromSummary(subagent);
+    const completed = liveSubagentFromSummary({
+      ...subagent,
+      status: "completed",
+      summary: "核对完成",
+    });
+    const failed = liveSubagentFromSummary({
+      ...subagent,
+      status: "failed",
+      summary: "核对失败",
+    });
+
+    expect(mergeHydratedSubagents([running], [completed])[0]?.status).toBe(
+      "completed",
+    );
+    expect(mergeHydratedSubagents([running], [failed])[0]?.status).toBe(
+      "failed",
+    );
+    expect(mergeHydratedSubagents([completed], [running])[0]?.status).toBe(
+      "completed",
+    );
   });
 });

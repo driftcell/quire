@@ -81,6 +81,10 @@ commas allowed; empty/`-`/`—` count as zero in data rows) or as a fixed-width 
 separated by `/`, `／` or `·`. Each mismatched column reports once, and the hint carries the exact
 expected value so the model can copy it without mental arithmetic.
 
+`QR201` measures both the header and the widest body or summary-row cell, so a numeric column that
+fits its header but cannot hold a 4-6 digit total such as `3531` or `11.25%` on one line reports with
+a width/column-count repair hint.
+
 ### AI-slop prose checks
 
 `QR412`-`QR415` analyze only `BlockKind::Paragraph`; headings are too short to judge and `Quote`

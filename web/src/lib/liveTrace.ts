@@ -260,6 +260,30 @@ export function hydrateActiveRun(
   return { main, subagents: liveSubagents };
 }
 
+/**
+ * Merge a server snapshot into locally streamed subagent cards. A running card
+ * must accept a terminal server snapshot, but a completed card is never
+ * regressed to an older running snapshot.
+ */
+export function mergeHydratedSubagents(
+  previous: LiveSubagentRun[],
+  hydrated: LiveSubagentRun[],
+): LiveSubagentRun[] {
+  const byId = new Map(
+    previous.map((subagent) => [subagent.subagentRunId, subagent]),
+  );
+  for (const subagent of hydrated) {
+    const existing = byId.get(subagent.subagentRunId);
+    if (
+      !existing ||
+      (existing.status === "running" && subagent.status !== "running")
+    ) {
+      byId.set(subagent.subagentRunId, subagent);
+    }
+  }
+  return Array.from(byId.values());
+}
+
 export function emptyLiveTrace(
   agentId: string,
   runId?: string,

@@ -759,7 +759,7 @@ async fn forward_comment_delete(
             "Configure QUIRE_RW_TOKEN on quire-runtime.",
         ));
     }
-    let response = reqwest::Client::new()
+    let response = crate::http_client::timed_client(Duration::from_secs(30))
         .delete(format!("{base_url}/api/docs{path}"))
         .bearer_auth(token)
         .header("x-session-id", session_id)
@@ -806,7 +806,7 @@ async fn forward_comment_request(
             "Configure QUIRE_RW_TOKEN on quire-runtime.",
         ));
     }
-    let response = reqwest::Client::new()
+    let response = crate::http_client::timed_client(Duration::from_secs(30))
         .request(method, format!("{base_url}/api/docs{path}"))
         .bearer_auth(token)
         .header("x-session-id", session_id)

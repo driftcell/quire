@@ -12,6 +12,12 @@ function slice(id: string): PageSlice {
   };
 }
 
+function headingSlice(id: string, level: number): PageSlice {
+  return {
+    block: { id, type: "heading", level, text: id },
+  };
+}
+
 function preview(
   previewId: string,
   blockId: string,
@@ -108,6 +114,32 @@ describe("buildMixedItems preview anchors", () => {
       "preview:p-second",
       "preview:p-first",
       "sec2_p1",
+    ]);
+  });
+
+  test("append_to_section stays after the last nested subsection block", () => {
+    const appended = preview("p-section", "sec3_preview", {
+      type: "append_to_section",
+      section_id: "sec3_h1",
+    });
+    const items = build(
+      [
+        headingSlice("sec3_h1", 1),
+        headingSlice("sec3_h3", 3),
+        slice("sec3_p1"),
+        headingSlice("sec4_h1", 1),
+        slice("sec4_p1"),
+      ],
+      [appended],
+    );
+
+    expect(itemIds(items)).toEqual([
+      "sec3_h1",
+      "sec3_h3",
+      "sec3_p1",
+      "preview:p-section",
+      "sec4_h1",
+      "sec4_p1",
     ]);
   });
 });

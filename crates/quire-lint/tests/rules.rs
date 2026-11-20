@@ -12,8 +12,8 @@ use quire_lint::{
     normalize::normalize_block,
 };
 use quire_protocol::{
-    Block, BlockId, BlockKind, BlockStyle, CellValue, ColumnNode, CustomHtmlBlock, DocId,
-    EchartsBlock, LintConfig, LintReport, ReportDocument, Severity, SourceEntry, SourceId,
+    Block, BlockId, BlockKind, BlockStyle, CellValue, ColumnDataType, ColumnNode, CustomHtmlBlock,
+    DocId, EchartsBlock, LintConfig, LintReport, ReportDocument, Severity, SourceEntry, SourceId,
     TableBlock,
 };
 
@@ -2349,6 +2349,74 @@ fn qr201_water_filling_does_not_flag_tables_that_fit_total_width() {
         "six columns whose total minimum width fits A4 must not trigger QR201: {:?}",
         report.diagnostics
     );
+}
+
+#[test]
+fn qr201_includes_summary_row_width_in_numeric_columns() {
+    let mut narrow = doc();
+    narrow.blocks.push(
+        table(
+            "narrow-summary",
+            None,
+            vec![
+                ColumnNode::leaf("name", "名称"),
+                ColumnNode::leaf("count", "数量").with_type(ColumnDataType::Number),
+            ],
+            vec![
+                row(&[
+                    ("name", CellValue::text("甲")),
+                    ("count", CellValue::Integer(1)),
+                ]),
+                row(&[
+                    ("name", CellValue::text("乙")),
+                    ("count", CellValue::Integer(2)),
+                ]),
+                row(&[
+                    ("name", CellValue::text("合计")),
+                    ("count", CellValue::Integer(3_531)),
+                ]),
+            ],
+        )
+        .with_style(BlockStyle {
+            column_widths: Some(BTreeMap::from([("count".into(), "48px".into())])),
+            ..BlockStyle::default()
+        }),
+    );
+    let report = lint_document(&narrow);
+    let diagnostic = finding(&report, "QR201");
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].columns.count"));
+    assert!(diagnostic.message.contains("widest row"));
+
+    let mut wide = doc();
+    wide.blocks.push(
+        table(
+            "wide-summary",
+            None,
+            vec![
+                ColumnNode::leaf("name", "名称"),
+                ColumnNode::leaf("count", "数量").with_type(ColumnDataType::Number),
+            ],
+            vec![
+                row(&[
+                    ("name", CellValue::text("甲")),
+                    ("count", CellValue::Integer(1)),
+                ]),
+                row(&[
+                    ("name", CellValue::text("乙")),
+                    ("count", CellValue::Integer(2)),
+                ]),
+                row(&[
+                    ("name", CellValue::text("合计")),
+                    ("count", CellValue::Integer(3_531)),
+                ]),
+            ],
+        )
+        .with_style(BlockStyle {
+            column_widths: Some(BTreeMap::from([("count".into(), "56px".into())])),
+            ..BlockStyle::default()
+        }),
+    );
+    assert!(!has_code(&lint_document(&wide), "QR201"));
 }
 
 #[test]

@@ -104,13 +104,23 @@ stores this in `agent_sessions.context_usage` and emits `ContextUsage`. Only off
 report no usage use the legacy text-length estimate.
 
 The cancellation token is checked by the stream wrapper, every model turn and every tool execution.
-Dropping or cancelling the stream stops subagent `JoinSet` work as well.
+Dropping or cancelling the stream stops subagent `JoinSet` work as well. Each `stream.next()` read has
+a 120-second idle timeout so a half-open provider connection cannot hang a turn forever. Each
+subagent runs inside a total timeout (360 seconds by default, override with
+`QUIRE_SUBAGENT_TIMEOUT_SECS`); on expiry the child token is cancelled, `SubagentFinished` is emitted
+with `status: "failed"` and `summary: "subagent timed out"`, and the parent `JoinSet` always converges.
+Runtime HTTP clients use a 15-second connect timeout plus bounded request timeouts; rmcp MCP transports
+use a dedicated reqwest 0.13 client with the same connect bound and a 300-second request bound.
 
 ### Ephemeral previews
 
 While streamed `apply_operations` arguments arrive, `PreviewState` parses the partial
 JSON with rig's partial-object parser, extracts block-like objects (heading, paragraph, quote, table,
 echarts, custom_html), and pushes `PartialBlockPreview` frames through `ToolPreviewStreamer`.
+Anchors follow the real `PatchOp` wire fields: `insert_after`/`insert_before` read `target_id`,
+`patch_block` reads `block_id` and parses the nested `patch`, and `replace_range` reads `start_id`.
+Multi-block insert arrays chain subsequent previews after the previous emitted block ID, so previews
+stay in the target section instead of falling back to the document tail.
 Frames are throttled to 50-80 ms per block and sent to `POST /api/docs/{doc_id}/ephemeral`. The
 preview IDs are attached to the tool arguments as `preview_ids` immediately before execution, so the
 formal Quire commit clears the placeholders atomically.
@@ -130,6 +140,12 @@ formal Quire commit clears the placeholders atomically.
   messages use `user_message_added` and do not masquerade as inline activity.
 - Live and refreshed traces share the `UserMessage` boundary: the previous activity is completed and
   later work starts a new activity. The outer transcript never duplicates an inline message ID.
+- A model stream step that produces no event for 120 seconds fails the turn instead of hanging.
+  Subagents are bounded by the total timeout and always emit one terminal `SubagentFinished`.
+- Streamed preview anchors follow `PatchOp` field names and chain multi-block inserts; a preview is
+  never demoted to `AppendToDoc` merely because the legacy `after_id`/`replace_block` names are absent.
+- Runtime HTTP clients configure `connect_timeout(15s)` and a request timeout; no unbounded default
+  reqwest client is used for model catalogs, preview publishing, comment proxying or MCP transport.
 - An active-run snapshot and its SSE cursor share one `last_event_seq` boundary; refreshing during a
   run hydrates prior thinking, tools and subagents, then continues from the next event.
 - `ask_user` suspension leaves the pending queue untouched.

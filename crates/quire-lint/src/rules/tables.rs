@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use quire_protocol::{
-    BlockKind, ReportDocument, TableBlock, TableShape, display_cell, validate_table,
+    BlockKind, ColumnDataType, ReportDocument, TableBlock, TableShape, display_cell, validate_table,
 };
 
 use crate::{engine::Engine, registry::RuleId};
@@ -20,7 +20,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
         let Ok(shape) = validate_table(table) else {
             continue;
         };
-        check_column_width(engine, block, &shape, index);
+        check_column_width(engine, block, table, &shape, index);
         check_empty_columns(engine, block, table, &shape, index);
         check_constant_columns(engine, block, table, &shape, index);
         check_a4_width(engine, block, table, &shape, index);
@@ -32,6 +32,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
 fn check_column_width(
     engine: &mut Engine<'_>,
     block: &quire_protocol::Block,
+    table: &TableBlock,
     shape: &TableShape,
     index: usize,
 ) {
@@ -44,33 +45,35 @@ fn check_column_width(
     let mut has_implicit = false;
     for leaf in &shape.leaves {
         let header_units = display_width(&leaf.label).max(1) as f64;
-        let required = header_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
+        let body_units = max_body_width_units(table, &leaf.key, leaf.data_type) as f64;
+        let required_units = header_units.max(body_units);
+        let required = required_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
         total_required += required;
         let explicit = widths
             .and_then(|widths| widths.get(&leaf.key))
             .and_then(|raw| parse_css_px(raw));
         let Some(available) = explicit else {
             has_implicit = true;
-            if has_cjk(&leaf.label)
-                && header_units >= 6.0
-                && widest_implicit
-                    .as_ref()
-                    .is_none_or(|(_, _, width)| required > *width)
+            if widest_implicit
+                .as_ref()
+                .is_none_or(|(_, _, width)| required > *width)
             {
                 widest_implicit = Some((leaf.key.as_str(), leaf.label.as_str(), required));
             }
             continue;
         };
-        if !has_cjk(&leaf.label) || header_units < 6.0 || available + 0.5 >= required {
+        let header_driven = has_cjk(&leaf.label) && header_units >= 6.0;
+        let numeric_driven = leaf.data_type.is_numeric() && body_units > 0.0;
+        if (!header_driven && !numeric_driven) || available + 0.5 >= required {
             continue;
         }
         engine.report(
             RuleId::TableColumnTooNarrow,
             format!(
-                "table `{}` column `{}` is too narrow: explicit column width is {:.0}px but header `{}` needs about {:.0}px",
-                block.id, leaf.key, available, leaf.label, required
+                "table `{}` column `{}` is too narrow: explicit column width is {:.0}px but the header or widest row needs about {:.0}px",
+                block.id, leaf.key, available, required
             ),
-            "shorten the header, reduce the column count, or reserve a wider explicit width such as `120px`/`20%`; CJK headers wrap vertically when squeezed.",
+            "widen this column's explicit `width`/`column_widths` entry, shorten the header, or reduce the column count; numeric and summary cells must stay on one line.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].columns.{}", leaf.key)),
         );
@@ -85,7 +88,7 @@ fn check_column_width(
     engine.report(
         RuleId::TableColumnTooNarrow,
         format!(
-            "table `{}` needs about {:.0}px for {} columns, exceeding the 640px A4 content width; column `{}` header `{}` needs about {:.0}px and will be squeezed",
+            "table `{}` needs about {:.0}px for {} columns, exceeding the 640px A4 content width; column `{}` (`{}`) needs about {:.0}px and will be squeezed",
             block.id,
             total_required,
             shape.leaves.len(),
@@ -181,16 +184,18 @@ fn check_a4_width(
     let mut natural_width = 0.0;
     for leaf in &shape.leaves {
         let header = display_width(&leaf.label) as f64;
+        let row_count = table.rows.len() + table.summary_rows.len();
         let body_total: usize = table
             .rows
             .iter()
+            .chain(table.summary_rows.iter())
             .filter_map(|row| row.get(&leaf.key))
             .map(|cell| display_width(&display_cell(cell, leaf.data_type)))
             .sum();
-        let body_average = if table.rows.is_empty() {
+        let body_average = if row_count == 0 {
             0.0
         } else {
-            body_total as f64 / table.rows.len() as f64
+            body_total as f64 / row_count as f64
         };
         let widest = header.max(body_average);
         natural_width += widest * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
@@ -449,6 +454,17 @@ fn parse_integer_cell(text: &str, allow_placeholder: bool) -> Option<i128> {
         .collect();
     let value = normalized.parse::<i128>().ok()?;
     (value >= 0).then_some(value)
+}
+
+fn max_body_width_units(table: &TableBlock, key: &str, data_type: ColumnDataType) -> usize {
+    table
+        .rows
+        .iter()
+        .chain(table.summary_rows.iter())
+        .filter_map(|row| row.get(key))
+        .map(|cell| display_width(&display_cell(cell, data_type)))
+        .max()
+        .unwrap_or(0)
 }
 
 fn display_width(text: &str) -> usize {

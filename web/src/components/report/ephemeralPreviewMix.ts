@@ -21,13 +21,29 @@ export function buildMixedItems(
   }
 
   const sectionLastBlock = new Map<string, string>();
-  let activeSection: string | null = null;
-  for (const b of allBlocks) {
-    if (b.type === "heading") {
-      activeSection = b.id;
+  const openSections: Array<{ id: string; level: number }> = [];
+  let previousBlockId: string | null = null;
+  for (const block of allBlocks) {
+    if (block.type === "heading") {
+      const level = block.level ?? 1;
+      while (openSections.length > 0) {
+        const current = openSections.at(-1);
+        if (!current || current.level < level) {
+          break;
+        }
+        openSections.pop();
+        sectionLastBlock.set(current.id, previousBlockId ?? current.id);
+      }
+      openSections.push({ id: block.id, level });
     }
-    if (activeSection) {
-      sectionLastBlock.set(activeSection, b.id);
+    for (const section of openSections) {
+      sectionLastBlock.set(section.id, block.id);
+    }
+    previousBlockId = block.id;
+  }
+  for (const section of openSections) {
+    if (!sectionLastBlock.has(section.id)) {
+      sectionLastBlock.set(section.id, previousBlockId ?? section.id);
     }
   }
 

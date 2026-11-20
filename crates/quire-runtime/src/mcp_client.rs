@@ -1,6 +1,7 @@
 //! Official Rig MCP client wrapper over `rig-rmcp`.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use http::{HeaderName, HeaderValue};
 use rig_core::tool::{DynamicTool, ToolContext};
@@ -62,7 +63,15 @@ impl RmcpClient {
         }
         config.custom_headers = headers;
 
-        let transport = StreamableHttpClientTransport::from_config(config);
+        let http = rig_reqwest::reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(15))
+            .timeout(Duration::from_secs(300))
+            .pool_max_idle_per_host(0)
+            .build()
+            .map_err(|error| {
+                RuntimeError::Internal(format!("MCP HTTP client init failed: {error}"))
+            })?;
+        let transport = StreamableHttpClientTransport::with_client(http, config);
         let service = rmcp::model::ClientConfig::default()
             .serve(transport)
             .await

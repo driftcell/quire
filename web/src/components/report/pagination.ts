@@ -263,7 +263,15 @@ export function paginateBlocks(
         continue;
       }
 
-      const take = Math.max(1, count);
+      let take = Math.max(1, count);
+      if (remainingRows > take && remainingRows - take === 1 && take >= 3) {
+        take -= 1;
+      }
+      const pageAccHeight =
+        count > take
+          ? accHeight -
+            (tableMetrics?.rowHeights[cursor + take] ?? DEFAULT_ROW_HEIGHT_PX)
+          : accHeight;
       const nextCursor = Math.min(rows.length, cursor + take);
       const isLast = nextCursor === rows.length;
       currentItems.push({
@@ -276,7 +284,7 @@ export function paginateBlocks(
       });
       usedHeight +=
         chromeHeight +
-        accHeight +
+        pageAccHeight +
         (isLast ? tfootHeight : CONTINUATION_FOOTER_PX);
       cursor = nextCursor;
       if (!isLast) {
