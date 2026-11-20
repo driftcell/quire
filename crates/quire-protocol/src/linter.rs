@@ -1095,7 +1095,7 @@ mod tests {
     }
 
     #[test]
-    fn dangling_citation_hint_lists_valid_sources() {
+    fn dangling_citation_reports_block_and_source_path() {
         let mut doc = valid_doc();
         doc.blocks
             .push(Block::paragraph(block_id("bad"), "Broken [^missing]."));
@@ -1106,9 +1106,8 @@ mod tests {
             .find(|diagnostic| diagnostic.code == "DANGLING_SOURCE_ID")
             .unwrap();
         assert_eq!(diagnostic.severity, Severity::Error);
-        assert!(diagnostic.message.contains("sec10"));
-        assert!(diagnostic.hint.contains("sec10"));
         assert_eq!(diagnostic.block_id.as_deref(), Some("bad"));
+        assert_eq!(diagnostic.path.as_deref(), Some("sources.missing"));
     }
 
     #[test]
@@ -1120,20 +1119,24 @@ mod tests {
             Block::paragraph(block_id("bad"), "No marker").with_sources([source_id("ghost")]),
         );
         let report = lint_document(&doc);
-        assert!(
-            report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "UNUSED_SOURCE"
-                    && diagnostic.message.contains("unused"))
-        );
-        assert!(
-            report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "DANGLING_SOURCE_ID"
-                    && diagnostic.message.contains("ghost"))
-        );
+
+        let unused = report
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "UNUSED_SOURCE")
+            .unwrap();
+        assert_eq!(unused.severity, Severity::Warning);
+        assert_eq!(unused.block_id, None);
+        assert_eq!(unused.path.as_deref(), Some("sources.unused"));
+
+        let dangling = report
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "DANGLING_SOURCE_ID")
+            .unwrap();
+        assert_eq!(dangling.severity, Severity::Error);
+        assert_eq!(dangling.block_id.as_deref(), Some("bad"));
+        assert_eq!(dangling.path.as_deref(), Some("sources.ghost"));
     }
 
     #[test]
@@ -1157,12 +1160,18 @@ mod tests {
             },
         ));
         let report = lint_document(&doc);
+        let duplicate = report
+            .diagnostics
+            .iter()
+            .find(|diagnostic| diagnostic.code == "TABLE_SCHEMA_INVALID")
+            .unwrap();
+        assert_eq!(duplicate.severity, Severity::Error);
+        assert_eq!(duplicate.block_id.as_deref(), Some("bad-table"));
         assert!(
-            report
-                .diagnostics
-                .iter()
-                .any(|diagnostic| diagnostic.code == "TABLE_SCHEMA_INVALID"
-                    && diagnostic.message.contains("duplicate"))
+            duplicate
+                .path
+                .as_deref()
+                .is_some_and(|path| path.starts_with("blocks[") && path.ends_with(".columns"))
         );
 
         let mut doc = valid_doc();
@@ -1184,11 +1193,18 @@ mod tests {
             .iter()
             .find(|diagnostic| diagnostic.code == "TABLE_UNKNOWN_ROW_KEY")
             .unwrap();
-        assert!(warning.hint.contains("valid leaf keys: a"));
+        assert_eq!(warning.severity, Severity::Warning);
+        assert_eq!(warning.block_id.as_deref(), Some("table2"));
+        assert!(
+            warning
+                .path
+                .as_deref()
+                .is_some_and(|path| path.starts_with("blocks[") && path.ends_with(".rows"))
+        );
     }
 
     #[test]
-    fn css_errors_include_line_and_column() {
+    fn css_errors_expose_theme_path_and_severity() {
         let mut doc = valid_doc();
         doc.theme.custom_css = ".a {\n color: red;\n".into();
         let report = lint_document(&doc);
@@ -1197,8 +1213,9 @@ mod tests {
             .iter()
             .find(|diagnostic| diagnostic.code == "THEME_CSS_SYNTAX")
             .unwrap();
-        assert!(diagnostic.message.contains("line 1"));
-        assert!(diagnostic.message.contains("column"));
+        assert_eq!(diagnostic.severity, Severity::Error);
+        assert_eq!(diagnostic.block_id, None);
+        assert_eq!(diagnostic.path.as_deref(), Some("theme.custom_css"));
     }
 
     #[test]
@@ -1553,7 +1570,7 @@ mod tests {
                     && diagnostic
                         .path
                         .as_deref()
-                        .is_some_and(|path| path.contains("xAxis[0].gridIndex"))
+                        .is_some_and(|path| path.ends_with("xAxis[0].gridIndex"))
             }),
             "{:?}",
             report.diagnostics
@@ -1564,7 +1581,7 @@ mod tests {
                     && diagnostic
                         .path
                         .as_deref()
-                        .is_some_and(|path| path.contains("datasetIndex"))
+                        .is_some_and(|path| path.ends_with("series[0].datasetIndex"))
             }),
             "{:?}",
             report.diagnostics

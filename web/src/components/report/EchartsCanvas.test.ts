@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { EchartsBlock } from "@/lib/document";
-import { buildEffectiveOption } from "./EchartsCanvas";
+import {
+  AXIS_LABEL_DEFAULTS,
+  AXIS_LINE_DEFAULTS,
+  SPLIT_LINE_DEFAULTS,
+  buildEffectiveOption,
+} from "./EchartsCanvas";
 
 function chart(option: Record<string, unknown>): EchartsBlock {
   return {
@@ -66,10 +71,21 @@ describe("buildEffectiveOption", () => {
     expect(xAxes).toHaveLength(2);
     expect(yAxes).toHaveLength(2);
     for (const axis of [...xAxes, ...yAxes]) {
-      expect(nested(axis, "axisLine", "lineStyle", "color")).toBe("#CBD5E1");
-      expect(nested(axis, "axisLabel", "color")).toBe("#475569");
-      expect(nested(axis, "splitLine", "lineStyle", "color")).toBe("#E2E8F0");
-      expect(nested(axis, "splitLine", "lineStyle", "type")).toBe("dashed");
+      expect(nested(axis, "axisLine", "lineStyle", "color")).toBe(
+        AXIS_LINE_DEFAULTS.color,
+      );
+      expect(nested(axis, "axisLabel", "color")).toBe(
+        AXIS_LABEL_DEFAULTS.color,
+      );
+      expect(nested(axis, "axisLabel", "fontSize")).toBe(
+        AXIS_LABEL_DEFAULTS.fontSize,
+      );
+      expect(nested(axis, "splitLine", "lineStyle", "color")).toBe(
+        SPLIT_LINE_DEFAULTS.color,
+      );
+      expect(nested(axis, "splitLine", "lineStyle", "type")).toBe(
+        SPLIT_LINE_DEFAULTS.type,
+      );
     }
   });
 

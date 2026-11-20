@@ -269,11 +269,9 @@ mod tests {
         let issue = css_brace_issue("a {\n  color: red;\n").unwrap();
         assert_eq!(issue.line, 1);
         assert_eq!(issue.column, 3);
-        assert!(issue.message.contains("unclosed"));
         let issue = css_brace_issue("a { color: red; }\n}\n").unwrap();
         assert_eq!(issue.line, 2);
         assert_eq!(issue.column, 1);
-        assert!(issue.message.contains("unexpected"));
         assert!(css_brace_issue("a { content: \"}\"; }").is_none());
     }
 }

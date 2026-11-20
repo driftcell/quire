@@ -144,9 +144,12 @@ const ACADEMIC_DEFAULTS: JsonObject = {
   },
 };
 
-const AXIS_LINE_DEFAULTS: JsonObject = { color: "#CBD5E1" };
-const AXIS_LABEL_DEFAULTS: JsonObject = { color: "#475569", fontSize: 11 };
-const SPLIT_LINE_DEFAULTS: JsonObject = {
+export const AXIS_LINE_DEFAULTS: JsonObject = { color: "#CBD5E1" };
+export const AXIS_LABEL_DEFAULTS: JsonObject = {
+  color: "#475569",
+  fontSize: 11,
+};
+export const SPLIT_LINE_DEFAULTS: JsonObject = {
   color: "#E2E8F0",
   type: "dashed",
 };

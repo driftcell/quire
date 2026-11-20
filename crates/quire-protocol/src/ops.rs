@@ -1360,8 +1360,15 @@ mod tests {
             }],
         )
         .unwrap_err();
-        assert!(matches!(error, PatchError::UnsupportedPatch { .. }));
-        assert!(error.to_string().contains("text"));
+        match error {
+            PatchError::UnsupportedPatch {
+                fields, supported, ..
+            } => {
+                assert!(fields.contains("update_cell"));
+                assert!(supported.contains("text"));
+            }
+            other => panic!("expected unsupported patch error, got {other:?}"),
+        }
     }
 
     #[test]

@@ -1770,9 +1770,14 @@ async fn execute_tool_call(
     });
     let started = Instant::now();
     let outcome = if let Some(invalid) = call.function.invalid_arguments.clone() {
-        Err(ToolExecutionError::invalid_args(
-            format_invalid_tool_arguments_error(&invalid),
-        ))
+        let message = format_invalid_tool_arguments_error(&invalid);
+        let model_output = json!({
+            "kind": "InvalidArgs",
+            "error": message.clone(),
+            "raw_arguments": invalid,
+        });
+        Err(ToolExecutionError::invalid_args(message)
+            .with_model_output(ToolOutput::json(model_output)))
     } else if let Some(tool) = tool_map.get(&tool_name) {
         tokio::select! {
             _ = execution.cancellation.cancelled() => {
@@ -2205,6 +2210,100 @@ fn inject_preview_ids(arguments: &mut Value, preview_ids: &[String]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rig_core::message::ToolFunction;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    async fn execute_invalid_arguments_call(raw: &str) -> (MessageToolResult, Value, usize) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tool_calls = Arc::clone(&calls);
+        let tool = DynamicTool::new(
+            ToolName::new("probe").unwrap(),
+            "Probe used to prove invalid arguments never execute.",
+            json!({}),
+            move |_args| {
+                let tool_calls = Arc::clone(&tool_calls);
+                Box::pin(async move {
+                    tool_calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(ToolOutput::text("executed"))
+                })
+            },
+        );
+        let mut tool_map = BTreeMap::new();
+        tool_map.insert("probe".to_string(), tool);
+
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let scope = EventScope::top(sender, CancellationToken::new());
+        let execution = AgentExecution {
+            agent_id: "main".into(),
+            model_route: "stub/echo".into(),
+            allowed_tools: vec!["probe".into()],
+            system_prompt: "test".into(),
+            kb_branch: Some("main".into()),
+            doc_id: None,
+            session_id: "sess_test".into(),
+            run_id: "run_test".into(),
+            cancellation: CancellationToken::new(),
+        };
+        let mut previews = PreviewState {
+            run_id: execution.run_id.clone(),
+            doc_id: None,
+            base_url: String::new(),
+            token: SecretString::from(String::new()),
+            actor: "test".into(),
+            throttle_ms: 0,
+            streams: HashMap::new(),
+            previews_by_call: HashMap::new(),
+        };
+        let call = ToolCall::from_wire(
+            "call_invalid",
+            ToolFunction::parse(ToolName::new("probe").unwrap(), raw),
+        );
+
+        let (result, linked_doc) =
+            execute_tool_call(&tool_map, &scope, &execution, &mut previews, call).await;
+        assert!(linked_doc.is_none());
+
+        let mut finished_output = Value::Null;
+        while let Ok(event) = receiver.try_recv() {
+            if let Ok(ModelStreamEvent::ToolCallFinished { output, .. }) = event {
+                finished_output = output;
+            }
+        }
+        (result, finished_output, calls.load(Ordering::SeqCst))
+    }
+
+    #[tokio::test]
+    async fn invalid_tool_arguments_never_execute_the_tool() {
+        for raw in [r#"{"total":"13%}"#, r#"["a"]"#] {
+            let (result, finished_output, calls) = execute_invalid_arguments_call(raw).await;
+            assert_eq!(calls, 0);
+            assert!(result.is_error);
+
+            let content = result
+                .content
+                .iter()
+                .find_map(|entry| entry.as_json())
+                .expect("structured invalid-arguments feedback");
+            assert_eq!(
+                content.get("kind").and_then(Value::as_str),
+                Some("InvalidArgs")
+            );
+            assert_eq!(
+                content.get("raw_arguments").and_then(Value::as_str),
+                Some(raw)
+            );
+            assert!(
+                content
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .is_some_and(|error| !error.trim().is_empty())
+            );
+            assert_eq!(
+                finished_output.get("kind").and_then(Value::as_str),
+                Some("InvalidArgs")
+            );
+        }
+    }
 
     #[test]
     fn wildcard_allow_list_enables_every_builtin_tool() {
