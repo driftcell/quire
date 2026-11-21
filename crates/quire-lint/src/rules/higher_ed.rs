@@ -226,6 +226,10 @@ fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
     for (index, block) in document.blocks.iter().enumerate() {
         match &block.body {
             BlockKind::Table(table) => {
+                if !table.rows.is_empty() || !table.summary_rows.is_empty() {
+                    check_visual_source(block, index, engine);
+                }
+                check_visual_note_length(block, index, table.note.as_deref(), engine);
                 if table
                     .note
                     .as_deref()
@@ -260,15 +264,21 @@ fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
                 }
             }
             BlockKind::Echarts(chart) => {
+                let option = effective_chart_option(chart);
+                let has_numeric_data = chart_has_numeric_data(&option);
+                if has_numeric_data {
+                    check_visual_source(block, index, engine);
+                }
+                check_visual_note_length(block, index, chart.note.as_deref(), engine);
                 if chart
                     .note
                     .as_deref()
                     .is_some_and(|note| !note.trim().is_empty())
+                    || !has_numeric_data
                 {
                     continue;
                 }
-                let option = effective_chart_option(chart);
-                if chart_has_numeric_data(&option) && !chart_units_complete(&option) {
+                if !chart_units_complete(&option) {
                     report_visual_note(
                         engine,
                         block,
@@ -280,6 +290,47 @@ fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
             _ => {}
         }
     }
+}
+
+fn check_visual_source(block: &quire_protocol::Block, index: usize, engine: &mut Engine<'_>) {
+    if !block.source_ids.is_empty() || !block.source_note.as_deref().unwrap_or("").trim().is_empty()
+    {
+        return;
+    }
+    engine.report(
+        RuleId::VisualMissingUnitOrScopeNote,
+        format!(
+            "{} `{}` contains data but has neither `source_ids` nor a non-empty `source_note`",
+            block.block_type(),
+            block.id
+        ),
+        "Add a natural-Chinese `source_note` naming the source institution/database and bind its `source_ids`; every data table/chart must show a traceable 资料来源 rather than a bare citation number.",
+        Some(block.id.clone()),
+        Some(format!("blocks[{index}].source_note")),
+    );
+}
+
+fn check_visual_note_length(
+    block: &quire_protocol::Block,
+    index: usize,
+    note: Option<&str>,
+    engine: &mut Engine<'_>,
+) {
+    let note_length = note.map_or(0, |note| note.chars().count());
+    if note_length <= 180 {
+        return;
+    }
+    engine.report(
+        RuleId::VisualMissingUnitOrScopeNote,
+        format!(
+            "{} `{}` 的表注/图注过长（当前 {note_length} 字），会挤压 A4 表格同页空间",
+            block.block_type(),
+            block.id
+        ),
+        "请精简至 120 字（2 行）以内，只保留‘单位 + 统计时间窗与核心口径’，删去加权公式长文、读图结论、校名简称词典及已在前文交代过的重复缺失说明。",
+        Some(block.id.clone()),
+        Some(format!("blocks[{index}].note")),
+    );
 }
 
 fn cell_is_numeric(cell: &CellValue) -> bool {

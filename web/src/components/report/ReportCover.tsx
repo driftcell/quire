@@ -70,11 +70,14 @@ export function ReportCover({
     return null;
   }
   const authors = cover.authors ?? [];
+  const cleanSubtitle = cover.subtitle
+    ?.replace(/^[\s—\-–―]+|[\s—\-–―]+$/g, "")
+    .trim();
   if (cover.custom_html) {
     let html = cover.custom_html;
     const replacements: Record<string, string> = {
       title: cover.title ?? "",
-      subtitle: cover.subtitle ?? "",
+      subtitle: cleanSubtitle ?? "",
       date: cover.date ?? "",
       signature: cover.meta?.signature?.trim() || authors.join("、"),
     };
@@ -140,9 +143,9 @@ export function ReportCover({
           <h1 className="text-balance text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
             {cover.title}
           </h1>
-          {cover.subtitle && (
+          {cleanSubtitle && (
             <p className="mt-2 text-sm text-[var(--rpt-muted)]">
-              {cover.subtitle}
+              {cleanSubtitle}
             </p>
           )}
           {renderMeta("mt-4")}
@@ -162,9 +165,9 @@ export function ReportCover({
         <h1 className="text-balance text-2xl leading-snug font-semibold tracking-tight text-[var(--rpt-ink)]">
           {cover.title}
         </h1>
-        {cover.subtitle && (
+        {cleanSubtitle && (
           <p className="mt-2 text-sm text-[var(--rpt-muted)]">
-            {cover.subtitle}
+            {cleanSubtitle}
           </p>
         )}
         {renderMeta("mt-3")}
@@ -184,9 +187,9 @@ export function ReportCover({
           <h1 className="text-balance text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
             {cover.title}
           </h1>
-          {cover.subtitle && (
+          {cleanSubtitle && (
             <p className="mt-2 text-sm text-[var(--rpt-muted)]">
-              {cover.subtitle}
+              {cleanSubtitle}
             </p>
           )}
         </div>
@@ -209,9 +212,9 @@ export function ReportCover({
       <h1 className="mx-auto max-w-[92%] text-balance text-[26px] leading-snug font-bold tracking-tight text-[var(--rpt-ink)] sm:text-[28px]">
         {cover.title}
       </h1>
-      {cover.subtitle && (
+      {cleanSubtitle && (
         <p className="mt-3 text-sm text-[var(--rpt-muted)]">
-          —— {cover.subtitle} ——
+          —— {cleanSubtitle} ——
         </p>
       )}
       {renderMeta("mt-5 justify-center")}

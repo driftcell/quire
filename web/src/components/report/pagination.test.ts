@@ -316,6 +316,37 @@ describe("paginateBlocks table widow row guard", () => {
   });
 });
 
+describe("paginateBlocks single-page table placement", () => {
+  test("moves a compact table to a fresh page instead of leaving a page-bottom fragment", () => {
+    const table = tableBlock("compact-table", 12);
+    const pages = paginateBlocks(
+      [paragraph("before"), table],
+      measurements({
+        blockHeights: { before: 350, "compact-table": 340 },
+        tableMeasurements: {
+          "compact-table": {
+            theadHeight: 40,
+            tfootHeight: 20,
+            rowHeights: Array.from({ length: 12 }, () => 20),
+            chromeHeight: 60,
+            notesHeight: 20,
+          },
+        },
+      }),
+      500,
+    );
+
+    expect(pages).toHaveLength(2);
+    expect(pageAt(pages, 0).items.map((item) => item.block.id)).toEqual([
+      "before",
+    ]);
+    expect(pageAt(pages, 1).items).toHaveLength(1);
+    expect(pageAt(pages, 1).items[0]).toMatchObject({ block: table });
+    expect(pageAt(pages, 1).items[0]?.rowStart).toBeUndefined();
+    expect(pageAt(pages, 1).items[0]?.rowEnd).toBeUndefined();
+  });
+});
+
 describe("paginateBlocks continuation footer notes", () => {
   test("charges long notes only to the final slice and keeps that slice within the page", () => {
     const table = tableBlock("continued-table", 20);
@@ -351,6 +382,45 @@ describe("paginateBlocks continuation footer notes", () => {
 
     const finalSliceHeight = 88 + 2 * 20 + 20 + 180 + 28;
     expect(finalSliceHeight).toBeLessThanOrEqual(500);
+  });
+
+  test("keeps every remaining data row together and moves only oversized notes", () => {
+    const pages = paginateBlocks(
+      [tableBlock("notes-only-table", 20)],
+      measurements({
+        blockHeights: { "notes-only-table": 688 },
+        tableMeasurements: {
+          "notes-only-table": {
+            theadHeight: 40,
+            tfootHeight: 20,
+            rowHeights: Array.from({ length: 20 }, () => 20),
+            chromeHeight: 88,
+            notesHeight: 180,
+          },
+        },
+      }),
+      400,
+    );
+
+    expect(pages).toHaveLength(3);
+    expect(pageAt(pages, 0).items[0]).toMatchObject({
+      rowStart: 0,
+      rowEnd: 14,
+      includeSummary: false,
+    });
+    expect(pageAt(pages, 1).items).toHaveLength(1);
+    expect(pageAt(pages, 1).items[0]).toMatchObject({
+      rowStart: 14,
+      rowEnd: 20,
+      continuation: true,
+      includeSummary: true,
+      includeNotes: false,
+    });
+    expect(pageAt(pages, 1).items[0]?.notesOnly).toBeUndefined();
+    expect(pageAt(pages, 2).items).toHaveLength(1);
+    expect(pageAt(pages, 2).items[0]).toMatchObject({ notesOnly: true });
+    expect(pageAt(pages, 2).items[0]?.rowStart).toBeUndefined();
+    expect(pageAt(pages, 2).items[0]?.rowEnd).toBeUndefined();
   });
 });
 

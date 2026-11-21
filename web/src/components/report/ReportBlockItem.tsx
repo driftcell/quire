@@ -117,8 +117,22 @@ function BlockFooterNotes({
     }
   }
   const missingIds = sourceIds.filter((sourceId) => !citedInNote.has(sourceId));
+  const autoSourceNames = !sourceNote
+    ? Array.from(
+        new Set(
+          sourceIds
+            .map((sourceId) => {
+              const source = bibliographyById.get(sourceId)?.source;
+              return source?.publisher?.trim() || source?.title?.trim() || "";
+            })
+            .filter((name) => name.length > 0),
+        ),
+      )
+        .slice(0, 3)
+        .join("、")
+    : "";
   const sourceText = [
-    sourceNote ?? "",
+    sourceNote || autoSourceNames,
     ...missingIds.map((sourceId) => `[^${sourceId}]`),
   ]
     .filter((part) => part.length > 0)
@@ -234,52 +248,66 @@ export const ReportBlockItem = memo(function ReportBlockItem({
       </blockquote>
     );
   } else if (block.type === "table") {
-    const titleText = block.title?.trim();
-    const totalRows =
-      slice.totalRows ?? (Array.isArray(block.rows) ? block.rows.length : 0);
-    const captionPrefix = framing?.label ?? "";
-    const captionText = [captionPrefix, titleText]
-      .filter((part): part is string => Boolean(part))
-      .join("  ");
-    const showCaption = Boolean(captionText || slice.continuation);
-
-    bodyNode = (
-      <figure id={domId} className="my-5 space-y-2">
-        {showCaption && (
-          <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
-            {captionText}
-            {slice.continuation ? "（续）" : ""}
-          </figcaption>
-        )}
-        <TableBlockView
-          table={block}
-          layout={computed.table_layouts[block.id]}
-          rowStart={slice.rowStart}
-          rowEnd={slice.rowEnd}
-          includeSummary={slice.includeSummary}
-          containerWidthPx={isPaged ? A4_CONTENT_WIDTH_PX : undefined}
+    if (slice.notesOnly) {
+      bodyNode = (
+        <BlockFooterNotes
+          block={block}
+          computed={computed}
+          bibliographyById={bibliographyById}
+          printMode={printMode}
+          onCitationClick={onCitationClick}
+          align="left"
+          framingAttribution={framing?.attribution}
         />
-        {slice.continuation &&
-          slice.rowStart !== undefined &&
-          slice.rowEnd !== undefined && (
-            <div className="text-right text-[11px] font-normal text-slate-500 tabular-nums">
-              接上页 · 第 {slice.rowStart + 1}–{slice.rowEnd} 行 / 共{" "}
-              {totalRows} 行
-            </div>
+      );
+    } else {
+      const titleText = block.title?.trim();
+      const totalRows =
+        slice.totalRows ?? (Array.isArray(block.rows) ? block.rows.length : 0);
+      const captionPrefix = framing?.label ?? "";
+      const captionText = [captionPrefix, titleText]
+        .filter((part): part is string => Boolean(part))
+        .join("  ");
+      const showCaption = Boolean(captionText || slice.continuation);
+
+      bodyNode = (
+        <figure id={domId} className="my-5 space-y-2">
+          {showCaption && (
+            <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+              {captionText}
+              {slice.continuation ? "（续）" : ""}
+            </figcaption>
           )}
-        {slice.includeSummary !== false && (
-          <BlockFooterNotes
-            block={block}
-            computed={computed}
-            bibliographyById={bibliographyById}
-            printMode={printMode}
-            onCitationClick={onCitationClick}
-            align="left"
-            framingAttribution={framing?.attribution}
+          <TableBlockView
+            table={block}
+            layout={computed.table_layouts[block.id]}
+            rowStart={slice.rowStart}
+            rowEnd={slice.rowEnd}
+            includeSummary={slice.includeSummary}
+            containerWidthPx={isPaged ? A4_CONTENT_WIDTH_PX : undefined}
           />
-        )}
-      </figure>
-    );
+          {slice.continuation &&
+            slice.rowStart !== undefined &&
+            slice.rowEnd !== undefined && (
+              <div className="text-right text-[11px] font-normal text-slate-500 tabular-nums">
+                接上页 · 第 {slice.rowStart + 1}–{slice.rowEnd} 行 / 共{" "}
+                {totalRows} 行
+              </div>
+            )}
+          {slice.includeNotes !== false && slice.includeSummary !== false && (
+            <BlockFooterNotes
+              block={block}
+              computed={computed}
+              bibliographyById={bibliographyById}
+              printMode={printMode}
+              onCitationClick={onCitationClick}
+              align="left"
+              framingAttribution={framing?.attribution}
+            />
+          )}
+        </figure>
+      );
+    }
   } else if (block.type === "echarts") {
     const titleText = blockTitle(block);
     const captionPrefix = framing?.label ?? "";

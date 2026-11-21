@@ -613,6 +613,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                     {"name": "Margin", "type": "bar", "datasetIndex": 0, "encode": {"x": "Quarter", "y": "Margin"}}
                 ]
             },
+            "note": "单位：万元、%；统计口径：2025年季度数据。",
+            "source_note": "Annual filings",
             "fallback_summary": "Revenue grew from 120 to 150 while margin rose from 62.5% to 64.0%."
         },
         {
@@ -626,6 +628,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
                     {"type": "map", "map": "world", "data": [{"name": "China", "value": 1}]}
                 ]
             },
+            "note": "单位：个；统计口径：2025年已覆盖区域。",
+            "source_note": "Annual filings",
             "fallback_summary": "Coverage spans the China and world map registrations."
         }
     ]);
@@ -938,6 +942,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             "type":"table",
             "caption":"Revenue by segment",
             "note":"单位：元；统计口径：FY25—FY26 营业收入。",
+            "source_note":"Audited financial statements [^sec_fin]",
+            "source_ids":["sec_fin"],
             "columns":[
                 {"key":"segment","label":"Segment"},
                 {"key":"revenue","label":"Revenue","children":[
@@ -959,6 +965,8 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             "type":"echarts",
             "title":"Revenue and margin",
             "note":"单位：元、%；统计口径：FY25—FY26 营业收入与利润率。",
+            "source_note":"Audited financial statements [^sec_fin]",
+            "source_ids":["sec_fin"],
             "height":340,
             "option":{
                 "tooltip":{"trigger":"axis"},

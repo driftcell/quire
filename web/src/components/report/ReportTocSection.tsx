@@ -63,7 +63,9 @@ function TocEntry({
         />
       )}
       {isPaged && (
-        <span className="ml-2 min-w-8 shrink-0 text-right font-mono text-xs text-[var(--rpt-muted)] tabular-nums">
+        <span
+          className={`${showLeaders ? "ml-2" : "ml-auto pl-3"} min-w-8 shrink-0 text-right font-mono text-xs text-[var(--rpt-muted)] tabular-nums`}
+        >
           {pageNumber ?? ""}
         </span>
       )}

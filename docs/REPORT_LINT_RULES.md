@@ -193,11 +193,16 @@ Spearman/Pearson, HHI and p-value statements. An ordinal followed by an explicit
 `第一项“国家级项目数”占优`, is allowed. Quoted titles and inline code are masked, and Spearman is
 owned by this rule rather than duplicated in `QR412`.
 
-`QR422` is a suppressible Info for numeric Table/ECharts blocks with no non-empty `note` and incomplete
-unit labels. A note describing unit/scope/time suppresses the finding. Without one, every numeric
-table column must carry a unit in its header; charts may instead label every explicit value axis, or
-every numeric series for charts without value axes. Units use forms such as `（项）`, `（万元）` and
-`（%）`.
+`QR422` is a suppressible Warning covering three independent visual-publication checks. Numeric
+Table/ECharts blocks with no non-empty `note` must have complete unit labels: every numeric table
+column carries a unit in its header; charts may instead label every explicit value axis, or every
+numeric series for charts without value axes. Units use forms such as `（项）`, `（万元）` and `（%）`.
+A non-empty unit/scope/time note suppresses only this unit check. Data tables (body or summary rows)
+and numeric charts must also have either `source_ids` or a non-empty `source_note`; the repair hint
+requires both a natural-Chinese institution/database name and bound citations. Finally, any Table or
+ECharts `note` longer than 180 Unicode scalar values reports separately, with a repair target of 120
+characters (about two lines) and instructions to remove formulas, reading conclusions, name glossaries
+and repeated missing-data explanations. Source and length findings still apply when a note is present.
 
 `QR423` checks paragraphs, headings and Table/ECharts `title`/`note`/`source_note` for unquoted
 `双一流`/`双优`/`十四五`/`十五五`, year ranges written with `-`, `~`, `～` or `–` instead of `—`, and
@@ -277,9 +282,10 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
 - Prose checks skip headings and quotations, mask quoted proper nouns before matching, and never
   report a single B-class jargon word as `QR412`.
 - `QR421` exempts explicitly named metrics and owns statistical jargon without duplicating `QR412`;
-  `QR422` remains Info when a visual note or complete unit labels are present; `QR423` respects Chinese
-  quotes, inline code and external Quote blocks. `QR424` covers every visible publication field and
-  survives document/block ignore policies while leaving natural business Chinese untouched.
+  `QR422` is Warning and checks units, missing visual sources and notes over 180 characters independently;
+  `QR423` respects Chinese quotes, inline code and external Quote blocks. `QR424` covers every visible
+  publication field and survives document/block ignore policies while leaving natural business Chinese
+  untouched.
 - Contrast tics are sentence-bounded and require a 1-45 character gap; a single contrast sentence or
   a single light hedging phrase does not report `QR415`.
 - Dense chart labels report at most once per chart; line end-label checks fire at most once per chart;

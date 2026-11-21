@@ -225,7 +225,7 @@ mod tests {
         let prose = diagnostic("QR412", Severity::Warning, Some(block_id("b_prose")?));
         let prose_fourteen = diagnostic("QR414", Severity::Warning, Some(block_id("b_prose_14")?));
         let blind_ordinal = diagnostic("QR421", Severity::Warning, Some(block_id("b_blind")?));
-        let visual_note = diagnostic("QR422", Severity::Info, Some(block_id("b_visual_note")?));
+        let visual_note = diagnostic("QR422", Severity::Warning, Some(block_id("b_visual_note")?));
         let policy_format = diagnostic("QR423", Severity::Warning, Some(block_id("b_policy")?));
         let info = diagnostic("QR103", Severity::Info, Some(block_id("b_info")?));
         assert_eq!(priority_tier(&error), 0);
@@ -238,7 +238,7 @@ mod tests {
         assert_eq!(priority_tier(&prose_fourteen), 3);
         assert_eq!(priority_tier(&blind_ordinal), 3);
         assert_eq!(priority_tier(&policy_format), 3);
-        assert_eq!(priority_tier(&visual_note), 4);
+        assert_eq!(priority_tier(&visual_note), 1);
         assert_eq!(priority_tier(&info), 4);
         Ok(())
     }

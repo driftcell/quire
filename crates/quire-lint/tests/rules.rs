@@ -88,7 +88,7 @@ fn valid_document() -> ReportDocument {
     document
         .blocks
         .push(paragraph("summary", "Revenue grew 18% [^sec10]."));
-    document.blocks.push(table(
+    let mut data_table = table(
         "table",
         None,
         vec![
@@ -105,7 +105,10 @@ fn valid_document() -> ReportDocument {
                 ("value", CellValue::Integer(20)),
             ]),
         ],
-    ));
+    );
+    data_table.source_note = Some("Annual filing".into());
+    data_table.source_ids = vec![sid("sec10")];
+    document.blocks.push(data_table);
     document
 }
 
@@ -1122,7 +1125,15 @@ fn chart_safety_rules_are_detected() {
             note: Some("单位：项；统计口径：2025年。".into()),
         },
     );
-    assert!(isolated.is_clean(), "{:?}", isolated.diagnostics);
+    assert!(
+        isolated
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code == "QR422"),
+        "{:?}",
+        isolated.diagnostics
+    );
+    assert!(has_code(&isolated, "QR422"));
 }
 
 #[test]
@@ -2849,7 +2860,7 @@ fn qr421_detects_blind_ordinals_and_academic_jargon() {
 #[test]
 fn qr422_requires_visual_units_or_scope_note() {
     let mut table_missing = doc();
-    table_missing.blocks.push(table(
+    let mut missing_table_block = table(
         "missing-table-note",
         None,
         vec![
@@ -2860,15 +2871,17 @@ fn qr422_requires_visual_units_or_scope_note() {
             ("name", CellValue::text("甲")),
             ("count", CellValue::Integer(214)),
         ])],
-    ));
+    );
+    missing_table_block.source_note = Some("教育部".into());
+    table_missing.blocks.push(missing_table_block);
     let report = lint_document(&table_missing);
     let diagnostic = finding(&report, "QR422");
-    assert_eq!(diagnostic.severity, Severity::Info);
+    assert_eq!(diagnostic.severity, Severity::Warning);
     assert!(diagnostic.suppressible);
     assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].note"));
 
     let mut table_with_units = doc();
-    table_with_units.blocks.push(table(
+    let mut units_table_block = table(
         "table-with-units",
         None,
         vec![
@@ -2879,11 +2892,13 @@ fn qr422_requires_visual_units_or_scope_note() {
             ("name", CellValue::text("甲")),
             ("count", CellValue::Integer(214)),
         ])],
-    ));
+    );
+    units_table_block.source_note = Some("教育部".into());
+    table_with_units.blocks.push(units_table_block);
     assert!(!has_code(&lint_document(&table_with_units), "QR422"));
 
     let mut table_with_note = doc();
-    table_with_note.blocks.push(with_table_note(
+    let mut noted_table_block = with_table_note(
         table(
             "table-with-note",
             None,
@@ -2897,39 +2912,122 @@ fn qr422_requires_visual_units_or_scope_note() {
             ])],
         ),
         "单位：项；统计口径：2025年国家级项目。",
-    ));
+    );
+    noted_table_block.source_note = Some("教育部".into());
+    table_with_note.blocks.push(noted_table_block);
     assert!(!has_code(&lint_document(&table_with_note), "QR422"));
 
     let mut chart_missing = doc();
-    chart_missing.blocks.push(chart_named(
+    let mut missing_chart_block = chart_named(
         "chart-without-units",
         serde_json::json!({
             "xAxis": {"type": "category", "data": ["A", "B"]},
             "yAxis": {"type": "value"},
             "series": [{"type": "bar", "data": [1, 2]}]
         }),
-    ));
+    );
+    missing_chart_block.source_note = Some("教育部".into());
+    chart_missing.blocks.push(missing_chart_block);
     assert!(has_code(&lint_document(&chart_missing), "QR422"));
 
     let mut chart_with_units = doc();
-    chart_with_units.blocks.push(chart_named(
+    let mut units_chart_block = chart_named(
         "chart-with-units",
         serde_json::json!({
             "xAxis": {"type": "category", "data": ["A", "B"]},
             "yAxis": {"type": "value", "name": "人才数（名）"},
             "series": [{"type": "bar", "data": [1, 2]}]
         }),
-    ));
+    );
+    units_chart_block.source_note = Some("教育部".into());
+    chart_with_units.blocks.push(units_chart_block);
     assert!(!has_code(&lint_document(&chart_with_units), "QR422"));
 
     let mut pie_with_units = doc();
-    pie_with_units.blocks.push(chart_named(
+    let mut pie_block = chart_named(
         "pie-with-units",
         serde_json::json!({
             "series": [{"name": "项目数（项）", "type": "pie", "data": [{"value": 1}, {"value": 2}]}]
         }),
-    ));
+    );
+    pie_block.source_note = Some("教育部".into());
+    pie_with_units.blocks.push(pie_block);
     assert!(!has_code(&lint_document(&pie_with_units), "QR422"));
+}
+
+#[test]
+fn qr422_requires_visual_sources_and_bounds_note_length() {
+    let make_table = |id: &str| {
+        table(
+            id,
+            None,
+            vec![ColumnNode::leaf("count", "项目数（项）").with_type(ColumnDataType::Number)],
+            vec![row(&[("count", CellValue::Integer(214))])],
+        )
+    };
+    let make_chart = |id: &str| {
+        chart_named(
+            id,
+            serde_json::json!({
+                "xAxis": {"type": "category", "data": ["A", "B"]},
+                "yAxis": {"type": "value", "name": "项目数（项）"},
+                "series": [{"type": "bar", "data": [1, 2]}]
+            }),
+        )
+    };
+
+    let mut missing_table_source = doc();
+    let mut table_block = make_table("missing-table-source");
+    table_block.source_note = Some("  \n".into());
+    missing_table_source.blocks.push(table_block);
+    let report = lint_document(&missing_table_source);
+    let diagnostic = finding(&report, "QR422");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].source_note"));
+    assert!(diagnostic.message.contains("source_ids"));
+    assert!(diagnostic.hint.contains("资料来源"));
+
+    let mut missing_chart_source = doc();
+    missing_chart_source
+        .blocks
+        .push(make_chart("missing-chart-source"));
+    let report = lint_document(&missing_chart_source);
+    let diagnostic = finding(&report, "QR422");
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].source_note"));
+
+    let mut long_table_note = doc();
+    let mut table_block = make_table("long-table-note");
+    table_block.source_note = Some("教育部".into());
+    if let BlockKind::Table(ref mut table) = table_block.body {
+        table.note = Some("长".repeat(181));
+    }
+    long_table_note.blocks.push(table_block);
+    let report = lint_document(&long_table_note);
+    let diagnostic = finding(&report, "QR422");
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].note"));
+    assert!(diagnostic.message.contains("当前 181 字"));
+    assert!(diagnostic.hint.contains("120 字（2 行）以内"));
+    assert!(diagnostic.hint.contains("重复缺失说明"));
+
+    let mut long_chart_note = doc();
+    let mut chart_block = make_chart("long-chart-note");
+    chart_block.source_note = Some("教育部".into());
+    if let BlockKind::Echarts(ref mut chart) = chart_block.body {
+        chart.note = Some("长".repeat(181));
+    }
+    long_chart_note.blocks.push(chart_block);
+    let report = lint_document(&long_chart_note);
+    let diagnostic = finding(&report, "QR422");
+    assert!(diagnostic.message.contains("当前 181 字"));
+
+    let mut boundary_note = doc();
+    let mut table_block = make_table("boundary-table-note");
+    table_block.source_note = Some("教育部".into());
+    if let BlockKind::Table(ref mut table) = table_block.body {
+        table.note = Some("长".repeat(180));
+    }
+    boundary_note.blocks.push(table_block);
+    assert!(!has_code(&lint_document(&boundary_note), "QR422"));
 }
 
 #[test]
@@ -3562,7 +3660,7 @@ fn non_suppressible_rules_survive_every_ignore_layer() {
 #[test]
 fn select_supports_codes_names_and_category_prefixes() {
     let mut document = doc();
-    document.blocks.push(table(
+    let mut empty_column_table = table(
         "empty",
         None,
         vec![ColumnNode::leaf("a", "A"), ColumnNode::leaf("b", "B")],
@@ -3570,7 +3668,9 @@ fn select_supports_codes_names_and_category_prefixes() {
             row(&[("a", CellValue::text("x")), ("b", CellValue::Null)]),
             row(&[("a", CellValue::text("y")), ("b", CellValue::Null)]),
         ],
-    ));
+    );
+    empty_column_table.source_note = Some("教育部".into());
+    document.blocks.push(empty_column_table);
     document.blocks.push(paragraph("placeholder", "TBD"));
     for token in ["QR2", "QR202", "table-empty-column"] {
         let report = lint_document_with_options(

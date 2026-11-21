@@ -192,7 +192,7 @@ define_rules! {
     DenseProseRunNeedsVisual = "QR419", "dense-prose-run-needs-visual", Warning, true;
     DuplicateNotePrefix = "QR420", "duplicate-note-prefix", Warning, true;
     BlindOrdinalOrAcademicJargon = "QR421", "blind-ordinal-or-academic-jargon", Warning, true;
-    VisualMissingUnitOrScopeNote = "QR422", "visual-missing-unit-or-scope-note", Info, true;
+    VisualMissingUnitOrScopeNote = "QR422", "visual-missing-unit-or-scope-note", Warning, true;
     HigherEdPolicyTermFormat = "QR423", "higher-ed-policy-term-format", Warning, true;
     InternalIdentifierLeak = "QR424", "internal-identifier-leak", Error, false;
 

@@ -89,7 +89,7 @@ pub struct TocConfig {
 }
 
 fn default_toc_variant() -> String {
-    "standard".to_string()
+    "dotted".to_string()
 }
 
 impl TocConfig {
@@ -475,10 +475,12 @@ mod tests {
     #[test]
     fn toc_page_breaks_default_false_and_roundtrip() {
         let default = TocConfig::default();
+        assert_eq!(default.variant, "dotted");
         assert!(!default.page_break_before);
         assert!(!default.page_break_after);
 
         let serialized = serde_json::to_value(&default).expect("serialize toc");
+        assert_eq!(serialized["variant"], "dotted");
         assert_eq!(serialized["page_break_before"], false);
         assert_eq!(serialized["page_break_after"], false);
 

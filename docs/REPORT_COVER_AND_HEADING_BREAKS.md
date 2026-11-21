@@ -16,10 +16,10 @@ This document governs three A4 layout contracts:
   `PageChromeDialog`.
 - Document-level TOC page breaks configured through `configure_toc` and `TocConfig`.
 
-It does not cover built-in cover variants (`classic`, `modern`, `minimal`, `split`) beyond preserving
-their inline behavior, the block bin-packing algorithm, table row slicing, or theme CSS sanitization.
-The default centered cover deliberately ends with natural `<header>` whitespace and no built-in
-bottom rule; agents that need a rule or a special layout should provide `cover.custom_html`.
+It also records the built-in subtitle cleanup, TOC page-number alignment and measured table-slicing
+invariants that protect A4 output. It does not cover theme CSS sanitization. The default centered cover
+deliberately ends with natural `<header>` whitespace and no built-in bottom rule; agents that need a
+rule or a special layout should provide `cover.custom_html`.
 
 ## 2. Canonical Design & Contract
 
@@ -42,7 +42,8 @@ generated with `web/` `bun run gen:types`.
 
 `TocConfig` carries `#[serde(default)] pub page_break_before: bool` and
 `#[serde(default)] pub page_break_after: bool`. Both default to `false` and are first-class document
-fields, not local display preferences.
+fields, not local display preferences. `TocConfig.variant` defaults to `dotted`; frontend normalization
+uses the same default in continuous and paged modes when no explicit variant exists.
 
 ### MCP and guide
 
@@ -84,6 +85,16 @@ before sanitization.
   vertically centered in the A4 page;
 - the page exposes `data-full-page-cover="true"` for tests and diagnostics.
 
+### Built-in cover and TOC details
+
+Before any built-in variant or custom `{{subtitle}}` placeholder renders a subtitle, `ReportCover`
+strips leading/trailing whitespace and dash characters. The `classic` variant then adds exactly one
+`—— … ——` wrapper, so agent-supplied dashes cannot produce a doubled prefix or suffix.
+
+TOC page numbers use a dotted flexible leader in the default `dotted` variant. Explicit `standard` and
+`numbered` variants omit the leader but pin the page-number span with `ml-auto pl-3`, keeping numbers
+on the right edge instead of immediately after variable-length title text.
+
 ### Pagination
 
 `PaginateOptions` adds `coverFullPage`, `headingPageBreak`, `tocPageBreakBefore` and
@@ -99,6 +110,22 @@ While iterating blocks, a heading starts a new page when its own `style.page_bre
 or when the document policy matches its level (`h1` for level 1, `h1_and_h2` for levels 1-2). The
 break only fires when the current page already has body items or a TOC, so a heading at the top of a
 fresh page never produces an empty page. A TOC-only page is preserved rather than discarded.
+
+Before slicing a table onto the current page, the paginator checks compact tables whose complete
+measured height is at most 90% of a fresh page. If the current page already has content and can hold
+fewer than `min(6, ceil(rowCount * 0.6))` rows, the whole table moves to a fresh page rather than
+leaving a small page-bottom fragment.
+
+During row slicing, the remaining body height includes all remaining rows, `tfoot` and any continuation
+footer, but is also compared independently with `notesHeight`. When the complete remaining body fits
+and the notes alone do not, the final body slice contains every remaining row with `includeNotes:
+false`; the next page receives a `notesOnly` slice. `ReportBlockItem` renders only `BlockFooterNotes`
+for that slice and never repeats the table or caption. Bibliography packing accounts for these two
+slices separately.
+
+When a visual has `source_ids` but no `source_note`, `BlockFooterNotes` resolves up to three distinct
+source names from bibliography `publisher` (falling back to `title`) and prepends them to the citation
+markers. This prevents a bare `资料来源：[N]` when bibliography metadata can supply a readable name.
 
 ### User settings
 
@@ -120,6 +147,12 @@ choice.
 - `tocPageBreakBefore` and `tocPageBreakAfter` are applied independently; enabling both gives the
   TOC an exclusive page.
 - Automatic heading breaks never emit a blank page when the heading is already at a page top.
+- `TocConfig.variant` defaults to `dotted`; non-dotted page numbers still align to the right edge.
+- Built-in cover variants never duplicate a subtitle's leading/trailing dashes.
+- Compact single-page tables do not leave small page-bottom fragments; long notes never force the last
+  data rows into a continuation solely to make room for those notes.
+- A `notesOnly` slice renders no table or caption, and missing source notes use readable bibliography
+  names when available.
 - Sanitization removes the required executable elements, inline handlers and script protocols, but
   keeps ordinary layout markup and placeholders.
 
@@ -133,7 +166,7 @@ Frontend verification:
 
 ```bash
 cd web
-bun run test          # pagination.test.ts covers cover isolation, TOC/heading breaks and sanitization
+bun run test          # pagination.test.ts + reportRendering.test.tsx cover layout/rendering contracts
 bun run typecheck
 bun run lint
 bun run build

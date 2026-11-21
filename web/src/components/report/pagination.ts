@@ -8,6 +8,9 @@ export interface PageSlice {
   rowEnd?: number;
   totalRows?: number;
   includeSummary?: boolean;
+  includeNotes?: boolean;
+  /** Render only the table's footer notes after its final body slice. */
+  notesOnly?: boolean;
   continuation?: boolean;
 }
 
@@ -95,6 +98,32 @@ function tableChromeHeight(
     );
   }
   return fallback;
+}
+
+function fitTableRows(
+  rowCount: number,
+  cursor: number,
+  available: number,
+  metrics: TableMeasurement | undefined,
+  tfootHeight: number,
+  notesHeight: number,
+): { count: number; height: number } {
+  let height = 0;
+  let count = 0;
+  while (cursor + count < rowCount) {
+    const rowHeight =
+      metrics?.rowHeights[cursor + count] ?? DEFAULT_ROW_HEIGHT_PX;
+    const isFinalRow = cursor + count === rowCount - 1;
+    const extraBottom = isFinalRow
+      ? tfootHeight + notesHeight + (cursor > 0 ? CONTINUATION_FOOTER_PX : 0)
+      : CONTINUATION_FOOTER_PX;
+    if (height + rowHeight + extraBottom > available) {
+      break;
+    }
+    height += rowHeight;
+    count += 1;
+  }
+  return { count, height };
 }
 
 /**
@@ -243,28 +272,75 @@ export function paginateBlocks(
       blockHeights,
     );
 
+    // A table that fits comfortably on one fresh page should not leave a small
+    // fragment at the bottom of the current page merely because a few rows fit.
+    if (
+      (currentItems.length > 0 || currentIncludeToc) &&
+      measured <= pageHeight * 0.9
+    ) {
+      const available = pageHeight - usedHeight - chromeHeight;
+      const { count } = fitTableRows(
+        rows.length,
+        0,
+        available,
+        tableMetrics,
+        tfootHeight,
+        notesHeight,
+      );
+      if (count < Math.min(6, Math.ceil(rows.length * 0.6))) {
+        pushPage();
+        currentItems.push({ block });
+        usedHeight += measured;
+        continue;
+      }
+    }
+
     let cursor = 0;
     while (cursor < rows.length) {
       const available = pageHeight - usedHeight - chromeHeight;
-      let accHeight = 0;
-      let count = 0;
+      const continuationFooterHeight = cursor > 0 ? CONTINUATION_FOOTER_PX : 0;
+      const remainingRowsHeight = rows
+        .slice(cursor)
+        .reduce(
+          (sum, _row, offset) =>
+            sum +
+            (tableMetrics?.rowHeights[cursor + offset] ??
+              DEFAULT_ROW_HEIGHT_PX),
+          0,
+        );
+      const remainingBodyHeight =
+        remainingRowsHeight + tfootHeight + continuationFooterHeight;
 
-      while (cursor + count < rows.length) {
-        const rowH =
-          tableMetrics?.rowHeights[cursor + count] ?? DEFAULT_ROW_HEIGHT_PX;
-        const isFinalRow = cursor + count === rows.length - 1;
-        const extraBottom = isFinalRow
-          ? tfootHeight +
-            notesHeight +
-            (cursor > 0 ? CONTINUATION_FOOTER_PX : 0)
-          : CONTINUATION_FOOTER_PX;
-        if (accHeight + rowH + extraBottom > available) {
-          break;
-        }
-        accHeight += rowH;
-        count += 1;
+      // Never sacrifice the last data rows just to keep long notes alongside
+      // them. Keep the complete remaining body here and continue notes alone.
+      if (
+        remainingBodyHeight <= available &&
+        remainingBodyHeight + notesHeight > available
+      ) {
+        currentItems.push({
+          block,
+          rowStart: cursor,
+          rowEnd: rows.length,
+          totalRows: rows.length,
+          includeSummary: true,
+          includeNotes: false,
+          continuation: cursor > 0,
+        });
+        usedHeight += chromeHeight + remainingBodyHeight;
+        pushPage();
+        currentItems.push({ block, notesOnly: true });
+        usedHeight += notesHeight;
+        break;
       }
 
+      const { count, height: accHeight } = fitTableRows(
+        rows.length,
+        cursor,
+        available,
+        tableMetrics,
+        tfootHeight,
+        notesHeight,
+      );
       const remainingRows = rows.length - cursor;
       const minRowsToKeepOnCurrentPage = Math.min(2, remainingRows);
 
@@ -299,9 +375,7 @@ export function paginateBlocks(
         chromeHeight +
         pageAccHeight +
         (isLast
-          ? tfootHeight +
-            notesHeight +
-            (cursor > 0 ? CONTINUATION_FOOTER_PX : 0)
+          ? tfootHeight + notesHeight + continuationFooterHeight
           : CONTINUATION_FOOTER_PX);
       cursor = nextCursor;
       if (!isLast) {
@@ -359,6 +433,9 @@ function estimatedPageUsedHeight(
     measurements;
   return page.items.reduce(
     (sum, slice) => {
+      if (slice.notesOnly) {
+        return sum + (tableMeasurements[slice.block.id]?.notesHeight ?? 0);
+      }
       if (slice.rowStart !== undefined && slice.rowEnd !== undefined) {
         const metrics = tableMeasurements[slice.block.id];
         const rowsCost = metrics
@@ -372,7 +449,7 @@ function estimatedPageUsedHeight(
           rowsCost +
           (slice.includeSummary
             ? (metrics?.tfootHeight ?? 0) +
-              (metrics?.notesHeight ?? 0) +
+              (slice.includeNotes === false ? 0 : (metrics?.notesHeight ?? 0)) +
               (slice.continuation ? CONTINUATION_FOOTER_PX : 0)
             : CONTINUATION_FOOTER_PX)
         );

@@ -79,14 +79,13 @@ function isTocVariant(value: unknown): value is TocVariant {
   return value === "standard" || value === "numbered" || value === "dotted";
 }
 
-function normalizeTocVariant(value: unknown, paged: boolean): TocVariant {
+function normalizeTocVariant(value: unknown, _paged: boolean): TocVariant {
   if (isTocVariant(value)) {
     return value;
   }
-  // Protocol default is `standard`. In paged/print output the extra page
-  // numbers make the dotted-leader layout the most useful default; an explicit
-  // `standard`/`numbered` from the document or local override always wins.
-  return paged ? "dotted" : "standard";
+  // Match the protocol default in both continuous and paged output. Explicit
+  // `standard`/`numbered` values from the document or local override still win.
+  return "dotted";
 }
 
 export interface NormalizeTocOptions {
