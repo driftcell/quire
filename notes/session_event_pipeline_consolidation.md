@@ -4,8 +4,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-21
-- **Promoted To:** `../docs/RUNTIME_RIG_STREAMING.md` (Phase 0 contracts);
-  `../docs/RUNTIME_SESSION_EVENTS.md` (later phases, pending implementation)
+- **Promoted To:** `../docs/RUNTIME_RIG_STREAMING.md`, `../docs/RUNTIME_SESSION_EVENTS.md`
 
 ## 1. Context & Problem
 
@@ -430,4 +429,6 @@ pnpm --dir web gen:types
   and `TurnStarted` now patch the query cache directly instead of invalidating the full session
   detail. Refetches remain only for structurally incomplete frames and terminal/synchronization
   boundaries. Reducer effect tests pin this contract.
-- **Next:** preview handoff, subagent `resume_run_id` and `docs/RUNTIME_SESSION_EVENTS.md`.
+- **All planned phases and support work landed:** preview latest-frame-wins handoff with a final-frame
+  barrier, subagent `resume_run_id` with bounded in-memory history, the higher-education 9-step
+  writing workflow, and the canonical `docs/RUNTIME_SESSION_EVENTS.md` contract.
