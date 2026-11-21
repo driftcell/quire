@@ -3,24 +3,13 @@
 use std::collections::HashSet;
 
 use quire_protocol::{
-    BlockKind, ReportDocument, TableError,
-    block::{is_semantic_block_id, looks_like_uuid_v4},
-    unknown_row_keys, unknown_width_overrides, validate_table,
+    BlockKind, ReportDocument, TableError, block::looks_like_uuid_v4, unknown_row_keys,
+    unknown_width_overrides, validate_table,
 };
 
 use crate::{engine::Engine, registry::RuleId};
 
 pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
-    if document.doc_id.as_str().trim().is_empty() {
-        engine.report(
-            RuleId::DocIdEmpty,
-            "document `doc_id` is empty",
-            "create or load the report with a non-empty semantic doc_id",
-            None,
-            Some("doc_id".into()),
-        );
-    }
-
     let mut seen = HashSet::new();
     for (index, block) in document.blocks.iter().enumerate() {
         if !seen.insert(block.id.as_str()) {
@@ -33,15 +22,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
                 vec![block_ids(document)],
             );
         }
-        if !is_semantic_block_id(block.id.as_str()) {
-            engine.report(
-                RuleId::InvalidBlockId,
-                format!("block id `{}` is not a short semantic id", block.id),
-                "use 1-64 ASCII letters/digits and '-' '_' '.', starting alphanumeric; never UUIDv4",
-                Some(block.id.clone()),
-                Some(format!("blocks[{index}].id")),
-            );
-        } else if looks_like_uuid_v4(block.id.as_str()) {
+        if looks_like_uuid_v4(block.id.as_str()) {
             engine.report(
                 RuleId::BlockIdUuidV4,
                 format!("block id `{}` is a UUIDv4", block.id),

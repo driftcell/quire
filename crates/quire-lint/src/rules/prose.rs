@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use quire_protocol::{BlockKind, ReportDocument};
 
-use super::structure::normalize_heading_text;
+use super::{evidence::has_quantitative_evidence, structure::dense_prose_section_exempt};
 use crate::{engine::Engine, registry::RuleId};
 
 const CLICHE_TRANSITIONS: &[&str] = &[
@@ -20,13 +20,16 @@ const CLICHE_TRANSITIONS: &[&str] = &[
     "众所周知",
     "毋庸置疑",
     "由此可见",
-    "值得注意的是",
     "需要指出的是",
     "不可忽视的是",
     "值得关注的是",
     "在此背景下",
     "面对这一形势",
 ];
+
+const REPEATED_TRANSITIONS: &[&str] = &["与此同时", "值得注意的是"];
+const ENUMERATION_MIN_ITEM_CHARS: usize = 8;
+const ENUMERATION_AVG_ITEM_CHARS: usize = 18;
 
 const PROCESS_AND_DISCLAIMER_CLICHES: &[&str] = &[
     "受篇幅所限",
@@ -48,13 +51,13 @@ const EXTREME_JARGON_CLICHES: &[&str] = &[
     "飞轮",
     "颗粒度",
     "深度赋能",
-    "组合拳",
-    "令人瞩目",
     "辉煌成就",
     "无比强劲",
     "质的飞跃",
-    "Spearman相关系数",
 ];
+
+const EVIDENCE_DEPENDENT_EVALUATIONS: &[&str] =
+    &["提质增效", "显著提升", "稳中有进", "总体平稳", "令人瞩目"];
 
 const ENGLISH_CLICHES: &[&str] = &[
     "in conclusion",
@@ -88,21 +91,14 @@ const EMPTY_JARGON: &[&str] = &[
     "蝶变",
     "弯道超车",
     "双轮驱动",
+    "组合拳",
     "协同发力",
-    "提质增效",
     "同频共振",
     "多措并举",
     "多维发力",
-    "系统推进",
     "纵深推进",
     "精准施策",
-    "高质量发展",
     "跨越式发展",
-    "内涵式发展",
-    "显著提升",
-    "稳中有进",
-    "总体平稳",
-    "与此同时",
 ];
 
 const ECO_SUFFIXES: &[&str] = &[
@@ -208,8 +204,6 @@ const LIGHT_HEDGES: &[&str] = &[
     "换个角度看",
 ];
 
-const DENSE_PROSE_EXEMPT_HEADINGS: &[&str] = &["导论", "引言", "前言", "结语", "总结", "摘要"];
-
 const ECO_PREFIXES: &[&str] = &[
     "海洋",
     "陆地",
@@ -270,8 +264,10 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
 }
 
 fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
+    let mut previous_transition = None;
     for (index, block) in document.blocks.iter().enumerate() {
         let BlockKind::Paragraph { text } = &block.body else {
+            previous_transition = None;
             continue;
         };
         let masked = mask_text(text);
@@ -290,6 +286,15 @@ fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
                 hits.insert(*phrase);
             }
         }
+        for phrase in EVIDENCE_DEPENDENT_EVALUATIONS {
+            if masked
+                .split(['。', '！', '？', '；', '\n'])
+                .any(|sentence| sentence.contains(phrase) && !has_quantitative_evidence(sentence))
+            {
+                hits.insert(*phrase);
+            }
+        }
+
         let mut jargon_hits = Vec::new();
         for phrase in EMPTY_JARGON {
             if contains_jargon(&masked, phrase) {
@@ -299,6 +304,20 @@ fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
         if jargon_hits.len() >= 2 {
             hits.extend(jargon_hits);
         }
+        if masked.matches("组合拳").count() >= 2 {
+            hits.insert("组合拳");
+        }
+
+        let leading_transition = leading_repeated_transition(&masked);
+        for phrase in REPEATED_TRANSITIONS {
+            if masked.matches(*phrase).count() >= 2
+                || (leading_transition == Some(*phrase) && previous_transition == Some(*phrase))
+            {
+                hits.insert(*phrase);
+            }
+        }
+        previous_transition = leading_transition;
+
         if hits.is_empty() {
             continue;
         }
@@ -306,14 +325,22 @@ fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
         engine.report(
             RuleId::ClichePhraseDensity,
             format!(
-                "block `{}` contains empty AI-slop phrases: {words}",
+                "block `{}` contains unsupported or mechanical phrases: {words}",
                 block.id
             ),
-            "In this Paragraph via apply_operations, delete the listed water phrases and rewrite the opening as a concrete metric/entity sentence with an effect size or rank; do not replace them with another synonym cliché. quote exact policy or source terms in \"\" if needed.",
+            "In this Paragraph via apply_operations, delete empty phrases, avoid repeating mechanical transitions, and support evaluative wording with a real metric, effect size or rank; do not replace them with another synonym cliché. quote exact policy or source terms in \"\" if needed.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
     }
+}
+
+fn leading_repeated_transition(text: &str) -> Option<&'static str> {
+    let trimmed = text.trim_start();
+    REPEATED_TRANSITIONS
+        .iter()
+        .copied()
+        .find(|phrase| trimmed.starts_with(phrase))
 }
 
 fn check_low_evidence(document: &ReportDocument, engine: &mut Engine<'_>) {
@@ -369,15 +396,19 @@ fn check_template_parallel(document: &ReportDocument, engine: &mut Engine<'_>) {
                 reasons.push("机械“第一/第二/第三”枚举");
             }
         }
-        let has_four_item_enumeration =
-            contains_in_order(&masked, &["一是", "二是", "三是", "四是"]);
-        if has_four_item_enumeration && !has_list_structure(text) {
-            reasons.push("机械“一是/二是/三是/四是”枚举");
-        } else if contains_in_order(&masked, &["一是", "二是", "三是"])
-            && !text.chars().any(|ch| ch.is_ascii_digit())
-            && !has_citation_evidence
-        {
-            reasons.push("机械“一是/二是/三是”枚举");
+        if !has_list_structure(text) {
+            if let Some(items) =
+                ordered_enumeration_items(&masked, &["一是", "二是", "三是", "四是"])
+            {
+                if !substantive_enumeration(&masked, &items, has_citation_evidence) {
+                    reasons.push("机械“一是/二是/三是/四是”枚举");
+                }
+            } else if let Some(items) =
+                ordered_enumeration_items(&masked, &["一是", "二是", "三是"])
+                && !substantive_enumeration(&masked, &items, has_citation_evidence)
+            {
+                reasons.push("机械“一是/二是/三是”枚举");
+            }
         }
         if masked.contains("一方面") && masked.contains("另一方面") {
             contrast_occurrences = contrast_occurrences.saturating_add(1);
@@ -401,11 +432,40 @@ fn check_template_parallel(document: &ReportDocument, engine: &mut Engine<'_>) {
                 block.id,
                 reasons.join("；")
             ),
-            "In this Paragraph via apply_operations, remove the mechanical connectives/parallel enumeration and split it into a bullet list or separate paragraphs, or state each claim with its metric, mechanism or source evidence; do not swap in another template or synonym shell.",
+            "In this Paragraph via apply_operations, remove empty mechanical connectives or give every enumeration item a concrete subject, action, mechanism, metric or source. Substantive semicolon-delimited 一是/二是 items are valid official-document prose; do not replace them with a decorative bullet list or another synonym shell.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
     }
+}
+
+fn ordered_enumeration_items<'a>(text: &'a str, markers: &[&str]) -> Option<Vec<&'a str>> {
+    let mut remaining = text;
+    let mut items = Vec::with_capacity(markers.len());
+    for (index, marker) in markers.iter().enumerate() {
+        let found = remaining.find(marker)?;
+        if index > 0 {
+            items.push(remaining.get(..found)?);
+        }
+        remaining = remaining.get(found + marker.len()..)?;
+    }
+    items.push(remaining);
+    Some(items)
+}
+
+fn substantive_enumeration(text: &str, items: &[&str], has_citation_evidence: bool) -> bool {
+    if items.is_empty() || (!has_citation_evidence && !has_quantitative_evidence(text)) {
+        return false;
+    }
+    let lengths: Vec<usize> = items
+        .iter()
+        .map(|item| masked_plain_char_count(item))
+        .collect();
+    let total = lengths.iter().sum::<usize>();
+    lengths
+        .iter()
+        .all(|length| *length >= ENUMERATION_MIN_ITEM_CHARS)
+        && total >= ENUMERATION_AVG_ITEM_CHARS.saturating_mul(lengths.len())
 }
 
 fn check_contrast_and_hedging(document: &ReportDocument, engine: &mut Engine<'_>) {
@@ -527,60 +587,27 @@ fn light_hedge_hits(text: &str) -> BTreeSet<&'static str> {
 }
 
 fn check_wall_of_text(document: &ReportDocument, engine: &mut Engine<'_>) {
-    let mut prose_streak = 0usize;
-    let mut prose_chars = 0usize;
-    let mut streak_reported = false;
     for (index, block) in document.blocks.iter().enumerate() {
-        match &block.body {
-            BlockKind::Paragraph { text } => {
-                if has_list_structure(text) {
-                    prose_streak = 0;
-                    prose_chars = 0;
-                    streak_reported = false;
-                    continue;
-                }
-                let char_len = wall_of_text_char_count(text);
-                let single_reported = char_len >= 450;
-                if single_reported {
-                    engine.report(
-                        RuleId::WallOfTextParagraph,
-                        format!(
-                            "paragraph `{}` is a {char_len}-char wall of text without line breaks or list structure",
-                            block.id
-                        ),
-                        "In this Paragraph via apply_operations, split it into 2-3 focused paragraphs or convert enumerations to a bullet list/Table; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
-                        Some(block.id.clone()),
-                        Some(format!("blocks[{index}].text")),
-                    );
-                }
-                prose_streak = prose_streak.saturating_add(1);
-                prose_chars = prose_chars.saturating_add(char_len);
-                if prose_streak >= 5 && prose_chars >= 1000 && !streak_reported {
-                    streak_reported = true;
-                    if !single_reported {
-                        engine.report(
-                            RuleId::WallOfTextParagraph,
-                            format!(
-                                "paragraph `{}` concludes {prose_streak} consecutive prose-only blocks ({prose_chars} chars) with no visual or heading break",
-                                block.id
-                            ),
-                            "In this prose run via apply_operations, break it up with a subheading, bullet list, Pull Quote, Table, or chart; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
-                            Some(block.id.clone()),
-                            Some(format!("blocks[{index}].text")),
-                        );
-                    }
-                }
-            }
-            BlockKind::Heading { .. }
-            | BlockKind::Table(_)
-            | BlockKind::Echarts(_)
-            | BlockKind::CustomHtml(_)
-            | BlockKind::Quote { .. } => {
-                prose_streak = 0;
-                prose_chars = 0;
-                streak_reported = false;
-            }
+        let BlockKind::Paragraph { text } = &block.body else {
+            continue;
+        };
+        if has_list_structure(text) {
+            continue;
         }
+        let char_len = wall_of_text_char_count(text);
+        if char_len < 450 {
+            continue;
+        }
+        engine.report(
+            RuleId::WallOfTextParagraph,
+            format!(
+                "paragraph `{}` is a {char_len}-char wall of text without line breaks or list structure",
+                block.id
+            ),
+            "In this Paragraph via apply_operations, split it into 2-3 focused paragraphs or convert enumerations to a bullet list/Table; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
+            Some(block.id.clone()),
+            Some(format!("blocks[{index}].text")),
+        );
     }
 }
 
@@ -595,8 +622,7 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 prose_blocks = 0;
                 prose_chars = 0;
                 reported = false;
-                exempt = *level == 2
-                    && DENSE_PROSE_EXEMPT_HEADINGS.contains(&normalize_heading_text(text));
+                exempt = *level == 2 && dense_prose_section_exempt(text);
             }
             BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_) => {
                 prose_blocks = 0;
@@ -754,7 +780,7 @@ fn matching_bracket_end(text: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn mask_text(text: &str) -> String {
+pub(super) fn mask_text(text: &str) -> String {
     let mut output = String::with_capacity(text.len());
     let mut cursor = 0usize;
     while cursor < text.len() {

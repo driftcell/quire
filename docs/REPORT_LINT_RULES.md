@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-store`, `quire-server`
-- **Related Notes:** `../notes/quire_lint_registry_split.md`
+- **Related Notes:** `../notes/quire_lint_registry_split.md`, `../notes/quire_lint_incremental_refactor.md`
 
 ## 1. Scope & Non-Goals
 
@@ -54,7 +54,9 @@ counts suppressible diagnostics hidden by any ignore layer; it is omitted when z
 
 `quire-lint/src/registry.rs` defines `RuleId`, `RuleMeta`, `RULES` and `rule_matches_token`. Codes and
 names are globally unique and code-sorted. The registry is the single source of truth; docs do not
-duplicate individual rule metadata.
+duplicate individual rule metadata. Retired codes `QR002`, `QR008` and `QR405` remain absent and are
+never reused. `QR002`/`QR008` were construction-time invariants already guaranteed by the validated
+ID newtypes; `QR405` was subsumed by `QR411`'s manual-numbering diagnostic.
 
 Category ranges:
 
@@ -75,15 +77,41 @@ or subdomain matches for the known wiki/self-media aggregator list (`baike.baidu
 `360doc.com`, `bilibili.com`, `weibo.com`, `xiaohongshu.com`). Diagnostics are document-scoped and
 do not flag lookalike domains such as `baike.baidu.com.evil.com`.
 
-`QR206` verifies a final `合计`/`总计` row when the table has at least three rows and its note does
-not declare `四舍五入`. Every non-first column is checked as a non-negative integer sum (thousands
-commas allowed; empty/`-`/`—` count as zero in data rows) or as a fixed-width 2-4 part composite
-separated by `/`, `／` or `·`. Each mismatched column reports once, and the hint carries the exact
-expected value so the model can copy it without mental arithmetic.
+`QR103` recognizes numeric claims only when a number carries a quantitative unit or currency
+marker. Higher-education units include `项`, `篇`, `所`, `名`, `位`, `倍`, `‰` and `百分点`; bare
+years, durations, chapter numbers and structural counts such as `3个方面` do not trigger it.
+
+`QR206` verifies `合计`/`总计` rows in canonical `summary_rows`, falling back to a final body summary
+row when no canonical total exists. Body detail rows exclude a trailing total and at least two detail
+rows are required. Non-negative fixed-point decimals and thousands commas are supported;
+empty/`-`/`—` detail cells count as zero. Percentage, rate, rank, position and average columns are
+not additive and are skipped. Comparison allows half a unit at the summary cell's displayed precision;
+a note declaring `四舍五入` retains its existing whole-table exemption. Fixed-width 2-4 part integer
+composites separated by `/`, `／` or `·` remain supported. Each mismatched summary cell reports with a
+path into `rows` or `summary_rows`, and the hint carries the exact expected value.
 
 `QR201` measures both the header and the widest body or summary-row cell, so a numeric column that
 fits its header but cannot hold a 4-6 digit total such as `3531` or `11.25%` on one line reports with
 a width/column-count repair hint.
+
+### Structure and placeholder integrity
+
+`QR401` retains the original English and Chinese placeholder tokens and additionally detects `××`,
+contextual `XX大学`/`XX学院`/`XX学科`/`XX项` forms, bracketed `【待…】`/`（待…）` slots, standalone
+`N` followed by a quantifier, `?%` and `??`. Bare `某高校`, generic angle-bracket examples and
+`待批复` remain valid prose rather than being promoted to placeholder errors.
+
+`QR406` parses complete Chinese and English visual references. Valid global references must start at
+one and resolve within the document's table/figure counts. Zero, out-of-range, chapter-scoped or
+compound forms such as `表 3.2`, `图 2-1`, and `附表 1` report; the diagnostic retains the complete
+reference and compound/appendix forms direct the writer to the renderer's global continuous labels.
+
+`QR404` parses manual heading numbers into relative hierarchy components instead of binding `一、` to
+H1. An unnumbered H1 therefore permits an H2-rooted `一、` → `（一）` → `1.` → `（1）` hierarchy;
+Arabic documents may use `1.` → `1.1` → `1.1.1`. Chapter/section markers and multi-character Chinese
+numerals such as `十一、` are supported. Sibling headings are grouped by actual parent block, level
+and numbering family; duplicates, gaps, non-1 starts and changed numeric prefixes report within that
+group. Decimal percentages such as `3.5%` remain prose rather than heading numbers.
 
 ### AI-slop prose checks
 
@@ -91,14 +119,20 @@ a width/column-count repair hint.
 blocks are treated as external quotations. Before matching, the prose module masks inline code,
 Markdown link targets, inline citations and `《...》` / `“...”` / `"..."` / `「...」` spans with spaces,
 so policy titles and quoted proper nouns cannot become false positives. `QR412` requires one strong
-cliché from mechanical transitions, process/disclaimer leakage, extreme internet jargon or
-untranslated statistical names, or at least two distinct empty-jargon words (with ecological
-compounds such as `生态环境` exempt); `QR413` requires a long paragraph with no digits, citations or book titles;
-`QR414` detects ordered mechanical connectives, the third and later `一方面/另一方面` contrast pair,
-three or more empty bold-list headings, and punctuated `其一/其二/其三` or `第一/第二/第三`
-enumerations. A four-item `一是/二是/三是/四是` run reports regardless of digits or citations unless
-the paragraph is a newline-delimited list. `QR415` counts sentence-bounded contrast pairs whose gap is
-1-45 characters, plus strong hedging phrases or two distinct light hedging phrases in one paragraph.
+cliché from process/disclaimer leakage or extreme internet jargon, or at least two distinct
+empty-jargon words (with ecological compounds such as `生态环境` exempt).
+Formal policy terms such as `高质量发展`, `内涵式发展` and `系统推进` are allowed. Evaluative phrases
+such as `显著提升`, `稳中有进` and `提质增效` report only when their sentence lacks a number with a
+quantitative unit; a bare year does not qualify. `组合拳` is allowed once but reports when densely
+combined or repeated, while `与此同时` and `值得注意的是` report only on repeated use within one
+paragraph or at the starts of consecutive paragraphs. `QR413` requires a long paragraph with no
+digits, citations or book titles. `QR414` detects ordered mechanical connectives, the third and later
+`一方面/另一方面` contrast pair, three or more empty bold-list headings, and punctuated
+`其一/其二/其三` or `第一/第二/第三` enumerations. Three/four-item `一是/二是/三是[/四是]` runs are
+allowed when the paragraph has quantitative or citation evidence, every item has at least eight
+visible characters, and the items average at least eighteen; hollow or padded runs still report.
+`QR415` counts sentence-bounded contrast pairs whose gap is 1-45 characters, plus strong hedging
+phrases or two distinct light hedging phrases in one paragraph.
 
 ### Layout rhythm and chart readability
 
@@ -112,34 +146,60 @@ label.
 `endLabel.textBorderWidth: 0` to avoid white-background double-stroke ghosting. Two or more line
 series with end labels also need a top-level or series-level `labelLayout.hideOverlap: true` guard.
 
-`QR318` targets Cartesian bar/line charts whose series contain at least two non-negative integer
-values with a maximum in `1..=15`. When exactly one axis is categorical, the numeric axis must set a
-positive integer `minInterval` or `interval`; otherwise ECharts may draw fractional ticks such as
-`0.5` or `2.4`. The check reports once and points at `option.xAxis` or `option.yAxis`. Polar/radar
-charts, mixed series types and dual numeric axes are exempt.
+`QR318` targets each Cartesian value axis whose bound bar/line series contain at least two
+non-negative integer values with a maximum in `1..=15`. The counterpart axis must be categorical, and
+the value axis must set a positive integer `minInterval` or `interval`; otherwise ECharts may draw
+fractional ticks such as `0.5` or `2.4`. Series are grouped by `xAxisIndex`/`yAxisIndex`, so dual-axis
+and multi-grid charts are checked per axis and paths include the array index. Percentage axes are
+exempt. Polar/radar and dual-numeric coordinates are skipped, as are dataset-driven, tuple-valued or
+otherwise ambiguous series whose value dimension cannot be resolved safely.
 
 `QR416` counts consecutive Table/ECharts/CustomHtml blocks. Empty text and headings do not reset the
 streak; a non-empty Paragraph or Quote does. The third visual block in a streak reports once, so two
 complementary visuals remain allowed.
 
 `QR417` measures prose after replacing Markdown links with their anchor text and removing citations
-and code markers. A paragraph of 450+ visible characters without a newline-delimited list is a wall
-of text; five or more consecutive non-list paragraphs totaling 1000+ characters also report at the
-threshold. Headings, tables, charts, custom HTML, quotes and list paragraphs reset the run.
+and code markers. It only reports a single paragraph of 450+ visible characters without a
+newline-delimited list. Cross-paragraph density is owned exclusively by `QR419`.
 
 `QR418` only inspects headings at level 2 or deeper. It strips common manual numbering and
 punctuation, then flags exact generic headings (`概述`, `行动建议`, `Overview`, etc.) and counting
-shells such as `三大核心维度`. A counting heading with a colon followed by at least six characters,
-or a long title with concrete data/entities, is exempt.
+shells such as `三大核心维度`. The first H2 may use `导论`/`引言`/`前言` and the last H2 may use
+`结语`/`总结`; arbitrary middle or deeper generic headings still report. A counting heading with a
+colon followed by at least six characters, or a long title with concrete data/entities, is exempt.
+For other official-document columns, the repair hint preserves the column label and adds a concrete
+judgment after a colon.
 
 `QR419` detects dense prose sections that should become a visual. It tracks the current H2 section,
 resets on a new H1/H2 and after any Table/ECharts/CustomHtml, and does not let H3-H6 split a prose run.
 Four or more non-visual paragraphs (or non-empty quotes) totaling 1000+ visible characters in a
-non-exempt section report once. `导论`、`引言`、`前言`、`结语`、`总结`、`摘要` sections are exempt.
+non-exempt section report once. Opening, conclusion and abstract sections are exempt, as are
+recommendation, next-step, implementation and safeguard sections. Section matching uses the normalized
+column label before any colon, so variants such as `四、结语` and `对策建议：……` receive the same
+exemption.
 
 `QR420` flags Table and ECharts notes whose trimmed start begins with `注：`, `注:`, `表注：`,
 `表注:`, `图注：`, `图注:` or `Note:`/`note:`. The renderer already prepends `注：`, so keeping the
 prefix produces `注：注：` in the PDF. CustomHtml notes are outside this rule.
+
+### Higher-education writing checks
+
+`QR421` analyzes paragraphs for blind ordinal references such as `第一项与第三项占优` and for
+academic-method jargon including sample/variable terminology, regression/significance language,
+Spearman/Pearson, HHI and p-value statements. An ordinal followed by an explicit metric name, such as
+`第一项“国家级项目数”占优`, is allowed. Quoted titles and inline code are masked, and Spearman is
+owned by this rule rather than duplicated in `QR412`.
+
+`QR422` is a suppressible Info for numeric Table/ECharts blocks with no non-empty `note` and incomplete
+unit labels. A note describing unit/scope/time suppresses the finding. Without one, every numeric
+table column must carry a unit in its header; charts may instead label every explicit value axis, or
+every numeric series for charts without value axes. Units use forms such as `（项）`, `（万元）` and
+`（%）`.
+
+`QR423` checks paragraphs for unquoted `双一流`/`双优`/`十四五`/`十五五`, year ranges written with
+`-`, `~`, `～` or `–` instead of `—`, and official document numbers using round rather than hexagonal
+year brackets. Existing Chinese quotation marks and inline code are respected; Quote blocks are
+external material and are not rewritten by this rule.
 
 ### Matching and filter layers
 
@@ -182,7 +242,7 @@ verify loop: fix every `error`, review `warning`, and ignore only diagnostics wh
 
 `crates/quire-server/src/mcp/lint_hint.rs` turns diagnostics into one deterministic `_next_hint`.
 Priority tiers are: errors, structural/chart/table/citation warnings, macro layout warnings
-(`QR417`/`QR418`), prose warnings (`QR412`-`QR415`), then info. Diagnostics are grouped by
+(`QR417`-`QR419`), prose/policy warnings (`QR412`-`QR415`, `QR421`, `QR423`), then info. Diagnostics are grouped by
 `block_id` (or `document`), codes are deduplicated and tier-sorted, groups are ordered by tier,
 diagnostic count and block ID, and only the first five groups expand with a `(+N more block(s))`
 tail. A warning rule touching more than three blocks asks for the top five blocks to be fixed in one
@@ -198,21 +258,26 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
 
 - `quire-lint` has no CLI and no I/O dependencies.
 - Every `RuleMeta.code` and `.name` is unique; the registry stays code-sorted.
-- `QR001`-`QR008`, `QR101`, `QR107`, `QR301`-`QR304` and `QR501` are never suppressible.
+- `QR001`, `QR003`-`QR007`, `QR101`, `QR107`, `QR301`-`QR304` and `QR501` are never suppressible.
 - Prefix, name and code matching produce the same rule set as the registry.
 - `summary.suppressed` counts each suppressible diagnostic hidden once.
 - Prose checks skip headings and quotations, mask quoted proper nouns before matching, and never
   report a single B-class jargon word as `QR412`.
+- `QR421` exempts explicitly named metrics and owns statistical jargon without duplicating `QR412`;
+  `QR422` remains Info when a visual note or complete unit labels are present; `QR423` respects Chinese
+  quotes, inline code and external Quote blocks.
 - Contrast tics are sentence-bounded and require a 1-45 character gap; a single contrast sentence or
   a single light hedging phrase does not report `QR415`.
 - Dense chart labels report at most once per chart; line end-label checks fire at most once per chart;
-  `QR318` only fires on a single numeric axis with 2+ non-negative integer values and max `1..=15`;
-  `QR416` reports only the third visual in a run; `QR417` never double-reports a block that already
-  breached the single-paragraph wall limit; `QR418` skips level-1 headings and numbering-only
-  prefixes; `QR419` reports once per non-exempt H2 prose run; `QR420` only inspects Table/ECharts
-  notes.
+  `QR318` checks each eligible numeric axis independently with 2+ non-negative integer values and max
+  `1..=15`; `QR404` evaluates numbering relative to the document root and checks only siblings in the
+  same parent/level/family group; `QR416` reports only the third visual in a run; `QR417` checks only
+  single-paragraph walls and never
+  shares a multi-paragraph diagnostic with `QR419`; `QR418` skips level-1 headings, numbering-only
+  prefixes and positional introduction/conclusion headings; `QR419` reports once per non-exempt H2
+  prose run; `QR420` only inspects Table/ECharts notes.
 - `QR108` matches hosts exactly or as subdomains, so lookalike domains do not report;
-  `QR206` reports at most once per mismatched column and carries the expected sum in its hint.
+  `QR206` reports at most once per mismatched summary cell and carries the expected sum in its hint.
 - Hint groups are deterministic, merged by block, capped at five expanded groups, and preserve tier
   order; `apply_operations` never advances past inline warnings without naming the affected blocks.
 - Document and block ignore policies survive reload, revision updates and rollback.

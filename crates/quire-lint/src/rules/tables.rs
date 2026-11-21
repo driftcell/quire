@@ -1,9 +1,10 @@
 //! Table layout risk checks: narrow CJK headers, empty/constant columns, A4 overflow and units.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use quire_protocol::{
-    BlockKind, ColumnDataType, ReportDocument, TableBlock, TableShape, display_cell, validate_table,
+    BlockKind, CellValue, ColumnDataType, LeafColumn, ReportDocument, TableBlock, TableShape,
+    display_cell, validate_table,
 };
 
 use crate::{engine::Engine, registry::RuleId};
@@ -306,6 +307,32 @@ fn check_numeric_units(
     }
 }
 
+type TableRow = BTreeMap<String, CellValue>;
+
+#[derive(Debug, Clone, Copy)]
+enum SummaryRowLocation {
+    Body(usize),
+    Summary(usize),
+}
+
+struct SummaryTarget<'a> {
+    row: &'a TableRow,
+    location: SummaryRowLocation,
+}
+
+impl SummaryTarget<'_> {
+    fn path(&self, block_index: usize, key: &str) -> String {
+        match self.location {
+            SummaryRowLocation::Body(row) => {
+                format!("blocks[{block_index}].rows[{row}].{key}")
+            }
+            SummaryRowLocation::Summary(row) => {
+                format!("blocks[{block_index}].summary_rows[{row}].{key}")
+            }
+        }
+    }
+}
+
 fn check_summary_row(
     engine: &mut Engine<'_>,
     block: &quire_protocol::Block,
@@ -313,24 +340,9 @@ fn check_summary_row(
     shape: &TableShape,
     index: usize,
 ) {
-    if table.rows.len() < 3 {
-        return;
-    }
-    let Some(last_row) = table.rows.last() else {
-        return;
-    };
     let Some(first_leaf) = shape.leaves.first() else {
         return;
     };
-    let Some(first_cell) = last_row.get(&first_leaf.key) else {
-        return;
-    };
-    let first_text = display_cell(first_cell, first_leaf.data_type);
-    let first_text = first_text.trim();
-    let is_summary = first_text.contains("合计") || first_text.contains("总计");
-    if !is_summary || first_text.contains("平均") || first_text.contains("均值") {
-        return;
-    }
     if table
         .note
         .as_deref()
@@ -339,62 +351,220 @@ fn check_summary_row(
         return;
     }
 
-    let last_row_idx = table.rows.len().saturating_sub(1);
-    for leaf in shape.leaves.iter().skip(1) {
-        let finding = single_integer_mismatch(table, &leaf.key)
-            .or_else(|| composite_integer_mismatch(table, &leaf.key));
-        let Some((actual, expected)) = finding else {
-            continue;
-        };
-        engine.report(
-            RuleId::TableSummaryRowMismatch,
-            format!(
-                "table `{}` summary row column `{}` is `{actual}`, but rows sum to `{expected}`",
-                block.id, leaf.key
-            ),
-            format!(
-                "In this Table via apply_operations (UpdateBlock), update summary row column `{}` to `{expected}` (or verify the individual row figures above it).",
-                leaf.key
-            ),
-            Some(block.id.clone()),
-            Some(format!(
-                "blocks[{index}].rows[{last_row_idx}].{}",
-                leaf.key
-            )),
-        );
+    let body_summary_index = table.rows.last().and_then(|row| {
+        is_total_summary_row(row, &first_leaf.key).then(|| table.rows.len().saturating_sub(1))
+    });
+    let mut targets = Vec::new();
+    for (row_index, row) in table.summary_rows.iter().enumerate() {
+        if is_total_summary_row(row, &first_leaf.key) {
+            targets.push(SummaryTarget {
+                row,
+                location: SummaryRowLocation::Summary(row_index),
+            });
+        }
+    }
+    if targets.is_empty()
+        && let Some(row_index) = body_summary_index
+        && let Some(row) = table.rows.last()
+    {
+        targets.push(SummaryTarget {
+            row,
+            location: SummaryRowLocation::Body(row_index),
+        });
+    }
+    if targets.is_empty() {
+        return;
+    }
+
+    let detail_len = body_summary_index.unwrap_or(table.rows.len());
+    let Some(detail_rows) = table.rows.get(..detail_len) else {
+        return;
+    };
+    if detail_rows.len() < 2 {
+        return;
+    }
+
+    for target in &targets {
+        for leaf in shape.leaves.iter().skip(1) {
+            if !is_additive_column(leaf) {
+                continue;
+            }
+            let finding = single_decimal_mismatch(detail_rows, target.row, &leaf.key)
+                .or_else(|| composite_integer_mismatch(detail_rows, target.row, &leaf.key));
+            let Some((actual, expected)) = finding else {
+                continue;
+            };
+            engine.report(
+                RuleId::TableSummaryRowMismatch,
+                format!(
+                    "table `{}` summary row column `{}` is `{actual}`, but rows sum to `{expected}`",
+                    block.id, leaf.key
+                ),
+                format!(
+                    "In this Table via apply_operations (UpdateCell), update summary row column `{}` to `{expected}` (or verify the individual row figures above it).",
+                    leaf.key
+                ),
+                Some(block.id.clone()),
+                Some(target.path(index, &leaf.key)),
+            );
+        }
     }
 }
 
-fn single_integer_mismatch(table: &TableBlock, key: &str) -> Option<(String, String)> {
-    let last = table.rows.last()?;
-    let actual = parse_integer_cell(&last.get(key)?.display_text(), false)?;
-    let mut expected: i128 = 0;
-    for row in table.rows.iter().take(table.rows.len().saturating_sub(1)) {
-        let value = parse_integer_cell(&row.get(key)?.display_text(), true)?;
-        expected = expected.checked_add(value)?;
-    }
-    (actual != expected).then(|| (actual.to_string(), expected.to_string()))
+fn is_total_summary_row(row: &TableRow, first_key: &str) -> bool {
+    row.get(first_key).is_some_and(|cell| {
+        let text = cell.display_text();
+        let text = text.trim();
+        (text.contains("合计") || text.contains("总计"))
+            && !["平均", "均值", "占比", "比例", "率", "排名", "位次"]
+                .iter()
+                .any(|marker| text.contains(marker))
+    })
 }
 
-fn composite_integer_mismatch(table: &TableBlock, key: &str) -> Option<(String, String)> {
+fn is_additive_column(leaf: &LeafColumn) -> bool {
+    leaf.data_type != ColumnDataType::Percent
+        && ![
+            "占比",
+            "比例",
+            "增长率",
+            "率",
+            "排名",
+            "位次",
+            "均值",
+            "平均",
+        ]
+        .iter()
+        .any(|marker| leaf.label.contains(marker))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DecimalValue {
+    units: i128,
+    scale: u32,
+}
+
+fn single_decimal_mismatch(
+    detail_rows: &[TableRow],
+    summary_row: &TableRow,
+    key: &str,
+) -> Option<(String, String)> {
+    let actual = parse_decimal_cell(&summary_row.get(key)?.display_text(), false)?;
+    let mut values = Vec::with_capacity(detail_rows.len());
+    for row in detail_rows {
+        values.push(parse_decimal_cell(&row.get(key)?.display_text(), true)?);
+    }
+    let scale = values.iter().map(|value| value.scale).max().unwrap_or(0);
+    let mut expected_units = 0i128;
+    for value in values {
+        expected_units = expected_units.checked_add(rescale_decimal(value, scale)?)?;
+    }
+    let expected = DecimalValue {
+        units: expected_units,
+        scale,
+    };
+    if decimal_values_match(actual, expected)? {
+        None
+    } else {
+        Some((format_decimal(actual), format_decimal(expected)))
+    }
+}
+
+fn parse_decimal_cell(text: &str, allow_placeholder: bool) -> Option<DecimalValue> {
+    let trimmed = text.trim();
+    if allow_placeholder && matches!(trimmed, "" | "-" | "—") {
+        return Some(DecimalValue { units: 0, scale: 0 });
+    }
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized: String = trimmed
+        .chars()
+        .filter(|ch| !matches!(ch, ',' | '，'))
+        .collect();
+    let has_decimal_point = normalized.contains('.');
+    let (whole, fraction) = normalized
+        .split_once('.')
+        .map_or((normalized.as_str(), ""), |(whole, fraction)| {
+            (whole, fraction)
+        });
+    if whole.is_empty()
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+        || (has_decimal_point && fraction.is_empty())
+    {
+        return None;
+    }
+    let mut digits = String::with_capacity(whole.len() + fraction.len());
+    digits.push_str(whole);
+    digits.push_str(fraction);
+    Some(DecimalValue {
+        units: digits.parse::<i128>().ok()?,
+        scale: u32::try_from(fraction.len()).ok()?,
+    })
+}
+
+fn rescale_decimal(value: DecimalValue, target_scale: u32) -> Option<i128> {
+    let exponent = target_scale.checked_sub(value.scale)?;
+    let factor = 10i128.checked_pow(exponent)?;
+    value.units.checked_mul(factor)
+}
+
+fn decimal_values_match(actual: DecimalValue, expected: DecimalValue) -> Option<bool> {
+    let common_scale = actual.scale.max(expected.scale);
+    let actual_units = rescale_decimal(actual, common_scale)?;
+    let expected_units = rescale_decimal(expected, common_scale)?;
+    let difference = actual_units.abs_diff(expected_units);
+    if difference == 0 {
+        return Some(true);
+    }
+
+    // Allow half a unit at the precision displayed by the summary cell. Comparing twice the
+    // difference avoids representing a fractional tolerance in the common fixed-point scale.
+    let exponent = common_scale.checked_sub(actual.scale)?;
+    let twice_tolerance = 10u128.checked_pow(exponent)?;
+    Some(difference.checked_mul(2)? <= twice_tolerance)
+}
+
+fn format_decimal(value: DecimalValue) -> String {
+    if value.scale == 0 {
+        return value.units.to_string();
+    }
+    let digits = value.units.to_string();
+    let scale = value.scale as usize;
+    let split = digits.len().saturating_sub(scale);
+    if split == 0 {
+        return format!("0.{}{}", "0".repeat(scale - digits.len()), digits);
+    }
+    match (digits.get(..split), digits.get(split..)) {
+        (Some(whole), Some(fraction)) => format!("{whole}.{fraction}"),
+        _ => digits,
+    }
+}
+
+fn composite_integer_mismatch(
+    detail_rows: &[TableRow],
+    summary_row: &TableRow,
+    key: &str,
+) -> Option<(String, String)> {
     ['/', '／', '·']
         .into_iter()
-        .find_map(|separator| composite_with_separator(table, key, separator))
+        .find_map(|separator| composite_with_separator(detail_rows, summary_row, key, separator))
 }
 
 fn composite_with_separator(
-    table: &TableBlock,
+    detail_rows: &[TableRow],
+    summary_row: &TableRow,
     key: &str,
     separator: char,
 ) -> Option<(String, String)> {
-    let last = table.rows.last()?;
-    let actual = parse_integer_parts(&last.get(key)?.display_text(), separator)?;
+    let actual = parse_integer_parts(&summary_row.get(key)?.display_text(), separator)?;
     let width = actual.len();
     if !(2..=4).contains(&width) {
         return None;
     }
     let mut expected = vec![0i128; width];
-    for row in table.rows.iter().take(table.rows.len().saturating_sub(1)) {
+    for row in detail_rows {
         let parts = parse_integer_parts(&row.get(key)?.display_text(), separator)?;
         if parts.len() != width {
             return None;

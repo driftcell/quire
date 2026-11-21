@@ -2,14 +2,18 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use quire_protocol::{BlockKind, ReportDocument, SourceId, safe_href, scan_document_citations};
+use quire_protocol::{
+    BlockKind, CitationScan, ReportDocument, SourceId, safe_href, scan_document_citations,
+};
 
+use super::evidence::has_quantitative_evidence;
 use crate::{engine::Engine, registry::RuleId};
 
 pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
-    check_citations(document, engine);
+    let scan = scan_document_citations(document);
+    check_citations(document, engine, &scan);
     check_malformed_citations(document, engine);
-    check_numeric_claims(document, engine);
+    check_numeric_claims(document, engine, &scan);
     check_sources(document, engine);
 }
 
@@ -346,11 +350,10 @@ fn find_matching_bracket(text: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn check_citations(document: &ReportDocument, engine: &mut Engine<'_>) {
-    let scan = scan_document_citations(document);
+fn check_citations(document: &ReportDocument, engine: &mut Engine<'_>, scan: &CitationScan) {
     let valid_ids = source_ids(document);
     let mut seen = BTreeSet::new();
-    for usage in scan.dangling {
+    for usage in &scan.dangling {
         let key = (
             usage.block_id.clone(),
             usage.source_id.clone(),
@@ -373,7 +376,7 @@ fn check_citations(document: &ReportDocument, engine: &mut Engine<'_>) {
                 "register it with upsert_sources, or change the marker to one of: {}",
                 valid_ids
             ),
-            Some(usage.block_id),
+            Some(usage.block_id.clone()),
             Some(format!("sources.{}", usage.source_id)),
             document.sources.keys().map(ToString::to_string).collect(),
         );
@@ -406,8 +409,7 @@ fn check_citations(document: &ReportDocument, engine: &mut Engine<'_>) {
     }
 }
 
-fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>) {
-    let scan = scan_document_citations(document);
+fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>, scan: &CitationScan) {
     let cited_blocks: BTreeSet<&str> = scan
         .uses
         .iter()
@@ -418,7 +420,7 @@ fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>) {
             BlockKind::Paragraph { text } | BlockKind::Quote { text } => text,
             _ => continue,
         };
-        if !has_numeric_claim(text)
+        if !has_quantitative_evidence(text)
             || !block.source_ids.is_empty()
             || cited_blocks.contains(block.id.as_str())
         {
@@ -545,24 +547,4 @@ fn url_host(url: &str) -> Option<String> {
     let host = host.trim_end_matches('.').to_ascii_lowercase();
     let host = host.strip_prefix("www.").unwrap_or(host.as_str());
     (!host.is_empty()).then(|| host.to_string())
-}
-
-fn has_numeric_claim(text: &str) -> bool {
-    if text.contains('%')
-        || ['¥', '$', '€', '£', '￥']
-            .iter()
-            .any(|symbol| text.contains(*symbol))
-        || ["亿元", "万元", "美元", "人民币", "万人", "亿吨", "万亿"]
-            .iter()
-            .any(|unit| text.contains(unit))
-    {
-        return true;
-    }
-    let chars: Vec<char> = text.chars().collect();
-    chars.windows(2).any(|pair| {
-        pair.first().is_some_and(char::is_ascii_digit)
-            && pair
-                .get(1)
-                .is_some_and(|ch| matches!(ch, '万' | '亿' | '元' | '人' | '年' | '%'))
-    })
 }

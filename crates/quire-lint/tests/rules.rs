@@ -65,6 +65,13 @@ fn with_table_note(mut block: Block, note: &str) -> Block {
     block
 }
 
+fn with_summary_row(mut block: Block, summary: BTreeMap<String, CellValue>) -> Block {
+    if let BlockKind::Table(ref mut table) = block.body {
+        table.summary_rows.push(summary);
+    }
+    block
+}
+
 fn row(pairs: &[(&str, CellValue)]) -> BTreeMap<String, CellValue> {
     pairs
         .iter()
@@ -86,7 +93,7 @@ fn valid_document() -> ReportDocument {
         None,
         vec![
             ColumnNode::leaf("region", "Region"),
-            ColumnNode::leaf("value", "Value"),
+            ColumnNode::leaf("value", "Value（项）"),
         ],
         vec![
             row(&[
@@ -287,6 +294,46 @@ fn citation_and_source_rules_are_detected() {
     );
     unsafe_url.blocks.push(paragraph("body", "Text [^unsafe]."));
     assert!(has_code(&lint_document(&unsafe_url), "QR106"));
+}
+
+#[test]
+fn qr103_requires_a_quantitative_unit_and_ignores_temporal_context() {
+    for (id, text) in [
+        ("year", "2025年，学校启动新一轮建设规划。"),
+        ("duration", "近5年，学校持续完善内部治理。"),
+        (
+            "plan-range",
+            "十四五（2021—2025年）期间，学校推进综合改革。",
+        ),
+        ("chapter", "第1章说明建设背景，第2章分析具体任务。"),
+        ("aspects", "改革包括3个方面，以下分别说明。"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        assert!(
+            !has_code(&lint_document(&document), "QR103"),
+            "temporal or structural numbers are not numeric claims: {text}"
+        );
+    }
+
+    for (id, text) in [
+        ("projects", "国家级项目立项214项。"),
+        ("papers", "发表高水平论文32篇。"),
+        ("universities", "本次对标覆盖12所高校。"),
+        ("people", "引育国家级人才8名。"),
+        ("rank", "综合实力位居第3位。"),
+        ("multiple", "年度经费增长1.5倍。"),
+        ("permille", "相关学科进入ESI全球前1‰。"),
+        ("percentage-points", "占比提高2个百分点。"),
+        ("degree-point", "新增3个博士点。"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        assert!(
+            has_code(&lint_document(&document), "QR103"),
+            "higher-education quantitative units must be detected: {text}"
+        );
+    }
 }
 
 #[test]
@@ -832,6 +879,112 @@ fn qr206_validates_full_width_composite_separator() {
 }
 
 #[test]
+fn qr206_validates_decimal_values_in_summary_rows() {
+    fn decimal_table(total: &str) -> Block {
+        with_summary_row(
+            table(
+                "decimal-summary",
+                None,
+                vec![
+                    ColumnNode::leaf("name", "名称"),
+                    ColumnNode::leaf("funding", "科研经费（万元）")
+                        .with_type(ColumnDataType::Currency),
+                ],
+                vec![
+                    row(&[
+                        ("name", CellValue::text("甲")),
+                        ("funding", CellValue::text("1,245.60")),
+                    ]),
+                    row(&[
+                        ("name", CellValue::text("乙")),
+                        ("funding", CellValue::Float(300.25)),
+                    ]),
+                ],
+            ),
+            row(&[
+                ("name", CellValue::text("合计")),
+                ("funding", CellValue::text(total)),
+            ]),
+        )
+    }
+
+    let mut correct = doc();
+    correct.blocks.push(decimal_table("1545.85"));
+    assert!(!has_code(&lint_document(&correct), "QR206"));
+
+    let mut wrong = doc();
+    wrong.blocks.push(decimal_table("1545.86"));
+    let report = lint_document(&wrong);
+    let diagnostic = finding(&report, "QR206");
+    assert_eq!(
+        diagnostic.path.as_deref(),
+        Some("blocks[0].summary_rows[0].funding")
+    );
+    assert!(diagnostic.message.contains("is `1545.86`"));
+    assert!(diagnostic.message.contains("sum to `1545.85`"));
+    assert!(diagnostic.hint.contains("1545.85"));
+}
+
+#[test]
+fn qr206_skips_non_additive_columns_and_applies_decimal_rounding_tolerance() {
+    fn rounded_table(total: &str) -> Block {
+        with_summary_row(
+            table(
+                "rounded-summary",
+                None,
+                vec![
+                    ColumnNode::leaf("name", "名称"),
+                    ColumnNode::leaf("rank", "排名").with_type(ColumnDataType::Number),
+                    ColumnNode::leaf("share", "占比").with_type(ColumnDataType::Percent),
+                    ColumnNode::leaf("amount", "金额").with_type(ColumnDataType::Number),
+                ],
+                vec![
+                    row(&[
+                        ("name", CellValue::text("甲")),
+                        ("rank", CellValue::Integer(1)),
+                        ("share", CellValue::text("10%")),
+                        ("amount", CellValue::text("0.52")),
+                    ]),
+                    row(&[
+                        ("name", CellValue::text("乙")),
+                        ("rank", CellValue::Integer(2)),
+                        ("share", CellValue::text("20%")),
+                        ("amount", CellValue::text("0.52")),
+                    ]),
+                ],
+            ),
+            row(&[
+                ("name", CellValue::text("合计")),
+                ("rank", CellValue::Integer(99)),
+                ("share", CellValue::text("30%")),
+                ("amount", CellValue::text(total)),
+            ]),
+        )
+    }
+
+    let mut rounded = doc();
+    rounded.blocks.push(rounded_table("1.0"));
+    assert!(
+        !has_code(&lint_document(&rounded), "QR206"),
+        "rank/rate columns must be skipped and summary precision supplies the rounding tolerance"
+    );
+
+    let mut wrong = doc();
+    wrong.blocks.push(rounded_table("1.2"));
+    let report = lint_document(&wrong);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR206")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(
+        hits[0].path.as_deref(),
+        Some("blocks[0].summary_rows[0].amount")
+    );
+}
+
+#[test]
 fn chart_safety_rules_are_detected() {
     let mut missing = doc();
     missing.blocks.push(chart(serde_json::json!({
@@ -863,7 +1016,7 @@ fn chart_safety_rules_are_detected() {
             option_patch: None,
             fallback_summary: "One bar.".into(),
             numbering: None,
-            note: None,
+            note: Some("单位：项；统计口径：2025年。".into()),
         },
     );
     assert!(isolated.is_clean(), "{:?}", isolated.diagnostics);
@@ -1078,7 +1231,18 @@ fn structure_and_text_rules_are_detected() {
         vec![ColumnNode::leaf("a", "A")],
         vec![],
     ));
-    assert!(has_code(&lint_document(&sequence), "QR405"));
+    let sequence_report = lint_document(&sequence);
+    assert!(!has_code(&sequence_report, "QR405"));
+    assert_eq!(
+        sequence_report
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.code == "QR411")
+            .count(),
+        2,
+        "each manual caption must produce only QR411: {:?}",
+        sequence_report.diagnostics
+    );
 
     let mut dangling_ref = doc();
     dangling_ref
@@ -1111,35 +1275,179 @@ fn structure_and_text_rules_are_detected() {
 }
 
 #[test]
-fn qr412_detects_strong_ai_cliches() {
-    for (id, text, phrase) in [
-        ("summary", "综上所述，项目进展顺利。", "综上所述"),
-        ("noting", "值得注意的是，数据仍有缺口。", "值得注意的是"),
+fn qr404_supports_relative_hierarchies_and_checks_sibling_sequences() {
+    let mut chinese = doc();
+    for (id, level, text) in [
+        ("report", 1, "学科建设报告"),
+        ("chapter-1", 2, "一、总体情况"),
+        ("section-1", 3, "（一）师资队伍"),
+        ("item-1", 4, "1. 领军人才"),
+        ("item-2", 4, "2. 青年教师"),
+        ("section-2", 3, "（二）学科平台"),
+        ("chapter-2", 2, "二、建设成效"),
+        ("chapter-2-section", 3, "（一）科研项目"),
+    ] {
+        chinese.blocks.push(heading(id, level, text));
+    }
+    assert!(
+        !has_code(&lint_document(&chinese), "QR404"),
+        "an unnumbered H1 must allow H2-rooted official-document numbering"
+    );
+
+    let mut arabic = doc();
+    for (id, level, text) in [
+        ("report", 1, "1. 总体情况"),
+        ("section-1", 2, "1.1 师资队伍"),
+        ("section-2", 2, "1.2 学科平台"),
+    ] {
+        arabic.blocks.push(heading(id, level, text));
+    }
+    assert!(!has_code(&lint_document(&arabic), "QR404"));
+
+    let mut duplicate = doc();
+    duplicate.blocks.push(heading("first", 2, "一、总体情况"));
+    duplicate
+        .blocks
+        .push(heading("duplicate", 2, "一、建设成效"));
+    let duplicate_report = lint_document(&duplicate);
+    assert!(
+        finding(&duplicate_report, "QR404")
+            .message
+            .contains("does not follow")
+    );
+
+    let mut gap = doc();
+    gap.blocks.push(heading("first", 2, "一、总体情况"));
+    gap.blocks.push(heading("gap", 2, "三、建设成效"));
+    assert!(has_code(&lint_document(&gap), "QR404"));
+
+    let mut extended = doc();
+    for (index, numeral) in [
+        "一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let id = format!("chapter-{index}");
+        extended
+            .blocks
+            .push(heading(&id, 2, &format!("{numeral}、建设任务")));
+    }
+    assert!(
+        !has_code(&lint_document(&extended), "QR404"),
+        "multi-character Chinese numerals must remain in sequence"
+    );
+
+    let mut decimal = doc();
+    decimal
+        .blocks
+        .push(heading("decimal-percent", 2, "3.5% 增速背后的结构性因素"));
+    assert!(!has_code(&lint_document(&decimal), "QR404"));
+}
+
+#[test]
+fn qr401_detects_higher_education_template_placeholders_conservatively() {
+    for (id, text) in [
+        ("xx-university", "XX大学应补充正式名称。"),
+        ("cjk-mask", "××学院应补充正式名称。"),
+        ("pending-brackets", "【待填写】应替换为已核实内容。"),
+        ("pending-parentheses", "（待补全）应替换为已核实内容。"),
+        ("n-quantifier", "计划引育 N 名高层次人才。"),
+        ("missing-percent", "占比为 ?%。"),
+        ("question-placeholder", "具体数值为??。"),
     ] {
         let mut document = doc();
         document.blocks.push(paragraph(id, text));
-        let report = lint_document(&document);
-        let diagnostic = finding(&report, "QR412");
-        assert_eq!(diagnostic.severity, Severity::Warning);
-        assert!(diagnostic.suppressible);
         assert!(
-            diagnostic.message.contains(phrase),
-            "{}",
-            diagnostic.message
-        );
-        assert!(
-            diagnostic.hint.contains("effect size"),
-            "{}",
-            diagnostic.hint
-        );
-        assert!(
-            diagnostic
-                .hint
-                .contains("quote exact policy or source terms in \"\" if needed."),
-            "{}",
-            diagnostic.hint
+            has_code(&lint_document(&document), "QR401"),
+            "unfinished template placeholder must be detected: {text}"
         );
     }
+
+    for (id, text) in [
+        ("anonymous", "某高校在匿名对标中位居前列。"),
+        (
+            "angle-example",
+            "<学校名称>仅作为格式示例，不作为模板槽位拦截。",
+        ),
+        ("n-value", "N 值表示总体规模，不是待填数量。"),
+        ("pending-action", "方案待批复后实施。"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        assert!(
+            !has_code(&lint_document(&document), "QR401"),
+            "intentional prose must not become a placeholder error: {text}"
+        );
+    }
+}
+
+#[test]
+fn qr406_rejects_zero_compound_and_appendix_visual_references() {
+    let mut document = doc();
+    for id in ["table-1", "table-2", "table-3"] {
+        document.blocks.push(table(
+            id,
+            None,
+            vec![ColumnNode::leaf("value", "数值")],
+            vec![],
+        ));
+    }
+    document.blocks.push(paragraph(
+        "references",
+        "表 3 可直接定位；表 3.2、图 1.3、表 0、附表 1、Table 2-1、Figure 1.2 均需改写。",
+    ));
+    let report = lint_document(&document);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR406")
+        .collect();
+    assert_eq!(hits.len(), 6, "{:?}", report.diagnostics);
+    for raw in [
+        "表 3.2",
+        "图 1.3",
+        "表 0",
+        "附表 1",
+        "table 2-1",
+        "figure 1.2",
+    ] {
+        assert!(
+            hits.iter()
+                .any(|diagnostic| diagnostic.message.contains(raw)),
+            "missing complete reference `{raw}`: {:?}",
+            report.diagnostics
+        );
+    }
+}
+
+#[test]
+fn qr412_detects_strong_ai_cliches() {
+    let mut document = doc();
+    document
+        .blocks
+        .push(paragraph("summary", "综上所述，项目进展顺利。"));
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR412");
+    assert_eq!(diagnostic.severity, Severity::Warning);
+    assert!(diagnostic.suppressible);
+    assert!(
+        diagnostic.message.contains("综上所述"),
+        "{}",
+        diagnostic.message
+    );
+    assert!(
+        diagnostic.hint.contains("effect size"),
+        "{}",
+        diagnostic.hint
+    );
+    assert!(
+        diagnostic
+            .hint
+            .contains("quote exact policy or source terms in \"\" if needed."),
+        "{}",
+        diagnostic.hint
+    );
 }
 
 #[test]
@@ -1153,7 +1461,6 @@ fn qr412_detects_process_disclaimer_and_extreme_cliches() {
         ("online-search", "经联网检索，相关数据如下。", "经联网检索"),
         ("bottom-logic", "底层逻辑在于资源配置。", "底层逻辑"),
         ("granularity", "提升数据颗粒度。", "颗粒度"),
-        ("spearman", "采用Spearman相关系数分析。", "Spearman相关系数"),
     ] {
         let mut document = doc();
         document.blocks.push(paragraph(id, text));
@@ -1172,18 +1479,12 @@ fn qr412_counts_new_b_class_words_by_distinct_density() {
     let mut single = doc();
     single
         .blocks
-        .push(paragraph("single", "显著提升是当前的主要判断。"));
+        .push(paragraph("single", "锚定目标需要长期投入。"));
     assert!(!has_code(&lint_document(&single), "QR412"));
 
     let mut pair = doc();
-    pair.blocks.push(paragraph("pair", "显著提升、稳中有进。"));
+    pair.blocks.push(paragraph("pair", "锚定目标、夯实基础。"));
     assert!(has_code(&lint_document(&pair), "QR412"));
-
-    let mut transition_pair = doc();
-    transition_pair
-        .blocks
-        .push(paragraph("transition-pair", "与此同时，总体平稳。"));
-    assert!(has_code(&lint_document(&transition_pair), "QR412"));
 
     let mut tactics_single = doc();
     tactics_single
@@ -1202,7 +1503,84 @@ fn qr412_counts_new_b_class_words_by_distinct_density() {
 }
 
 #[test]
-fn qr412_requires_two_distinct_jargon_words() {
+fn qr412_aligns_formal_terms_and_evaluations_with_evidence() {
+    for (id, text) in [
+        (
+            "policy-terms",
+            "学校坚持高质量发展、内涵式发展，系统推进“双一流”建设。",
+        ),
+        (
+            "supported-evaluation",
+            "国家级项目由158项增至214项，同比增长35.4%，人才培养质量显著提升。",
+        ),
+        ("single-combination", "学校以组合拳推进跨学科课程建设。"),
+        ("single-transition", "与此同时，学校完善质量保障。"),
+        ("single-noting", "值得注意的是，数据仍有缺口。"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        assert!(
+            !has_code(&lint_document(&document), "QR412"),
+            "formal or supported prose must remain clean: {text}"
+        );
+    }
+
+    let mut unsupported = doc();
+    unsupported.blocks.push(paragraph(
+        "unsupported-evaluation",
+        "2025年，学校办学水平显著提升，发展态势稳中有进。",
+    ));
+    let report = lint_document(&unsupported);
+    let diagnostic = finding(&report, "QR412");
+    assert!(diagnostic.message.contains("显著提升"));
+    assert!(diagnostic.message.contains("稳中有进"));
+
+    let mut repeated_combination = doc();
+    repeated_combination.blocks.push(paragraph(
+        "repeated-combination",
+        "第一项举措打出组合拳，第二项举措再次打出组合拳。",
+    ));
+    assert!(has_code(&lint_document(&repeated_combination), "QR412"));
+}
+
+#[test]
+fn qr412_flags_only_repeated_mechanical_transitions() {
+    let mut repeated = doc();
+    repeated
+        .blocks
+        .push(paragraph("first", "与此同时，学校完善课程建设。"));
+    repeated
+        .blocks
+        .push(paragraph("second", "与此同时，学校健全质量保障。"));
+    let report = lint_document(&repeated);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR412")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("second")));
+
+    let mut within_paragraph = doc();
+    within_paragraph.blocks.push(paragraph(
+        "within-paragraph",
+        "与此同时，学校完善课程建设；与此同时，学校健全质量保障。",
+    ));
+    assert!(has_code(&lint_document(&within_paragraph), "QR412"));
+
+    let mut separated = doc();
+    separated
+        .blocks
+        .push(paragraph("before", "值得注意的是，课程建设仍需完善。"));
+    separated.blocks.push(heading("separator", 2, "质量保障"));
+    separated
+        .blocks
+        .push(paragraph("after", "值得注意的是，质量保障仍需健全。"));
+    assert!(!has_code(&lint_document(&separated), "QR412"));
+}
+
+#[test]
+fn qr412_allows_policy_terms_and_requires_two_distinct_jargon_words() {
     let mut single = doc();
     single
         .blocks
@@ -1401,7 +1779,7 @@ fn qr414_detects_punctuated_and_four_item_enumerations() {
     ));
     assert!(
         has_code(&lint_document(&four_items), "QR414"),
-        "four or more 一是/二是 enumerations must trigger even with numbers and citations"
+        "hollow four-item enumerations must trigger even when they contain numbers and citations"
     );
 
     let mut ordinal_prose = doc();
@@ -1412,6 +1790,32 @@ fn qr414_detects_punctuated_and_four_item_enumerations() {
     assert!(
         !has_code(&lint_document(&ordinal_prose), "QR414"),
         "ordinary ordinal prose without enumeration punctuation must remain unflagged"
+    );
+}
+
+#[test]
+fn qr414_allows_substantive_official_document_enumerations() {
+    let mut detailed = doc();
+    detailed.blocks.push(paragraph(
+        "detailed-enumeration",
+        "一是国家级科研项目由158项增至214项，重点围绕优势学科组织跨单位联合攻关，形成稳定的项目培育与质量把关机制；二是依托省重点实验室重组完善平台开放共享和成果转化流程，推动科研条件向本科生与研究生培养环节持续开放；三是实施高层次人才引育与青年教师支持计划，明确领军人才、骨干团队和青年教师的分层建设任务；四是建立年度监测、校内审核和第三方评价相结合的质量保障机制，将各项任务落实到责任单位与完成时限。",
+    ));
+    assert!(
+        !has_code(&lint_document(&detailed), "QR414"),
+        "substantive semicolon-delimited official-document items must remain allowed"
+    );
+
+    let mut padded = doc();
+    let padded_text = format!(
+        "一是新增国家级项目214项，{}；二是抓落实；三是促协同；四是强保障。",
+        "持续完善机制".repeat(12)
+    );
+    padded
+        .blocks
+        .push(paragraph("padded-enumeration", &padded_text));
+    assert!(
+        has_code(&lint_document(&padded), "QR414"),
+        "one padded item must not exempt otherwise hollow enumeration items"
     );
 }
 
@@ -1843,11 +2247,65 @@ fn qr318_flags_small_integer_axes_without_min_interval() {
         "dual-axis",
         serde_json::json!({
             "xAxis": {"type": "category", "data": ["A", "B"]},
-            "yAxis": [{"type": "value"}, {"type": "value"}],
-            "series": [{"type": "bar", "data": [1, 2]}]
+            "yAxis": [{"type": "value"}, {"type": "value", "name": "增长率（%）"}],
+            "series": [
+                {"type": "bar", "yAxisIndex": 0, "data": [1, 2]},
+                {"type": "line", "yAxisIndex": 1, "data": [1, 2]}
+            ]
         }),
     ));
-    assert!(!has_code(&lint_document(&dual_axis), "QR318"));
+    let dual_report = lint_document(&dual_axis);
+    let dual_hits: Vec<_> = dual_report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR318")
+        .collect();
+    assert_eq!(dual_hits.len(), 1, "{:?}", dual_report.diagnostics);
+    assert_eq!(
+        dual_hits[0].path.as_deref(),
+        Some("blocks[0].option.yAxis[0]")
+    );
+
+    let mut multi_grid = doc();
+    multi_grid.blocks.push(chart_named(
+        "multi-grid",
+        serde_json::json!({
+            "xAxis": [
+                {"type": "category", "data": ["A", "B"]},
+                {"type": "category", "data": ["C", "D"]}
+            ],
+            "yAxis": [{"type": "value"}, {"type": "value"}],
+            "series": [
+                {"type": "bar", "xAxisIndex": 0, "yAxisIndex": 0, "data": [1, 2]},
+                {"type": "bar", "xAxisIndex": 1, "yAxisIndex": 1, "data": [3, 4]}
+            ]
+        }),
+    ));
+    let multi_report = lint_document(&multi_grid);
+    let multi_paths: Vec<_> = multi_report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR318")
+        .filter_map(|diagnostic| diagnostic.path.as_deref())
+        .collect();
+    assert_eq!(multi_paths.len(), 2, "{:?}", multi_report.diagnostics);
+    assert!(multi_paths.contains(&"blocks[0].option.yAxis[0]"));
+    assert!(multi_paths.contains(&"blocks[0].option.yAxis[1]"));
+
+    let mut dataset = doc();
+    dataset.blocks.push(chart_named(
+        "dataset",
+        serde_json::json!({
+            "xAxis": {"type": "category"},
+            "yAxis": {"type": "value"},
+            "dataset": {"source": [["A", 1], ["B", 2]]},
+            "series": [{"type": "bar"}]
+        }),
+    ));
+    assert!(
+        !has_code(&lint_document(&dataset), "QR318"),
+        "dataset/encode dimensions are intentionally skipped until they can be resolved safely"
+    );
 
     let mut pie = doc();
     pie.blocks.push(chart_named(
@@ -1987,7 +2445,7 @@ fn qr416_flags_third_consecutive_visual_only() {
 }
 
 #[test]
-fn qr417_flags_walls_of_text_and_long_prose_runs() {
+fn qr417_flags_only_single_paragraph_walls_of_text() {
     let wall = "数".repeat(450);
     let mut single = doc();
     single.blocks.push(paragraph("wall", wall.as_str()));
@@ -2029,13 +2487,22 @@ fn qr417_flags_walls_of_text_and_long_prose_runs() {
             .push(paragraph(id.as_str(), paragraph_text.as_str()));
     }
     let report = lint_document(&run);
-    let hits: Vec<_> = report
+    assert!(
+        !has_code(&report, "QR417"),
+        "multi-paragraph density belongs to QR419: {:?}",
+        report.diagnostics
+    );
+    let dense_hits: Vec<_> = report
         .diagnostics
         .iter()
-        .filter(|diagnostic| diagnostic.code == "QR417")
+        .filter(|diagnostic| diagnostic.code == "QR419")
         .collect();
-    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
-    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("run-5")));
+    assert_eq!(dense_hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(
+        dense_hits[0].block_id.as_ref(),
+        Some(&bid("run-5")),
+        "QR419 must retain the cross-paragraph diagnostic"
+    );
 }
 
 #[test]
@@ -2058,7 +2525,17 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
     );
     assert!(diagnostic.hint.contains("Table or Echarts"));
 
-    for title in ["导论", "结语"] {
+    for title in [
+        "导论",
+        "结语",
+        "四、结语",
+        "总结与展望",
+        "对策建议",
+        "对策建议：依托省重点实验室集中引育领军人才",
+        "存在问题与下一步工作",
+        "保障措施",
+        "落实要求",
+    ] {
         let mut exempt = doc();
         exempt.blocks.push(heading("exempt-h2", 2, title));
         for index in 1..=4 {
@@ -2221,6 +2698,181 @@ fn qr420_flags_redundant_note_prefixes() {
 }
 
 #[test]
+fn qr421_detects_blind_ordinals_and_academic_jargon() {
+    for (id, text) in [
+        ("blind-pair", "第一项与第三项占优。"),
+        ("blind-metric", "第二项指标表现突出。"),
+        ("blind-shortcoming", "第四项存在短板。"),
+        ("spearman", "采用Spearman相关系数分析。"),
+        ("sample", "样本高校覆盖不同类型院校。"),
+        ("p-value", "回归结果满足p < 0.05。"),
+        ("hhi", "HHI反映学科集中度。"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        assert!(
+            has_code(&lint_document(&document), "QR421"),
+            "blind ordinal or academic jargon must be detected: {text}"
+        );
+    }
+
+    let mut spearman = doc();
+    spearman.blocks.push(paragraph(
+        "spearman-single-owner",
+        "采用Spearman相关系数分析。",
+    ));
+    assert!(
+        !has_code(&lint_document(&spearman), "QR412"),
+        "QR421 owns academic jargon without duplicating QR412"
+    );
+
+    for (id, text) in [
+        ("named-quoted", "第一项“国家级项目数”占优。"),
+        ("named-plain", "第一项立项数占优。"),
+        ("defined", "第一项为立项数，第二项为经费总量。"),
+        ("quoted-title", "《第一项与第三项占优》只是待讨论标题。"),
+        ("ordinary-rank", "2025年立项数位居全省第一。"),
+        ("quoted-method", "《回归分析》是本次引用的资料名称。"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        assert!(
+            !has_code(&lint_document(&document), "QR421"),
+            "named metrics and quoted material must remain clean: {text}"
+        );
+    }
+}
+
+#[test]
+fn qr422_requires_visual_units_or_scope_note() {
+    let mut table_missing = doc();
+    table_missing.blocks.push(table(
+        "missing-table-note",
+        None,
+        vec![
+            ColumnNode::leaf("name", "名称"),
+            ColumnNode::leaf("count", "项目数").with_type(ColumnDataType::Number),
+        ],
+        vec![row(&[
+            ("name", CellValue::text("甲")),
+            ("count", CellValue::Integer(214)),
+        ])],
+    ));
+    let report = lint_document(&table_missing);
+    let diagnostic = finding(&report, "QR422");
+    assert_eq!(diagnostic.severity, Severity::Info);
+    assert!(diagnostic.suppressible);
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].note"));
+
+    let mut table_with_units = doc();
+    table_with_units.blocks.push(table(
+        "table-with-units",
+        None,
+        vec![
+            ColumnNode::leaf("name", "名称"),
+            ColumnNode::leaf("count", "项目数（项）").with_type(ColumnDataType::Number),
+        ],
+        vec![row(&[
+            ("name", CellValue::text("甲")),
+            ("count", CellValue::Integer(214)),
+        ])],
+    ));
+    assert!(!has_code(&lint_document(&table_with_units), "QR422"));
+
+    let mut table_with_note = doc();
+    table_with_note.blocks.push(with_table_note(
+        table(
+            "table-with-note",
+            None,
+            vec![
+                ColumnNode::leaf("name", "名称"),
+                ColumnNode::leaf("count", "项目数").with_type(ColumnDataType::Number),
+            ],
+            vec![row(&[
+                ("name", CellValue::text("甲")),
+                ("count", CellValue::Integer(214)),
+            ])],
+        ),
+        "单位：项；统计口径：2025年国家级项目。",
+    ));
+    assert!(!has_code(&lint_document(&table_with_note), "QR422"));
+
+    let mut chart_missing = doc();
+    chart_missing.blocks.push(chart_named(
+        "chart-without-units",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": ["A", "B"]},
+            "yAxis": {"type": "value"},
+            "series": [{"type": "bar", "data": [1, 2]}]
+        }),
+    ));
+    assert!(has_code(&lint_document(&chart_missing), "QR422"));
+
+    let mut chart_with_units = doc();
+    chart_with_units.blocks.push(chart_named(
+        "chart-with-units",
+        serde_json::json!({
+            "xAxis": {"type": "category", "data": ["A", "B"]},
+            "yAxis": {"type": "value", "name": "人才数（名）"},
+            "series": [{"type": "bar", "data": [1, 2]}]
+        }),
+    ));
+    assert!(!has_code(&lint_document(&chart_with_units), "QR422"));
+
+    let mut pie_with_units = doc();
+    pie_with_units.blocks.push(chart_named(
+        "pie-with-units",
+        serde_json::json!({
+            "series": [{"name": "项目数（项）", "type": "pie", "data": [{"value": 1}, {"value": 2}]}]
+        }),
+    ));
+    assert!(!has_code(&lint_document(&pie_with_units), "QR422"));
+}
+
+#[test]
+fn qr423_enforces_policy_terms_year_ranges_and_document_numbers() {
+    let mut invalid = doc();
+    invalid.blocks.push(paragraph(
+        "invalid-policy-format",
+        "双一流建设应衔接十四五规划和十五五布局，参照教发(2025)12号，分析2021-2025年数据。",
+    ));
+    let report = lint_document(&invalid);
+    let diagnostic = finding(&report, "QR423");
+    assert!(diagnostic.message.contains("“双一流”"));
+    assert!(diagnostic.message.contains("“十四五”"));
+    assert!(diagnostic.message.contains("“十五五”"));
+    assert!(diagnostic.message.contains("一字线"));
+    assert!(diagnostic.message.contains("六角括号"));
+
+    for (id, text) in [
+        ("tilde-range", "分析2021~2025年数据。"),
+        ("fullwidth-tilde-range", "分析2021～2025年数据。"),
+        ("fullwidth-doc-number", "参照教发字（2025）12号。"),
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph(id, text));
+        assert!(has_code(&lint_document(&document), "QR423"));
+    }
+
+    let mut valid = doc();
+    valid.blocks.push(paragraph(
+        "valid-policy-format",
+        "“双一流”建设衔接“十四五”规划和“十五五”布局，参照教发〔2025〕12号，分析2021—2025年数据。",
+    ));
+    assert!(!has_code(&lint_document(&valid), "QR423"));
+
+    let mut quoted = doc();
+    quoted.blocks.push(Block::quote(
+        bid("external-policy-quote"),
+        "双一流建设参见十四五规划。",
+    ));
+    quoted
+        .blocks
+        .push(paragraph("code", "`双一流` 是代码示例。"));
+    assert!(!has_code(&lint_document(&quoted), "QR423"));
+}
+
+#[test]
 fn qr418_flags_generic_and_counting_headings() {
     let mut generic = doc();
     generic
@@ -2262,6 +2914,40 @@ fn qr418_flags_generic_and_counting_headings() {
     assert!(
         !has_code(&lint_document(&decimal), "QR418"),
         "a decimal percentage must not be treated as heading numbering"
+    );
+}
+
+#[test]
+fn qr418_allows_positional_introduction_and_conclusion_headings() {
+    let mut document = doc();
+    document.blocks.push(heading("intro", 2, "一、引言"));
+    document
+        .blocks
+        .push(paragraph("intro-body", "说明报告背景与分析对象。"));
+    document.blocks.push(heading("analysis", 2, "二、现状分析"));
+    document
+        .blocks
+        .push(paragraph("analysis-body", "分析具体指标与结构。"));
+    document.blocks.push(heading("ending", 2, "三、结语"));
+    document
+        .blocks
+        .push(paragraph("ending-body", "回扣核心判断与建设方向。"));
+
+    let report = lint_document(&document);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR418")
+        .collect();
+    assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
+    assert_eq!(hits[0].block_id.as_ref(), Some(&bid("analysis")));
+    assert!(hits[0].hint.contains("keep its column label"));
+
+    let mut nested = doc();
+    nested.blocks.push(heading("nested-ending", 3, "结语"));
+    assert!(
+        has_code(&lint_document(&nested), "QR418"),
+        "the positional exemption applies only to the final H2, not arbitrary nested headings"
     );
 }
 

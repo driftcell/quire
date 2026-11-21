@@ -937,6 +937,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             "id":"ch1_financials",
             "type":"table",
             "caption":"Revenue by segment",
+            "note":"单位：元；统计口径：FY25—FY26 营业收入。",
             "columns":[
                 {"key":"segment","label":"Segment"},
                 {"key":"revenue","label":"Revenue","children":[
@@ -957,6 +958,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             "id":"ch1_chart",
             "type":"echarts",
             "title":"Revenue and margin",
+            "note":"单位：元、%；统计口径：FY25—FY26 营业收入与利润率。",
             "height":340,
             "option":{
                 "tooltip":{"trigger":"axis"},

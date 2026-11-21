@@ -19,7 +19,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
     check_headings(document, engine);
     check_empty_text(document, engine);
     check_placeholders(document, engine);
-    check_visual_sequence(document, engine);
+    check_visual_titles(document, engine);
     check_visual_references(document, engine);
     check_inline_syntax(document, engine);
     check_consecutive_visuals(document, engine);
@@ -27,8 +27,89 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
     check_duplicate_note_prefix(document, engine);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum HeadingNumberingFamily {
+    Chapter(usize),
+    ChineseTop,
+    ParenthesizedChinese,
+    Arabic,
+    ParenthesizedArabic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HeadingNumbering {
+    family: HeadingNumberingFamily,
+    components: Vec<usize>,
+}
+
+impl HeadingNumbering {
+    fn is_root(&self) -> bool {
+        match self.family {
+            HeadingNumberingFamily::Chapter(1) | HeadingNumberingFamily::ChineseTop => true,
+            HeadingNumberingFamily::Arabic => self.components.len() == 1,
+            _ => false,
+        }
+    }
+
+    fn system(&self) -> NumberingSystem {
+        if self.family == HeadingNumberingFamily::Arabic {
+            NumberingSystem::Arabic
+        } else {
+            NumberingSystem::Chinese
+        }
+    }
+
+    fn rank(&self, system: NumberingSystem) -> usize {
+        match self.family {
+            HeadingNumberingFamily::Chapter(rank) => rank,
+            HeadingNumberingFamily::ChineseTop => 1,
+            HeadingNumberingFamily::ParenthesizedChinese => 2,
+            HeadingNumberingFamily::Arabic if self.components.len() > 1 => self.components.len(),
+            HeadingNumberingFamily::Arabic => match system {
+                NumberingSystem::Chinese => 3,
+                NumberingSystem::Arabic => 1,
+            },
+            HeadingNumberingFamily::ParenthesizedArabic => match system {
+                NumberingSystem::Chinese => 4,
+                NumberingSystem::Arabic => 2,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum NumberingSystem {
+    Chinese,
+    Arabic,
+}
+
+type HeadingSequences =
+    BTreeMap<(Option<quire_protocol::BlockId>, u8, HeadingNumberingFamily), Vec<usize>>;
+
+fn heading_numbering_base(document: &ReportDocument) -> (u8, NumberingSystem) {
+    let mut fallback = None;
+    for block in &document.blocks {
+        let BlockKind::Heading { level, text } = &block.body else {
+            continue;
+        };
+        let Some(numbering) = parse_heading_numbering(text) else {
+            continue;
+        };
+        if fallback.is_none() {
+            fallback = Some(numbering.system());
+        }
+        if numbering.is_root() {
+            return (*level, numbering.system());
+        }
+    }
+    (1, fallback.unwrap_or(NumberingSystem::Chinese))
+}
+
 fn check_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
+    let (numbering_base, numbering_system) = heading_numbering_base(document);
     let mut previous_heading_level: Option<u8> = None;
+    let mut heading_stack: Vec<(u8, quire_protocol::BlockId)> = Vec::new();
+    let mut sequences = HeadingSequences::new();
     for (index, block) in document.blocks.iter().enumerate() {
         let BlockKind::Heading { level, text } = &block.body else {
             continue;
@@ -55,21 +136,41 @@ fn check_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
                 );
             }
             previous_heading_level = Some(*level);
-            if let Some(depth) = manual_heading_depth(text)
-                && depth != usize::from(*level)
+
+            while heading_stack
+                .last()
+                .is_some_and(|(parent_level, _)| *parent_level >= *level)
             {
-                engine.report(
-                    RuleId::HeadingNumberingMismatch,
-                    format!(
-                        "heading `{}` uses level-{depth} numbering `{}` at h{level}",
-                        block.id,
-                        text.trim()
-                    ),
-                    "match the manual number depth to the heading level, or remove the manual number and let the TOC number it.",
-                    Some(block.id.clone()),
-                    Some(format!("blocks[{index}].text")),
+                heading_stack.pop();
+            }
+            let parent_id = heading_stack.last().map(|(_, block_id)| block_id.clone());
+            if let Some(numbering) = parse_heading_numbering(text) {
+                let rank = numbering.rank(numbering_system);
+                let expected_level = usize::from(numbering_base) + rank.saturating_sub(1);
+                if expected_level != usize::from(*level) {
+                    engine.report(
+                        RuleId::HeadingNumberingMismatch,
+                        format!(
+                            "heading `{}` uses relative level-{rank} numbering `{}` at h{level}; the document's numbering root is h{numbering_base}",
+                            block.id,
+                            text.trim()
+                        ),
+                        "match the numbering to the document's relative heading hierarchy, or remove the manual number and let the TOC number it.",
+                        Some(block.id.clone()),
+                        Some(format!("blocks[{index}].text")),
+                    );
+                }
+                check_heading_sequence(
+                    engine,
+                    block,
+                    index,
+                    &numbering,
+                    parent_id,
+                    *level,
+                    &mut sequences,
                 );
             }
+            heading_stack.push((*level, block.id.clone()));
         }
         let next_is_boundary = document.blocks.get(index + 1).is_none_or(|next| {
             matches!(
@@ -87,6 +188,65 @@ fn check_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
             );
         }
     }
+}
+
+fn check_heading_sequence(
+    engine: &mut Engine<'_>,
+    block: &quire_protocol::Block,
+    index: usize,
+    numbering: &HeadingNumbering,
+    parent_id: Option<quire_protocol::BlockId>,
+    level: u8,
+    sequences: &mut HeadingSequences,
+) {
+    let Some(current) = numbering.components.last().copied() else {
+        return;
+    };
+    let previous = sequences
+        .entry((parent_id, level, numbering.family))
+        .or_default();
+    let previous_label = previous
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(".");
+    let current_label = numbering
+        .components
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(".");
+    let out_of_sequence = if previous.is_empty() {
+        current != 1
+    } else {
+        let previous_prefix = previous.get(..previous.len().saturating_sub(1));
+        let current_prefix = numbering
+            .components
+            .get(..numbering.components.len().saturating_sub(1));
+        previous_prefix != current_prefix
+            || previous.last().and_then(|value| value.checked_add(1)) != Some(current)
+    };
+    if out_of_sequence {
+        let message = if previous_label.is_empty() {
+            format!(
+                "heading `{}` numbering `{current_label}` starts at {current} instead of 1",
+                block.id
+            )
+        } else {
+            format!(
+                "heading `{}` numbering `{current_label}` does not follow `{previous_label}` within the same parent section",
+                block.id
+            )
+        };
+        engine.report(
+            RuleId::HeadingNumberingMismatch,
+            message,
+            "renumber sibling headings continuously from 1 within each parent section; keep one numbering style per sibling group.",
+            Some(block.id.clone()),
+            Some(format!("blocks[{index}].text")),
+        );
+    }
+    *previous = numbering.components.clone();
 }
 
 fn check_empty_text(document: &ReportDocument, engine: &mut Engine<'_>) {
@@ -109,7 +269,7 @@ fn check_empty_text(document: &ReportDocument, engine: &mut Engine<'_>) {
 
 fn check_placeholders(document: &ReportDocument, engine: &mut Engine<'_>) {
     for (index, block) in document.blocks.iter().enumerate() {
-        let mut found: Option<(&'static str, String)> = None;
+        let mut found: Option<(String, String)> = None;
         let mut scan = |text: &str, path: String| {
             if found.is_none()
                 && let Some(token) = first_placeholder(text)
@@ -172,45 +332,17 @@ fn check_placeholders(document: &ReportDocument, engine: &mut Engine<'_>) {
     }
 }
 
-fn check_visual_sequence(document: &ReportDocument, engine: &mut Engine<'_>) {
-    let mut expected: BTreeMap<&'static str, usize> = BTreeMap::new();
-    let mut seen: BTreeMap<&'static str, BTreeSet<usize>> = BTreeMap::new();
+fn check_visual_titles(document: &ReportDocument, engine: &mut Engine<'_>) {
     for (index, block) in document.blocks.iter().enumerate() {
-        let BlockKind::Table(table) = &block.body else {
-            let BlockKind::Echarts(chart) = &block.body else {
-                if let BlockKind::CustomHtml(html) = &block.body {
-                    check_visual_title(engine, block, html.title.as_deref(), index);
-                    check_manual_caption(
-                        engine,
-                        block,
-                        html.title.as_deref(),
-                        index,
-                        &mut expected,
-                        &mut seen,
-                    );
-                }
+        let title = match &block.body {
+            BlockKind::Table(table) => table.title.as_deref(),
+            BlockKind::Echarts(chart) => chart.title.as_deref(),
+            BlockKind::CustomHtml(html) => html.title.as_deref(),
+            BlockKind::Heading { .. } | BlockKind::Paragraph { .. } | BlockKind::Quote { .. } => {
                 continue;
-            };
-            check_visual_title(engine, block, chart.title.as_deref(), index);
-            check_manual_caption(
-                engine,
-                block,
-                chart.title.as_deref(),
-                index,
-                &mut expected,
-                &mut seen,
-            );
-            continue;
+            }
         };
-        check_visual_title(engine, block, table.title.as_deref(), index);
-        check_manual_caption(
-            engine,
-            block,
-            table.title.as_deref(),
-            index,
-            &mut expected,
-            &mut seen,
-        );
+        check_visual_title(engine, block, title, index);
     }
 }
 
@@ -238,47 +370,6 @@ fn check_visual_title(
     );
 }
 
-fn check_manual_caption(
-    engine: &mut Engine<'_>,
-    block: &quire_protocol::Block,
-    title: Option<&str>,
-    index: usize,
-    expected: &mut BTreeMap<&'static str, usize>,
-    seen: &mut BTreeMap<&'static str, BTreeSet<usize>>,
-) {
-    let Some(title) = title else {
-        return;
-    };
-    let Some((kind, number)) = manual_caption(title) else {
-        return;
-    };
-    let next = expected.entry(kind).or_insert(1);
-    let duplicates = seen.entry(kind).or_default();
-    if !duplicates.insert(number) {
-        engine.report(
-            RuleId::VisualCaptionSequence,
-            format!("block `{}` repeats {kind} {number}", block.id),
-            "remove the hardcoded label and let automatic numbering produce a unique sequence.",
-            Some(block.id.clone()),
-            Some(format!("blocks[{index}].title")),
-        );
-        return;
-    }
-    if number != *next {
-        engine.report(
-            RuleId::VisualCaptionSequence,
-            format!(
-                "block `{}` uses {kind} {number} where the next label is {kind} {next}",
-                block.id
-            ),
-            "remove the hardcoded label; automatic numbering keeps tables and figures contiguous.",
-            Some(block.id.clone()),
-            Some(format!("blocks[{index}].title")),
-        );
-    }
-    *next = number.saturating_add(1);
-}
-
 fn check_visual_references(document: &ReportDocument, engine: &mut Engine<'_>) {
     let table_count = document
         .blocks
@@ -302,21 +393,39 @@ fn check_visual_references(document: &ReportDocument, engine: &mut Engine<'_>) {
             _ => continue,
         };
         let mut reported = BTreeSet::new();
-        for (kind, number) in visual_references(text) {
-            let available = if kind == "表" {
+        for reference in visual_references(text) {
+            let available = if reference.kind == "表" {
                 table_count
             } else {
                 figure_count
             };
-            if number <= available || !reported.insert((kind, number)) {
+            let unsupported_format = reference.compound || reference.appendix;
+            if (!unsupported_format && reference.number > 0 && reference.number <= available)
+                || !reported.insert((reference.kind, reference.raw.clone()))
+            {
                 continue;
             }
+            let (message, hint) = if unsupported_format {
+                (
+                    format!(
+                        "block `{}` uses unsupported visual reference `{}`",
+                        block.id, reference.raw
+                    ),
+                    "use the renderer's global continuous labels (表 1, 表 2 / 图 1, 图 2); do not use chapter-scoped, decimal, hyphenated or appendix-only numbers".to_string(),
+                )
+            } else {
+                (
+                    format!(
+                        "block `{}` references {}, but the document has only {available}",
+                        block.id, reference.raw
+                    ),
+                    "fix the reference number or add the missing visual block; automatic labels start at 1 within each kind".to_string(),
+                )
+            };
             engine.report(
                 RuleId::DanglingVisualRef,
-                format!(
-                    "block `{}` references {kind} {number}, but the document has only {available}"
-                , block.id),
-                "fix the reference number or add the missing visual block; automatic labels start at 1 within each kind.",
+                message,
+                hint,
                 Some(block.id.clone()),
                 Some(format!("blocks[{index}].text")),
             );
@@ -384,6 +493,25 @@ fn check_consecutive_visuals(document: &ReportDocument, engine: &mut Engine<'_>)
     }
 }
 
+const OPENING_SECTION_HEADINGS: &[&str] = &["导论", "引言", "前言", "introduction"];
+const CLOSING_SECTION_HEADINGS: &[&str] = &["结语", "总结", "conclusion", "conclusions", "summary"];
+const DENSE_PROSE_EXEMPT_SECTION_HEADINGS: &[&str] = &[
+    "摘要",
+    "总结与展望",
+    "总结与建议",
+    "结论与建议",
+    "对策建议",
+    "相关建议",
+    "行动建议",
+    "行动方案建议",
+    "下一步工作",
+    "存在问题与下一步工作",
+    "保障措施",
+    "落实要求",
+    "工作举措",
+    "具体举措",
+];
+
 const GENERIC_HEADINGS_ZH: &[&str] = &[
     "概述",
     "引言",
@@ -447,6 +575,14 @@ const COUNTING_NOUNS: &[&str] = &[
 ];
 
 fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
+    let first_h2 = document
+        .blocks
+        .iter()
+        .position(|block| matches!(&block.body, BlockKind::Heading { level: 2, .. }));
+    let last_h2 = document
+        .blocks
+        .iter()
+        .rposition(|block| matches!(&block.body, BlockKind::Heading { level: 2, .. }));
     for (index, block) in document.blocks.iter().enumerate() {
         let BlockKind::Heading { level, text } = &block.body else {
             continue;
@@ -456,6 +592,16 @@ fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
         }
         let normalized = normalize_heading_text(text);
         if normalized.is_empty() {
+            continue;
+        }
+        let label = section_label(text);
+        let lowered_label = label.to_ascii_lowercase();
+        let positionally_exempt = *level == 2
+            && ((Some(index) == first_h2
+                && heading_list_contains(OPENING_SECTION_HEADINGS, label, &lowered_label))
+                || (Some(index) == last_h2
+                    && heading_list_contains(CLOSING_SECTION_HEADINGS, label, &lowered_label)));
+        if positionally_exempt {
             continue;
         }
         let lowered = normalized.to_ascii_lowercase();
@@ -472,7 +618,7 @@ fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
                 block.id,
                 text.trim()
             ),
-            "Rewrite this Heading via apply_operations as a conclusion-first title naming the specific subject, metric, or takeaway (e.g. '算力与政策双轮驱动 Q3 增速达 24%'); fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
+            "Rewrite this Heading via apply_operations to name a specific subject, metric or takeaway. For a standard official-document section, keep its column label and add a concrete judgment after a colon (e.g. '对策建议：依托省重点实验室集中引育领军人才'); fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -517,6 +663,30 @@ fn has_redundant_note_prefix(note: &str) -> bool {
         || trimmed
             .get(..5)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Note:"))
+}
+
+pub(super) fn dense_prose_section_exempt(text: &str) -> bool {
+    let label = section_label(text);
+    let lowered = label.to_ascii_lowercase();
+    heading_list_contains(OPENING_SECTION_HEADINGS, label, &lowered)
+        || heading_list_contains(CLOSING_SECTION_HEADINGS, label, &lowered)
+        || heading_list_contains(DENSE_PROSE_EXEMPT_SECTION_HEADINGS, label, &lowered)
+}
+
+fn section_label(text: &str) -> &str {
+    let normalized = normalize_heading_text(text);
+    if let Some((index, _)) = normalized
+        .char_indices()
+        .find(|(_, ch)| matches!(ch, ':' | '：'))
+    {
+        normalized.get(..index).unwrap_or(normalized).trim()
+    } else {
+        normalized
+    }
+}
+
+fn heading_list_contains(headings: &[&str], label: &str, lowered: &str) -> bool {
+    headings.contains(&label) || headings.contains(&lowered)
 }
 
 pub(super) fn normalize_heading_text(text: &str) -> &str {
@@ -636,12 +806,11 @@ fn strip_dotted_number(text: &str) -> Option<&str> {
 }
 
 fn strip_chinese_number(text: &str) -> Option<&str> {
-    let first = text.chars().next()?;
-    if !is_chinese_numeral(first) {
+    let numeral_len = chapter_numeral_prefix_len(text);
+    if numeral_len == 0 {
         return None;
     }
-    let rest = text.get(first.len_utf8()..)?;
-    rest.strip_prefix('、')
+    text.get(numeral_len..)?.strip_prefix('、')
 }
 
 fn ascii_digit_prefix_len(text: &str) -> usize {
@@ -736,14 +905,14 @@ fn has_concrete_heading_marker(text: &str) -> bool {
         || text.contains('"')
 }
 
-fn first_placeholder(text: &str) -> Option<&'static str> {
+fn first_placeholder(text: &str) -> Option<String> {
     let lowered = text.to_ascii_lowercase();
     for token in ["tbd", "todo", "fixme", "tba"] {
         if contains_ascii_word(&lowered, token) {
-            return Some(token);
+            return Some(token.to_string());
         }
     }
-    [
+    for token in [
         "[待补充]",
         "[待核实]",
         "[待完善]",
@@ -754,9 +923,72 @@ fn first_placeholder(text: &str) -> Option<&'static str> {
         "待核实",
         "待完善",
         "待确认",
-    ]
-    .into_iter()
-    .find(|token| lowered.contains(*token))
+    ] {
+        if lowered.contains(token) {
+            return Some(token.to_string());
+        }
+    }
+    if text.contains("××") {
+        return Some("××".to_string());
+    }
+    for token in [
+        "xx高校", "xx大学", "xx学院", "xx学科", "xx项", "xx名", "xx所",
+    ] {
+        if lowered.contains(token) {
+            return Some(token.to_string());
+        }
+    }
+    for (open, close) in [('【', '】'), ('（', '）'), ('(', ')')] {
+        if let Some(token) = wrapped_pending_placeholder(text, open, close) {
+            return Some(token);
+        }
+    }
+    for token in ["?%", "??"] {
+        if text.contains(token) {
+            return Some(token.to_string());
+        }
+    }
+    independent_n_quantifier(text)
+}
+
+fn wrapped_pending_placeholder(text: &str, open: char, close: char) -> Option<String> {
+    let mut search_start = 0usize;
+    while let Some(found) = text.get(search_start..).and_then(|rest| rest.find(open)) {
+        let start = search_start + found;
+        let content_start = start + open.len_utf8();
+        let rest = text.get(content_start..)?;
+        if rest.starts_with('待')
+            && let Some(close_index) = rest.find(close)
+        {
+            return text
+                .get(start..content_start + close_index + close.len_utf8())
+                .map(str::to_string);
+        }
+        search_start = content_start;
+    }
+    None
+}
+
+fn independent_n_quantifier(text: &str) -> Option<String> {
+    for (index, _) in text.match_indices('N') {
+        let previous = text
+            .get(..index)
+            .and_then(|prefix| prefix.chars().next_back());
+        if previous.is_some_and(|ch| ch.is_ascii_alphanumeric()) {
+            continue;
+        }
+        let after = text.get(index + 1..)?;
+        let trimmed = after.trim_start();
+        let unit = trimmed.chars().next()?;
+        if !matches!(unit, '项' | '名' | '篇' | '所' | '个' | '位') {
+            continue;
+        }
+        let whitespace = after.len().saturating_sub(trimmed.len());
+        return text
+            .get(index..index + 1 + whitespace + unit.len_utf8())
+            .map(str::to_string);
+    }
+    None
 }
 
 fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
@@ -779,91 +1011,233 @@ fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
     false
 }
 
-fn manual_heading_depth(text: &str) -> Option<usize> {
+fn parse_heading_numbering(text: &str) -> Option<HeadingNumbering> {
     let trimmed = text.trim_start();
-    let first = trimmed.chars().next()?;
-    if first.is_ascii_digit() {
-        let token: String = trimmed
-            .chars()
-            .take_while(|ch| ch.is_ascii_digit() || *ch == '.')
-            .collect();
-        let has_dot = token.contains('.');
-        let rest = trimmed.get(token.len()..)?.trim_start();
-        let chinese_separator = rest.starts_with('、')
-            || rest.starts_with(')')
-            || rest.starts_with('）')
-            || rest.starts_with('．');
-        if !has_dot && !chinese_separator {
-            return None;
+    if let Some(rest) = trimmed.strip_prefix('第') {
+        let numeral_len = chapter_numeral_prefix_len(rest);
+        if numeral_len > 0 {
+            let value = parse_numeral_token(rest.get(..numeral_len)?)?;
+            let after = rest.get(numeral_len..)?;
+            for (marker, rank) in [("部分", 1), ("章", 1), ("节", 2), ("篇", 1)] {
+                if after.starts_with(marker) {
+                    return Some(HeadingNumbering {
+                        family: HeadingNumberingFamily::Chapter(rank),
+                        components: vec![value],
+                    });
+                }
+            }
         }
-        let depth = token
-            .split('.')
-            .filter(|segment| !segment.is_empty())
-            .count();
-        return (depth > 0).then_some(depth);
     }
-    if matches!(first, '第') {
-        return Some(if trimmed.contains('节') { 2 } else { 1 });
+
+    if let Some(first) = trimmed.chars().next()
+        && matches!(first, '（' | '(')
+    {
+        let close = if first == '（' { '）' } else { ')' };
+        let rest = trimmed.get(first.len_utf8()..)?;
+        let close_index = rest.find(close)?;
+        let inner = rest.get(..close_index)?;
+        if !inner.is_empty() && chapter_numeral_prefix_len(inner) == inner.len() {
+            let value = parse_numeral_token(inner)?;
+            let family = if inner.bytes().all(|byte| byte.is_ascii_digit()) {
+                HeadingNumberingFamily::ParenthesizedArabic
+            } else {
+                HeadingNumberingFamily::ParenthesizedChinese
+            };
+            return Some(HeadingNumbering {
+                family,
+                components: vec![value],
+            });
+        }
     }
-    let rest = trimmed.get(first.len_utf8()..)?;
-    if rest.starts_with('、') && is_chinese_numeral(first) {
-        return Some(1);
+
+    if trimmed.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        return parse_arabic_heading_numbering(trimmed);
+    }
+
+    let numeral_len = chapter_numeral_prefix_len(trimmed);
+    if numeral_len > 0
+        && trimmed
+            .get(numeral_len..)
+            .is_some_and(|rest| rest.starts_with('、'))
+    {
+        return Some(HeadingNumbering {
+            family: HeadingNumberingFamily::ChineseTop,
+            components: vec![parse_numeral_token(trimmed.get(..numeral_len)?)?],
+        });
     }
     None
+}
+
+fn parse_arabic_heading_numbering(text: &str) -> Option<HeadingNumbering> {
+    let mut components = Vec::new();
+    let mut cursor = 0usize;
+    let mut saw_dot = false;
+    loop {
+        let digit_len = ascii_digit_prefix_len(text.get(cursor..)?);
+        if digit_len == 0 {
+            return None;
+        }
+        let value = text
+            .get(cursor..cursor + digit_len)?
+            .parse::<usize>()
+            .ok()?;
+        components.push(value);
+        cursor += digit_len;
+        let after = text.get(cursor..)?;
+        let Some(separator) = after.chars().next() else {
+            break;
+        };
+        if !matches!(separator, '.' | '．') {
+            break;
+        }
+        saw_dot = true;
+        cursor += separator.len_utf8();
+        if ascii_digit_prefix_len(text.get(cursor..)?) == 0 {
+            break;
+        }
+    }
+    let after = text.get(cursor..)?;
+    if after.starts_with('%') || after.starts_with('％') || after.starts_with('‰') {
+        return None;
+    }
+    let valid =
+        saw_dot || after.starts_with('、') || after.starts_with(')') || after.starts_with('）');
+    valid.then_some(HeadingNumbering {
+        family: HeadingNumberingFamily::Arabic,
+        components,
+    })
+}
+
+fn parse_numeral_token(text: &str) -> Option<usize> {
+    if !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return text.parse::<usize>().ok();
+    }
+    parse_chinese_numeral(text)
+}
+
+fn parse_chinese_numeral(text: &str) -> Option<usize> {
+    let mut total = 0usize;
+    let mut current = 0usize;
+    let mut saw_numeral = false;
+    for ch in text.chars() {
+        let digit = match ch {
+            '零' => Some(0),
+            '一' => Some(1),
+            '二' | '两' => Some(2),
+            '三' => Some(3),
+            '四' => Some(4),
+            '五' => Some(5),
+            '六' => Some(6),
+            '七' => Some(7),
+            '八' => Some(8),
+            '九' => Some(9),
+            _ => None,
+        };
+        if let Some(digit) = digit {
+            current = digit;
+            saw_numeral = true;
+            continue;
+        }
+        let unit = match ch {
+            '十' => 10usize,
+            '百' => 100usize,
+            _ => return None,
+        };
+        let value = if current == 0 { 1 } else { current };
+        total = total.checked_add(value.checked_mul(unit)?)?;
+        current = 0;
+        saw_numeral = true;
+    }
+    if saw_numeral {
+        total.checked_add(current)
+    } else {
+        None
+    }
 }
 
 fn is_chinese_numeral(ch: char) -> bool {
     matches!(
         ch,
-        '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十' | '百'
+        '零' | '一' | '二' | '两' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十' | '百'
     )
 }
 
-fn manual_caption(title: &str) -> Option<(&'static str, usize)> {
-    let trimmed = title.trim_start();
-    let kind = if trimmed.starts_with('表') {
-        "表"
-    } else if trimmed.starts_with('图') {
-        "图"
-    } else {
-        return None;
-    };
-    let rest = trimmed.get(kind.len()..)?.trim_start();
-    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    let number = digits.parse::<usize>().ok()?;
-    (number > 0).then_some((kind, number))
+struct VisualReference {
+    kind: &'static str,
+    raw: String,
+    number: usize,
+    compound: bool,
+    appendix: bool,
 }
 
-fn visual_references(text: &str) -> Vec<(&'static str, usize)> {
+fn visual_references(text: &str) -> Vec<VisualReference> {
     let mut refs = Vec::new();
-    for (kind, marker) in [("表", '表'), ("图", '图')] {
-        for (position, _) in text.match_indices(marker) {
-            let rest = text.get(position + marker.len_utf8()..).unwrap_or_default();
-            let rest = rest.trim_start();
-            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-            if let Ok(number) = digits.parse::<usize>()
-                && number > 0
-            {
-                refs.push((kind, number));
-            }
-        }
+    for (kind, marker) in [("表", "表"), ("图", "图")] {
+        collect_visual_references(text, kind, marker, &mut refs);
     }
-    for (kind, lower_marker) in [("表", "table"), ("图", "figure")] {
-        let lowered = text.to_ascii_lowercase();
-        for (position, _) in lowered.match_indices(lower_marker) {
-            let rest = lowered
-                .get(position + lower_marker.len()..)
-                .unwrap_or_default()
-                .trim_start();
-            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-            if let Ok(number) = digits.parse::<usize>()
-                && number > 0
-            {
-                refs.push((kind, number));
-            }
-        }
+    let lowered = text.to_ascii_lowercase();
+    for (kind, marker) in [("表", "table"), ("图", "figure")] {
+        collect_visual_references(&lowered, kind, marker, &mut refs);
     }
     refs
+}
+
+fn collect_visual_references(
+    text: &str,
+    kind: &'static str,
+    marker: &str,
+    refs: &mut Vec<VisualReference>,
+) {
+    for (position, _) in text.match_indices(marker) {
+        let after_marker = text.get(position + marker.len()..).unwrap_or_default();
+        let rest = after_marker.trim_start();
+        let digit_len = ascii_digit_prefix_len(rest);
+        if digit_len == 0 {
+            continue;
+        }
+        let Ok(number) = rest.get(..digit_len).unwrap_or_default().parse::<usize>() else {
+            continue;
+        };
+
+        let mut end = digit_len;
+        let mut compound = false;
+        loop {
+            let after_number = rest.get(end..).unwrap_or_default();
+            let Some(separator) = after_number.chars().next() else {
+                break;
+            };
+            if !matches!(separator, '-' | '.' | '—' | '–' | '－' | '．') {
+                break;
+            }
+            let suffix = after_number.get(separator.len_utf8()..).unwrap_or_default();
+            let suffix_digits = ascii_digit_prefix_len(suffix);
+            if suffix_digits == 0 {
+                break;
+            }
+            compound = true;
+            end += separator.len_utf8() + suffix_digits;
+        }
+
+        let appendix = text
+            .get(..position)
+            .and_then(|prefix| prefix.chars().next_back())
+            == Some('附');
+        let raw_start = if appendix {
+            position.saturating_sub('附'.len_utf8())
+        } else {
+            position
+        };
+        let leading_space = after_marker.len().saturating_sub(rest.len());
+        let raw_end = position + marker.len() + leading_space + end;
+        let raw = text.get(raw_start..raw_end).unwrap_or_default().to_string();
+        refs.push(VisualReference {
+            kind,
+            raw,
+            number,
+            compound,
+            appendix,
+        });
+    }
 }
 
 fn has_unclosed_link(text: &str) -> bool {

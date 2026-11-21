@@ -470,24 +470,73 @@ fn check_line_end_labels(
     );
 }
 
+#[derive(Debug, Clone, Copy)]
+enum CartesianValueAxis {
+    X,
+    Y,
+}
+
+impl CartesianValueAxis {
+    fn name(self) -> &'static str {
+        match self {
+            Self::X => "xAxis",
+            Self::Y => "yAxis",
+        }
+    }
+
+    fn series_index_field(self) -> &'static str {
+        match self {
+            Self::X => "xAxisIndex",
+            Self::Y => "yAxisIndex",
+        }
+    }
+
+    fn category_index_field(self) -> &'static str {
+        match self {
+            Self::X => "yAxisIndex",
+            Self::Y => "xAxisIndex",
+        }
+    }
+}
+
+struct IntegerAxisFinding {
+    orientation: CartesianValueAxis,
+    axis_index: usize,
+    max_value: f64,
+}
+
 fn check_integer_axis_interval(
     engine: &mut Engine<'_>,
     block: &quire_protocol::Block,
     option: &Value,
     index: usize,
 ) {
+    for finding in integer_axis_findings(option) {
+        let axis_name = finding.orientation.name();
+        let axis_path = if option.get(axis_name).is_some_and(Value::is_array) {
+            format!("{axis_name}[{}]", finding.axis_index)
+        } else {
+            axis_name.to_string()
+        };
+        engine.report(
+            RuleId::EchartsIntegerAxisMinInterval,
+            format!(
+                "chart `{}` plots small integer counts (max {}) without `minInterval: 1` on `{axis_path}`",
+                block.id, finding.max_value
+            ),
+            format!(
+                "On `{axis_path}`, set `\"minInterval\": 1` so ECharts does not render fractional axis ticks (like 0.5 or 2.4) for integer count data."
+            ),
+            Some(block.id.clone()),
+            Some(format!("blocks[{index}].option.{axis_path}")),
+        );
+    }
+}
+
+fn integer_axis_findings(option: &Value) -> Vec<IntegerAxisFinding> {
     let series = chart_series(option);
     if series.is_empty()
-        || !series.iter().all(|entry| {
-            matches!(
-                entry.get("type").and_then(Value::as_str),
-                Some("bar" | "line")
-            )
-        })
-    {
-        return;
-    }
-    if option.get("polar").is_some_and(|value| !value.is_null())
+        || option.get("polar").is_some_and(|value| !value.is_null())
         || option.get("radar").is_some_and(|value| !value.is_null())
         || series.iter().any(|entry| {
             matches!(
@@ -496,53 +545,131 @@ fn check_integer_axis_interval(
             )
         })
     {
-        return;
+        return Vec::new();
     }
 
     let x_axes = entries(option.get("xAxis"));
     let y_axes = entries(option.get("yAxis"));
-    if x_axes.len() != 1 || y_axes.len() != 1 {
-        return;
-    }
-    let Some(x_axis) = x_axes.first() else {
-        return;
-    };
-    let Some(y_axis) = y_axes.first() else {
-        return;
-    };
-    let (axis_name, axis) = if is_category_axis(x_axis) && !is_category_axis(y_axis) {
-        ("yAxis", *y_axis)
-    } else if is_category_axis(y_axis) && !is_category_axis(x_axis) {
-        ("xAxis", *x_axis)
-    } else {
-        return;
-    };
+    let mut findings = Vec::new();
+    findings.extend(find_integer_value_axes(
+        &series,
+        &y_axes,
+        &x_axes,
+        CartesianValueAxis::Y,
+    ));
+    findings.extend(find_integer_value_axes(
+        &series,
+        &x_axes,
+        &y_axes,
+        CartesianValueAxis::X,
+    ));
+    findings
+}
 
-    let numbers = series_numbers(&series);
-    if numbers.len() < 2
-        || numbers
-            .iter()
-            .any(|value| *value < 0.0 || value.fract() != 0.0)
-    {
-        return;
+fn find_integer_value_axes(
+    series: &[&Value],
+    value_axes: &[&Value],
+    category_axes: &[&Value],
+    orientation: CartesianValueAxis,
+) -> Vec<IntegerAxisFinding> {
+    let mut findings = Vec::new();
+    for (axis_index, axis) in value_axes.iter().enumerate() {
+        if is_category_axis(axis) || is_percentage_axis(axis) || axis_interval_is_handled(axis) {
+            continue;
+        }
+        let Some(numbers) =
+            integer_numbers_for_axis(series, axis_index, category_axes, orientation)
+        else {
+            continue;
+        };
+        if numbers.len() < 2
+            || numbers
+                .iter()
+                .any(|value| *value < 0.0 || value.fract() != 0.0)
+        {
+            continue;
+        }
+        let max_value = numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        if (1.0..=15.0).contains(&max_value) {
+            findings.push(IntegerAxisFinding {
+                orientation,
+                axis_index,
+                max_value,
+            });
+        }
     }
-    let max_val = numbers.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    if !(1.0..=15.0).contains(&max_val) || axis_interval_is_handled(axis) {
-        return;
-    }
+    findings
+}
 
-    engine.report(
-        RuleId::EchartsIntegerAxisMinInterval,
-        format!(
-            "chart `{}` plots small integer counts (max {max_val}) without `minInterval: 1` on `{axis_name}`",
-            block.id
-        ),
-        format!(
-            "On `{axis_name}`, set `\"minInterval\": 1` so ECharts does not render fractional axis ticks (like 0.5 or 2.4) for integer count data."
-        ),
-        Some(block.id.clone()),
-        Some(format!("blocks[{index}].option.{axis_name}")),
-    );
+fn integer_numbers_for_axis(
+    series: &[&Value],
+    value_axis_index: usize,
+    category_axes: &[&Value],
+    orientation: CartesianValueAxis,
+) -> Option<Vec<f64>> {
+    let mut numbers = Vec::new();
+    let mut matched = false;
+    for entry in series.iter().filter(|entry| {
+        matches!(
+            entry.get("type").and_then(Value::as_str),
+            Some("bar" | "line")
+        )
+    }) {
+        if series_component_index(entry, orientation.series_index_field())? != value_axis_index {
+            continue;
+        }
+        let category_index = series_component_index(entry, orientation.category_index_field())?;
+        if !category_axes
+            .get(category_index)
+            .is_some_and(|axis| is_category_axis(axis))
+        {
+            return None;
+        }
+        matched = true;
+        numbers.extend(simple_cartesian_series_numbers(entry)?);
+    }
+    matched.then_some(numbers)
+}
+
+fn series_component_index(series: &Value, field: &str) -> Option<usize> {
+    match series.get(field) {
+        None => Some(0),
+        Some(value) => value.as_u64().and_then(|index| usize::try_from(index).ok()),
+    }
+}
+
+fn simple_cartesian_series_numbers(series: &Value) -> Option<Vec<f64>> {
+    let data = series.get("data")?.as_array()?;
+    let mut numbers = Vec::new();
+    for item in data {
+        match item {
+            Value::Number(number) => numbers.push(number.as_f64()?),
+            Value::Object(object) => match object.get("value") {
+                Some(Value::Number(number)) => numbers.push(number.as_f64()?),
+                Some(Value::Null) => {}
+                _ => return None,
+            },
+            Value::Null => {}
+            _ => return None,
+        }
+    }
+    Some(numbers)
+}
+
+fn is_percentage_axis(axis: &Value) -> bool {
+    axis.get("name")
+        .and_then(Value::as_str)
+        .is_some_and(|name| {
+            name.contains('%')
+                || name.contains('％')
+                || name.contains("占比")
+                || name.contains('率')
+        })
+        || axis
+            .get("axisLabel")
+            .and_then(|label| label.get("formatter"))
+            .and_then(Value::as_str)
+            .is_some_and(|formatter| formatter.contains('%') || formatter.contains('％'))
 }
 
 fn is_category_axis(axis: &Value) -> bool {
@@ -562,37 +689,6 @@ fn axis_interval_is_handled(axis: &Value) -> bool {
 
 fn is_positive_integer(value: f64) -> bool {
     value >= 1.0 && value.fract() == 0.0
-}
-
-fn series_numbers(series: &[&Value]) -> Vec<f64> {
-    let mut numbers = Vec::new();
-    for entry in series {
-        if let Some(data) = entry.get("data") {
-            collect_numbers(data, &mut numbers);
-        }
-    }
-    numbers
-}
-
-fn collect_numbers(value: &Value, numbers: &mut Vec<f64>) {
-    match value {
-        Value::Number(number) => {
-            if let Some(value) = number.as_f64() {
-                numbers.push(value);
-            }
-        }
-        Value::Object(object) => {
-            if let Some(value) = object.get("value") {
-                collect_numbers(value, numbers);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_numbers(item, numbers);
-            }
-        }
-        _ => {}
-    }
 }
 
 fn axis_label_handled(value: &Value) -> bool {
