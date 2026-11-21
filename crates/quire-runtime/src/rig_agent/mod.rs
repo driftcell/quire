@@ -41,8 +41,11 @@ use crate::{
 };
 
 mod builtin_tools;
+mod dsml;
 mod preview_stream;
 mod subagents;
+
+use dsml::{DsmlState, extract_dsml_tool_calls, sanitize_dsml_text};
 
 pub use builtin_tools::BUILTIN_TOOLS;
 pub use preview_stream::{PreviewThrottle, ToolPreviewStreamer};
@@ -351,6 +354,7 @@ impl RigModelCore {
             }
             let mut stream = model.stream(request).map_err(model_provider_error)?;
             let mut previews = PreviewState::new(&execution, &self.config);
+            let mut dsml = DsmlState::default();
             let mut streamed_text = false;
             loop {
                 tokio::select! {
@@ -364,6 +368,7 @@ impl RigModelCore {
                                     &event,
                                     &scope,
                                     &mut previews,
+                                    &mut dsml,
                                 )
                                 .await
                                 {
@@ -388,11 +393,12 @@ impl RigModelCore {
             // sum of every tool-round prompt. Keep the last call's usage so the
             // session meter reflects the live context window.
             last_usage = response.usage;
-            let text = response_text(&response);
+            let text = sanitize_dsml_text(&response_text(&response));
+            let dsml_calls = extract_dsml_tool_calls(&response);
             if !streamed_text && !text.is_empty() {
                 scope.send(ModelStreamEvent::TextDelta(text.clone())).await;
             }
-            let calls: Vec<ToolCall> = response
+            let mut calls: Vec<ToolCall> = response
                 .choice
                 .iter()
                 .filter_map(|content| match content {
@@ -400,6 +406,7 @@ impl RigModelCore {
                     _ => None,
                 })
                 .collect();
+            calls.extend(dsml_calls);
             append_assistant_message(&mut messages, &response);
             if execution.disable_tools {
                 final_text = text;
@@ -583,14 +590,18 @@ async fn handle_stream_event(
     event: &StreamEvent,
     scope: &EventScope,
     previews: &mut PreviewState,
+    dsml: &mut DsmlState,
 ) -> bool {
     match event {
         StreamEvent::Start { part, kind, name } => {
             previews.on_start(part.index(), *kind, name.as_ref());
             false
         }
-        StreamEvent::Text { text, .. } => {
-            scope.send(ModelStreamEvent::TextDelta(text.clone())).await;
+        StreamEvent::Text { part, text } => {
+            let sanitized = dsml.push_text(part.index(), text);
+            if !sanitized.is_empty() {
+                scope.send(ModelStreamEvent::TextDelta(sanitized)).await;
+            }
             true
         }
         StreamEvent::Reasoning { text, .. } => {
