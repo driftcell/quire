@@ -432,3 +432,7 @@ pnpm --dir web gen:types
 - **All planned phases and support work landed:** preview latest-frame-wins handoff with a final-frame
   barrier, subagent `resume_run_id` with bounded in-memory history, the higher-education 9-step
   writing workflow, and the canonical `docs/RUNTIME_SESSION_EVENTS.md` contract.
+- **Review fixes landed:** preview flush uses a watch watermark instead of `Notify`, avoiding lost
+  wakeups; resumed subagent history includes the final assistant reply and frontend/backend resume
+  state is deduplicated; pruning computes the active-run cursor and deletes under one session row
+  lock, including the missing-`start_seq` edge case.

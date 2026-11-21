@@ -6458,3 +6458,75 @@ async fn pruning_preserves_materialized_history_and_enforces_the_retained_cursor
     assert!(matches!(sync.kind, SessionEventKind::SyncRequired { .. }));
     server.abort();
 }
+
+#[tokio::test]
+async fn prune_preserves_a_new_run_before_start_seq_is_recorded() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session("prune before start seq", None)
+        .await
+        .unwrap();
+    store
+        .append_event(
+            &session.session_id,
+            "run_old",
+            "main",
+            None,
+            SessionEventKind::TurnStarted,
+        )
+        .await
+        .unwrap();
+    store
+        .append_event(
+            &session.session_id,
+            "run_old",
+            "main",
+            None,
+            SessionEventKind::TextDelta {
+                delta: "old output".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let run = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await
+        .unwrap();
+    assert_eq!(store.get_run(&run.run_id).await.unwrap().start_seq, None);
+    let last_seq = store
+        .get_session_summary(&session.session_id)
+        .await
+        .unwrap()
+        .last_event_seq;
+
+    let (deleted, min_available) = store
+        .prune_session_events(&session.session_id, 1)
+        .await
+        .unwrap();
+    assert_eq!(deleted, 1);
+    assert_eq!(min_available, last_seq);
+    assert_eq!(
+        store.min_available_seq(&session.session_id).await.unwrap(),
+        last_seq
+    );
+
+    let started = store
+        .start_run_with_event(&run.run_id, SessionEventKind::TurnStarted)
+        .await
+        .unwrap();
+    let events = store
+        .list_events(&session.session_id, 0, 100)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.run_id == run.run_id && event.event_name() == "turn_started"),
+        "the new run's turn_started must survive pruning"
+    );
+    assert_eq!(
+        store.get_run(&run.run_id).await.unwrap().start_seq,
+        Some(started.seq)
+    );
+}

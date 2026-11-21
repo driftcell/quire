@@ -273,6 +273,7 @@ fn settles_sub_thinking(kind: &SessionEventKind) -> bool {
         kind,
         SessionEventKind::ToolCallStarted { .. }
             | SessionEventKind::TextDelta { .. }
+            | SessionEventKind::SubagentStarted { .. }
             | SessionEventKind::SubagentFinished { .. }
             | SessionEventKind::TurnFinished
             | SessionEventKind::TurnFailed { .. }
@@ -493,6 +494,10 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                     subagent.task = task.clone();
                     subagent.section_id = section_id.clone();
                     subagent.status = "running".to_string();
+                    // A resumed subagent starts a new round: its previous final
+                    // summary must not survive into the new round, and any active
+                    // thinking clock is settled before the next segment begins.
+                    subagent.summary = None;
                     if subagent.started_at.is_none() {
                         subagent.started_at = Some(event.timestamp);
                     }
@@ -602,6 +607,10 @@ mod tests {
             (
                 "subagent_run",
                 include_str!("../../../contracts/fixtures/session-events/subagent_run.json"),
+            ),
+            (
+                "subagent_resume",
+                include_str!("../../../contracts/fixtures/session-events/subagent_resume.json"),
             ),
             (
                 "inline_user_message",

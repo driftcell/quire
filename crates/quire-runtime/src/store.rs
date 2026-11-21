@@ -1986,22 +1986,23 @@ impl RuntimeStore {
         let keep = keep_events.clamp(1, 100_000);
         self.materialize_completed_run_traces(session_id).await?;
 
-        let active_start: Option<i64> = sqlx::query_scalar(
+        let mut tx = self.pool.begin().await?;
+        let last_seq = lock_event_seq(&mut tx, session_id).await?;
+        let active_start: Option<Option<i64>> = sqlx::query_scalar(
             r#"SELECT start_seq FROM agent_runs
                WHERE session_id = $1 AND status IN ('running', 'awaiting_input')
                ORDER BY started_at DESC LIMIT 1"#,
         )
         .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten();
+        .fetch_optional(&mut *tx)
+        .await?;
         let rows = sqlx::query(
             r#"SELECT seq FROM session_events
                WHERE session_id = $1 ORDER BY seq DESC LIMIT $2"#,
         )
         .bind(session_id)
         .bind(i64::try_from(keep).unwrap_or(i64::MAX))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
         let cutoff = if rows.len() == keep {
             rows.last()
@@ -2011,17 +2012,19 @@ impl RuntimeStore {
         } else {
             None
         };
-        let mut min_available = cutoff.unwrap_or(0);
-        if let Some(start) = active_start {
-            let start = u64::try_from(start).unwrap_or(0);
-            min_available = if start == 0 {
-                0
-            } else {
-                min_available.min(start)
-            };
+        let mut min_available = cutoff.unwrap_or(last_seq);
+        match active_start {
+            Some(Some(start)) => {
+                min_available = min_available.min(u64::try_from(start).unwrap_or(0));
+            }
+            // A run created before `start_run_with_event` has no start_seq yet.
+            // Protect the high-water mark instead of treating it as no active run.
+            Some(None) => {
+                min_available = min_available.min(last_seq);
+            }
+            None => {}
         }
 
-        let mut tx = self.pool.begin().await?;
         let deleted = sqlx::query("DELETE FROM session_events WHERE session_id = $1 AND seq < $2")
             .bind(session_id)
             .bind(i64::try_from(min_available).unwrap_or(i64::MAX))

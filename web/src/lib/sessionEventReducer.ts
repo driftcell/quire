@@ -392,31 +392,60 @@ export function reduceSessionEvent(
       }
       break;
     }
-    case "subagent_started":
+    case "subagent_started": {
+      const existingIndex = next.liveSubagents.findIndex(
+        (subagent) => subagent.subagentRunId === event.subagent_run_id,
+      );
+      if (existingIndex >= 0) {
+        next = {
+          ...next,
+          liveSubagents: next.liveSubagents.map((subagent, index) =>
+            index === existingIndex
+              ? {
+                  ...subagent,
+                  task: event.task,
+                  sectionId: event.section_id ?? subagent.sectionId,
+                  displayName: event.display_name ?? subagent.displayName,
+                  status: "running",
+                  summary: undefined,
+                  trace: {
+                    ...finishThinkingSegment(subagent.trace, eventTs),
+                    isStreaming: true,
+                  },
+                }
+              : subagent,
+          ),
+        };
+      } else {
+        next = {
+          ...next,
+          liveSubagents: [
+            ...next.liveSubagents,
+            {
+              subagentRunId: event.subagent_run_id,
+              agentName: event.agent_name,
+              displayName: event.display_name ?? undefined,
+              task: event.task,
+              sectionId: event.section_id ?? undefined,
+              status: "running",
+              trace: emptyLiveTrace(
+                event.agent_name,
+                event.subagent_run_id,
+                eventTs,
+              ),
+            },
+          ],
+        };
+      }
       next = {
         ...next,
         liveMain: appendSubagentSegment(
           finishMainThinking(next, event.run_id, eventTs),
           event.subagent_run_id,
         ),
-        liveSubagents: [
-          ...next.liveSubagents,
-          {
-            subagentRunId: event.subagent_run_id,
-            agentName: event.agent_name,
-            displayName: event.display_name ?? undefined,
-            task: event.task,
-            sectionId: event.section_id ?? undefined,
-            status: "running",
-            trace: emptyLiveTrace(
-              event.agent_name,
-              event.subagent_run_id,
-              eventTs,
-            ),
-          },
-        ],
       };
       break;
+    }
     case "subagent_finished":
       next = {
         ...next,

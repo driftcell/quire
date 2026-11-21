@@ -400,6 +400,7 @@ impl RigModelCore {
                     _ => None,
                 })
                 .collect();
+            append_assistant_message(&mut messages, &response);
             if execution.disable_tools {
                 final_text = text;
                 break;
@@ -408,9 +409,6 @@ impl RigModelCore {
                 final_text = text;
                 break;
             }
-            messages.push(Message::Assistant(AssistantMessage::new(
-                response.choice.clone(),
-            )));
             let mut answers: Vec<MessageToolResult> = Vec::new();
             for call in calls {
                 if !execution.run_id.starts_with("run_sub_")
@@ -502,6 +500,14 @@ impl RigModelCore {
             )))
             .await;
         Ok((final_text, messages))
+    }
+}
+
+fn append_assistant_message(messages: &mut Vec<Message>, response: &CompletionResponse) {
+    if !response.choice.is_empty() {
+        messages.push(Message::Assistant(AssistantMessage::new(
+            response.choice.clone(),
+        )));
     }
 }
 
@@ -909,6 +915,33 @@ mod tests {
                 Some("InvalidArgs")
             );
         }
+    }
+
+    #[test]
+    fn final_assistant_response_is_retained_in_history() {
+        let response = CompletionResponse::new(
+            vec![AssistantContent::Text(rig_core::message::Text::from(
+                "final answer",
+            ))],
+            Usage::new(),
+            rig_core::message::Origin::new("openai.responses", "openai", "stub"),
+            json!({}),
+        );
+        let mut messages = Vec::new();
+        append_assistant_message(&mut messages, &response);
+        assert_eq!(messages.len(), 1);
+        let Some(Message::Assistant(assistant)) = messages.last() else {
+            panic!("expected an assistant message");
+        };
+        let text = assistant
+            .content
+            .iter()
+            .find_map(|content| match content {
+                AssistantContent::Text(text) => Some(text.text.as_str()),
+                _ => None,
+            })
+            .expect("assistant text");
+        assert_eq!(text, "final answer");
     }
 
     #[test]

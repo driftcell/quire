@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import mainRun from "../../../contracts/fixtures/session-events/main_run.json";
 import subagentRun from "../../../contracts/fixtures/session-events/subagent_run.json";
+import subagentResume from "../../../contracts/fixtures/session-events/subagent_resume.json";
 import subagentMultiRound from "../../../contracts/fixtures/session-events/subagent_multi_round.json";
 import inlineUserMessage from "../../../contracts/fixtures/session-events/inline_user_message.json";
 import sessionControlFrames from "../../../contracts/fixtures/session-events/session_control_frames.json";
@@ -43,6 +44,7 @@ const fixtures: Record<string, TraceFixture> = {
   mainRun: parseFixture(mainRun),
   subagentRun: parseFixture(subagentRun),
   subagentMultiRound: parseFixture(subagentMultiRound),
+  subagentResume: parseFixture(subagentResume),
   inlineUserMessage: parseFixture(inlineUserMessage),
   sessionControlFrames: parseFixture(sessionControlFrames),
 };

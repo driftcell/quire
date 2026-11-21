@@ -120,7 +120,10 @@ run-scoped events without an `agent_runs` row retain an aggregate fallback.
 
 `POST /api/sessions/{session_id}/prune-events` first materializes completed traces, then deletes old
 raw events while preserving the active run's complete history, and advances `min_available_seq`.
-Retention never discards the materialized completed trace.
+The active-run check, cutoff calculation, deletion and cursor update all share one `agent_sessions`
+`FOR UPDATE` transaction. An active run whose `start_seq` has not yet been recorded is treated as an
+active run, not as history that can be discarded. Retention never discards the materialized
+completed trace.
 
 ### 2.6 Frontend projection and cache behavior
 
@@ -138,15 +141,19 @@ for `UserMessageAdded`, `UserMessageInjected`, `CompactionFinished`, questionnai
 
 `ToolPreviewStreamer` uses a latest-frame-wins `watch` channel with a lazily spawned background
 sender. Intermediate preview frames never block the model stream. `push_block_now` enqueues the
-final frame and waits for the last enqueued frame ID to be sent; the existing 200 ms
+final frame and waits on a watch watermark for the last enqueued frame ID to be sent (not on a
+`Notify` permit), so completion cannot be lost to a wakeup race. The existing 200 ms
 `PREVIEW_ANCHOR_SETTLE` barrier then runs before `apply_operations`, so a stale preview cannot arrive
 after `ephemeral_clear`.
 
 `SubagentTask.resume_run_id` resumes a subagent from an earlier round in the same session.
 `RigModelCore` keeps up to 128 `(session_id, subagent_run_id)` history entries, each containing the
-agent name and complete `Vec<Message>`. A hit with a matching agent name reuses the run ID and
-appends the new user task to that history; a miss or agent mismatch starts a fresh subagent with a
-warning. `SubagentOutcome.subagent_run_id` is returned to the main agent for subsequent resume calls.
+agent name and complete `Vec<Message>` including the final assistant reply. A hit with a matching
+agent name reuses the run ID and appends the new user task to that history; a miss or agent mismatch
+starts a fresh subagent with a warning. `SubagentOutcome.subagent_run_id` is returned to the main
+agent for subsequent resume calls. Reusing a run ID does not create a duplicate frontend card:
+`sessionEventReducer` updates the existing subagent in place, and the backend resets the previous
+summary and settles the old thinking clock before the new round.
 
 ### 2.8 Generated contracts
 
@@ -179,11 +186,12 @@ warning. `SubagentOutcome.subagent_run_id` is returned to the main agent for sub
 Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs` includes run lifecycle,
 queue claiming, active-run uniqueness, terminal single-winner behavior, cancellation ordering,
 unknown-event forwarding, cursor-ahead handling, heartbeat reconciliation, `start_seq` hydration,
-trace materialization and retention. `crates/quire-session-protocol` runs the golden projection
-fixtures. `web/src/lib/sessionEventReducer.test.ts` checks every prefix/suffix split, lifecycle
-guards and refetch-reducing effects. `rig_agent::preview_stream::handoff_tests` verifies the final
-preview barrier, and `rig_agent::subagents::tests` verifies resume history, missing history and agent
-mismatch.
+trace materialization, retention and pruning with a missing active-run `start_seq`.
+`crates/quire-session-protocol` runs the golden projection fixtures, including subagent resume.
+`web/src/lib/sessionEventReducer.test.ts` checks every prefix/suffix split, lifecycle guards and
+refetch-reducing effects. `rig_agent::preview_stream::handoff_tests` verifies the final preview
+barrier and immediate wakeup after the last frame, while `rig_agent::subagents::tests` verifies
+resume history, missing history, agent mismatch and retention of the final assistant reply.
 
 Full gate:
 
