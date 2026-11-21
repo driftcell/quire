@@ -130,11 +130,12 @@ timeouts; rmcp MCP transports use a dedicated reqwest 0.13 client with the same 
 While streamed `apply_operations` arguments arrive, `PreviewState` parses the partial
 JSON with rig's partial-object parser, extracts block-like objects (heading, paragraph, quote, table,
 echarts, custom_html), and pushes `PartialBlockPreview` frames through `ToolPreviewStreamer`.
-Anchors follow the real `PatchOp` wire fields and accept both the `op` compatibility key and the
-serialized `type` discriminator: `insert_after`/`insert_before` read `target_id`, `append_to_section`
-reads `section_id`, `patch_block` reads `block_id` and parses the nested `patch`, and `replace_range`
-reads `start_id`. Multi-block insert arrays chain subsequent previews after the previous emitted
-block ID, so previews stay in the target section instead of falling back to the document tail.
+Anchors follow the serialized `PatchOp` wire format: the `type` discriminator selects
+`insert_after`/`insert_before`/`append_to_section`/`patch_block`/`replace_range`;
+`insert_after`/`insert_before` read `target_id`, `append_to_section` reads `section_id`,
+`patch_block` reads `block_id` and parses the nested `patch`, and `replace_range` reads `start_id`.
+Multi-block insert arrays chain subsequent previews after the previous emitted block ID, so previews
+stay in the target section instead of falling back to the document tail.
 Models may emit `blocks` before `target_id`/`section_id`/`type`; a preview whose anchor target is not
 committed or not yet another preview is therefore hidden rather than pinned to the document tail.
 When the tool-call stream ends, `PreviewState` re-extracts the complete arguments, force-publishes the
@@ -161,9 +162,9 @@ formal Quire commit clears the placeholders atomically.
   later work starts a new activity. The outer transcript never duplicates an inline message ID.
 - A model stream step that produces no event for 120 seconds fails the turn instead of hanging.
   Subagents have no total wall-clock cutoff; network/stream timeouts and parent cancellation bound them.
-- Streamed preview anchors follow the real `PatchOp` `type` discriminator and `op` compatibility key,
-  and chain multi-block inserts. A preview with an unresolved target anchor is hidden, never pinned to
-  the document tail; the complete-argument pass republishes final anchors before commit.
+- Streamed preview anchors follow the serialized `PatchOp` `type` discriminator and chain multi-block
+  inserts. A preview with an unresolved target anchor is hidden, never pinned to the document tail;
+  the complete-argument pass republishes final anchors before commit.
 - Runtime HTTP clients configure `connect_timeout(15s)` and a request timeout; no unbounded default
   reqwest client is used for model catalogs, preview publishing, comment proxying or MCP transport.
 - An active-run snapshot and its SSE cursor share one `last_event_seq` boundary; refreshing during a

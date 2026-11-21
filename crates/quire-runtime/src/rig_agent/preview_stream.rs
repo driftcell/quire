@@ -444,26 +444,21 @@ fn parse_preview_block_id(raw: Option<&str>) -> Option<BlockId> {
         .and_then(|raw| BlockId::parse(raw.to_string()).ok())
 }
 
-fn operation_name(object: &serde_json::Map<String, Value>) -> Option<&str> {
-    object
-        .get("op")
-        .and_then(Value::as_str)
-        .or_else(|| object.get("type").and_then(Value::as_str))
+fn operation_type(object: &serde_json::Map<String, Value>) -> Option<&str> {
+    object.get("type").and_then(Value::as_str)
 }
 
-fn is_patch_operation(op_name: Option<&str>, object: &serde_json::Map<String, Value>) -> bool {
-    matches!(
-        op_name,
-        Some("patch_block" | "replace_block" | "update_block")
-    ) || (op_name.is_none() && object.contains_key("patch") && object.contains_key("block_id"))
+fn is_patch_operation(op_type: Option<&str>, object: &serde_json::Map<String, Value>) -> bool {
+    op_type == Some("patch_block")
+        || (op_type.is_none() && object.contains_key("patch") && object.contains_key("block_id"))
 }
 
 fn infer_operation_anchor(
     object: &serde_json::Map<String, Value>,
     inherited: &PreviewAnchor,
 ) -> PreviewAnchor {
-    let op_name = operation_name(object);
-    if op_name == Some("append_to_section") || object.contains_key("section_id") {
+    let op_type = operation_type(object);
+    if op_type == Some("append_to_section") || object.contains_key("section_id") {
         if let Some(section_id) =
             parse_preview_block_id(object.get("section_id").and_then(Value::as_str))
         {
@@ -471,31 +466,23 @@ fn infer_operation_anchor(
         }
         return inherited.clone();
     }
-    if op_name == Some("insert_after") {
-        if let Some(block_id) = parse_preview_block_id(
-            object
-                .get("target_id")
-                .or_else(|| object.get("after_id"))
-                .or_else(|| object.get("after_block_id"))
-                .and_then(Value::as_str),
-        ) {
+    if op_type == Some("insert_after") {
+        if let Some(block_id) =
+            parse_preview_block_id(object.get("target_id").and_then(Value::as_str))
+        {
             return PreviewAnchor::AfterBlock { block_id };
         }
         return inherited.clone();
     }
-    if op_name == Some("insert_before") {
-        if let Some(block_id) = parse_preview_block_id(
-            object
-                .get("target_id")
-                .or_else(|| object.get("before_id"))
-                .or_else(|| object.get("before_block_id"))
-                .and_then(Value::as_str),
-        ) {
+    if op_type == Some("insert_before") {
+        if let Some(block_id) =
+            parse_preview_block_id(object.get("target_id").and_then(Value::as_str))
+        {
             return PreviewAnchor::BeforeBlock { block_id };
         }
         return inherited.clone();
     }
-    if is_patch_operation(op_name, object) {
+    if is_patch_operation(op_type, object) {
         if let Some(block_id) =
             parse_preview_block_id(object.get("block_id").and_then(Value::as_str))
         {
@@ -503,31 +490,13 @@ fn infer_operation_anchor(
         }
         return inherited.clone();
     }
-    if op_name == Some("replace_range") {
+    if op_type == Some("replace_range") {
         if let Some(block_id) =
             parse_preview_block_id(object.get("start_id").and_then(Value::as_str))
         {
             return PreviewAnchor::ReplaceBlock { block_id };
         }
         return inherited.clone();
-    }
-    if op_name.is_none() {
-        if let Some(block_id) = parse_preview_block_id(
-            object
-                .get("after_id")
-                .or_else(|| object.get("after_block_id"))
-                .and_then(Value::as_str),
-        ) {
-            return PreviewAnchor::AfterBlock { block_id };
-        }
-        if let Some(block_id) = parse_preview_block_id(
-            object
-                .get("before_id")
-                .or_else(|| object.get("before_block_id"))
-                .and_then(Value::as_str),
-        ) {
-            return PreviewAnchor::BeforeBlock { block_id };
-        }
     }
     inherited.clone()
 }
@@ -544,9 +513,9 @@ fn collect_preview_blocks(
     }
     match value {
         Value::Object(object) => {
-            let op_name = operation_name(object);
+            let op_type = operation_type(object);
             let next_anchor = infer_operation_anchor(object, anchor);
-            let patch_op = is_patch_operation(op_name, object);
+            let patch_op = is_patch_operation(op_type, object);
             let mut consumed_patch = false;
             if patch_op && let Some(Value::Object(patch)) = object.get("patch") {
                 let mut merged = patch.clone();
@@ -563,7 +532,7 @@ fn collect_preview_blocks(
             if let Some(block) = preview_block(object, &next_anchor) {
                 push_preview_block(block, blocks, seen);
             }
-            let chained_insert = matches!(op_name, Some("insert_after" | "insert_before"));
+            let chained_insert = matches!(op_type, Some("insert_after" | "insert_before"));
             for (key, child) in object {
                 if key == "patch" && consumed_patch {
                     continue;
@@ -724,11 +693,11 @@ mod tests {
     }
 
     #[test]
-    fn preview_anchors_follow_patch_ops_and_chain_inserted_blocks() {
+    fn preview_anchors_chain_inserted_blocks_and_patch_targets() {
         let arguments = json!({
             "ops": [
                 {
-                    "op": "insert_after",
+                    "type": "insert_after",
                     "target_id": "sec3_h1",
                     "blocks": [
                         {"id": "sec3_p1", "type": "paragraph", "text": "hello"},
@@ -736,9 +705,9 @@ mod tests {
                     ]
                 },
                 {
-                    "op": "patch_block",
                     "block_id": "sec2_p1",
-                    "patch": {"text": "updated"}
+                    "patch": {"text": "updated"},
+                    "type": "patch_block"
                 }
             ]
         });
@@ -772,7 +741,7 @@ mod tests {
     fn preview_anchor_chains_insert_before_blocks_in_forward_order() {
         let arguments = json!({
             "ops": [{
-                "op": "insert_before",
+                "type": "insert_before",
                 "target_id": "sec3_p3",
                 "blocks": [
                     {"id": "sec3_p1", "type": "paragraph", "text": "first"},
