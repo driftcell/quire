@@ -430,6 +430,15 @@ export function appendSubagentSegment(
   trace: LiveAgentTrace,
   subagentRunId: string,
 ): LiveAgentTrace {
+  if (
+    trace.segments.some(
+      (segment) =>
+        segment.kind === "execution" &&
+        segment.subagentRunIds.includes(subagentRunId),
+    )
+  ) {
+    return trace;
+  }
   const last = trace.segments[trace.segments.length - 1];
   if (last?.kind === "execution") {
     if (last.subagentRunIds.includes(subagentRunId)) {

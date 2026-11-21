@@ -65,6 +65,7 @@ pub enum RuleId {
     BlindOrdinalOrAcademicJargon,
     VisualMissingUnitOrScopeNote,
     HigherEdPolicyTermFormat,
+    InternalIdentifierLeak,
     CssSyntaxError,
     CustomHtmlExternalResource,
     CustomHtmlFixedOverflow,
@@ -193,6 +194,7 @@ define_rules! {
     BlindOrdinalOrAcademicJargon = "QR421", "blind-ordinal-or-academic-jargon", Warning, true;
     VisualMissingUnitOrScopeNote = "QR422", "visual-missing-unit-or-scope-note", Info, true;
     HigherEdPolicyTermFormat = "QR423", "higher-ed-policy-term-format", Warning, true;
+    InternalIdentifierLeak = "QR424", "internal-identifier-leak", Error, false;
 
     CssSyntaxError = "QR501", "css-syntax-error", Error, false;
     CustomHtmlExternalResource = "QR502", "custom-html-external-resource", Warning, true;

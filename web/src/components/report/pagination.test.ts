@@ -316,6 +316,44 @@ describe("paginateBlocks table widow row guard", () => {
   });
 });
 
+describe("paginateBlocks continuation footer notes", () => {
+  test("charges long notes only to the final slice and keeps that slice within the page", () => {
+    const table = tableBlock("continued-table", 20);
+    const pages = paginateBlocks(
+      [table],
+      measurements({
+        blockHeights: { "continued-table": 688 },
+        tableMeasurements: {
+          "continued-table": {
+            theadHeight: 40,
+            tfootHeight: 20,
+            rowHeights: Array.from({ length: 20 }, () => 20),
+            chromeHeight: 88,
+            notesHeight: 180,
+          },
+        },
+      }),
+      500,
+    );
+
+    expect(pages).toHaveLength(2);
+    expect(pageAt(pages, 0).items[0]).toMatchObject({
+      rowStart: 0,
+      rowEnd: 18,
+      includeSummary: false,
+    });
+    expect(pageAt(pages, 1).items[0]).toMatchObject({
+      rowStart: 18,
+      rowEnd: 20,
+      continuation: true,
+      includeSummary: true,
+    });
+
+    const finalSliceHeight = 88 + 2 * 20 + 20 + 180 + 28;
+    expect(finalSliceHeight).toBeLessThanOrEqual(500);
+  });
+});
+
 describe("paginateBlocks cover page isolation", () => {
   test("coverFullPage puts only the cover on page 1 and starts TOC/body on page 2", () => {
     const pages = paginateBlocks(

@@ -29,6 +29,10 @@ const SHORT_NUMERIC_TOKEN = /^[+-]?\d[\d,，]*(?:\.\d+)?%?$/;
 const COMPOSITE_NUMERIC_TOKEN =
   /^\d+(?:\.\d+)?(?:\s*[/／·]\s*\d+(?:\.\d+)?)+%?$/;
 
+function keepHeaderOnOneLine(label: string): boolean {
+  return Array.from(label.trim()).length <= 3;
+}
+
 function keepCellOnOneLine(text: string, dataType: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -154,7 +158,7 @@ export const TableBlockView = memo(function TableBlockView({
                   colSpan={cell.colspan}
                   rowSpan={cell.rowspan}
                   style={{ textAlign: cell.align }}
-                  className="px-3 py-2 text-[13px] font-semibold break-words"
+                  className={`px-3 py-2 text-[13px] font-semibold ${keepHeaderOnOneLine(cell.label) ? "whitespace-nowrap" : "break-words"}`}
                 >
                   {cell.label}
                 </th>

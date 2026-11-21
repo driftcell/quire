@@ -448,8 +448,10 @@ export function reduceSessionEvent(
       }
       next = {
         ...next,
+        // Match the canonical backend projection: starting/resuming a child
+        // does not settle the main agent's current thinking segment.
         liveMain: appendSubagentSegment(
-          finishMainThinking(next, event.run_id, eventTs),
+          withMainTrace(next, event.run_id, eventTs),
           event.subagent_run_id,
         ),
       };

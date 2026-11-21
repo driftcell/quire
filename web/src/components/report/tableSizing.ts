@@ -27,6 +27,7 @@ const BADGE_EXTRA_PX = 18;
 const SHORT_HEADER_SINGLE_LINE_PX = 82;
 const WRAPPED_HEADER_FLOOR_PX = 78;
 const TEXT_COMPRESSION_FLOOR_PX = 78;
+const FIRST_TEXT_COLUMN_FLOOR_PX = 84;
 const ATOMIC_TYPES = new Set<ColumnDataType>([
   "number",
   "currency",
@@ -158,6 +159,17 @@ function formatPercentWidths(pcts: number[]): string[] {
   return rounded.map((p) => `${p.toFixed(2)}%`);
 }
 
+function compressionFloorPx(bounds: ColumnBounds): number {
+  return bounds.index === 0 && !bounds.atomic
+    ? FIRST_TEXT_COLUMN_FLOOR_PX
+    : TEXT_COMPRESSION_FLOOR_PX;
+}
+
+function explicitFloorPct(bounds: ColumnBounds, availablePx: number): number {
+  const floorPx = Math.min(bounds.minPx, compressionFloorPx(bounds));
+  return (floorPx / availablePx) * 100;
+}
+
 /**
  * SOTA pixel-accurate Water-Filling column width allocator.
  * - Uses Canvas 2D text metrics with actual table font & padding.
@@ -234,15 +246,13 @@ export function computeTableColumnWidths(
     const p90CellPx = percentile(cellWidths, 0.9);
     const p95CellPx = percentile(cellWidths, 0.95);
 
+    const textMinPx = Math.min(
+      140,
+      Math.max(Math.min(headerFloorPx, 110), maxUnbreakablePx),
+    );
     const minPx = isAtomic
       ? Math.max(56, Math.min(240, Math.max(headerFloorPx, maxAtomicPx)))
-      : Math.max(
-          56,
-          Math.min(
-            140,
-            Math.max(Math.min(headerFloorPx, 110), maxUnbreakablePx),
-          ),
-        );
+      : Math.max(colIdx === 0 ? FIRST_TEXT_COLUMN_FLOOR_PX : 56, textMinPx);
 
     const maxCapPx = Math.max(minPx, availablePx * 0.38);
     const rawIdeal = isAtomic
@@ -275,15 +285,6 @@ export function computeTableColumnWidths(
   }
 
   const flexBounds = bounds.filter((b) => b.explicitPct === undefined);
-  if (flexBounds.length === 0) {
-    const total = explicitPctSum > 0 ? explicitPctSum : 100;
-    return {
-      columnCssWidths: formatPercentWidths(
-        bounds.map((b) => ((b.explicitPct ?? 0) / total) * 100),
-      ),
-    };
-  }
-
   if (explicitPctSum > 90) {
     const scale = 90 / explicitPctSum;
     for (const b of bounds) {
@@ -292,6 +293,30 @@ export function computeTableColumnWidths(
       }
     }
     explicitPctSum = 90;
+  }
+
+  // Explicit widths are hints, not permission to create an unreadable column.
+  // Apply the same pixel floor used by flex compression before normalization.
+  explicitPctSum = 0;
+  for (const b of bounds) {
+    if (b.explicitPct !== undefined) {
+      b.explicitPct = Math.max(b.explicitPct, explicitFloorPct(b, availablePx));
+      explicitPctSum += b.explicitPct;
+    }
+  }
+
+  if (flexBounds.length === 0) {
+    const pixels = bounds.map(
+      (b) => availablePx * ((b.explicitPct ?? 0) / 100),
+    );
+    const totalPx = pixels.reduce((sum, width) => sum + width, 0) || 1;
+    return {
+      columnCssWidths: formatPercentWidths(
+        pixels.map((width) => (width / totalPx) * 100),
+      ),
+      minTableWidthPx:
+        totalPx > availablePx + 4 ? Math.ceil(totalPx) : undefined,
+    };
   }
 
   const remainingPx = availablePx * ((100 - explicitPctSum) / 100);
@@ -359,7 +384,7 @@ export function computeTableColumnWidths(
     // Keep a readable floor so medium/short text columns never collapse into a
     // one-character vertical strip.
     const textFloorPx = (b: ColumnBounds) =>
-      Math.min(b.minPx, TEXT_COMPRESSION_FLOOR_PX);
+      Math.min(b.minPx, compressionFloorPx(b));
     let deficit = -surplus;
     const textCols = flexBounds.filter((b) => !b.atomic);
     const totalShrinkable = textCols.reduce(
@@ -384,7 +409,7 @@ export function computeTableColumnWidths(
 
   const flexTotalPx =
     Array.from(alloc.values()).reduce((a, b) => a + b, 0) || 1;
-  const flexPctBudget = 100 - explicitPctSum;
+  const flexPctBudget = Math.max(0, 100 - explicitPctSum);
 
   const pcts = bounds.map((b) => {
     if (b.explicitPct !== undefined) {

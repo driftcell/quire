@@ -8,6 +8,7 @@ license.workspace = true
 
 [dependencies]
 quire-protocol.workspace = true
+regex.workspace = true
 serde_json.workspace = true
 
 [lints]

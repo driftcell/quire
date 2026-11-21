@@ -132,10 +132,11 @@ reducer returns state plus effects. `useSessionEventStream` only executes those 
 frames are projected in 16 ms batches with one React state commit per batch, rather than forcing a
 full render for every delta. A frame at or below the projected cursor is a no-op, so replay cannot
 duplicate text or resurrect a completed tool as running. A detail snapshot cursor is adopted only
-when a connection is created; later detail updates cannot rewind or skip a live connection's queued
-frames. The reducer is scope-aware, applies only main-scope usage, and clears a finished run only if
-no newer run owns the live pane. `liveTrace.ts` uses the same ordered segments for live and
-historical subagents.
+when a connection is created. Active-run hydration also raises `liveState.afterSeq` and the
+connection cursor to the snapshot's `last_event_seq`; later detail updates cannot rewind or skip a
+live connection's queued frames. The reducer is scope-aware, applies only main-scope usage, and
+clears a finished run only if no newer run owns the live pane. `liveTrace.ts` uses the same ordered
+segments for live and historical subagents.
 
 Subagent text keeps smooth incremental rendering, but a large hydration burst immediately reveals
 the settled prefix and smooths only the bounded 160-code-point tail. Subagent thinking is collapsed
@@ -169,8 +170,10 @@ agent name and complete `Vec<Message>` including the final assistant reply. A hi
 agent name reuses the run ID and appends the new user task to that history; a miss or agent mismatch
 starts a fresh subagent with a warning. `SubagentOutcome.subagent_run_id` is returned to the main
 agent for subsequent resume calls. Reusing a run ID does not create a duplicate frontend card:
-`sessionEventReducer` updates the existing subagent in place, and the backend resets the previous
-summary and settles the old thinking clock before the new round.
+`appendSubagentSegment` checks every execution segment, not only the latest one, and the reducer
+updates the existing subagent in place. Starting or resuming a child does not settle the main agent's
+current thinking segment. The backend resets the previous summary and settles the old child thinking
+clock before the new round.
 
 ### 2.8 Generated contracts
 

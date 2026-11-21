@@ -262,7 +262,7 @@ describe("computeTableColumnWidths", () => {
     );
     expect(result.columnCssWidths).toHaveLength(8);
     expect(result.minTableWidthPx).toBeUndefined();
-    expect(pixelWidth(result, 0, 682)).toBeGreaterThanOrEqual(72);
+    expect(pixelWidth(result, 0, 682)).toBeGreaterThanOrEqual(84);
     expect(percentSum(result).toFixed(2)).toBe("100.00");
   });
 });
@@ -380,6 +380,24 @@ describe("computeTableColumnWidths regression boundaries", () => {
 
     expectAtLeastSingleLine(result, 0, "45.0");
     expectAtLeastSingleLine(result, 1, "123456.0");
+  });
+
+  test("explicit percentages cannot collapse the first text column below 84px", () => {
+    const narrowTable: TableBlock = {
+      ...table([{ school: "深圳大学", value: 12 }]),
+      style: {
+        column_widths: { school: "5%", value: "95%" },
+      },
+    };
+    const narrowLayout = layout([
+      leafColumn(0, "school", "高校", "text"),
+      leafColumn(1, "value", "数量", "number"),
+    ]);
+
+    const result = computeTableColumnWidths(narrowTable, narrowLayout, 682);
+
+    expect(pixelWidth(result, 0, 682)).toBeGreaterThanOrEqual(84);
+    expect(percentSum(result).toFixed(2)).toBe("100.00");
   });
 
   test("converts explicit px column widths against the available width", () => {

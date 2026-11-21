@@ -26,8 +26,8 @@ or CLI work.
 | `quire-store` | Persists `report_documents.lint` JSONB and block payload `lint_ignore`; runs lint for inline warnings and blocking errors. |
 | `quire-server` | Exposes `lint_document(doc_id, select?, ignore?)` and forwards diagnostics to MCP receipts. |
 
-`quire-lint` depends only on `quire-protocol` and `serde_json`. There is no compatibility module,
-re-export shim or legacy uppercase diagnostic code in `quire-protocol`.
+`quire-lint` depends only on `quire-protocol`, `serde_json` and `regex`. There is no compatibility
+module, re-export shim or legacy uppercase diagnostic code in `quire-protocol`.
 
 ### Diagnostic contract
 
@@ -66,7 +66,7 @@ Category ranges:
 | `QR1xx` | Citations and source quality | `QR101` and `QR107` non-suppressible; quality advisories suppressible |
 | `QR2xx` | Table layout risk | Suppressible warnings |
 | `QR3xx` | ECharts safety/data | `QR301`-`QR304` non-suppressible; other chart checks suppressible |
-| `QR4xx` | Structure and text quality | Suppressible, including placeholder errors |
+| `QR4xx` | Structure and text quality | Suppressible except `QR424` internal-identifier safety |
 | `QR5xx` | CSS/HTML/theme/cover/TOC | `QR501` non-suppressible; other style advisories suppressible |
 
 ### Source and table integrity
@@ -90,9 +90,12 @@ a note declaring `四舍五入` retains its existing whole-table exemption. Fixe
 composites separated by `/`, `／` or `·` remain supported. Each mismatched summary cell reports with a
 path into `rows` or `summary_rows`, and the hint carries the exact expected value.
 
-`QR201` measures both the header and the widest body or summary-row cell, so a numeric column that
-fits its header but cannot hold a 4-6 digit total such as `3531` or `11.25%` on one line reports with
-a width/column-count repair hint.
+`QR201` checks every explicit column width against the single-line header and a readable body floor;
+numeric and summary cells retain their widest-cell requirement, and CJK entity text has a 76px
+minimum. Explicit `column_widths` cannot exempt narrow columns. `QR204` reports any table with more
+than nine leaf columns or a natural width above 1.18× the 640px A4 content width. Both hints direct
+the writer to remove all-`—` columns, reduce to 6–8 columns (hard maximum 9), or split by topic
+instead of hiding overflow with manual widths.
 
 ### Structure and placeholder integrity
 
@@ -196,10 +199,19 @@ table column must carry a unit in its header; charts may instead label every exp
 every numeric series for charts without value axes. Units use forms such as `（项）`, `（万元）` and
 `（%）`.
 
-`QR423` checks paragraphs for unquoted `双一流`/`双优`/`十四五`/`十五五`, year ranges written with
-`-`, `~`, `～` or `–` instead of `—`, and official document numbers using round rather than hexagonal
-year brackets. Existing Chinese quotation marks and inline code are respected; Quote blocks are
-external material and are not rewritten by this rule.
+`QR423` checks paragraphs, headings and Table/ECharts `title`/`note`/`source_note` for unquoted
+`双一流`/`双优`/`十四五`/`十五五`, year ranges written with `-`, `~`, `～` or `–` instead of `—`, and
+official document numbers using round rather than hexagonal year brackets. Existing Chinese quotation
+marks and inline code are respected; Quote blocks are external material and are not rewritten by this
+rule.
+
+`QR424` is a non-suppressible Error covering every visible publication field: heading, paragraph and
+quote text; Table titles, notes, source notes and every body/summary cell; ECharts titles, notes,
+source notes and fallback summaries; CustomHtml titles, notes and fallback text. It detects ASCII
+API/database assignments and year-primary-key mappings, `local:` metric codes, internal enum/field or
+table names, `LATEST`, `学科云index系统`, panel terminology, and cell-level `学科云无数据` /
+`双优库无数据`. Repairs must translate these into formal business Chinese or `—` / `暂未收录`, never
+merely hide the rule.
 
 ### Matching and filter layers
 
@@ -258,14 +270,16 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
 
 - `quire-lint` has no CLI and no I/O dependencies.
 - Every `RuleMeta.code` and `.name` is unique; the registry stays code-sorted.
-- `QR001`, `QR003`-`QR007`, `QR101`, `QR107`, `QR301`-`QR304` and `QR501` are never suppressible.
+- `QR001`, `QR003`-`QR007`, `QR101`, `QR107`, `QR301`-`QR304`, `QR424` and `QR501` are never
+  suppressible.
 - Prefix, name and code matching produce the same rule set as the registry.
 - `summary.suppressed` counts each suppressible diagnostic hidden once.
 - Prose checks skip headings and quotations, mask quoted proper nouns before matching, and never
   report a single B-class jargon word as `QR412`.
 - `QR421` exempts explicitly named metrics and owns statistical jargon without duplicating `QR412`;
   `QR422` remains Info when a visual note or complete unit labels are present; `QR423` respects Chinese
-  quotes, inline code and external Quote blocks.
+  quotes, inline code and external Quote blocks. `QR424` covers every visible publication field and
+  survives document/block ignore policies while leaving natural business Chinese untouched.
 - Contrast tics are sentence-bounded and require a 1-45 character gap; a single contrast sentence or
   a single light hedging phrase does not report `QR415`.
 - Dense chart labels report at most once per chart; line end-label checks fire at most once per chart;

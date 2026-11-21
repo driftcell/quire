@@ -388,39 +388,67 @@ fn report_visual_note(
 
 fn check_policy_and_document_format(document: &ReportDocument, engine: &mut Engine<'_>) {
     for (index, block) in document.blocks.iter().enumerate() {
-        let BlockKind::Paragraph { text } = &block.body else {
-            continue;
-        };
-        let mut issues = BTreeSet::new();
-        for term in POLICY_TERMS_REQUIRING_QUOTES {
-            if text.match_indices(term).any(|(position, _)| {
-                !inside_chinese_quotes(text, position) && !inside_inline_code(text, position)
-            }) {
-                issues.insert(format!("固定提法应写为“{term}”"));
+        let mut fields: Vec<(&str, String)> = Vec::new();
+        match &block.body {
+            BlockKind::Heading { text, .. } | BlockKind::Paragraph { text } => {
+                fields.push((text, format!("blocks[{index}].text")));
             }
+            BlockKind::Table(table) => {
+                for (text, path) in [
+                    (table.title.as_deref(), "title"),
+                    (table.note.as_deref(), "note"),
+                    (block.source_note.as_deref(), "source_note"),
+                ] {
+                    if let Some(text) = text {
+                        fields.push((text, format!("blocks[{index}].{path}")));
+                    }
+                }
+            }
+            BlockKind::Echarts(chart) => {
+                for (text, path) in [
+                    (chart.title.as_deref(), "title"),
+                    (chart.note.as_deref(), "note"),
+                    (block.source_note.as_deref(), "source_note"),
+                ] {
+                    if let Some(text) = text {
+                        fields.push((text, format!("blocks[{index}].{path}")));
+                    }
+                }
+            }
+            _ => {}
         }
-        if let Some(range) = nonstandard_year_range(text) {
-            issues.insert(format!("年份区间 `{range}` 应使用一字线 `—`"));
+        for (text, path) in fields {
+            let mut issues = BTreeSet::new();
+            for term in POLICY_TERMS_REQUIRING_QUOTES {
+                if text.match_indices(term).any(|(position, _)| {
+                    !inside_chinese_quotes(text, position) && !inside_inline_code(text, position)
+                }) {
+                    issues.insert(format!("固定提法应写为“{term}”"));
+                }
+            }
+            if let Some(range) = nonstandard_year_range(text) {
+                issues.insert(format!("年份区间 `{range}` 应使用一字线 `—`"));
+            }
+            if let Some(document_number) = nonstandard_document_number(text) {
+                issues.insert(format!(
+                    "文号 `{document_number}` 的年份应使用六角括号 `〔〕`"
+                ));
+            }
+            if issues.is_empty() {
+                continue;
+            }
+            engine.report(
+                RuleId::HigherEdPolicyTermFormat,
+                format!(
+                    "block `{}` has higher-education terminology/format issues: {}",
+                    block.id,
+                    issues.into_iter().collect::<Vec<_>>().join("；")
+                ),
+                "Use Chinese quotation marks for fixed policy terms, `—` for year ranges, and `〔20XX〕X号` for official document numbers; preserve verified source wording in Quote blocks.",
+                Some(block.id.clone()),
+                Some(path),
+            );
         }
-        if let Some(document_number) = nonstandard_document_number(text) {
-            issues.insert(format!(
-                "文号 `{document_number}` 的年份应使用六角括号 `〔〕`"
-            ));
-        }
-        if issues.is_empty() {
-            continue;
-        }
-        engine.report(
-            RuleId::HigherEdPolicyTermFormat,
-            format!(
-                "block `{}` has higher-education terminology/format issues: {}",
-                block.id,
-                issues.into_iter().collect::<Vec<_>>().join("；")
-            ),
-            "Use Chinese quotation marks for fixed policy terms, `—` for year ranges, and `〔20XX〕X号` for official document numbers; preserve verified source wording in Quote blocks.",
-            Some(block.id.clone()),
-            Some(format!("blocks[{index}].text")),
-        );
     }
 }
 

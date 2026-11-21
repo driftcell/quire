@@ -23,6 +23,13 @@ import {
 export type { ResolvedQuestionEntry } from "@/lib/sessionEventReducer";
 import type { ResolvedQuestionEntry } from "@/lib/sessionEventReducer";
 
+export function hydrationCursor(
+  currentAfterSeq: number,
+  lastEventSeq: number,
+): number {
+  return Math.max(currentAfterSeq, lastEventSeq);
+}
+
 export interface UseSessionEventStreamOptions {
   sessionId: string;
   enabled: boolean;
@@ -183,10 +190,19 @@ export function useSessionEventStream({
       serverActiveRunStatus === "running" ||
       serverActiveRunStatus === "awaiting_input" ||
       activeRunTrace.status === "running";
+    const afterSeq = hydrationCursor(
+      liveStateRef.current.afterSeq,
+      hydratedEventSeqRef.current,
+    );
+    afterSeqRef.current = Math.max(afterSeqRef.current, afterSeq);
     if (current) {
       if (current.runId !== runId || hydratedRunIdRef.current === runId) {
         // A local trace already owns the pane. Never replace it with a detail
-        // snapshot that may be behind the SSE cursor.
+        // snapshot that may be behind the SSE cursor, but do synchronize its
+        // watermark before the duplicate-frame guard evaluates new events.
+        const next = { ...liveStateRef.current, afterSeq };
+        liveStateRef.current = next;
+        setLiveState(next);
         return;
       }
       const hydrated = hydrateActiveRun(
@@ -196,6 +212,7 @@ export function useSessionEventStream({
       );
       const next = {
         ...liveStateRef.current,
+        afterSeq,
         liveSubagents: mergeHydratedSubagents(
           liveStateRef.current.liveSubagents,
           hydrated.subagents,
@@ -207,12 +224,15 @@ export function useSessionEventStream({
       hydratedRunIdRef.current = runId;
       return;
     }
-    const next = hydrateLiveSession(
-      activeRunTrace,
-      activeSubagentTraces,
-      isStreaming,
-      liveStateRef.current,
-    );
+    const next = {
+      ...hydrateLiveSession(
+        activeRunTrace,
+        activeSubagentTraces,
+        isStreaming,
+        liveStateRef.current,
+      ),
+      afterSeq,
+    };
     liveStateRef.current = next;
     setLiveState(next);
     hydratedRunIdRef.current = runId;

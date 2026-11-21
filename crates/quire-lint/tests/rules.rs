@@ -671,6 +671,109 @@ fn table_layout_rules_are_detected() {
 }
 
 #[test]
+fn qr201_rejects_explicit_widths_below_readable_floors() {
+    let mut document = doc();
+    document.blocks.push(
+        table(
+            "narrow-entity",
+            None,
+            vec![
+                ColumnNode::leaf("school", "高校"),
+                ColumnNode::leaf("grade", "A+"),
+            ],
+            vec![row(&[
+                ("school", CellValue::text("深圳大学")),
+                ("grade", CellValue::text("A+")),
+            ])],
+        )
+        .with_style(BlockStyle {
+            column_widths: Some(BTreeMap::from([
+                ("school".into(), "37px".into()),
+                ("grade".into(), "37px".into()),
+            ])),
+            ..BlockStyle::default()
+        }),
+    );
+    let report = lint_document(&document);
+    let paths: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR201")
+        .filter_map(|diagnostic| diagnostic.path.clone())
+        .collect();
+    assert!(paths.contains(&"blocks[0].columns.school".to_string()));
+    assert!(paths.contains(&"blocks[0].columns.grade".to_string()));
+    assert!(finding(&report, "QR201").hint.contains("最多不超过 9 列"));
+
+    let mut readable = doc();
+    readable.blocks.push(
+        table(
+            "readable-entity",
+            None,
+            vec![
+                ColumnNode::leaf("school", "高校"),
+                ColumnNode::leaf("grade", "A+"),
+            ],
+            vec![row(&[
+                ("school", CellValue::text("深圳大学")),
+                ("grade", CellValue::text("A+")),
+            ])],
+        )
+        .with_style(BlockStyle {
+            column_widths: Some(BTreeMap::from([
+                ("school".into(), "76px".into()),
+                ("grade".into(), "40px".into()),
+            ])),
+            ..BlockStyle::default()
+        }),
+    );
+    assert!(!has_code(&lint_document(&readable), "QR201"));
+}
+
+#[test]
+fn qr204_blocks_more_than_nine_columns_even_with_short_cells() {
+    for (count, expected) in [(9, false), (10, true)] {
+        let mut document = doc();
+        let columns: Vec<_> = (0..count)
+            .map(|index| ColumnNode::leaf(format!("c{index}"), format!("列{index}")))
+            .collect();
+        let values: BTreeMap<String, CellValue> = (0..count)
+            .map(|index| (format!("c{index}"), CellValue::text("1")))
+            .collect();
+        document
+            .blocks
+            .push(table("column-count", None, columns, vec![values]));
+        assert_eq!(has_code(&lint_document(&document), "QR204"), expected);
+    }
+}
+
+#[test]
+fn qr202_flags_columns_that_are_only_emdashes() {
+    let mut document = doc();
+    document.blocks.push(table(
+        "empty-emdash",
+        None,
+        vec![
+            ColumnNode::leaf("school", "高校"),
+            ColumnNode::leaf("missing", "暂未收录指标"),
+        ],
+        vec![
+            row(&[
+                ("school", CellValue::text("深圳大学")),
+                ("missing", CellValue::text("—")),
+            ]),
+            row(&[
+                ("school", CellValue::text("广州大学")),
+                ("missing", CellValue::text("—")),
+            ]),
+        ],
+    ));
+    let report = lint_document(&document);
+    let diagnostic = finding(&report, "QR202");
+    assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].rows.missing"));
+}
+
+#[test]
 fn qr206_validates_single_integer_summary_rows() {
     fn columns() -> Vec<ColumnNode> {
         vec![
@@ -2873,6 +2976,173 @@ fn qr423_enforces_policy_terms_year_ranges_and_document_numbers() {
 }
 
 #[test]
+fn qr423_scans_headings_table_and_chart_notes() {
+    let mut heading_doc = doc();
+    heading_doc
+        .blocks
+        .push(heading("policy-heading", 1, "双一流建设"));
+    assert!(has_code(&lint_document(&heading_doc), "QR423"));
+
+    let mut table_doc = doc();
+    let mut table_block = with_table_note(
+        table(
+            "policy-table",
+            Some("十四五指标"),
+            vec![ColumnNode::leaf("name", "名称")],
+            vec![row(&[("name", CellValue::text("A"))])],
+        ),
+        "十五五布局",
+    );
+    table_block.source_note = Some("双一流政策依据".into());
+    table_doc.blocks.push(table_block);
+    let table_paths: Vec<String> = lint_document(&table_doc)
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR423")
+        .filter_map(|diagnostic| diagnostic.path.clone())
+        .collect();
+    for path in ["blocks[0].title", "blocks[0].note", "blocks[0].source_note"] {
+        assert!(table_paths.contains(&path.to_string()), "{table_paths:?}");
+    }
+
+    let mut chart_doc = doc();
+    let mut chart_block = chart_named(
+        "policy-chart",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    );
+    chart_block.source_note = Some("十五五政策依据".into());
+    if let BlockKind::Echarts(chart) = &mut chart_block.body {
+        chart.title = Some("双一流对比".into());
+        chart.note = Some("十四五期间".into());
+    }
+    chart_doc.blocks.push(chart_block);
+    let chart_paths: Vec<String> = lint_document(&chart_doc)
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR423")
+        .filter_map(|diagnostic| diagnostic.path.clone())
+        .collect();
+    for path in ["blocks[0].title", "blocks[0].note", "blocks[0].source_note"] {
+        assert!(chart_paths.contains(&path.to_string()), "{chart_paths:?}");
+    }
+}
+
+#[test]
+fn qr424_scans_all_visible_publication_fields() {
+    let mut document = doc();
+    document.blocks.push(heading(
+        "internal-heading",
+        1,
+        "学科云index系统对比（record_id=42）",
+    ));
+    document.blocks.push(paragraph(
+        "internal-paragraph",
+        "统计口径 target_id=0、target_level=0、includeSub=true。",
+    ));
+    document.blocks.push(Block::quote(
+        bid("internal-quote"),
+        "内部编码 local:4.1.1 不应进入交付文本。",
+    ));
+
+    let mut table_block = with_summary_row(
+        with_table_note(
+            table(
+                "internal-table",
+                Some("province=广东，detail=matrix"),
+                vec![ColumnNode::leaf("name", "名称")],
+                vec![
+                    row(&[("name", CellValue::text("学科云无数据"))]),
+                    row(&[("name", CellValue::text("2021=4"))]),
+                ],
+            ),
+            "LATEST期末快照，字段 FacultyInfo。",
+        ),
+        row(&[("name", CellValue::text("2026=43"))]),
+    );
+    table_block.source_note = Some("indicator_id、block_id、source_id、record_id".into());
+    document.blocks.push(table_block);
+
+    let mut chart_block = chart_named(
+        "internal-chart",
+        serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
+    );
+    chart_block.source_note = Some("target_level=0".into());
+    if let BlockKind::Echarts(chart) = &mut chart_block.body {
+        chart.title = Some("左panel与右panel".into());
+        chart.note = Some("NOT_COLLECTED".into());
+        chart.fallback_summary = "学科云index系统，includeSub=true".into();
+    }
+    document.blocks.push(chart_block);
+
+    let mut html = custom_html("<p>safe</p>", "双优库无数据；NOT_COLLECTED");
+    html.source_note = Some("record_id=42".into());
+    if let BlockKind::CustomHtml(custom) = &mut html.body {
+        custom.title = Some("右panel".into());
+        custom.note = Some("local:3.1.1".into());
+    }
+    document.blocks.push(html);
+
+    let report = lint_document(&document);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR424")
+        .collect();
+    assert!(hits.len() >= 12, "{:?}", report.diagnostics);
+    assert!(
+        hits.iter().all(|diagnostic| {
+            diagnostic.severity == Severity::Error && !diagnostic.suppressible
+        })
+    );
+    for path in [
+        "blocks[0].text",
+        "blocks[1].text",
+        "blocks[2].text",
+        "blocks[3].title",
+        "blocks[3].note",
+        "blocks[3].source_note",
+        "blocks[3].rows[0].name",
+        "blocks[3].summary_rows[0].name",
+        "blocks[4].title",
+        "blocks[4].note",
+        "blocks[4].source_note",
+        "blocks[4].fallback_summary",
+        "blocks[5].title",
+        "blocks[5].note",
+        "blocks[5].source_note",
+        "blocks[5].fallback_text",
+    ] {
+        assert!(
+            hits.iter()
+                .any(|diagnostic| diagnostic.path.as_deref() == Some(path)),
+            "missing {path}: {:?}",
+            report.diagnostics
+        );
+    }
+}
+
+#[test]
+fn qr424_is_not_suppressible_and_accepts_business_chinese() {
+    let mut document = doc();
+    document.lint.ignore = vec!["QR424".into()];
+    let mut block = paragraph("unsafe", "record_id=42");
+    block.lint_ignore = vec!["internal-identifier-leak".into()];
+    document.blocks.push(block);
+    assert!(has_code(&lint_document(&document), "QR424"));
+
+    for text in [
+        "统计口径含参与单位与附属机构",
+        "高层次人才称号记录",
+        "左图与右图",
+        "2021—2026年暂未收录指标以—表示",
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph("business-language", text));
+        assert!(!has_code(&lint_document(&document), "QR424"), "{text}");
+    }
+}
+
+#[test]
 fn pending_heading_is_qr401_not_qr418() {
     let mut pending = doc();
     pending.blocks.push(heading(
@@ -3090,7 +3360,7 @@ fn qr201_includes_summary_row_width_in_numeric_columns() {
     let report = lint_document(&narrow);
     let diagnostic = finding(&report, "QR201");
     assert_eq!(diagnostic.path.as_deref(), Some("blocks[0].columns.count"));
-    assert!(diagnostic.message.contains("widest row"));
+    assert!(diagnostic.message.contains("readable body"));
 
     let mut wide = doc();
     wide.blocks.push(

@@ -53,6 +53,9 @@ export function useReportMeasurements({
         const rowEls = el.querySelectorAll<HTMLElement>(
           "[data-measure-row-index]",
         );
+        const notesEl = el.querySelector<HTMLElement>(
+          '[data-measure-notes="true"]',
+        );
         if (theadEl || rowEls.length > 0) {
           const rowHeights: number[] = [];
           for (const rowEl of rowEls) {
@@ -65,11 +68,18 @@ export function useReportMeasurements({
             (sum, height) => sum + height,
             0,
           );
+          const notesHeight = notesEl
+            ? notesEl.getBoundingClientRect().height
+            : 0;
           tableMeasurements[id] = {
             theadHeight: theadEl ? theadEl.getBoundingClientRect().height : 0,
             tfootHeight,
             rowHeights,
-            chromeHeight: Math.max(0, blockHeight - rowsHeight - tfootHeight),
+            notesHeight,
+            chromeHeight: Math.max(
+              0,
+              blockHeight - rowsHeight - tfootHeight - notesHeight,
+            ),
           };
         }
       }

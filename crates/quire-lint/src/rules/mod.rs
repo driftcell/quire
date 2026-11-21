@@ -5,6 +5,7 @@ pub(crate) mod citations;
 pub(crate) mod core;
 pub(crate) mod evidence;
 pub(crate) mod higher_ed;
+pub(crate) mod internal;
 pub(crate) mod prose;
 pub(crate) mod structure;
 pub(crate) mod style;
@@ -21,5 +22,6 @@ pub(crate) fn run(engine: &mut Engine<'_>) {
     structure::check(document, engine);
     prose::check(document, engine);
     higher_ed::check(document, engine);
+    internal::check(document, engine);
     style::check(document, engine);
 }

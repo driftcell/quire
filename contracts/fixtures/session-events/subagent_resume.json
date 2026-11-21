@@ -4,7 +4,6 @@
       "seq": 1,
       "run_id": "run_main",
       "agent_id": "main",
-      "parent_run_id": null,
       "timestamp": "2026-01-01T00:00:00Z",
       "event": "turn_started"
     },
@@ -78,9 +77,17 @@
     {
       "seq": 8,
       "run_id": "run_main",
+      "agent_id": "main",
+      "timestamp": "2026-01-01T00:00:07Z",
+      "event": "thinking_delta",
+      "delta": "between review rounds"
+    },
+    {
+      "seq": 9,
+      "run_id": "run_main",
       "agent_id": "reviewer",
       "parent_run_id": "run_main",
-      "timestamp": "2026-01-01T00:00:07Z",
+      "timestamp": "2026-01-01T00:00:08Z",
       "event": "subagent_started",
       "subagent_run_id": "run_sub_1",
       "agent_name": "reviewer",
@@ -89,20 +96,20 @@
       "section_id": "analysis"
     },
     {
-      "seq": 9,
-      "run_id": "run_sub_1",
-      "agent_id": "reviewer",
-      "parent_run_id": "run_main",
-      "timestamp": "2026-01-01T00:00:08Z",
-      "event": "thinking_delta",
-      "delta": "round two"
-    },
-    {
       "seq": 10,
       "run_id": "run_sub_1",
       "agent_id": "reviewer",
       "parent_run_id": "run_main",
-      "timestamp": "2026-01-01T00:00:09Z",
+      "timestamp": "2026-01-01T00:00:10Z",
+      "event": "thinking_delta",
+      "delta": "round two"
+    },
+    {
+      "seq": 11,
+      "run_id": "run_sub_1",
+      "agent_id": "reviewer",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:11Z",
       "event": "tool_call_started",
       "tool_call_id": "tc_2",
       "tool_name": "apply_operations",
@@ -110,11 +117,11 @@
       "truncated": true
     },
     {
-      "seq": 11,
+      "seq": 12,
       "run_id": "run_sub_1",
       "agent_id": "reviewer",
       "parent_run_id": "run_main",
-      "timestamp": "2026-01-01T00:00:10Z",
+      "timestamp": "2026-01-01T00:00:12Z",
       "event": "tool_call_finished",
       "tool_call_id": "tc_2",
       "status": "completed",
@@ -123,31 +130,30 @@
       "duration_ms": 50
     },
     {
-      "seq": 12,
+      "seq": 13,
       "run_id": "run_sub_1",
       "agent_id": "reviewer",
       "parent_run_id": "run_main",
-      "timestamp": "2026-01-01T00:00:11Z",
+      "timestamp": "2026-01-01T00:00:13Z",
       "event": "text_delta",
       "delta": "round two answer"
     },
     {
-      "seq": 13,
+      "seq": 14,
       "run_id": "run_main",
       "agent_id": "main",
       "parent_run_id": "run_main",
-      "timestamp": "2026-01-01T00:00:12Z",
+      "timestamp": "2026-01-01T00:00:14Z",
       "event": "subagent_finished",
       "subagent_run_id": "run_sub_1",
       "status": "completed",
       "summary": "round two done"
     },
     {
-      "seq": 14,
+      "seq": 15,
       "run_id": "run_main",
       "agent_id": "main",
-      "parent_run_id": null,
-      "timestamp": "2026-01-01T00:00:13Z",
+      "timestamp": "2026-01-01T00:00:15Z",
       "event": "turn_finished"
     }
   ],
@@ -156,7 +162,7 @@
       "run_id": "run_main",
       "status": "completed",
       "started_at": "2026-01-01T00:00:00Z",
-      "duration_ms": 13000,
+      "duration_ms": 15000,
       "segments": [
         {
           "kind": "execution",
@@ -201,7 +207,7 @@
                   "kind": "thinking",
                   "text": "round two",
                   "duration_ms": 1000,
-                  "started_at": "2026-01-01T00:00:08Z"
+                  "started_at": "2026-01-01T00:00:10Z"
                 },
                 {
                   "kind": "execution",
@@ -225,6 +231,12 @@
               ]
             }
           ]
+        },
+        {
+          "kind": "thinking",
+          "text": "between review rounds",
+          "duration_ms": 8000,
+          "started_at": "2026-01-01T00:00:07Z"
         }
       ]
     }
@@ -504,6 +516,63 @@
                 "subagent_run_id": "run_sub_1",
                 "agent_name": "reviewer",
                 "display_name": "Reviewer",
+                "task": "review round 1",
+                "section_id": "analysis",
+                "status": "completed",
+                "started_at": "2026-01-01T00:00:01Z",
+                "summary": "round one done",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "text",
+                    "text": "round one answer"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z"
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "reviewer",
+                "display_name": "Reviewer",
                 "task": "review round 2",
                 "section_id": "analysis",
                 "status": "running",
@@ -537,6 +606,11 @@
                 ]
               }
             ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -588,11 +662,16 @@
                   {
                     "kind": "thinking",
                     "text": "round two",
-                    "started_at": "2026-01-01T00:00:08Z"
+                    "started_at": "2026-01-01T00:00:10Z"
                   }
                 ]
               }
             ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -645,7 +724,7 @@
                     "kind": "thinking",
                     "text": "round two",
                     "duration_ms": 1000,
-                    "started_at": "2026-01-01T00:00:08Z"
+                    "started_at": "2026-01-01T00:00:10Z"
                   },
                   {
                     "kind": "execution",
@@ -663,6 +742,11 @@
                 ]
               }
             ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -715,7 +799,7 @@
                     "kind": "thinking",
                     "text": "round two",
                     "duration_ms": 1000,
-                    "started_at": "2026-01-01T00:00:08Z"
+                    "started_at": "2026-01-01T00:00:10Z"
                   },
                   {
                     "kind": "execution",
@@ -735,6 +819,11 @@
                 ]
               }
             ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -787,7 +876,7 @@
                     "kind": "thinking",
                     "text": "round two",
                     "duration_ms": 1000,
-                    "started_at": "2026-01-01T00:00:08Z"
+                    "started_at": "2026-01-01T00:00:10Z"
                   },
                   {
                     "kind": "execution",
@@ -811,6 +900,11 @@
                 ]
               }
             ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -864,7 +958,7 @@
                     "kind": "thinking",
                     "text": "round two",
                     "duration_ms": 1000,
-                    "started_at": "2026-01-01T00:00:08Z"
+                    "started_at": "2026-01-01T00:00:10Z"
                   },
                   {
                     "kind": "execution",
@@ -888,6 +982,11 @@
                 ]
               }
             ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -897,7 +996,7 @@
         "run_id": "run_main",
         "status": "completed",
         "started_at": "2026-01-01T00:00:00Z",
-        "duration_ms": 13000,
+        "duration_ms": 15000,
         "segments": [
           {
             "kind": "execution",
@@ -942,7 +1041,7 @@
                     "kind": "thinking",
                     "text": "round two",
                     "duration_ms": 1000,
-                    "started_at": "2026-01-01T00:00:08Z"
+                    "started_at": "2026-01-01T00:00:10Z"
                   },
                   {
                     "kind": "execution",
@@ -966,6 +1065,12 @@
                 ]
               }
             ]
+          },
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "duration_ms": 8000,
+            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }

@@ -47,8 +47,30 @@ fn check_column_width(
     for leaf in &shape.leaves {
         let header_units = display_width(&leaf.label).max(1) as f64;
         let body_units = max_body_width_units(table, &leaf.key, leaf.data_type) as f64;
-        let required_units = header_units.max(body_units);
-        let required = required_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
+        let body_has_text = table
+            .rows
+            .iter()
+            .chain(table.summary_rows.iter())
+            .filter_map(|row| row.get(&leaf.key))
+            .any(|cell| !cell.display_text().trim().is_empty());
+        let body_has_cjk = table
+            .rows
+            .iter()
+            .chain(table.summary_rows.iter())
+            .filter_map(|row| row.get(&leaf.key))
+            .any(|cell| has_cjk(&cell.display_text()));
+        let body_required = if leaf.data_type.is_numeric() {
+            body_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX
+        } else if body_has_cjk {
+            // CJK entity names need 3–4 characters before they become a
+            // one-character vertical strip, regardless of an explicit width.
+            76.0
+        } else if body_has_text {
+            (body_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX).min(56.0)
+        } else {
+            0.0
+        };
+        let required = (header_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX).max(body_required);
         total_required += required;
         let explicit = widths
             .and_then(|widths| widths.get(&leaf.key))
@@ -63,18 +85,16 @@ fn check_column_width(
             }
             continue;
         };
-        let header_driven = has_cjk(&leaf.label) && header_units >= 6.0;
-        let numeric_driven = leaf.data_type.is_numeric() && body_units > 0.0;
-        if (!header_driven && !numeric_driven) || available + 0.5 >= required {
+        if available + 0.5 >= required {
             continue;
         }
         engine.report(
             RuleId::TableColumnTooNarrow,
             format!(
-                "table `{}` column `{}` is too narrow: explicit column width is {:.0}px but the header or widest row needs about {:.0}px",
+                "table `{}` column `{}` is too narrow: explicit column width is {:.0}px but the single-line header or readable body needs about {:.0}px",
                 block.id, leaf.key, available, required
             ),
-            "widen this column's explicit `width`/`column_widths` entry, shorten the header, or reduce the column count; numeric and summary cells must stay on one line.",
+            "删除全 `—` 空列、将列数精简至 8 列以内（最多不超过 9 列），或拆分为两张专题表；缩短长表头，不要用显式 column_widths 掩盖超宽。",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].columns.{}", leaf.key)),
         );
@@ -97,7 +117,7 @@ fn check_column_width(
             label,
             required
         ),
-        "shorten long CJK headers, reduce the column count, or give the widest column an explicit width so Water-Filling can allocate enough space.",
+        "删除全 `—` 空列、将列数精简至 8 列以内（最多不超过 9 列），或拆分为两张专题表；缩短长表头，不要用显式 column_widths 掩盖超宽。",
         Some(block.id.clone()),
         Some(format!("blocks[{index}].columns.{key}")),
     );
@@ -179,9 +199,6 @@ fn check_a4_width(
     shape: &TableShape,
     index: usize,
 ) {
-    if shape.leaves.len() < 6 {
-        return;
-    }
     let mut natural_width = 0.0;
     for leaf in &shape.leaves {
         let header = display_width(&leaf.label) as f64;
@@ -201,7 +218,7 @@ fn check_a4_width(
         let widest = header.max(body_average);
         natural_width += widest * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
     }
-    if natural_width <= A4_CONTENT_WIDTH_PX * 1.5 {
+    if shape.leaves.len() <= 9 && natural_width <= A4_CONTENT_WIDTH_PX * 1.18 {
         return;
     }
     engine.report(
@@ -212,7 +229,7 @@ fn check_a4_width(
             shape.leaves.len(),
             natural_width
         ),
-        "split the table, move low-priority columns into notes, or shorten cell text so the table fits a 640px A4 content width.",
+        "删除全 `—` 空列、将列数精简至 8 列以内（最多不超过 9 列），或拆分为两张专题表；A4 竖版不得依赖横向滚动显示完整表格。",
         Some(block.id.clone()),
         Some(format!("blocks[{index}].columns")),
     );

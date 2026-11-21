@@ -29,8 +29,10 @@ export interface TableMeasurement {
   theadHeight: number;
   tfootHeight: number;
   rowHeights: number[];
-  /** Measured non-row table chrome: figure margins, caption, thead and notes. */
+  /** Measured top-only table chrome: figure margins, caption and thead. */
   chromeHeight?: number;
+  /** Footer notes rendered only by the final table slice. */
+  notesHeight?: number;
 }
 
 export interface PageMeasurements {
@@ -84,7 +86,13 @@ function tableChromeHeight(
   const blockHeight = blockHeights[blockId];
   if (metrics && blockHeight !== undefined && blockHeight > 0) {
     const rowsHeight = metrics.rowHeights.reduce((sum, row) => sum + row, 0);
-    return Math.max(fallback, blockHeight - rowsHeight - metrics.tfootHeight);
+    return Math.max(
+      fallback,
+      blockHeight -
+        rowsHeight -
+        metrics.tfootHeight -
+        (metrics.notesHeight ?? 0),
+    );
   }
   return fallback;
 }
@@ -228,6 +236,7 @@ export function paginateBlocks(
 
     const tableMetrics = tableMeasurements[block.id];
     const tfootHeight = tableMetrics ? tableMetrics.tfootHeight : 0;
+    const notesHeight = tableMetrics?.notesHeight ?? 0;
     const chromeHeight = tableChromeHeight(
       block.id,
       tableMetrics,
@@ -244,7 +253,11 @@ export function paginateBlocks(
         const rowH =
           tableMetrics?.rowHeights[cursor + count] ?? DEFAULT_ROW_HEIGHT_PX;
         const isFinalRow = cursor + count === rows.length - 1;
-        const extraBottom = isFinalRow ? tfootHeight : CONTINUATION_FOOTER_PX;
+        const extraBottom = isFinalRow
+          ? tfootHeight +
+            notesHeight +
+            (cursor > 0 ? CONTINUATION_FOOTER_PX : 0)
+          : CONTINUATION_FOOTER_PX;
         if (accHeight + rowH + extraBottom > available) {
           break;
         }
@@ -285,7 +298,11 @@ export function paginateBlocks(
       usedHeight +=
         chromeHeight +
         pageAccHeight +
-        (isLast ? tfootHeight : CONTINUATION_FOOTER_PX);
+        (isLast
+          ? tfootHeight +
+            notesHeight +
+            (cursor > 0 ? CONTINUATION_FOOTER_PX : 0)
+          : CONTINUATION_FOOTER_PX);
       cursor = nextCursor;
       if (!isLast) {
         pushPage();
@@ -354,7 +371,9 @@ function estimatedPageUsedHeight(
           tableChromeHeight(slice.block.id, metrics, blockHeights) +
           rowsCost +
           (slice.includeSummary
-            ? (metrics?.tfootHeight ?? 0)
+            ? (metrics?.tfootHeight ?? 0) +
+              (metrics?.notesHeight ?? 0) +
+              (slice.continuation ? CONTINUATION_FOOTER_PX : 0)
             : CONTINUATION_FOOTER_PX)
         );
       }

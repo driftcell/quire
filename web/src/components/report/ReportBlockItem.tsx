@@ -131,12 +131,14 @@ function BlockFooterNotes({
 
   if (!note && !hasSource) {
     return framingAttribution ? (
-      <div className={className}>{framingAttribution}</div>
+      <div data-measure-notes="true" className={className}>
+        {framingAttribution}
+      </div>
     ) : null;
   }
 
   return (
-    <div className={className}>
+    <div data-measure-notes="true" className={className}>
       {note && (
         <div>
           注：
