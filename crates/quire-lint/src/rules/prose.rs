@@ -1,8 +1,9 @@
 //! Static AI-slop and low-evidence prose checks for paragraph blocks.
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, sync::LazyLock};
 
 use quire_protocol::{BlockKind, ReportDocument};
+use regex::Regex;
 
 use super::{evidence::has_quantitative_evidence, structure::dense_prose_section_exempt};
 use crate::{engine::Engine, registry::RuleId};
@@ -41,7 +42,15 @@ const PROCESS_AND_DISCLAIMER_CLICHES: &[&str] = &[
     "由于水平有限",
     "值得进一步观察",
     "但不构成简单对应",
+    "须合并解读",
 ];
+
+static CHAPTER_GUIDE_RE: LazyLock<Option<Regex>> = LazyLock::new(|| {
+    Regex::new(
+        r"(?:本章|本节|下文|后文|接下来)[^。；！？\n]{0,24}(?:先看|(?:从|以|围绕|按照|通过)[^。；！？\n]{0,12}[一二两三四五六七八九十\d]+个?(?:维度|方面|观测面|角度|层面|视角|步骤|部分))|(?:观察|分析|研判|审视)?(?:角度|维度|观测面|层面|视角)有[一二两三四五六七八九十\d]+",
+    )
+    .ok()
+});
 
 const EXTREME_JARGON_CLICHES: &[&str] = &[
     "底层逻辑",
@@ -281,6 +290,12 @@ fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
                 hits.insert(*phrase);
             }
         }
+        if CHAPTER_GUIDE_RE
+            .as_ref()
+            .is_some_and(|pattern| pattern.is_match(&masked))
+        {
+            hits.insert("chapter-preview narration");
+        }
         for phrase in ENGLISH_CLICHES {
             if contains_ascii_phrase(&masked, phrase) {
                 hits.insert(*phrase);
@@ -328,7 +343,7 @@ fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
                 "block `{}` contains unsupported or mechanical phrases: {words}",
                 block.id
             ),
-            "In this Paragraph via apply_operations, delete empty phrases, avoid repeating mechanical transitions, and support evaluative wording with a real metric, effect size or rank; do not replace them with another synonym cliché. quote exact policy or source terms in \"\" if needed.",
+            "In this Paragraph via apply_operations, delete empty phrases and chapter-preview narration such as enumerated viewing angles or 'first A, then B'; open directly with a quantified core judgment and cross-institution evidence, avoid repeating mechanical transitions, and support evaluative wording with a real metric, effect size or rank. Do not replace one cliché with another; quote exact policy or source terms in \"\" if needed.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );

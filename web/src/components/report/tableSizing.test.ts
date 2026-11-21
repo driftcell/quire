@@ -382,6 +382,65 @@ describe("computeTableColumnWidths regression boundaries", () => {
     expectAtLeastSingleLine(result, 1, "123456.0");
   });
 
+  test("caps a lone grow column and preserves four-character fit headers", () => {
+    const sparseTable = table([
+      { school: "浙工大", tier: 1, rank: 23, majors: 64 },
+      { school: "宁大", tier: 2, rank: 78, majors: 60 },
+      { school: "浙师大", tier: 3, rank: 92, majors: 58 },
+    ]);
+    const sparseLayout = layout([
+      leafColumn(0, "school", "学校", "text", "grow"),
+      leafColumn(1, "tier", "评估档位", "number"),
+      leafColumn(2, "rank", "全国位次", "number"),
+      leafColumn(3, "majors", "本科专业", "number"),
+    ]);
+
+    const result = computeTableColumnWidths(sparseTable, sparseLayout, 682);
+
+    expect(
+      Number.parseFloat(result.columnCssWidths[0] ?? "100"),
+    ).toBeLessThanOrEqual(36);
+    for (const index of [1, 2, 3]) {
+      expect(pixelWidth(result, index, 682)).toBeGreaterThanOrEqual(88);
+    }
+    expectAtLeastSingleLine(result, 1, "评估档位");
+    expectAtLeastSingleLine(result, 2, "全国位次");
+    expectAtLeastSingleLine(result, 3, "本科专业");
+    expect(percentSum(result).toFixed(2)).toBe("100.00");
+  });
+
+  test("reclaims optional atomic slack before a nine-column table overflows", () => {
+    const numericColumns = Array.from({ length: 8 }, (_, index) =>
+      leafColumn(index + 1, `m${index}`, `项目数${index + 1}`, "number"),
+    );
+    const denseLayout = layout([
+      leafColumn(0, "school", "学校", "text", "grow"),
+      ...numericColumns,
+    ]);
+    const denseTable = table([
+      {
+        school: "甲大学",
+        ...Object.fromEntries(
+          numericColumns.map((column, index) => [column.key, 20 + index]),
+        ),
+      },
+      {
+        school: "乙大学",
+        ...Object.fromEntries(
+          numericColumns.map((column, index) => [column.key, 30 + index]),
+        ),
+      },
+    ]);
+
+    const result = computeTableColumnWidths(denseTable, denseLayout, 682);
+
+    expect(result.minTableWidthPx).toBeUndefined();
+    for (const [index, column] of numericColumns.entries()) {
+      expectAtLeastSingleLine(result, index + 1, column.label);
+    }
+    expect(percentSum(result).toFixed(2)).toBe("100.00");
+  });
+
   test("explicit percentages cannot collapse the first text column below 84px", () => {
     const narrowTable: TableBlock = {
       ...table([{ school: "深圳大学", value: 12 }]),

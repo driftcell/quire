@@ -624,12 +624,23 @@ fn table_layout_rules_are_detected() {
         None,
         vec![ColumnNode::leaf("a", "A"), ColumnNode::leaf("b", "B")],
         vec![
-            row(&[("a", CellValue::text("x")), ("b", CellValue::text("same"))]),
-            row(&[("a", CellValue::text("y")), ("b", CellValue::text("same"))]),
-            row(&[("a", CellValue::text("z")), ("b", CellValue::text("same"))]),
+            row(&[
+                ("a", CellValue::text("x")),
+                ("b", CellValue::text("博士点")),
+            ]),
+            row(&[
+                ("a", CellValue::text("y")),
+                ("b", CellValue::text("博士点")),
+            ]),
+            row(&[
+                ("a", CellValue::text("z")),
+                ("b", CellValue::text("博士点")),
+            ]),
         ],
     ));
-    assert!(has_code(&lint_document(&constant), "QR203"));
+    let report = lint_document(&constant);
+    assert!(has_code(&report, "QR203"));
+    assert!(finding(&report, "QR203").message.contains("博士点"));
 
     let mut wide = doc();
     let columns: Vec<_> = (0..8)
@@ -1575,6 +1586,42 @@ fn qr412_detects_process_disclaimer_and_extreme_cliches() {
         ("online-search", "经联网检索，相关数据如下。", "经联网检索"),
         ("bottom-logic", "底层逻辑在于资源配置。", "底层逻辑"),
         ("granularity", "提升数据颗粒度。", "颗粒度"),
+        (
+            "chapter-from",
+            "本章从两个维度审读学科发展。",
+            "chapter-preview narration",
+        ),
+        (
+            "below-first",
+            "下文先看学科档位，再判断人才结构。",
+            "chapter-preview narration",
+        ),
+        (
+            "two-angles",
+            "观察角度有二：规模与质量。",
+            "chapter-preview narration",
+        ),
+        (
+            "three-angles",
+            "观察角度有三：规模、质量与结构。",
+            "chapter-preview narration",
+        ),
+        (
+            "three-views",
+            "本章以三个观测面展开分析。",
+            "chapter-preview narration",
+        ),
+        (
+            "four-levels",
+            "本节围绕四个层面依次展开。",
+            "chapter-preview narration",
+        ),
+        (
+            "numbered-guide",
+            "接下来从2个步骤审视建设路径。",
+            "chapter-preview narration",
+        ),
+        ("joint-reading", "二者须合并解读，不能割裂。", "须合并解读"),
     ] {
         let mut document = doc();
         document.blocks.push(paragraph(id, text));
@@ -1585,6 +1632,7 @@ fn qr412_detects_process_disclaimer_and_extreme_cliches() {
             "{}",
             diagnostic.message
         );
+        assert!(diagnostic.hint.contains("chapter-preview narration"));
     }
 }
 
@@ -3301,6 +3349,53 @@ fn qr418_flags_generic_and_counting_headings() {
     assert!(
         !has_code(&lint_document(&decimal), "QR418"),
         "a decimal percentage must not be treated as heading numbering"
+    );
+}
+
+#[test]
+fn qr418_flags_standalone_scope_sections_in_any_position() {
+    for text in [
+        "数据口径与说明",
+        "口径与说明",
+        "统计口径说明",
+        "数据说明",
+        "统计范围与时间窗口说明",
+        "指标释义",
+    ] {
+        let mut document = doc();
+        document.blocks.push(heading("scope-only", 2, text));
+        let report = lint_document(&document);
+        assert!(
+            has_code(&report, "QR418"),
+            "scope heading must report: {text}"
+        );
+        assert_eq!(
+            finding(&report, "QR418").block_id.as_ref(),
+            Some(&bid("scope-only"))
+        );
+    }
+
+    let mut concrete = doc();
+    concrete.blocks.push(heading(
+        "concrete-scope-heading",
+        2,
+        "数据说明：6个A类学科仅1个入围",
+    ));
+    assert!(!has_code(&lint_document(&concrete), "QR418"));
+
+    let mut after_closing = doc();
+    after_closing.blocks.push(heading("closing", 2, "结语"));
+    after_closing
+        .blocks
+        .push(heading("scope-after-closing", 2, "数据口径与说明"));
+    let report = lint_document(&after_closing);
+    assert!(
+        report.diagnostics.iter().any(|diagnostic| {
+            diagnostic.code == "QR418"
+                && diagnostic.block_id.as_ref() == Some(&bid("scope-after-closing"))
+        }),
+        "a scope chapter after the conclusion must never inherit a closing exemption: {:?}",
+        report.diagnostics
     );
 }
 

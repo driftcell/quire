@@ -30,7 +30,7 @@ const COMPOSITE_NUMERIC_TOKEN =
   /^\d+(?:\.\d+)?(?:\s*[/／·]\s*\d+(?:\.\d+)?)+%?$/;
 
 function keepHeaderOnOneLine(label: string): boolean {
-  return Array.from(label.trim()).length <= 3;
+  return Array.from(label.trim()).length <= 4;
 }
 
 function keepCellOnOneLine(text: string, dataType: string): boolean {

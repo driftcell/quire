@@ -17,14 +17,18 @@ interface ColumnBounds {
   explicitPct?: number;
   minPx: number;
   idealPx: number;
+  maxCapPx: number;
   weight: number;
   sizing: "fit" | "grow";
   atomic: boolean;
 }
 
-const CELL_HORIZONTAL_CHROME_PX = 24; // px-2.5 (20px) + borders + slack
+const CELL_HORIZONTAL_PADDING_PX = 24;
+const CELL_HORIZONTAL_CHROME_PX = 30; // px-3 (24px) + borders + rendering slack
+const ATOMIC_SAFETY_RECLAIM_PX =
+  CELL_HORIZONTAL_CHROME_PX - CELL_HORIZONTAL_PADDING_PX;
 const BADGE_EXTRA_PX = 18;
-const SHORT_HEADER_SINGLE_LINE_PX = 82;
+const SHORT_HEADER_SINGLE_LINE_PX = 92;
 const WRAPPED_HEADER_FLOOR_PX = 78;
 const TEXT_COMPRESSION_FLOOR_PX = 78;
 const FIRST_TEXT_COLUMN_FLOOR_PX = 84;
@@ -254,7 +258,8 @@ export function computeTableColumnWidths(
       ? Math.max(56, Math.min(240, Math.max(headerFloorPx, maxAtomicPx)))
       : Math.max(colIdx === 0 ? FIRST_TEXT_COLUMN_FLOOR_PX : 56, textMinPx);
 
-    const maxCapPx = Math.max(minPx, availablePx * 0.38);
+    const maxCapRatio = leafCols.length <= 5 && colIdx === 0 ? 0.34 : 0.38;
+    const maxCapPx = Math.max(minPx, availablePx * maxCapRatio);
     const rawIdeal = isAtomic
       ? Math.max(headerPx, p95CellPx, minPx)
       : Math.max(headerPx, p90CellPx, minPx);
@@ -270,6 +275,7 @@ export function computeTableColumnWidths(
       explicitPct,
       minPx,
       idealPx,
+      maxCapPx,
       weight,
       sizing: col.sizing === "grow" ? "grow" : "fit",
       atomic: isAtomic,
@@ -363,19 +369,66 @@ export function computeTableColumnWidths(
       surplus -= spent;
     }
 
-    // Pass 2: Distribute leftover surplus to Grow columns (or all if none are Grow)
+    // Pass 2: Grow columns absorb surplus first, but a single text column must
+    // not swallow the free space in a sparse table. Leftovers are then shared
+    // by ideal width with every column that can still expand, including Fit.
     if (surplus > 0.5) {
       const growCols = flexBounds.filter((b) => b.sizing === "grow");
-      const targets = growCols.length > 0 ? growCols : flexBounds;
-      const targetWeight = targets.reduce(
-        (sum, b) => sum + b.weight * (b.sizing === "grow" ? 1 : b.idealPx),
-        0,
-      );
-      if (targetWeight > 0) {
-        for (const b of targets) {
-          const factor = b.weight * (b.sizing === "grow" ? 1 : b.idealPx);
+      const growWeight = growCols.reduce((sum, b) => sum + b.weight, 0);
+      if (growWeight > 0) {
+        let spent = 0;
+        for (const b of growCols) {
           const curr = alloc.get(b.index) ?? b.minPx;
-          alloc.set(b.index, curr + surplus * (factor / targetWeight));
+          const room = Math.max(0, b.maxCapPx - curr);
+          const add = Math.min(room, surplus * (b.weight / growWeight));
+          alloc.set(b.index, curr + add);
+          spent += add;
+        }
+        surplus -= spent;
+      }
+
+      const expanding = new Set(flexBounds.map((b) => b.index));
+      while (surplus > 0.5 && expanding.size > 0) {
+        let idealSum = 0;
+        for (const b of flexBounds) {
+          if (!expanding.has(b.index)) continue;
+          const curr = alloc.get(b.index) ?? b.minPx;
+          if (b.sizing === "grow" && b.maxCapPx - curr <= 0.1) {
+            expanding.delete(b.index);
+            continue;
+          }
+          idealSum += b.idealPx;
+        }
+        if (idealSum <= 0 || expanding.size === 0) break;
+
+        let spent = 0;
+        for (const b of flexBounds) {
+          if (!expanding.has(b.index)) continue;
+          const curr = alloc.get(b.index) ?? b.minPx;
+          const room =
+            b.sizing === "grow"
+              ? Math.max(0, b.maxCapPx - curr)
+              : Number.POSITIVE_INFINITY;
+          const add = Math.min(room, surplus * (b.idealPx / idealSum));
+          alloc.set(b.index, curr + add);
+          spent += add;
+          if (b.sizing === "grow" && curr + add >= b.maxCapPx - 0.1) {
+            expanding.delete(b.index);
+          }
+        }
+        if (spent <= 0.01) break;
+        surplus -= spent;
+      }
+
+      // A table made exclusively of capped Grow columns still has to fill its
+      // container. Only in that degenerate case, relax the caps for the residue.
+      if (surplus > 0.5 && flexBounds.every((b) => b.sizing === "grow")) {
+        const idealSum = flexBounds.reduce((sum, b) => sum + b.idealPx, 0);
+        if (idealSum > 0) {
+          for (const b of flexBounds) {
+            const curr = alloc.get(b.index) ?? b.minPx;
+            alloc.set(b.index, curr + surplus * (b.idealPx / idealSum));
+          }
         }
       }
     }
@@ -398,6 +451,27 @@ export function computeTableColumnWidths(
         const cut = room * shrinkRatio;
         alloc.set(b.index, b.minPx - cut);
         deficit -= cut;
+      }
+    }
+    // Reclaim the optional rendering slack before allowing a dense table to
+    // overflow. The real 24px padding and 56px atomic floor remain intact.
+    if (deficit > 0) {
+      const atomicCols = flexBounds.filter((b) => b.atomic);
+      const atomicFloorPx = (b: ColumnBounds) =>
+        Math.max(56, b.minPx - ATOMIC_SAFETY_RECLAIM_PX);
+      const totalSafetySlack = atomicCols.reduce((sum, b) => {
+        const curr = alloc.get(b.index) ?? b.minPx;
+        return sum + Math.max(0, curr - atomicFloorPx(b));
+      }, 0);
+      if (totalSafetySlack > 0) {
+        const shrinkRatio = Math.min(1, deficit / totalSafetySlack);
+        for (const b of atomicCols) {
+          const curr = alloc.get(b.index) ?? b.minPx;
+          const room = Math.max(0, curr - atomicFloorPx(b));
+          const cut = room * shrinkRatio;
+          alloc.set(b.index, curr - cut);
+          deficit -= cut;
+        }
       }
     }
     if (deficit > 4) {

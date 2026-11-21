@@ -123,6 +123,15 @@ false`; the next page receives a `notesOnly` slice. `ReportBlockItem` renders on
 for that slice and never repeats the table or caption. Bibliography packing accounts for these two
 slices separately.
 
+Column sizing measures text with 30px of horizontal chrome (24px padding plus rendering slack), and
+headers of at most four characters render with `whitespace-nowrap`. After ideal-width water filling,
+Grow columns absorb surplus only up to their pixel cap: the first column of a table with at most five
+columns is capped at 34% of the available width, while other Grow columns use 38%. Any residue is
+distributed by `idealPx` across columns that can still expand, including Fit numeric columns, preventing
+a lone Grow text column from consuming most of a sparse table. If minimum widths still exceed the
+container, the allocator reclaims at most the optional 6px atomic-column rendering slack before enabling
+horizontal overflow; the real 24px padding and 56px atomic floor are preserved.
+
 When a visual has `source_ids` but no `source_note`, `BlockFooterNotes` resolves up to three distinct
 source names from bibliography `publisher` (falling back to `title`) and prepends them to the citation
 markers. This prevents a bare `资料来源：[N]` when bibliography metadata can supply a readable name.
@@ -151,6 +160,8 @@ choice.
 - Built-in cover variants never duplicate a subtitle's leading/trailing dashes.
 - Compact single-page tables do not leave small page-bottom fragments; long notes never force the last
   data rows into a continuation solely to make room for those notes.
+- Four-character headers receive single-line protection, and a sparse table's lone Grow first column
+  stays within its cap while Fit columns share the remaining space.
 - A `notesOnly` slice renders no table or caption, and missing source notes use readable bibliography
   names when available.
 - Sanitization removes the required executable elements, inline handlers and script protocols, but

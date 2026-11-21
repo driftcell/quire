@@ -90,6 +90,11 @@ a note declaring `四舍五入` retains its existing whole-table exemption. Fixe
 composites separated by `/`, `／` or `·` remain supported. Each mismatched summary cell reports with a
 path into `rows` or `summary_rows`, and the hint carries the exact expected value.
 
+`QR203` compares formatted cell display values across tables with at least three body rows. A non-empty
+column whose values are all identical reports once, regardless of whether the shared value is text or a
+number; the repair moves that invariant into the title/note instead of spending a column on it. Empty or
+placeholder-only columns remain owned by `QR202`.
+
 `QR201` checks every explicit column width against the single-line header and a readable body floor;
 numeric and summary cells retain their widest-cell requirement, and CJK entity text has a 76px
 minimum. Explicit `column_widths` cannot exempt narrow columns. `QR204` reports any table with more
@@ -123,7 +128,11 @@ blocks are treated as external quotations. Before matching, the prose module mas
 Markdown link targets, inline citations and `《...》` / `“...”` / `"..."` / `「...」` spans with spaces,
 so policy titles and quoted proper nouns cannot become false positives. `QR412` requires one strong
 cliché from process/disclaimer leakage or extreme internet jargon, or at least two distinct
-empty-jargon words (with ecological compounds such as `生态环境` exempt).
+empty-jargon words (with ecological compounds such as `生态环境` exempt). Its chapter-preview detector
+also recognizes structural narration: a chapter/section/following-text lead-in with “first look”, or a
+quantified frame such as two dimensions, three observation planes or four levels. Chinese and Arabic
+quantifiers are handled by the same pattern rather than an enumerated phrase list; the repair opens
+directly with quantified findings and cross-institution evidence.
 Formal policy terms such as `高质量发展`, `内涵式发展` and `系统推进` are allowed. Evaluative phrases
 such as `显著提升`, `稳中有进` and `提质增效` report only when their sentence lacks a number with a
 quantitative unit; a bare year does not qualify. `组合拳` is allowed once but reports when densely
@@ -167,9 +176,13 @@ newline-delimited list. Cross-paragraph density is owned exclusively by `QR419`.
 
 `QR418` only inspects headings at level 2 or deeper. It strips common manual numbering and
 punctuation, then flags exact generic headings (`概述`, `行动建议`, `Overview`, etc.) and counting
-shells such as `三大核心维度`. The first H2 may use `导论`/`引言`/`前言` and the last H2 may use
-`结语`/`总结`; arbitrary middle or deeper generic headings still report. A counting heading with a
-colon followed by at least six characters, or a long title with concrete data/entities, is exempt.
+shells such as `三大核心维度`. Headings composed solely of scope-note vocabulary (`数据`, `统计`,
+`指标`, `口径`, `范围`, `说明`, `释义`, connectors and related tokens) also report as standalone scope
+sections, including variants such as `统计范围与时间窗口说明`; a concrete quantitative suffix does not.
+The first H2 may use `导论`/`引言`/`前言` and the last H2 may use `结语`/`总结`; arbitrary middle or
+deeper generic headings still report, and scope-only headings receive no positional exemption. A
+counting heading with a colon followed by at least six characters, or a long title with concrete
+data/entities, is exempt.
 For other official-document columns, the repair hint preserves the column label and adds a concrete
 judgment after a colon.
 

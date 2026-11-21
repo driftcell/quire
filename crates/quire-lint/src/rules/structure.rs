@@ -539,6 +539,28 @@ const GENERIC_HEADINGS_ZH: &[&str] = &[
     "附录说明",
 ];
 
+const SCOPE_ONLY_HEADING_TOKENS: &[&str] = &[
+    "时间窗口",
+    "时间窗",
+    "未纳入",
+    "统计",
+    "数据",
+    "指标",
+    "资料",
+    "信息",
+    "口径",
+    "范围",
+    "缺失",
+    "说明",
+    "释义",
+    "备注",
+    "与",
+    "及",
+    "和",
+    "、",
+    " ",
+];
+
 const GENERIC_HEADINGS_EN: &[&str] = &[
     "overview",
     "introduction",
@@ -574,6 +596,21 @@ const COUNTING_NOUNS: &[&str] = &[
     "要素",
 ];
 
+fn is_scope_only_heading(normalized: &str) -> bool {
+    if !["口径", "范围", "说明", "释义"]
+        .iter()
+        .any(|term| normalized.contains(term))
+    {
+        return false;
+    }
+    let remainder = SCOPE_ONLY_HEADING_TOKENS
+        .iter()
+        .fold(normalized.to_string(), |remaining, token| {
+            remaining.replace(token, "")
+        });
+    remainder.trim().is_empty()
+}
+
 fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
     let first_h2 = document
         .blocks
@@ -606,7 +643,8 @@ fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
         }
         let lowered = normalized.to_ascii_lowercase();
         let is_generic = GENERIC_HEADINGS_ZH.contains(&normalized)
-            || GENERIC_HEADINGS_EN.contains(&lowered.as_str());
+            || GENERIC_HEADINGS_EN.contains(&lowered.as_str())
+            || is_scope_only_heading(normalized);
         let is_counting = is_counting_heading(normalized);
         if !is_generic && !is_counting {
             continue;
