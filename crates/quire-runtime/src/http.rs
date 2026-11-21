@@ -83,6 +83,10 @@ pub fn router(service: RuntimeService) -> Router {
         )
         .route("/api/sessions/{session_id}/events", get(session_events))
         .route(
+            "/api/sessions/{session_id}/prune-events",
+            post(prune_events),
+        )
+        .route(
             "/api/sessions/{session_id}/traces",
             get(list_session_traces),
         )
@@ -1037,14 +1041,47 @@ struct EventsQuery {
     after_seq: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+struct PruneEventsRequest {
+    keep_events: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+struct PruneEventsResponse {
+    deleted: u64,
+    min_available_seq: u64,
+}
+
+async fn prune_events(
+    State(service): State<RuntimeService>,
+    Path(session_id): Path<String>,
+    Json(request): Json<PruneEventsRequest>,
+) -> RuntimeResult<Json<PruneEventsResponse>> {
+    let (deleted, min_available_seq) = service
+        .store()
+        .prune_session_events(&session_id, request.keep_events.unwrap_or(1_000))
+        .await?;
+    Ok(Json(PruneEventsResponse {
+        deleted,
+        min_available_seq,
+    }))
+}
+
 async fn session_events(
     State(service): State<RuntimeService>,
     Path(session_id): Path<String>,
     Query(query): Query<EventsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, RuntimeError> {
     let summary = service.store().get_session_summary(&session_id).await?;
+    let min_available_seq = service.store().min_available_seq(&session_id).await?;
     let after_seq = query.after_seq.unwrap_or(0);
-    let stream = event_stream(service, session_id, after_seq, summary.last_event_seq);
+    let stream = event_stream(
+        service,
+        session_id,
+        after_seq,
+        summary.last_event_seq,
+        min_available_seq,
+    );
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
 
@@ -1053,6 +1090,7 @@ fn event_stream(
     session_id: String,
     after_seq: u64,
     server_last_seq: u64,
+    min_available_seq: u64,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     async_stream::stream! {
         yield Ok(Event::default().comment("connected"));
@@ -1061,6 +1099,14 @@ fn event_stream(
                 &session_id,
                 after_seq,
                 "client cursor is ahead of the server",
+            )));
+            return;
+        }
+        if after_seq.saturating_add(1) < min_available_seq {
+            yield Ok(sse_event(&synthetic_sync(
+                &session_id,
+                after_seq,
+                "replay cursor is older than the retained event window",
             )));
             return;
         }

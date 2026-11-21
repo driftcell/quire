@@ -6294,3 +6294,167 @@ async fn active_run_start_seq_scopes_hydration_to_the_current_run() {
     provider.release();
     wait_for_idle(&store, &session.session_id).await;
 }
+
+fn trace_text(trace: &RunTraceSummary) -> String {
+    trace
+        .segments
+        .iter()
+        .filter_map(|segment| match segment {
+            RunTraceSegment::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+#[tokio::test]
+async fn completed_run_trace_is_materialized_on_terminal_transition() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let service = service.with_model_stream_provider(Arc::new(MockStreamProvider::new(vec![
+        vec![ModelStreamEvent::TextDelta("materialized answer".into())],
+    ])));
+    let session = service
+        .create_session("materialize completed trace", None)
+        .await
+        .unwrap();
+    let outcome = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("materialize-run"),
+                content: "produce a trace".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let PostMessageOutcome::Started { run_id, .. } = outcome else {
+        panic!("expected a started run");
+    };
+    wait_for_idle(&store, &session.session_id).await;
+
+    let stored: Option<Value> =
+        sqlx::query_scalar("SELECT trace_summary FROM agent_runs WHERE run_id = $1")
+            .bind(&run_id)
+            .fetch_optional(store.pool())
+            .await
+            .unwrap();
+    let stored = stored.expect("the terminal transition must materialize the trace");
+    let stored_trace: RunTraceSummary = serde_json::from_value(stored).unwrap();
+    assert_eq!(stored_trace.status, "completed");
+    assert_eq!(trace_text(&stored_trace), "materialized answer");
+
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    assert_eq!(traces.len(), 1);
+    assert_eq!(traces[0], stored_trace);
+}
+
+#[tokio::test]
+async fn resolving_a_suspended_run_materializes_its_trace() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session("materialize suspended trace", None)
+        .await
+        .unwrap();
+    let run = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await
+        .unwrap();
+    store
+        .start_run_with_event(&run.run_id, SessionEventKind::TurnStarted)
+        .await
+        .unwrap();
+    store.mark_run_awaiting_input(&run.run_id).await.unwrap();
+    store.resolve_suspended_run(&run.run_id).await.unwrap();
+
+    let stored: Option<Value> =
+        sqlx::query_scalar("SELECT trace_summary FROM agent_runs WHERE run_id = $1")
+            .bind(&run.run_id)
+            .fetch_optional(store.pool())
+            .await
+            .unwrap();
+    assert!(
+        stored.is_some(),
+        "resolve_suspended_run must materialize the trace"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pruning_preserves_materialized_history_and_enforces_the_retained_cursor() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let service = service.with_model_stream_provider(Arc::new(MockStreamProvider::new(vec![
+        vec![ModelStreamEvent::TextDelta("first run".into())],
+        vec![ModelStreamEvent::TextDelta("second run".into())],
+    ])));
+    let session = service
+        .create_session(&unique("prune-events"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    for content in ["first message", "second message"] {
+        let request = SendMessageRequest {
+            client_msg_id: unique("prune-run"),
+            content: content.into(),
+            comment_refs: Vec::new(),
+            attachment_ids: Vec::new(),
+        };
+        service
+            .post_message(&session.session_id, &request)
+            .await
+            .unwrap();
+        wait_for_idle(&store, &session.session_id).await;
+    }
+
+    let before = store
+        .list_events(&session.session_id, 0, 1_000)
+        .await
+        .unwrap();
+    assert!(before.len() >= 4);
+    let (deleted, min_available) = store
+        .prune_session_events(&session.session_id, 2)
+        .await
+        .unwrap();
+    assert_eq!(deleted as usize, before.len() - 2);
+    let expected_min = before[before.len() - 2].seq;
+    assert_eq!(min_available, expected_min);
+    assert_eq!(
+        store.min_available_seq(&session.session_id).await.unwrap(),
+        expected_min
+    );
+
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    assert_eq!(traces.len(), 2, "materialized history survives pruning");
+    assert!(trace_text(&traces[0]).contains("first run"));
+    assert!(trace_text(&traces[1]).contains("second run"));
+
+    let app = quire_runtime::http::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let response = reqwest::Client::new()
+        .get(format!(
+            "http://{address}/api/sessions/{}/events?afterSeq={}",
+            session.session_id,
+            expected_min - 2
+        ))
+        .bearer_auth("runtime-test-token")
+        .send()
+        .await
+        .unwrap();
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let sync = tokio::time::timeout(
+        Duration::from_secs(2),
+        next_session_event(&mut stream, &mut buffer),
+    )
+    .await
+    .unwrap()
+    .expect("an older cursor must produce sync_required");
+    assert!(matches!(sync.kind, SessionEventKind::SyncRequired { .. }));
+    server.abort();
+}

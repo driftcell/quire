@@ -422,5 +422,9 @@ pnpm --dir web gen:types
   `prefix_traces`, and `sessionEventReducer.test.ts` verifies every split point, including a dedicated
   multi-round subagent fixture. The equivalence tests also caught and fixed live `truncated` updates
   and `taskFocus` object-shape drift.
-- **Next:** Phase 5 observability, RAII run-turn guard, unified resilient subscriber base, preview
-  handoff and architecture guardrails.
+- **Phase 4 support work landed:** RAII `RunTurnGuard`, exhaustive event/projection guardrails,
+  `agent_runs.trace_summary` materialization at terminal transitions, lazy backfill, and
+  `min_available_seq` retention with `POST /api/sessions/{session_id}/prune-events`. `/traces` now
+  reads stored traces and only the active run is aggregated live.
+- **Next:** preview handoff, subagent `resume_run_id`, frontend refetch reduction and
+  `docs/RUNTIME_SESSION_EVENTS.md`.

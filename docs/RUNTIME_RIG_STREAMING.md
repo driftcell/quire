@@ -122,7 +122,15 @@ reconnect.
 and backfilled from existing events. Active-run hydration reads `seq BETWEEN start_seq AND
 last_event_seq` through the `(session_id, seq)` primary key, so `get_session_detail` no longer
 aggregates the whole session history for the active run; idle sessions skip event history entirely.
-`/traces` still aggregates full history until completed-run trace materialisation is introduced.
+
+Completed runs are materialized into `agent_runs.trace_summary` by
+`finish_run_with_event` and `resolve_suspended_run` (migration `0010_trace_materialization.sql`),
+using the canonical aggregator over `start_seq..end_seq`. `/traces` reads those stored traces and
+aggregates only the active run, with lazy backfill for legacy completed runs and a fallback for
+run-scoped events that have no `agent_runs` row. `POST /api/sessions/{session_id}/prune-events`
+materializes completed traces before deleting old raw events, preserves the active run's full
+history, and advances `agent_sessions.min_available_seq`. An `afterSeq` cursor whose next expected
+event is older than that retained window returns `sync_required`.
 
 `RunTraceSummary.started_at` is the originating `TurnStarted` timestamp. `RunTraceSegment::Thinking`
 retains `started_at` while a thinking phase is still streaming, and `RunTraceSubagent` carries its own
@@ -223,6 +231,9 @@ formal Quire commit clears the placeholders atomically.
   without requiring a reconnect.
 - `turn_started` and `agent_runs.start_seq` commit atomically; active-run hydration is a primary-key
   range scan and idle detail requests do not read event history.
+- Completed-run traces are materialized in the same lifecycle transaction. `/traces` reads
+  `agent_runs.trace_summary` and only the active run is aggregated live. Pruning preserves those
+  traces and enforces `min_available_seq` on replay cursors.
 - Tool calls persist complete input and output, with globally unique IDs.
 - Pending queue dequeue is serialized by the per-session gate; queue items are persisted as user
   messages exactly once.
@@ -286,6 +297,10 @@ Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
   that heartbeat reconciliation delivers it.
 - `active_run_start_seq_scopes_hydration_to_the_current_run` verifies the atomic `start_seq` cursor
   and that older runs are excluded from active hydration.
+- `completed_run_trace_is_materialized_on_terminal_transition` and
+  `resolving_a_suspended_run_materializes_its_trace` verify trace materialization.
+- `pruning_preserves_materialized_history_and_enforces_the_retained_cursor` verifies that pruning
+  keeps completed traces and rejects cursors older than the retained window.
 
 Browser coverage in `web/e2e/pending-user-message-timeline.js` verifies the same DOM order before
 and after `page.reload()`, exactly one inline user bubble, and two settled activity groups.

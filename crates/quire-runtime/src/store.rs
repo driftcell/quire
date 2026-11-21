@@ -282,6 +282,107 @@ impl RuntimeStore {
         rows.iter().map(row_to_event_frame).collect()
     }
 
+    async fn event_frames_between_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &str,
+        start_seq: u64,
+        end_seq: u64,
+    ) -> RuntimeResult<Vec<SessionEventFrame>> {
+        let rows = sqlx::query(
+            r#"SELECT seq, event_type, event FROM session_events
+               WHERE session_id = $1 AND seq >= $2 AND seq <= $3
+               ORDER BY seq ASC"#,
+        )
+        .bind(session_id)
+        .bind(i64::try_from(start_seq).unwrap_or(i64::MAX))
+        .bind(i64::try_from(end_seq).unwrap_or(i64::MAX))
+        .fetch_all(&mut **tx)
+        .await?;
+        rows.iter().map(row_to_event_frame).collect()
+    }
+
+    /// Aggregate and store one run's trace inside a lifecycle transaction.
+    async fn materialize_run_trace_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &str,
+        run_id: &str,
+        start_seq: Option<u64>,
+        end_seq: u64,
+    ) -> RuntimeResult<()> {
+        let frames = self
+            .event_frames_between_in(tx, session_id, start_seq.unwrap_or(0), end_seq)
+            .await?;
+        let events = decode_projection_events(frames);
+        let Some(trace) = aggregate_run_traces(&events)
+            .into_iter()
+            .find(|trace| trace.run_id == run_id)
+        else {
+            return Ok(());
+        };
+        let value = serde_json::to_value(&trace)?;
+        sqlx::query("UPDATE agent_runs SET trace_summary = $2 WHERE run_id = $1")
+            .bind(run_id)
+            .bind(value)
+            .execute(&mut **tx)
+            .await?;
+        Ok(())
+    }
+
+    /// Lazy backfill for a completed run whose trace has not been materialized.
+    pub async fn materialize_run_trace(&self, run_id: &str) -> RuntimeResult<()> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query("SELECT session_id, start_seq FROM agent_runs WHERE run_id = $1")
+            .bind(run_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or_else(|| RuntimeError::RunNotFound(run_id.to_string()))?;
+        let session_id: String = row.try_get("session_id")?;
+        let start_seq: Option<i64> = row.try_get("start_seq")?;
+        let end_seq = lock_event_seq(&mut tx, &session_id).await?;
+        self.materialize_run_trace_in(
+            &mut tx,
+            &session_id,
+            run_id,
+            start_seq.map(|seq| u64::try_from(seq).unwrap_or(0)),
+            end_seq,
+        )
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Materialize every completed run in a session before pruning raw events.
+    pub async fn materialize_completed_run_traces(&self, session_id: &str) -> RuntimeResult<usize> {
+        let mut tx = self.pool.begin().await?;
+        let end_seq = lock_event_seq(&mut tx, session_id).await?;
+        let rows = sqlx::query(
+            r#"SELECT run_id, start_seq FROM agent_runs
+               WHERE session_id = $1 AND parent_run_id IS NULL
+                 AND status NOT IN ('running', 'awaiting_input') AND trace_summary IS NULL"#,
+        )
+        .bind(session_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let mut materialized = 0usize;
+        for row in &rows {
+            let run_id: String = row.try_get("run_id")?;
+            let start_seq: Option<i64> = row.try_get("start_seq")?;
+            self.materialize_run_trace_in(
+                &mut tx,
+                session_id,
+                &run_id,
+                start_seq.map(|seq| u64::try_from(seq).unwrap_or(0)),
+                end_seq,
+            )
+            .await?;
+            materialized += 1;
+        }
+        tx.commit().await?;
+        Ok(materialized)
+    }
+
     /// Opaque frames for SSE transport. Unlike projection, transport does not
     /// need to understand the event variant and can relay newer writers safely.
     pub async fn list_event_frames(
@@ -1272,7 +1373,7 @@ impl RuntimeStore {
             r#"UPDATE agent_runs
                SET status = 'completed', finished_at = COALESCE(finished_at, NOW())
                WHERE run_id = $1 AND status = 'awaiting_input'
-               RETURNING session_id"#,
+               RETURNING session_id, start_seq"#,
         )
         .bind(run_id)
         .fetch_optional(&mut *tx)
@@ -1282,12 +1383,22 @@ impl RuntimeStore {
             return Ok(None);
         };
         let session_id: String = row.try_get("session_id")?;
+        let start_seq: Option<i64> = row.try_get("start_seq")?;
         sqlx::query(
             r#"UPDATE agent_sessions SET active_run_status = 'idle', updated_at = NOW()
                WHERE session_id = $1"#,
         )
         .bind(&session_id)
         .execute(&mut *tx)
+        .await?;
+        let end_seq = lock_event_seq(&mut tx, &session_id).await?;
+        self.materialize_run_trace_in(
+            &mut tx,
+            &session_id,
+            run_id,
+            start_seq.map(|seq| u64::try_from(seq).unwrap_or(0)),
+            end_seq,
+        )
         .await?;
         tx.commit().await?;
         Ok(Some(session_id))
@@ -1693,7 +1804,7 @@ impl RuntimeStore {
             r#"UPDATE agent_runs
                SET status = $2, error = $3, finished_at = NOW()
                WHERE run_id = $1 AND status = 'running'
-               RETURNING session_id, agent_id, parent_run_id"#,
+               RETURNING session_id, agent_id, parent_run_id, start_seq"#,
         )
         .bind(run_id)
         .bind(status)
@@ -1717,6 +1828,7 @@ impl RuntimeStore {
         let session_id: String = row.try_get("session_id")?;
         let agent_id: String = row.try_get("agent_id")?;
         let parent_run_id: Option<String> = row.try_get("parent_run_id")?;
+        let start_seq: Option<i64> = row.try_get("start_seq")?;
         let session_status = match status {
             "completed" => "idle",
             "cancelled" | "interrupted" => "interrupted",
@@ -1739,6 +1851,14 @@ impl RuntimeStore {
         .bind(&session_id)
         .bind(session_status)
         .execute(&mut *tx)
+        .await?;
+        self.materialize_run_trace_in(
+            &mut tx,
+            &session_id,
+            run_id,
+            start_seq.map(|seq| u64::try_from(seq).unwrap_or(0)),
+            event.seq,
+        )
         .await?;
         tx.commit().await?;
         self.publish_event(event.clone(), &session_id).await;
@@ -1776,12 +1896,147 @@ impl RuntimeStore {
             .collect()
     }
 
-    /// Aggregate persisted `session_events` into lightweight per-run traces.
+    /// Read materialized completed traces and aggregate only the active run.
     pub async fn list_run_traces(&self, session_id: &str) -> RuntimeResult<Vec<RunTraceSummary>> {
-        self.get_session_summary(session_id).await?;
-        let frames = self.event_frames_between(session_id, 0, u64::MAX).await?;
-        let events = decode_projection_events(frames);
-        Ok(aggregate_run_traces(&events))
+        let summary = self.get_session_summary(session_id).await?;
+        let rows = sqlx::query(
+            r#"SELECT run_id, status, start_seq, trace_summary FROM agent_runs
+               WHERE session_id = $1 AND parent_run_id IS NULL
+               ORDER BY started_at ASC, run_id ASC"#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut traces = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let run_id: String = row.try_get("run_id")?;
+            let status: String = row.try_get("status")?;
+            let start_seq: Option<i64> = row.try_get("start_seq")?;
+            let stored: Option<Value> = row.try_get("trace_summary")?;
+            if let Some(value) = stored {
+                traces.push(serde_json::from_value(value)?);
+                continue;
+            }
+            let events = self
+                .events_between(
+                    session_id,
+                    start_seq
+                        .map(|seq| u64::try_from(seq).unwrap_or(0))
+                        .unwrap_or(0),
+                    summary.last_event_seq,
+                )
+                .await?;
+            let Some(trace) = aggregate_run_traces(&events)
+                .into_iter()
+                .find(|trace| trace.run_id == run_id)
+            else {
+                continue;
+            };
+            if !matches!(status.as_str(), "running" | "awaiting_input") {
+                // Lazy backfill for runs completed before trace materialization.
+                self.materialize_run_trace(&run_id).await?;
+            }
+            traces.push(trace);
+        }
+
+        // Some historical/test events have no agent_runs row. Keep their
+        // run-scoped projection instead of silently dropping those traces.
+        let orphan_rows = sqlx::query(
+            r#"SELECT DISTINCT run_id FROM session_events
+               WHERE session_id = $1 AND parent_run_id IS NULL
+                 AND run_id NOT IN (SELECT run_id FROM agent_runs WHERE session_id = $1)
+               ORDER BY run_id ASC"#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        for row in &orphan_rows {
+            let run_id: String = row.try_get("run_id")?;
+            let events = self
+                .events_between(session_id, 0, summary.last_event_seq)
+                .await?;
+            if let Some(trace) = aggregate_run_traces(&events)
+                .into_iter()
+                .find(|trace| trace.run_id == run_id)
+            {
+                traces.push(trace);
+            }
+        }
+        Ok(traces)
+    }
+
+    /// Oldest sequence still available for SSE replay.
+    pub async fn min_available_seq(&self, session_id: &str) -> RuntimeResult<u64> {
+        let value: i64 = sqlx::query_scalar(
+            "SELECT min_available_seq FROM agent_sessions WHERE session_id = $1",
+        )
+        .bind(session_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(u64::try_from(value).unwrap_or(0))
+    }
+
+    /// Materialize completed traces, then prune old raw events while preserving
+    /// the active run's complete history. Returns `(deleted, min_available_seq)`.
+    pub async fn prune_session_events(
+        &self,
+        session_id: &str,
+        keep_events: usize,
+    ) -> RuntimeResult<(u64, u64)> {
+        let keep = keep_events.clamp(1, 100_000);
+        self.materialize_completed_run_traces(session_id).await?;
+
+        let active_start: Option<i64> = sqlx::query_scalar(
+            r#"SELECT start_seq FROM agent_runs
+               WHERE session_id = $1 AND status IN ('running', 'awaiting_input')
+               ORDER BY started_at DESC LIMIT 1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .flatten();
+        let rows = sqlx::query(
+            r#"SELECT seq FROM session_events
+               WHERE session_id = $1 ORDER BY seq DESC LIMIT $2"#,
+        )
+        .bind(session_id)
+        .bind(i64::try_from(keep).unwrap_or(i64::MAX))
+        .fetch_all(&self.pool)
+        .await?;
+        let cutoff = if rows.len() == keep {
+            rows.last()
+                .map(|row| row.try_get::<i64, _>("seq"))
+                .transpose()?
+                .map(|seq| u64::try_from(seq).unwrap_or(0))
+        } else {
+            None
+        };
+        let mut min_available = cutoff.unwrap_or(0);
+        if let Some(start) = active_start {
+            let start = u64::try_from(start).unwrap_or(0);
+            min_available = if start == 0 {
+                0
+            } else {
+                min_available.min(start)
+            };
+        }
+
+        let mut tx = self.pool.begin().await?;
+        let deleted = sqlx::query("DELETE FROM session_events WHERE session_id = $1 AND seq < $2")
+            .bind(session_id)
+            .bind(i64::try_from(min_available).unwrap_or(i64::MAX))
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        sqlx::query(
+            "UPDATE agent_sessions SET min_available_seq = GREATEST(min_available_seq, $2) WHERE session_id = $1",
+        )
+        .bind(session_id)
+        .bind(i64::try_from(min_available).unwrap_or(i64::MAX))
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok((deleted, min_available))
     }
 
     pub async fn count_events_after(&self, session_id: &str, after_seq: u64) -> RuntimeResult<i64> {
