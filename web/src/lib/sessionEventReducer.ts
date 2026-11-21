@@ -207,6 +207,15 @@ export function reduceSessionEvent(
   state: LiveSessionState,
   event: SessionEvent,
 ): ReduceResult {
+  // Reconnects and detail hydration may overlap. An already projected frame
+  // must never append duplicate text or resurrect a completed tool as running.
+  if (
+    event.event !== "sync_required" &&
+    event.seq > 0 &&
+    event.seq <= state.afterSeq
+  ) {
+    return { state, effects: [] };
+  }
   const effects: SessionEventEffect[] = [];
   const eventTs = eventTimestampMs(event.timestamp);
   const isSubagentEvent = isSubagentScope(event);
@@ -568,5 +577,20 @@ export function reduceSessionEvent(
       return assertNever(event);
   }
 
+  return { state: next, effects };
+}
+
+/** Project one network batch with a single React state commit at the caller. */
+export function reduceSessionEventBatch(
+  state: LiveSessionState,
+  events: SessionEvent[],
+): ReduceResult {
+  let next = state;
+  const effects: SessionEventEffect[] = [];
+  for (const event of events) {
+    const result = reduceSessionEvent(next, event);
+    next = result.state;
+    effects.push(...result.effects);
+  }
   return { state: next, effects };
 }

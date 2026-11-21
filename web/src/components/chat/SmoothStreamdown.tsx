@@ -1,4 +1,4 @@
-import { Streamdown } from "streamdown";
+import { Streamdown, type ControlsConfig } from "streamdown";
 import {
   CHAT_PROSE,
   STREAMDOWN_ANIMATION,
@@ -10,6 +10,8 @@ export interface SmoothStreamdownProps {
   text: string;
   isStreaming: boolean;
   className?: string;
+  maxBacklog?: number;
+  controls?: ControlsConfig;
 }
 
 /**
@@ -20,10 +22,13 @@ export function SmoothStreamdown({
   text,
   isStreaming,
   className = CHAT_PROSE,
+  maxBacklog,
+  controls = STREAMDOWN_CONTROLS,
 }: SmoothStreamdownProps) {
   const { text: smoothedText, isSmoothing } = useSmoothStreamText(
     text,
     isStreaming,
+    maxBacklog,
   );
   const animating = isStreaming || isSmoothing;
   return (
@@ -32,7 +37,7 @@ export function SmoothStreamdown({
         mode={animating ? "streaming" : "static"}
         isAnimating={animating}
         animated={animating ? STREAMDOWN_ANIMATION : false}
-        controls={STREAMDOWN_CONTROLS}
+        controls={controls}
       >
         {smoothedText}
       </Streamdown>

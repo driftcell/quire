@@ -14,6 +14,7 @@ import {
   emptyLiveSessionState,
   hydrateLiveSession,
   reduceSessionEvent,
+  reduceSessionEventBatch,
   resetLiveRun as resetLiveRunForTest,
   type LiveSessionState,
 } from "./sessionEventReducer";
@@ -40,6 +41,7 @@ function parseFixture(value: unknown): TraceFixture {
   return value;
 }
 
+const mainRunEvents = parseFixture(mainRun).events;
 const fixtures: Record<string, TraceFixture> = {
   mainRun: parseFixture(mainRun),
   subagentRun: parseFixture(subagentRun),
@@ -228,5 +230,37 @@ describe("refetch-reducing effects", () => {
     expect(effects).toEqual([
       { type: "set-doc-linked", doc_id: "doc_1", title: "Report" },
     ]);
+  });
+});
+
+describe("batched replay protection", () => {
+  test("a replayed tool start cannot resurrect a completed call", () => {
+    const final = reduceAll(mainRunEvents);
+    const started = mainRunEvents.find(
+      (event) => event.event === "tool_call_started",
+    );
+    expect(started).toBeDefined();
+    if (!started) return;
+
+    const replayed = reduceSessionEvent(final, started);
+    expect(comparable(replayed.state)).toEqual(comparable(final));
+    expect(replayed.effects).toEqual([]);
+  });
+
+  test("a batch matches sequential projection without duplicate text", () => {
+    const running = reduceAll(mainRunEvents.slice(0, 2));
+    const first = mainRunEvents.find((event) => event.event === "text_delta");
+    expect(first).toBeDefined();
+    if (!first || first.event !== "text_delta") return;
+    const second = {
+      ...first,
+      seq: first.seq + 1,
+      delta: "next",
+    };
+    const withFirst = reduceSessionEvent(running, first).state;
+    const expected = reduceSessionEvent(withFirst, second).state;
+    const actual = reduceSessionEventBatch(running, [first, first, second]);
+
+    expect(comparable(actual.state)).toEqual(comparable(expected));
   });
 });

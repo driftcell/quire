@@ -128,9 +128,19 @@ completed trace.
 ### 2.6 Frontend projection and cache behavior
 
 `web/src/lib/sessionEventReducer.ts` is the only frontend event projection: an exhaustive pure
-reducer returns state plus effects. `useSessionEventStream` only executes those effects. The reducer
-is scope-aware, applies only main-scope usage, and clears a finished run only if no newer run owns
-the live pane. `liveTrace.ts` uses the same ordered segments for live and historical subagents.
+reducer returns state plus effects. `useSessionEventStream` only executes those effects. Network
+frames are projected in 16 ms batches with one React state commit per batch, rather than forcing a
+full render for every delta. A frame at or below the projected cursor is a no-op, so replay cannot
+duplicate text or resurrect a completed tool as running. A detail snapshot cursor is adopted only
+when a connection is created; later detail updates cannot rewind or skip a live connection's queued
+frames. The reducer is scope-aware, applies only main-scope usage, and clears a finished run only if
+no newer run owns the live pane. `liveTrace.ts` uses the same ordered segments for live and
+historical subagents.
+
+Subagent text keeps smooth incremental rendering, but a large hydration burst immediately reveals
+the settled prefix and smooths only the bounded 160-code-point tail. Subagent thinking is collapsed
+by default, including while it is streaming, and expanded subagent Markdown disables Streamdown
+controls.
 
 Complete payloads update the query cache directly: `SessionTitleUpdated`, `DocLinked`,
 `PendingQueueUpdated` and `TurnStarted` do not invalidate the full session detail. Refetches remain
@@ -145,6 +155,13 @@ final frame and waits on a watch watermark for the last enqueued frame ID to be 
 `Notify` permit), so completion cannot be lost to a wakeup race. The existing 200 ms
 `PREVIEW_ANCHOR_SETTLE` barrier then runs before `apply_operations`, so a stale preview cannot arrive
 after `ephemeral_clear`.
+
+Every streamed tool call receives a unique invocation ID. Preview IDs include that invocation rather
+than relying on the model-round-local part index, and sequence numbers restart only within that
+invocation. Streamers are keyed by argument position while block IDs arrive, so an early provisional
+block and its later identified form remain one card. Preview frames publish only after their anchor
+is resolved: `append_to_doc` requires an explicit `append` operation, while an incomplete section or
+insert target stays deferred instead of temporarily mounting at the document tail.
 
 `SubagentTask.resume_run_id` resumes a subagent from an earlier round in the same session.
 `RigModelCore` keeps up to 128 `(session_id, subagent_run_id)` history entries, each containing the
@@ -178,7 +195,10 @@ summary and settles the old thinking clock before the new round.
 - Live and hydrated projections agree for every fixture split point, including multi-round
   subagents.
 - Preview `push_block_now` waits for the final frame before the commit barrier, and intermediate
-  frames do not replay as an unbounded queue.
+  frames do not replay as an unbounded queue. Preview IDs are unique across model rounds, remain
+  stable while a block ID arrives, and never publish an unresolved anchor at the document tail.
+- Replayed session frames are idempotent, and batched frontend projection matches sequential
+  projection without duplicating deltas or reopening completed tools.
 - A resumed subagent receives its previous conversation history and appends the new task; a missing
   or mismatched resume starts fresh.
 - `[待拟标题：...]` is rejected by `QR401`, not reported as a generic heading by `QR418`.
@@ -188,10 +208,12 @@ queue claiming, active-run uniqueness, terminal single-winner behavior, cancella
 unknown-event forwarding, cursor-ahead handling, heartbeat reconciliation, `start_seq` hydration,
 trace materialization, retention and pruning with a missing active-run `start_seq`.
 `crates/quire-session-protocol` runs the golden projection fixtures, including subagent resume.
-`web/src/lib/sessionEventReducer.test.ts` checks every prefix/suffix split, lifecycle guards and
-refetch-reducing effects. `rig_agent::preview_stream::handoff_tests` verifies the final preview
-barrier and immediate wakeup after the last frame, while `rig_agent::subagents::tests` verifies
-resume history, missing history, agent mismatch and retention of the final assistant reply.
+`web/src/lib/sessionEventReducer.test.ts` checks every prefix/suffix split, lifecycle guards,
+refetch-reducing effects and duplicate-safe batch projection. `useSmoothStreamText.test.ts` covers
+bounded subagent bursts. `rig_agent::preview_stream::tests` covers invocation identity, late block
+IDs and deferred anchors; `handoff_tests` verifies the final preview barrier and immediate wakeup
+after the last frame. `rig_agent::subagents::tests` verifies resume history, missing history, agent
+mismatch and retention of the final assistant reply.
 
 Full gate:
 

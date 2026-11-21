@@ -73,6 +73,19 @@ describe("buildMixedItems preview anchors", () => {
     ]);
   });
 
+  test("replace_block keeps the streaming card at the committed block position", () => {
+    const replacement = preview("p-replace", "sec1_p", {
+      type: "replace_block",
+      block_id: "sec1_p",
+    });
+    const items = build(
+      [headingSlice("sec1", 1), slice("sec1_p"), headingSlice("sec2", 1)],
+      [replacement],
+    );
+
+    expect(itemIds(items)).toEqual(["sec1", "preview:p-replace", "sec2"]);
+  });
+
   test("chains after_block previews through uncommitted preview blocks", () => {
     const first = preview("p-first", "sec2_preview_first", {
       type: "after_block",

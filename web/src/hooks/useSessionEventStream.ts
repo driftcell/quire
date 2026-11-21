@@ -14,7 +14,7 @@ import {
   emptyLiveSessionState,
   hydrateLiveSession,
   recordResolvedQuestion as applyResolvedQuestion,
-  reduceSessionEvent,
+  reduceSessionEventBatch,
   resetLiveRun,
   type LiveSessionState,
   type SessionEventEffect,
@@ -166,8 +166,9 @@ export function useSessionEventStream({
   }, [liveState]);
 
   const afterSeqRef = useRef<number>(lastEventSeq);
+  const hydratedEventSeqRef = useRef<number>(lastEventSeq);
   useEffect(() => {
-    afterSeqRef.current = lastEventSeq;
+    hydratedEventSeqRef.current = lastEventSeq;
   }, [lastEventSeq]);
 
   const hydratedRunIdRef = useRef<string | null>(null);
@@ -265,8 +266,21 @@ export function useSessionEventStream({
   useEffect(() => {
     if (!enabled) return undefined;
 
-    const handleEvent = (event: SessionEvent) => {
-      const result = reduceSessionEvent(liveStateRef.current, event);
+    // Adopt a detail cursor only while (re)creating the stream. Later query
+    // updates must not rewind or skip frames already queued by this connection.
+    afterSeqRef.current = Math.max(
+      afterSeqRef.current,
+      hydratedEventSeqRef.current,
+    );
+    const eventQueue: SessionEvent[] = [];
+    let flushTimer: number | null = null;
+    const flushEvents = () => {
+      flushTimer = null;
+      if (eventQueue.length === 0) {
+        return;
+      }
+      const events = eventQueue.splice(0, eventQueue.length);
+      const result = reduceSessionEventBatch(liveStateRef.current, events);
       liveStateRef.current = result.state;
       setLiveState(result.state);
       afterSeqRef.current = Math.max(
@@ -286,11 +300,24 @@ export function useSessionEventStream({
         );
       }
     };
-
-    return subscribeSessionEvents(sessionId, () => afterSeqRef.current, {
-      onEvent: handleEvent,
-    });
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- bumping generation intentionally tears down and recreates the SSE stream
+    const unsubscribe = subscribeSessionEvents(
+      sessionId,
+      () => afterSeqRef.current,
+      {
+        onEvent(event) {
+          eventQueue.push(event);
+          flushTimer ??= window.setTimeout(flushEvents, 16);
+        },
+      },
+    );
+    return () => {
+      if (flushTimer !== null) {
+        window.clearTimeout(flushTimer);
+      }
+      eventQueue.length = 0;
+      unsubscribe();
+    };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- generation intentionally recreates the stream after sync_required
   }, [sessionId, enabled, queryClient, sseGeneration]);
 
   return {

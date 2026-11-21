@@ -13,6 +13,8 @@ export function SubagentOutput({
       <SmoothStreamdown
         text={text}
         isStreaming={streaming}
+        maxBacklog={160}
+        controls={false}
         className={`${CHAT_PROSE} text-xs text-muted-foreground`}
       />
     </div>

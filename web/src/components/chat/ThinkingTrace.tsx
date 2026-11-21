@@ -23,6 +23,10 @@ export interface ThinkingTraceProps {
   content: string;
   isStreaming: boolean;
   isActive?: boolean;
+  /** Live main-agent thinking opens automatically; subagents stay collapsed. */
+  autoExpand?: boolean;
+  /** Bound large hydration bursts while retaining smooth incremental deltas. */
+  maxSmoothBacklog?: number;
   /** Server timestamp when this thinking segment started. */
   startedAtMs?: number;
   /** Server-settled duration for a completed thinking segment. */
@@ -42,15 +46,21 @@ export function ThinkingTrace({
   content,
   isStreaming,
   isActive = false,
+  autoExpand = true,
+  maxSmoothBacklog,
   startedAtMs,
   durationMs,
 }: ThinkingTraceProps) {
   const [open, setOpen] = useState<boolean | undefined>(undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const { text: smoothedContent } = useSmoothStreamText(content, isStreaming);
+  const { text: smoothedContent } = useSmoothStreamText(
+    content,
+    isStreaming,
+    maxSmoothBacklog,
+  );
 
   const hasContent = content.trim().length > 0;
-  const expanded = open ?? (isStreaming || isActive);
+  const expanded = open ?? (autoExpand && (isStreaming || isActive));
   const elapsedSeconds =
     isStreaming && startedAtMs !== undefined
       ? Math.max(0, Math.floor((nowMs - startedAtMs) / 1000))

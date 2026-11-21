@@ -103,6 +103,16 @@ describe("useSmoothStreamText clock", () => {
     player.stop();
   });
 
+  test("bounds large subagent bursts to a short smooth tail", () => {
+    const clock = new SmoothStreamClock("", true, 140, 80);
+    const target = "前".repeat(900) + "🙂" + "尾".repeat(99);
+    clock.sync(target, true);
+
+    expect(Array.from(clock.currentText).length).toBe(920);
+    expect(clock.currentText).toBe(Array.from(target).slice(0, 920).join(""));
+    expect(clock.needsFrame).toBe(true);
+  });
+
   test("advances only on Unicode code-point boundaries", () => {
     const target = "A🙂中文🙃B".repeat(40);
     const clock = new SmoothStreamClock("", true);

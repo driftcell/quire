@@ -13,7 +13,7 @@ use tokio::sync::watch;
 
 use quire_protocol::{
     BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
-    PreviewStatus,
+    PreviewStatus, short_id,
 };
 use rig_core::{
     message::{ToolCall, ToolName},
@@ -327,6 +327,14 @@ impl ToolPreviewStreamer {
 }
 
 #[derive(Clone)]
+struct AnchorContext {
+    anchor: PreviewAnchor,
+    /// `AppendToDoc` is meaningful only for an explicit `append` operation.
+    /// Until then, a partial operation must not put its card at the doc tail.
+    resolved: bool,
+}
+
+#[derive(Clone)]
 struct PreviewBlock {
     block_id: Option<String>,
     block_type: String,
@@ -334,6 +342,7 @@ struct PreviewBlock {
     level: Option<u8>,
     text: Option<String>,
     anchor: PreviewAnchor,
+    anchor_resolved: bool,
 }
 
 impl PreviewBlock {
@@ -349,9 +358,12 @@ impl PreviewBlock {
 }
 
 struct StreamingPreview {
+    invocation_id: String,
     tool_name: String,
     buffer: String,
-    streamers: HashMap<String, ToolPreviewStreamer>,
+    // Argument position is stable while a block's id and anchor are still
+    // arriving. Keying by the eventual block id would create a second card.
+    streamers: HashMap<usize, ToolPreviewStreamer>,
     preview_ids: BTreeSet<String>,
 }
 
@@ -393,6 +405,7 @@ impl PreviewState {
         self.streams.insert(
             part,
             StreamingPreview {
+                invocation_id: short_id("call"),
                 tool_name: name.as_str().to_string(),
                 buffer: String::new(),
                 streamers: HashMap::new(),
@@ -412,18 +425,24 @@ impl PreviewState {
         let arguments = Value::Object(parse_partial_arguments(&stream.buffer));
         let blocks = extract_preview_blocks(&arguments);
         for (index, candidate) in blocks.iter().enumerate() {
-            let key = candidate
-                .block_id
-                .clone()
-                .unwrap_or_else(|| format!("auto-{index}"));
-            if !stream.streamers.contains_key(&key) {
+            if !candidate.anchor_resolved {
+                continue;
+            }
+            if !stream.streamers.contains_key(&index) {
                 let block_id = candidate
                     .block_id
                     .clone()
                     .unwrap_or_else(|| format!("preview{part}{index}"));
-                let preview_id = format!("{}:{}:{}:{}", self.run_id, stream.tool_name, part, key);
+                let key = candidate
+                    .block_id
+                    .clone()
+                    .unwrap_or_else(|| format!("auto-{index}"));
+                let preview_id = format!(
+                    "{}:{}:{}:{}:{}",
+                    self.run_id, stream.tool_name, stream.invocation_id, part, key
+                );
                 stream.streamers.insert(
-                    key.clone(),
+                    index,
                     ToolPreviewStreamer::new(
                         &self.base_url,
                         self.token.clone(),
@@ -436,8 +455,12 @@ impl PreviewState {
                     .with_anchor(candidate.anchor.clone()),
                 );
             }
-            if let Some(streamer) = stream.streamers.get_mut(&key) {
-                if candidate.anchor != PreviewAnchor::AppendToDoc {
+            if let Some(streamer) = stream.streamers.get_mut(&index) {
+                streamer.block_id = candidate
+                    .block_id
+                    .clone()
+                    .unwrap_or_else(|| format!("preview{part}{index}"));
+                if streamer.anchor != candidate.anchor {
                     streamer.set_anchor(candidate.anchor.clone());
                 }
                 let block_id = BlockId::parse(
@@ -473,18 +496,24 @@ impl PreviewState {
         let mut corrected = false;
         let final_blocks = extract_preview_blocks(&call.function.arguments_value());
         for (index, candidate) in final_blocks.iter().enumerate() {
-            let key = candidate
-                .block_id
-                .clone()
-                .unwrap_or_else(|| format!("auto-{index}"));
-            if !stream.streamers.contains_key(&key) {
+            if !candidate.anchor_resolved {
+                continue;
+            }
+            if !stream.streamers.contains_key(&index) {
                 let block_id = candidate
                     .block_id
                     .clone()
                     .unwrap_or_else(|| format!("preview{part}{index}"));
-                let preview_id = format!("{}:{}:{}:{}", self.run_id, stream.tool_name, part, key);
+                let key = candidate
+                    .block_id
+                    .clone()
+                    .unwrap_or_else(|| format!("auto-{index}"));
+                let preview_id = format!(
+                    "{}:{}:{}:{}:{}",
+                    self.run_id, stream.tool_name, stream.invocation_id, part, key
+                );
                 stream.streamers.insert(
-                    key.clone(),
+                    index,
                     ToolPreviewStreamer::new(
                         &self.base_url,
                         self.token.clone(),
@@ -498,9 +527,13 @@ impl PreviewState {
                 );
                 corrected = true;
             }
-            let Some(streamer) = stream.streamers.get_mut(&key) else {
+            let Some(streamer) = stream.streamers.get_mut(&index) else {
                 continue;
             };
+            streamer.block_id = candidate
+                .block_id
+                .clone()
+                .unwrap_or_else(|| format!("preview{part}{index}"));
             if streamer.anchor != candidate.anchor {
                 streamer.set_anchor(candidate.anchor.clone());
                 corrected = true;
@@ -561,7 +594,10 @@ fn extract_preview_blocks(arguments: &Value) -> Vec<PreviewBlock> {
     collect_preview_blocks(
         arguments,
         0,
-        &PreviewAnchor::AppendToDoc,
+        &AnchorContext {
+            anchor: PreviewAnchor::AppendToDoc,
+            resolved: false,
+        },
         &mut blocks,
         &mut seen,
     );
@@ -585,48 +621,84 @@ fn is_patch_operation(op_type: Option<&str>, object: &serde_json::Map<String, Va
 
 fn infer_operation_anchor(
     object: &serde_json::Map<String, Value>,
-    inherited: &PreviewAnchor,
-) -> PreviewAnchor {
+    inherited: &AnchorContext,
+) -> AnchorContext {
     let op_type = operation_type(object);
+    if op_type == Some("append") {
+        return AnchorContext {
+            anchor: PreviewAnchor::AppendToDoc,
+            resolved: true,
+        };
+    }
     if op_type == Some("append_to_section") || object.contains_key("section_id") {
         if let Some(section_id) =
             parse_preview_block_id(object.get("section_id").and_then(Value::as_str))
         {
-            return PreviewAnchor::AppendToSection { section_id };
+            return AnchorContext {
+                anchor: PreviewAnchor::AppendToSection { section_id },
+                resolved: true,
+            };
         }
-        return inherited.clone();
+        return AnchorContext {
+            anchor: inherited.anchor.clone(),
+            resolved: false,
+        };
     }
     if op_type == Some("insert_after") {
         if let Some(block_id) =
             parse_preview_block_id(object.get("target_id").and_then(Value::as_str))
         {
-            return PreviewAnchor::AfterBlock { block_id };
+            return AnchorContext {
+                anchor: PreviewAnchor::AfterBlock { block_id },
+                resolved: true,
+            };
         }
-        return inherited.clone();
+        return AnchorContext {
+            anchor: inherited.anchor.clone(),
+            resolved: false,
+        };
     }
     if op_type == Some("insert_before") {
         if let Some(block_id) =
             parse_preview_block_id(object.get("target_id").and_then(Value::as_str))
         {
-            return PreviewAnchor::BeforeBlock { block_id };
+            return AnchorContext {
+                anchor: PreviewAnchor::BeforeBlock { block_id },
+                resolved: true,
+            };
         }
-        return inherited.clone();
+        return AnchorContext {
+            anchor: inherited.anchor.clone(),
+            resolved: false,
+        };
     }
     if is_patch_operation(op_type, object) {
         if let Some(block_id) =
             parse_preview_block_id(object.get("block_id").and_then(Value::as_str))
         {
-            return PreviewAnchor::ReplaceBlock { block_id };
+            return AnchorContext {
+                anchor: PreviewAnchor::ReplaceBlock { block_id },
+                resolved: true,
+            };
         }
-        return inherited.clone();
+        return AnchorContext {
+            anchor: inherited.anchor.clone(),
+            resolved: false,
+        };
     }
     if op_type == Some("replace_range") {
         if let Some(block_id) =
             parse_preview_block_id(object.get("start_id").and_then(Value::as_str))
         {
-            return PreviewAnchor::ReplaceBlock { block_id };
+            return AnchorContext {
+                anchor: PreviewAnchor::ReplaceBlock { block_id },
+                resolved: true,
+            };
         }
-        return inherited.clone();
+        return AnchorContext {
+            anchor: inherited.anchor.clone(),
+            resolved: false,
+        };
     }
     inherited.clone()
 }
@@ -634,7 +706,7 @@ fn infer_operation_anchor(
 fn collect_preview_blocks(
     value: &Value,
     depth: usize,
-    anchor: &PreviewAnchor,
+    anchor: &AnchorContext,
     blocks: &mut Vec<PreviewBlock>,
     seen: &mut BTreeSet<String>,
 ) {
@@ -686,7 +758,7 @@ fn collect_preview_blocks(
 fn collect_chained_insert_blocks(
     value: &Value,
     depth: usize,
-    anchor: &PreviewAnchor,
+    anchor: &AnchorContext,
     blocks: &mut Vec<PreviewBlock>,
     seen: &mut BTreeSet<String>,
 ) {
@@ -705,7 +777,10 @@ fn collect_chained_insert_blocks(
             .and_then(|object| object.get("id"))
             .and_then(Value::as_str);
         if let Some(block_id) = parse_preview_block_id(previous_id) {
-            chain_anchor = PreviewAnchor::AfterBlock { block_id };
+            chain_anchor = AnchorContext {
+                anchor: PreviewAnchor::AfterBlock { block_id },
+                resolved: chain_anchor.resolved,
+            };
         }
     }
 }
@@ -726,7 +801,7 @@ fn push_preview_block(
 
 fn preview_block(
     object: &serde_json::Map<String, Value>,
-    anchor: &PreviewAnchor,
+    anchor: &AnchorContext,
 ) -> Option<PreviewBlock> {
     let text = object.get("text").and_then(Value::as_str);
     let title = object.get("title").and_then(Value::as_str);
@@ -767,7 +842,8 @@ fn preview_block(
         title: title.map(str::to_string),
         level,
         text: text.map(str::to_string),
-        anchor: anchor.clone(),
+        anchor: anchor.anchor.clone(),
+        anchor_resolved: anchor.resolved,
     })
 }
 
@@ -1024,6 +1100,50 @@ mod tests {
             PreviewAnchor::ReplaceBlock { block_id: current }
         );
         Ok(())
+    }
+
+    #[test]
+    fn incomplete_anchors_stay_deferred_but_explicit_append_is_resolved() {
+        let partial = json!({
+            "ops": [{"blocks": [{"text": "draft"}]}]
+        });
+        let blocks = extract_preview_blocks(&partial);
+        assert_eq!(blocks.len(), 1);
+        assert!(!blocks[0].anchor_resolved);
+
+        let explicit = json!({
+            "ops": [{"type": "append", "blocks": [{"text": "draft"}]}]
+        });
+        let blocks = extract_preview_blocks(&explicit);
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].anchor_resolved);
+        assert_eq!(blocks[0].anchor, PreviewAnchor::AppendToDoc);
+    }
+
+    #[tokio::test]
+    async fn preview_identity_is_unique_per_tool_call_and_stable_while_id_arrives() {
+        let tool = ToolName::new("apply_operations").expect("tool name");
+        let partial = r#"{"ops":[{"type":"append_to_section","section_id":"sec1","blocks":[{"type":"paragraph","text":"draft""#;
+        let suffix = r#","id":"sec1_p"}]}]}"#;
+        let complete = r#"{"ops":[{"type":"append_to_section","section_id":"sec1","blocks":[{"type":"paragraph","text":"draft","id":"sec1_p"}]}]}"#;
+
+        let mut first = PreviewState::for_test("run_test");
+        first.doc_id = Some("doc".into());
+        first.on_start(1, PartKind::ToolCall, Some(&tool));
+        first.on_arguments(1, partial).await;
+        let first_id = first.streams[&1].streamers[&0].preview_id().to_string();
+        first.on_arguments(1, suffix).await;
+        let stream = &first.streams[&1];
+        assert_eq!(stream.streamers.len(), 1);
+        assert_eq!(stream.streamers[&0].preview_id(), first_id);
+        assert_eq!(stream.streamers[&0].block_id, "sec1_p");
+
+        let mut second = PreviewState::for_test("run_test");
+        second.doc_id = Some("doc".into());
+        second.on_start(1, PartKind::ToolCall, Some(&tool));
+        second.on_arguments(1, complete).await;
+        let second_id = second.streams[&1].streamers[&0].preview_id();
+        assert_ne!(first_id, second_id);
     }
 
     #[test]

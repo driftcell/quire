@@ -80,6 +80,8 @@ export function SubagentTrace({
           <ThinkingTrace
             content={model.thinking}
             isStreaming={model.thinkingStreaming}
+            autoExpand={false}
+            maxSmoothBacklog={160}
             startedAtMs={model.thinkingStartedAtMs}
             durationMs={model.thinkingDurationMs}
           />

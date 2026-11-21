@@ -46,13 +46,16 @@ export class SmoothStreamClock {
   private wasStreaming: boolean;
   private finishing = false;
   private readonly baseRate: number;
+  private readonly maxBacklog: number;
 
   constructor(
     targetText: string,
     isStreaming: boolean,
     baseRate = SMOOTH_STREAM_BASE_RATE,
+    maxBacklog = Number.POSITIVE_INFINITY,
   ) {
     this.baseRate = baseRate;
+    this.maxBacklog = maxBacklog;
     this.targetText = targetText;
     this.targetUnits = countCodePoints(targetText);
     // Initial streaming mount must not replay text already on screen.
@@ -78,6 +81,29 @@ export class SmoothStreamClock {
   /** Start a new rAF burst without inheriting an old timestamp gap. */
   beginFrame(): void {
     this.lastFrameAt = null;
+  }
+
+  /**
+   * Keep only a bounded tail for subagent/history bursts. The existing prefix
+   * is already settled content, not a blank region that should be typed again.
+   */
+  private boundBacklog(): void {
+    const backlog = this.targetUnits - this.displayedUnits;
+    if (backlog <= this.maxBacklog) {
+      return;
+    }
+    const visibleUnits = this.targetUnits - this.maxBacklog;
+    let index = 0;
+    let units = 0;
+    while (units < visibleUnits && index < this.targetText.length) {
+      const codePoint = this.targetText.codePointAt(index);
+      index += codePoint !== undefined && codePoint > 0xffff ? 2 : 1;
+      units += 1;
+    }
+    this.displayedText = this.targetText.slice(0, index);
+    this.displayedIndex = index;
+    this.displayedUnits = units;
+    this.carry = 0;
   }
 
   /**
@@ -110,6 +136,7 @@ export class SmoothStreamClock {
       this.isStreaming = true;
       this.wasStreaming = true;
       this.finishing = false;
+      this.boundBacklog();
     } else if (this.wasStreaming) {
       this.isStreaming = false;
       this.finishing = true;
@@ -130,7 +157,8 @@ export class SmoothStreamClock {
 
     return {
       text: this.displayedText,
-      isSmoothing: this.currentIsSmoothing && (this.isStreaming || this.finishing),
+      isSmoothing:
+        this.currentIsSmoothing && (this.isStreaming || this.finishing),
     };
   }
 
@@ -203,10 +231,16 @@ export class SmoothStreamPlayer {
     onState: (state: SmoothStreamState) => void,
     scheduler: SmoothStreamScheduler = browserScheduler,
     baseRate = SMOOTH_STREAM_BASE_RATE,
+    maxBacklog = Number.POSITIVE_INFINITY,
   ) {
     this.onState = onState;
     this.scheduler = scheduler;
-    this.clock = new SmoothStreamClock(targetText, isStreaming, baseRate);
+    this.clock = new SmoothStreamClock(
+      targetText,
+      isStreaming,
+      baseRate,
+      maxBacklog,
+    );
   }
 
   get currentText(): string {
@@ -255,13 +289,22 @@ export class SmoothStreamPlayer {
 export function useSmoothStreamText(
   targetText: string,
   isStreaming: boolean,
+  maxBacklog = Number.POSITIVE_INFINITY,
 ): SmoothStreamState {
   const [state, setState] = useState<SmoothStreamState>(() => ({
     text: targetText,
     isSmoothing: false,
   }));
   const [player] = useState(
-    () => new SmoothStreamPlayer(targetText, isStreaming, setState),
+    () =>
+      new SmoothStreamPlayer(
+        targetText,
+        isStreaming,
+        setState,
+        browserScheduler,
+        SMOOTH_STREAM_BASE_RATE,
+        maxBacklog,
+      ),
   );
 
   useEffect(() => {
