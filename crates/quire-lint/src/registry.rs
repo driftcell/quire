@@ -6,13 +6,11 @@ use quire_protocol::Severity;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RuleId {
     DuplicateBlockId,
-    InvalidBlockId,
     BlockIdUuidV4,
     HeadingLevelRange,
     TableSchemaInvalid,
     TableUnknownRowKey,
     TableUnknownWidthOverride,
-    DocIdEmpty,
     DanglingSourceId,
     UnusedSource,
     NumericClaimWithoutCitation,
@@ -49,7 +47,6 @@ pub enum RuleId {
     HeadingLevelJump,
     HeadingEmptySection,
     HeadingNumberingMismatch,
-    VisualCaptionSequence,
     DanglingVisualRef,
     UnclosedInlineSyntax,
     EmptyTextBlock,
@@ -65,6 +62,9 @@ pub enum RuleId {
     BoringOrCountingHeading,
     DenseProseRunNeedsVisual,
     DuplicateNotePrefix,
+    BlindOrdinalOrAcademicJargon,
+    VisualMissingUnitOrScopeNote,
+    HigherEdPolicyTermFormat,
     CssSyntaxError,
     CustomHtmlExternalResource,
     CustomHtmlFixedOverflow,
@@ -130,13 +130,11 @@ macro_rules! define_rules {
 
 define_rules! {
     DuplicateBlockId = "QR001", "duplicate-block-id", Error, false;
-    InvalidBlockId = "QR002", "invalid-block-id", Error, false;
     BlockIdUuidV4 = "QR003", "block-id-uuid-v4", Error, false;
     HeadingLevelRange = "QR004", "heading-level-range", Error, false;
     TableSchemaInvalid = "QR005", "table-schema-invalid", Error, false;
     TableUnknownRowKey = "QR006", "table-unknown-row-key", Warning, false;
     TableUnknownWidthOverride = "QR007", "table-unknown-width-override", Warning, false;
-    DocIdEmpty = "QR008", "doc-id-empty", Error, false;
 
     DanglingSourceId = "QR101", "dangling-source-id", Error, false;
     UnusedSource = "QR102", "unused-source", Warning, true;
@@ -177,7 +175,6 @@ define_rules! {
     HeadingLevelJump = "QR402", "heading-level-jump", Warning, true;
     HeadingEmptySection = "QR403", "heading-empty-section", Warning, true;
     HeadingNumberingMismatch = "QR404", "heading-numbering-mismatch", Warning, true;
-    VisualCaptionSequence = "QR405", "visual-caption-sequence", Warning, true;
     DanglingVisualRef = "QR406", "dangling-visual-ref", Warning, true;
     UnclosedInlineSyntax = "QR407", "unclosed-inline-syntax", Warning, true;
     EmptyTextBlock = "QR408", "empty-text-block", Warning, true;
@@ -193,6 +190,9 @@ define_rules! {
     BoringOrCountingHeading = "QR418", "boring-or-counting-heading", Warning, true;
     DenseProseRunNeedsVisual = "QR419", "dense-prose-run-needs-visual", Warning, true;
     DuplicateNotePrefix = "QR420", "duplicate-note-prefix", Warning, true;
+    BlindOrdinalOrAcademicJargon = "QR421", "blind-ordinal-or-academic-jargon", Warning, true;
+    VisualMissingUnitOrScopeNote = "QR422", "visual-missing-unit-or-scope-note", Info, true;
+    HigherEdPolicyTermFormat = "QR423", "higher-ed-policy-term-format", Warning, true;
 
     CssSyntaxError = "QR501", "css-syntax-error", Error, false;
     CustomHtmlExternalResource = "QR502", "custom-html-external-resource", Warning, true;
@@ -261,13 +261,23 @@ mod tests {
     #[test]
     fn core_and_safety_rules_are_not_suppressible() {
         for code in [
-            "QR001", "QR002", "QR003", "QR004", "QR005", "QR006", "QR007", "QR008", "QR101",
-            "QR107", "QR301", "QR302", "QR303", "QR304", "QR501",
+            "QR001", "QR003", "QR004", "QR005", "QR006", "QR007", "QR101", "QR107", "QR301",
+            "QR302", "QR303", "QR304", "QR501",
         ] {
             let rule = RULES.iter().find(|rule| rule.code == code);
             assert!(
                 rule.is_some_and(|rule| !rule.suppressible),
                 "{code} must be registered and not suppressible"
+            );
+        }
+    }
+
+    #[test]
+    fn retired_rule_codes_are_not_registered() {
+        for code in ["QR002", "QR008", "QR405"] {
+            assert!(
+                !RULES.iter().any(|rule| rule.code == code),
+                "retired code {code} must not be reused"
             );
         }
     }
