@@ -31,7 +31,7 @@ use crate::{
         assemble_context_history, estimate_context_tokens, validate_compaction_summary,
     },
     config::Config,
-    control::{RunRegistry, spawn_interrupt_listener},
+    control::{RunRegistry, RunTurnGuard, spawn_interrupt_listener},
     error::{RuntimeError, RuntimeResult},
     events::{EventScope, EventSink, project},
     kb::{KbService, SeedReport},
@@ -1611,10 +1611,10 @@ impl RuntimeService {
         current_message_id: Option<&str>,
         token: CancellationToken,
     ) -> RuntimeResult<()> {
+        let _run_guard = RunTurnGuard::new(run_id, token.clone(), self.runs.clone());
         let result = self
             .execute_turn(session_id, run_id, content, current_message_id, &token)
             .await;
-        self.runs.remove(run_id).await;
         match result {
             Ok(()) => {
                 if token.is_cancelled() {

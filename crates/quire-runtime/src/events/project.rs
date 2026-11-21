@@ -337,6 +337,17 @@ mod tests {
     }
 
     #[test]
+    fn every_model_event_has_a_main_action() {
+        for event in crate::model_stream::sample_model_stream_events() {
+            let action = project(EventScope::main("run_main"), event.clone());
+            assert!(
+                !matches!(action, EventAction::Ignore { .. }),
+                "unhandled main model event: {event:?}"
+            );
+        }
+    }
+
+    #[test]
     fn only_main_text_contributes_to_the_assistant_response() {
         let main = project(
             EventScope::main("run_main"),

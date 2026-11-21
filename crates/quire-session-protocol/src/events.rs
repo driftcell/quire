@@ -218,6 +218,98 @@ impl SessionEventKind {
                 | Self::UserMessageInjected { .. }
         )
     }
+
+    /// Every event variant, used by architecture guardrail tests to keep
+    /// classification, naming and schema coverage exhaustive.
+    pub fn sample_variants() -> Vec<Self> {
+        vec![
+            Self::TurnStarted,
+            Self::TurnFinished,
+            Self::TurnFailed {
+                error: "error".into(),
+                recoverable: true,
+            },
+            Self::SyncRequired {
+                after_seq: 0,
+                reason: "reason".into(),
+            },
+            Self::ThinkingDelta {
+                delta: "thinking".into(),
+            },
+            Self::TextDelta {
+                delta: "text".into(),
+            },
+            Self::TaskFocus {
+                title: "title".into(),
+                detail: None,
+                section_id: None,
+            },
+            Self::ToolCallStarted {
+                tool_call_id: "tc_1".into(),
+                tool_name: "tool".into(),
+                input_preview: "{}".into(),
+                truncated: false,
+            },
+            Self::ToolCallFinished {
+                tool_call_id: "tc_1".into(),
+                status: "completed".into(),
+                output_preview: "ok".into(),
+                truncated: false,
+                duration_ms: 1,
+            },
+            Self::SubagentStarted {
+                subagent_run_id: "run_sub_1".into(),
+                agent_name: "alpha".into(),
+                display_name: None,
+                task: "task".into(),
+                section_id: None,
+            },
+            Self::SubagentFinished {
+                subagent_run_id: "run_sub_1".into(),
+                status: "completed".into(),
+                summary: "done".into(),
+            },
+            Self::ContextUsage {
+                input_tokens: 1,
+                output_tokens: 1,
+                cached_tokens: 0,
+                context_used: 2,
+                context_limit: 100,
+            },
+            Self::QuestionnaireRequested {
+                question_id: "q_1".into(),
+                tool_call_id: Some("tc_ask".into()),
+                questions: vec![],
+            },
+            Self::QuestionnaireAnswered {
+                question_id: "q_1".into(),
+                answers: vec![],
+                skipped_all: false,
+            },
+            Self::QuestionnaireDismissed {
+                question_id: "q_1".into(),
+                reason: "reason".into(),
+            },
+            Self::DocLinked {
+                doc_id: "doc_1".into(),
+                title: "title".into(),
+            },
+            Self::SessionTitleUpdated {
+                title: "title".into(),
+            },
+            Self::UserMessageAdded {
+                message_id: "msg_1".into(),
+            },
+            Self::UserMessageInjected {
+                message_id: "msg_1".into(),
+                content: "content".into(),
+                created_at: chrono::Utc::now(),
+            },
+            Self::PendingQueueUpdated { items: vec![] },
+            Self::CompactionStarted,
+            Self::CompactionFinished { success: true },
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -369,31 +461,24 @@ mod tests {
     fn schema_exports_every_event_variant() {
         let schema = schemars::schema_for!(SessionEvent);
         let rendered = serde_json::to_string(&schema).unwrap();
-        for event in [
-            "turn_started",
-            "turn_finished",
-            "turn_failed",
-            "sync_required",
-            "thinking_delta",
-            "text_delta",
-            "task_focus",
-            "tool_call_started",
-            "tool_call_finished",
-            "subagent_started",
-            "subagent_finished",
-            "context_usage",
-            "questionnaire_requested",
-            "questionnaire_answered",
-            "questionnaire_dismissed",
-            "doc_linked",
-            "session_title_updated",
-            "user_message_added",
-            "user_message_injected",
-            "pending_queue_updated",
-            "compaction_started",
-            "compaction_finished",
-        ] {
-            assert!(rendered.contains(event), "missing {event} in schema");
+        let variants = SessionEventKind::sample_variants();
+        assert_eq!(variants.len(), 22);
+        for kind in variants {
+            let name = kind.event_name();
+            assert!(rendered.contains(name), "missing {name} in schema");
+        }
+    }
+
+    #[test]
+    fn sample_variants_have_consistent_scope_classification() {
+        for kind in SessionEventKind::sample_variants() {
+            let event = SessionEvent::new(1, "run_main", "main", None, kind.clone());
+            assert_eq!(
+                event.trace_run_id().is_some(),
+                kind.is_run_scoped(),
+                "scope mismatch for {}",
+                kind.event_name()
+            );
         }
     }
 

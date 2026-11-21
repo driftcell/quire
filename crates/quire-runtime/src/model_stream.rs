@@ -215,6 +215,78 @@ pub fn missing_provider_error(route: &str) -> RuntimeError {
     RuntimeError::InvalidRequest(format!("no model stream provider configured for `{route}`"))
 }
 
+/// Every provider event variant, used by projection guardrail tests.
+#[cfg(test)]
+pub(crate) fn sample_model_stream_events() -> Vec<ModelStreamEvent> {
+    vec![
+        ModelStreamEvent::ThinkingDelta("thinking".into()),
+        ModelStreamEvent::TextDelta("text".into()),
+        ModelStreamEvent::TaskFocus {
+            title: "title".into(),
+            detail: None,
+            section_id: None,
+        },
+        ModelStreamEvent::DocLinked {
+            doc_id: "doc_1".into(),
+            title: "title".into(),
+        },
+        ModelStreamEvent::SessionTitleUpdated {
+            title: "title".into(),
+        },
+        ModelStreamEvent::SubagentStarted {
+            subagent_run_id: "run_sub_1".into(),
+            agent_name: "alpha".into(),
+            display_name: None,
+            task: "task".into(),
+            section_id: None,
+        },
+        ModelStreamEvent::SubagentFinished {
+            subagent_run_id: "run_sub_1".into(),
+            status: "completed".into(),
+            summary: "done".into(),
+        },
+        ModelStreamEvent::SubagentEvent {
+            subagent_run_id: "run_sub_1".into(),
+            agent_name: "alpha".into(),
+            event: Box::new(ModelStreamEvent::TextDelta("child".into())),
+        },
+        ModelStreamEvent::ToolCallStarted {
+            tool_call_id: "tc_1".into(),
+            tool_name: "tool".into(),
+            input_preview: "{}".into(),
+            truncated: false,
+            input: serde_json::json!({}),
+        },
+        ModelStreamEvent::ToolCallFinished {
+            tool_call_id: "tc_1".into(),
+            tool_name: "tool".into(),
+            status: "completed".into(),
+            output_preview: "ok".into(),
+            truncated: false,
+            duration_ms: 1,
+            input: serde_json::json!({}),
+            output: serde_json::json!({}),
+            error: None,
+        },
+        ModelStreamEvent::UserMessageInjected {
+            message_id: "msg_1".into(),
+            content: "content".into(),
+            created_at: chrono::Utc::now(),
+        },
+        ModelStreamEvent::QuestionnaireRequested {
+            tool_call_id: Some("tc_ask".into()),
+            questions: vec![],
+        },
+        ModelStreamEvent::Usage(quire_session_protocol::ContextUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cached_tokens: 0,
+            context_used: 2,
+            context_limit: 100,
+        }),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
