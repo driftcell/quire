@@ -1,13 +1,13 @@
 //! Pluggable model stream used by the runtime turn loop and offline tests.
 
-use std::{collections::VecDeque, pin::Pin, sync::Arc};
+use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::Stream;
 use quire_session_protocol::{ContextUsage, QuestionItem};
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::{sync::Mutex, sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -113,6 +113,51 @@ pub trait ModelStreamProvider: Send + Sync {
     async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream>;
 }
 
+/// Aborts the producer task when the consumer drops the stream.
+struct AbortOnDrop(JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Spawn a producer task and expose its events as a stream bound to the consumer's lifetime.
+///
+/// Dropping the stream aborts the producer. A consumer that fails midway (for example on a
+/// persistence error) therefore cannot leave a provider executing model turns or tools in the
+/// background after the run has already been marked as failed.
+/// Bounded producer queue. Slow persistence applies backpressure instead of
+/// accumulating an unbounded number of deltas and full tool payloads in memory.
+const PRODUCER_CHANNEL_CAPACITY: usize = 256;
+
+pub(crate) fn spawn_producer_stream<F, Fut>(
+    cancellation: CancellationToken,
+    producer: F,
+) -> ModelEventStream
+where
+    F: FnOnce(mpsc::Sender<RuntimeResult<ModelStreamEvent>>) -> Fut + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    let (sender, mut receiver) = mpsc::channel(PRODUCER_CHANNEL_CAPACITY);
+    let task = AbortOnDrop(tokio::spawn(producer(sender)));
+    let stream = async_stream::stream! {
+        let _task = task;
+        loop {
+            tokio::select! {
+                _ = cancellation.cancelled() => break,
+                item = receiver.recv() => {
+                    match item {
+                        Some(item) => yield item,
+                        None => break,
+                    }
+                }
+            }
+        }
+    };
+    Box::pin(stream)
+}
+
 /// Deterministic local provider used when no external model is configured.
 #[derive(Debug, Default)]
 pub struct StubStreamProvider;
@@ -168,4 +213,130 @@ impl ModelStreamProvider for MockStreamProvider {
 /// Fail fast if a provider is asked to stream without a model route.
 pub fn missing_provider_error(route: &str) -> RuntimeError {
     RuntimeError::InvalidRequest(format!("no model stream provider configured for `{route}`"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+        time::Duration,
+    };
+
+    use futures::StreamExt;
+
+    struct DropFlag(Arc<AtomicBool>);
+
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_the_stream_aborts_the_producer_task() {
+        let aborted = Arc::new(AtomicBool::new(false));
+        let producer_flag = Arc::clone(&aborted);
+        let mut stream =
+            spawn_producer_stream(CancellationToken::new(), move |sender| async move {
+                let _flag = DropFlag(producer_flag);
+                let _ = sender
+                    .send(Ok(ModelStreamEvent::TextDelta("first".into())))
+                    .await;
+                tokio::time::sleep(Duration::from_secs(60)).await;
+            });
+
+        let first = stream.next().await;
+        assert!(matches!(first, Some(Ok(ModelStreamEvent::TextDelta(text))) if text == "first"));
+        drop(stream);
+
+        for _ in 0..100 {
+            if aborted.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("producer task was not aborted when the stream was dropped");
+    }
+
+    #[tokio::test]
+    async fn producer_events_flow_until_the_producer_completes() {
+        let mut stream = spawn_producer_stream(CancellationToken::new(), |sender| async move {
+            let _ = sender
+                .send(Ok(ModelStreamEvent::ThinkingDelta("plan".into())))
+                .await;
+            let _ = sender
+                .send(Ok(ModelStreamEvent::TextDelta("answer".into())))
+                .await;
+        });
+
+        let first = stream.next().await;
+        let second = stream.next().await;
+        let end = stream.next().await;
+        assert!(matches!(
+            first,
+            Some(Ok(ModelStreamEvent::ThinkingDelta(_)))
+        ));
+        assert!(matches!(second, Some(Ok(ModelStreamEvent::TextDelta(_)))));
+        assert!(end.is_none());
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_the_stream() {
+        let token = CancellationToken::new();
+        let mut stream = spawn_producer_stream(token.clone(), |sender| async move {
+            let _ = sender
+                .send(Ok(ModelStreamEvent::TextDelta("first".into())))
+                .await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
+
+        let _ = stream.next().await;
+        token.cancel();
+        let end = stream.next().await;
+        assert!(end.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_slow_consumer_applies_backpressure_to_the_producer() {
+        let sent = Arc::new(AtomicUsize::new(0));
+        let producer_sent = Arc::clone(&sent);
+        let mut stream =
+            spawn_producer_stream(CancellationToken::new(), move |sender| async move {
+                for index in 0..(PRODUCER_CHANNEL_CAPACITY + 32) {
+                    if sender
+                        .send(Ok(ModelStreamEvent::TextDelta(index.to_string())))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    producer_sent.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+
+        for _ in 0..100 {
+            if sent.load(Ordering::SeqCst) >= PRODUCER_CHANNEL_CAPACITY {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            sent.load(Ordering::SeqCst),
+            PRODUCER_CHANNEL_CAPACITY,
+            "the producer must stop at the bounded queue capacity"
+        );
+
+        let _ = stream.next().await;
+        for _ in 0..100 {
+            if sent.load(Ordering::SeqCst) > PRODUCER_CHANNEL_CAPACITY {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            sent.load(Ordering::SeqCst) > PRODUCER_CHANNEL_CAPACITY,
+            "consuming one frame must release one queue slot"
+        );
+    }
 }

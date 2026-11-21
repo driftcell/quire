@@ -39,12 +39,13 @@ use quire_runtime::{
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
-    RunTraceSegment, RunTraceSummary, RunTraceToolItem, SendMessageRequest, SessionCommentRef,
-    SessionEvent, SessionEventKind, SessionMessage,
+    RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
+    SessionCommentRef, SessionEvent, SessionEventKind, SessionMessage,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, Notify};
+use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 fn test_lock() -> &'static Mutex<()> {
@@ -195,6 +196,7 @@ fn test_config(base_url: &str) -> Config {
         workspace_dir: std::env::temp_dir(),
         default_model: "stub/echo".into(),
         sse_replay_limit: 500,
+        sse_heartbeat_ms: 50,
         preview_throttle_ms: 65,
         preview_base_url: "http://127.0.0.1:5173".into(),
         preview_public_url: "http://localhost:5173".into(),
@@ -341,6 +343,54 @@ fn test_oss_config() -> quire_runtime::oss::OssConfig {
         access_key_secret: Some(SecretString::from("test-secret-value")),
         key_prefix: "quire/attachments".into(),
     }
+}
+
+fn subagent_text(subagent: &RunTraceSubagent) -> String {
+    subagent
+        .segments
+        .iter()
+        .filter_map(|segment| match segment {
+            RunTraceSegment::Text { text } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn subagent_thinking_text(subagent: &RunTraceSubagent) -> String {
+    subagent
+        .segments
+        .iter()
+        .filter_map(|segment| match segment {
+            RunTraceSegment::Thinking { text, .. } => Some(text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn subagent_tools(subagent: &RunTraceSubagent) -> Vec<RunTraceToolItem> {
+    subagent
+        .segments
+        .iter()
+        .flat_map(|segment| match segment {
+            RunTraceSegment::Execution { tools, .. } => tools.clone(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn subagent_thinking_started_at(
+    subagent: &RunTraceSubagent,
+) -> Option<chrono::DateTime<chrono::Utc>> {
+    subagent
+        .segments
+        .iter()
+        .rev()
+        .find_map(|segment| match segment {
+            RunTraceSegment::Thinking { started_at, .. } => *started_at,
+            _ => None,
+        })
 }
 
 fn find_trace_tool<'a>(
@@ -2499,7 +2549,12 @@ async fn compaction_conflicts_while_a_run_is_active() {
     let error = service.compact(&session.session_id).await.unwrap_err();
     assert!(matches!(error, RuntimeError::CompactionConflict(_)));
     store
-        .finish_run(&run.run_id, "completed", None)
+        .finish_run_with_event(
+            &run.run_id,
+            "completed",
+            None,
+            SessionEventKind::TurnFinished,
+        )
         .await
         .unwrap();
     service.delete_session(&session.session_id).await.unwrap();
@@ -5518,22 +5573,724 @@ async fn session_detail_returns_an_atomic_active_run_snapshot() {
     assert_eq!(subagent.subagent_run_id, "run-sub");
     assert_eq!(subagent.status, "running");
     assert_eq!(subagent.started_at, Some(subagent_started.timestamp));
-    assert_eq!(subagent.text, "子代理输出片段。");
-    assert_eq!(subagent.thinking, "子代理正在思考。");
+    assert_eq!(subagent_text(subagent), "子代理输出片段。");
+    assert_eq!(subagent_thinking_text(subagent), "子代理正在思考。");
     assert_eq!(
-        subagent.thinking_started_at,
+        subagent_thinking_started_at(subagent),
         Some(subagent_thinking.timestamp)
     );
     assert!(
-        subagent
-            .tools
+        subagent_tools(subagent)
             .iter()
             .any(|tool| tool.tool_call_id == "sub-live" && tool.status == "running")
     );
 
     store
-        .finish_run(&run.run_id, "completed", None)
+        .finish_run_with_event(
+            &run.run_id,
+            "completed",
+            None,
+            SessionEventKind::TurnFinished,
+        )
         .await
         .unwrap();
     service.delete_session(session_id).await.unwrap();
+}
+
+struct FailingTurnProvider {
+    cancellation: Arc<Mutex<Option<CancellationToken>>>,
+}
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for FailingTurnProvider {
+    async fn stream_turn(
+        &self,
+        request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        *self.cancellation.lock().await = Some(request.cancellation.clone());
+        Ok(Box::pin(futures::stream::iter(vec![Err(
+            RuntimeError::Internal("turn failed".into()),
+        )])))
+    }
+}
+
+#[tokio::test]
+async fn failed_turn_cancels_the_provider_token() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let captured = Arc::new(Mutex::new(None));
+    let service = service.with_model_stream_provider(Arc::new(FailingTurnProvider {
+        cancellation: captured.clone(),
+    }));
+    let session = service
+        .create_session("cancel provider on failure", None)
+        .await
+        .unwrap();
+    let outcome = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("failing-turn"),
+                content: "trigger a provider failure".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let PostMessageOutcome::Started { run_id, .. } = outcome else {
+        panic!("expected a started run");
+    };
+
+    wait_for_idle(&store, &session.session_id).await;
+    let token = captured
+        .lock()
+        .await
+        .clone()
+        .expect("provider captured the cancellation token");
+    assert!(
+        token.is_cancelled(),
+        "a failed run must cancel the provider token so no tool work continues"
+    );
+    assert_eq!(store.get_run(&run_id).await.unwrap().status, "failed");
+}
+
+#[tokio::test]
+async fn queued_messages_do_not_create_phantom_traces_or_hijack_the_active_run() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let provider = GateStreamProvider::new();
+    let service = service.with_model_stream_provider(Arc::new(provider.clone()));
+    let session = service
+        .create_session("queue frames stay out of traces", None)
+        .await
+        .unwrap();
+    let first = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-trace-first"),
+                content: "start a gated run".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let PostMessageOutcome::Started { run_id, .. } = first else {
+        panic!("expected a started run");
+    };
+    wait_for_running(&store, &session.session_id).await;
+    let mut trace_started = false;
+    for _ in 0..200 {
+        let traces = store.list_run_traces(&session.session_id).await.unwrap();
+        if traces.iter().any(|trace| trace.run_id == run_id) {
+            trace_started = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        trace_started,
+        "turn_started must be persisted before hydration is asserted"
+    );
+
+    let second = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("queue-trace-second"),
+                content: "queue behind the active run".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(second, PostMessageOutcome::Queued { .. }),
+        "the second message must wait for the active run"
+    );
+
+    let detail = store.get_session_detail(&session.session_id).await.unwrap();
+    let active = detail
+        .active_run_trace
+        .as_ref()
+        .expect("an active run must hydrate its own trace");
+    assert_eq!(
+        active.run_id, run_id,
+        "queue control frames must not replace the active run trace"
+    );
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    assert_eq!(
+        traces.len(),
+        1,
+        "only the real run owns a trace: {traces:?}"
+    );
+    assert!(
+        traces.iter().all(|trace| trace.run_id != "queue"),
+        "queue control frames must not create phantom traces: {traces:?}"
+    );
+
+    provider.release();
+    wait_for_idle(&store, &session.session_id).await;
+}
+
+#[tokio::test]
+async fn active_run_creation_is_unique_per_session() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session("one active run only", None)
+        .await
+        .unwrap();
+    let run = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await
+        .unwrap();
+
+    let conflict = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await;
+    assert!(
+        conflict.is_err(),
+        "a second active run must be rejected even behind the in-memory gate"
+    );
+
+    store
+        .finish_run_with_event(
+            &run.run_id,
+            "completed",
+            None,
+            SessionEventKind::TurnFinished,
+        )
+        .await
+        .unwrap();
+    let next = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await
+        .unwrap();
+    store
+        .finish_run_with_event(
+            &next.run_id,
+            "completed",
+            None,
+            SessionEventKind::TurnFinished,
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn terminal_transition_has_a_single_winner() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session("one terminal event only", None)
+        .await
+        .unwrap();
+    let run = store
+        .create_run(&session.session_id, None, "main", "stub/echo")
+        .await
+        .unwrap();
+
+    let completed = store
+        .finish_run_with_event(
+            &run.run_id,
+            "completed",
+            None,
+            SessionEventKind::TurnFinished,
+        )
+        .await
+        .unwrap();
+    assert!(completed.is_some());
+    let interrupted = store
+        .finish_run_with_event(
+            &run.run_id,
+            "cancelled",
+            Some("interrupted by user"),
+            SessionEventKind::TurnFailed {
+                error: "interrupted by user".into(),
+                recoverable: true,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(
+        interrupted.is_none(),
+        "a late interrupt must not emit a second terminal event"
+    );
+
+    let events = store
+        .list_events(&session.session_id, 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_name() == "turn_finished")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_name() == "turn_failed")
+            .count(),
+        0
+    );
+    assert_eq!(
+        store.get_run(&run.run_id).await.unwrap().status,
+        "completed"
+    );
+}
+
+#[derive(Clone)]
+struct DripStreamProvider {
+    first_delta_consumed: Arc<Notify>,
+}
+
+impl DripStreamProvider {
+    fn new() -> Self {
+        Self {
+            first_delta_consumed: Arc::new(Notify::new()),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for DripStreamProvider {
+    async fn stream_turn(
+        &self,
+        request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        let cancellation = request.cancellation.clone();
+        let first_delta_consumed = self.first_delta_consumed.clone();
+        Ok(Box::pin(async_stream::stream! {
+            yield Ok(ModelStreamEvent::TextDelta("partial answer".into()));
+            // This notification fires when the consumer polls again, after it
+            // has accepted the first delta into its coalescer.
+            first_delta_consumed.notify_one();
+            cancellation.cancelled().await;
+        }))
+    }
+}
+
+#[tokio::test]
+async fn interrupt_flushes_residual_deltas_before_a_single_terminal_event() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let provider = DripStreamProvider::new();
+    let service = service.with_model_stream_provider(Arc::new(provider.clone()));
+    let session = service
+        .create_session("interrupt ordering", None)
+        .await
+        .unwrap();
+    let outcome = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("interrupt-order"),
+                content: "start a slow answer".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let PostMessageOutcome::Started { run_id, .. } = outcome else {
+        panic!("expected a started run");
+    };
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        provider.first_delta_consumed.notified(),
+    )
+    .await
+    .expect("the first delta must reach the turn loop");
+
+    service
+        .interrupt(&session.session_id, Some(&run_id))
+        .await
+        .unwrap();
+    let events = store
+        .list_events(&session.session_id, 0, 100)
+        .await
+        .unwrap();
+    let terminal = events
+        .iter()
+        .position(|event| event.event_name() == "turn_failed")
+        .expect("the interrupt must emit one terminal event");
+    assert!(
+        events[..terminal].iter().any(|event| matches!(
+            &event.kind,
+            SessionEventKind::TextDelta { delta } if delta == "partial answer"
+        )),
+        "the buffered delta must be persisted before the terminal event: {events:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .all(|event| event.event_name() != "turn_finished"),
+        "an interrupted run must not also emit turn_finished"
+    );
+
+    let event_count = events.len();
+    service
+        .interrupt(&session.session_id, Some(&run_id))
+        .await
+        .unwrap();
+    let after_second_interrupt = store
+        .list_events(&session.session_id, 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(
+        after_second_interrupt.len(),
+        event_count,
+        "a repeated interrupt must not append another terminal event"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_queue_claims_have_one_winner() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session("queue claim winner", None)
+        .await
+        .unwrap();
+    let item = store
+        .enqueue_pending_message(
+            &session.session_id,
+            &unique("queue-claim"),
+            "queued message",
+            &[],
+            PendingQueueSource::User,
+            None,
+            &[],
+        )
+        .await
+        .unwrap();
+    let request = SendMessageRequest {
+        client_msg_id: format!("queue:{}", item.queue_id),
+        content: item.content.clone(),
+        comment_refs: Vec::new(),
+        attachment_ids: Vec::new(),
+    };
+    let queue_ids = vec![item.queue_id.clone()];
+
+    let (first, second) = tokio::join!(
+        store.claim_pending_batch(&session.session_id, "queue", &request, &queue_ids, false),
+        store.claim_pending_batch(&session.session_id, "queue", &request, &queue_ids, false),
+    );
+    let first = first.unwrap();
+    let second = second.unwrap();
+    assert_ne!(
+        first.is_some(),
+        second.is_some(),
+        "exactly one concurrent claim may win"
+    );
+
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    assert_eq!(
+        messages
+            .iter()
+            .filter(
+                |message| message.role == MessageRole::User && message.content == "queued message"
+            )
+            .count(),
+        1
+    );
+    assert!(
+        store
+            .list_pending_queue(&session.session_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "the winning claim removes the queue item"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unknown_events_are_forwarded_and_skipped_by_projection() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("future-event"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    store
+        .append_event(
+            &session.session_id,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::TextDelta {
+                delta: "known".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let payload = json!({
+        "seq": 2,
+        "run_id": "run_main",
+        "agent_id": "main",
+        "parent_run_id": null,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "event": "future_event",
+        "future_field": 42
+    });
+    sqlx::query(
+        r#"INSERT INTO session_events
+           (session_id, seq, run_id, agent_id, parent_run_id, event_type, event, created_at)
+           VALUES ($1, 2, 'run_main', 'main', NULL, 'future_event', $2, NOW())"#,
+    )
+    .bind(&session.session_id)
+    .bind(&payload)
+    .execute(store.pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE agent_sessions SET last_event_seq = 2 WHERE session_id = $1")
+        .bind(&session.session_id)
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    assert_eq!(traces.len(), 1, "the future frame is skipped by projection");
+    assert!(store.get_session_detail(&session.session_id).await.is_ok());
+
+    let app = quire_runtime::http::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let response = reqwest::Client::new()
+        .get(format!(
+            "http://{address}/api/sessions/{}/events?afterSeq=1",
+            session.session_id
+        ))
+        .bearer_auth("runtime-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let frame = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let frame = next_sse_frame(&mut stream, &mut buffer)
+                .await
+                .expect("the unknown frame must be forwarded verbatim");
+            if frame.contains("data:") {
+                return frame;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(frame.contains("event: future_event"), "{frame}");
+    assert!(frame.contains("\"future_field\":42"), "{frame}");
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cursor_ahead_of_the_server_returns_sync_required() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("cursor-ahead"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    store
+        .append_event(
+            &session.session_id,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::TextDelta {
+                delta: "only one".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let app = quire_runtime::http::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let response = reqwest::Client::new()
+        .get(format!(
+            "http://{address}/api/sessions/{}/events?afterSeq=99",
+            session.session_id
+        ))
+        .bearer_auth("runtime-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let event = tokio::time::timeout(
+        Duration::from_secs(2),
+        next_session_event(&mut stream, &mut buffer),
+    )
+    .await
+    .unwrap()
+    .expect("cursor-ahead must produce sync_required");
+    assert!(matches!(
+        event.kind,
+        SessionEventKind::SyncRequired { after_seq: 99, .. }
+    ));
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn heartbeat_reconcile_repairs_a_missing_publish() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("heartbeat-reconcile"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    store
+        .append_event(
+            &session.session_id,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::TextDelta {
+                delta: "before".into(),
+            },
+        )
+        .await
+        .unwrap();
+
+    let app = quire_runtime::http::router(service.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let response = reqwest::Client::new()
+        .get(format!(
+            "http://{address}/api/sessions/{}/events?afterSeq=1",
+            session.session_id
+        ))
+        .bearer_auth("runtime-test-token")
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    // Commit a real event without publishing it to Redis, simulating the lost
+    // terminal publish that previously left clients stuck until reconnect.
+    let mut tx = store.pool().begin().await.unwrap();
+    store
+        .append_event_in(
+            &mut tx,
+            &session.session_id,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::TurnFinished,
+        )
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+
+    let repaired = tokio::time::timeout(
+        Duration::from_secs(5),
+        next_session_event(&mut stream, &mut buffer),
+    )
+    .await
+    .unwrap()
+    .expect("the heartbeat must reconcile the missing frame");
+    assert_eq!(repaired.seq, 2);
+    assert!(matches!(repaired.kind, SessionEventKind::TurnFinished));
+    server.abort();
+}
+
+#[tokio::test]
+async fn active_run_start_seq_scopes_hydration_to_the_current_run() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let service = service.with_model_stream_provider(Arc::new(MockStreamProvider::new(vec![
+        vec![ModelStreamEvent::TextDelta("older run text".into())],
+    ])));
+    let session = service
+        .create_session("start seq hydration", None)
+        .await
+        .unwrap();
+    let _ = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("start-seq-old"),
+                content: "finish the older run".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let provider = GateStreamProvider::new();
+    let service = service.with_model_stream_provider(Arc::new(provider.clone()));
+    let second = service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("start-seq-new"),
+                content: "keep the current run active".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    let PostMessageOutcome::Started { run_id, .. } = second else {
+        panic!("expected the second run to start");
+    };
+    wait_for_running(&store, &session.session_id).await;
+    let mut turn_started = None;
+    for _ in 0..200 {
+        let events = store
+            .list_events(&session.session_id, 0, 100)
+            .await
+            .unwrap();
+        if let Some(event) = events
+            .iter()
+            .find(|event| event.run_id == run_id && event.event_name() == "turn_started")
+        {
+            turn_started = Some(event.clone());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let turn_started = turn_started.expect("the current run has turn_started");
+    assert_eq!(
+        store.get_run(&run_id).await.unwrap().start_seq,
+        Some(turn_started.seq),
+        "turn_started and start_seq are recorded atomically"
+    );
+
+    let detail = store.get_session_detail(&session.session_id).await.unwrap();
+    let active = detail
+        .active_run_trace
+        .as_ref()
+        .expect("the active run hydrates its trace");
+    assert_eq!(active.run_id, run_id);
+    assert!(
+        active.segments.is_empty(),
+        "the active range starts at this run's turn_started, not at older history: {active:?}"
+    );
+
+    provider.release();
+    wait_for_idle(&store, &session.session_id).await;
 }

@@ -1,0 +1,176 @@
+{
+  "events": [
+    {
+      "seq": 1,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "event": "user_message_added",
+      "message_id": "msg_1"
+    },
+    {
+      "seq": 2,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:01Z",
+      "event": "turn_started"
+    },
+    {
+      "seq": 3,
+      "run_id": "queue",
+      "agent_id": "system",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:02Z",
+      "event": "pending_queue_updated",
+      "items": []
+    },
+    {
+      "seq": 4,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:03Z",
+      "event": "doc_linked",
+      "doc_id": "doc_1",
+      "title": "Report"
+    },
+    {
+      "seq": 5,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:04Z",
+      "event": "session_title_updated",
+      "title": "Report"
+    },
+    {
+      "seq": 6,
+      "run_id": "compaction",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:05Z",
+      "event": "compaction_started"
+    },
+    {
+      "seq": 7,
+      "run_id": "compaction",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:06Z",
+      "event": "compaction_finished",
+      "success": true
+    },
+    {
+      "seq": 8,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:07Z",
+      "event": "text_delta",
+      "delta": "answer"
+    },
+    {
+      "seq": 9,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:08Z",
+      "event": "turn_finished"
+    }
+  ],
+  "expected_traces": [
+    {
+      "run_id": "run_main",
+      "status": "completed",
+      "started_at": "2026-01-01T00:00:01Z",
+      "duration_ms": 7000,
+      "segments": [
+        {
+          "kind": "text",
+          "text": "answer"
+        }
+      ]
+    }
+  ],
+  "prefix_traces": [
+    [],
+    [],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:01Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:01Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:01Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:01Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:01Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:01Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:01Z",
+        "segments": [
+          {
+            "kind": "text",
+            "text": "answer"
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "completed",
+        "started_at": "2026-01-01T00:00:01Z",
+        "duration_ms": 7000,
+        "segments": [
+          {
+            "kind": "text",
+            "text": "answer"
+          }
+        ]
+      }
+    ]
+  ]
+}

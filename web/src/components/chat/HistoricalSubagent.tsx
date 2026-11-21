@@ -1,7 +1,8 @@
 import { SubagentTrace } from "@/components/chat/SubagentTrace";
 import { isVisibleTraceTool } from "@/components/chat/toolMeta";
-import { toToolTraceItems } from "@/components/chat/traceSegments";
+import { extractSubagentLiveView } from "@/components/chat/traceSegments";
 import type { RunTraceSubagent } from "@/contracts/session-protocol";
+import { liveSubagentFromSummary } from "@/lib/liveTrace";
 
 export function HistoricalSubagent({
   sessionId,
@@ -10,14 +11,11 @@ export function HistoricalSubagent({
   sessionId: string;
   subagent: RunTraceSubagent;
 }) {
+  const live = liveSubagentFromSummary(subagent, false);
+  const view = extractSubagentLiveView(live.trace);
   const title = subagent.display_name?.trim() || subagent.agent_name;
-  const tools = toToolTraceItems(subagent.tools).filter(isVisibleTraceTool);
-  const status =
-    subagent.status === "running"
-      ? "running"
-      : subagent.status === "failed"
-        ? "failed"
-        : "completed";
+  const tools = view.tools.filter(isVisibleTraceTool);
+  const status = live.status;
 
   return (
     <SubagentTrace
@@ -27,11 +25,11 @@ export function HistoricalSubagent({
         title,
         focusTitle: subagent.task_focus?.title,
         status,
-        thinking: subagent.thinking,
+        thinking: view.thinkingText,
         thinkingStreaming: false,
-        thinkingDurationMs: subagent.thinking_duration_ms ?? undefined,
+        thinkingDurationMs: view.thinkingDurationMs,
         tools,
-        outputText: subagent.summary?.trim() || subagent.text?.trim() || "",
+        outputText: subagent.summary?.trim() || view.streamingText.trim() || "",
         outputStreaming: false,
       }}
     />

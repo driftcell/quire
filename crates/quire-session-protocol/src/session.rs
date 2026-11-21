@@ -272,19 +272,13 @@ pub struct RunTraceSubagent {
     pub started_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
-    pub thinking: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_duration_ms: Option<u64>,
-    /// Start of the currently streaming thinking phase. `None` once settled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thinking_started_at: Option<DateTime<Utc>>,
-    /// Text streamed by the subagent before it finishes.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub text: String,
+    /// Ordered subagent activity, isomorphic to the main run's segments. Text
+    /// closes the preceding thinking/execution phase, so multi-round tool use
+    /// keeps the same order in live and hydrated views.
+    #[serde(default)]
+    pub segments: Vec<RunTraceSegment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_focus: Option<RunTaskFocus>,
-    #[serde(default)]
-    pub tools: Vec<RunTraceToolItem>,
 }
 
 /// One ordered slice of a run. Text output closes the preceding thinking and

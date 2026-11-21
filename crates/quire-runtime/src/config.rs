@@ -27,6 +27,7 @@ pub struct Config {
     pub workspace_dir: PathBuf,
     pub default_model: String,
     pub sse_replay_limit: usize,
+    pub sse_heartbeat_ms: u64,
     pub preview_throttle_ms: u64,
     pub preview_base_url: String,
     pub preview_public_url: String,
@@ -60,6 +61,7 @@ impl Debug for Config {
             .field("workspace_dir", &self.workspace_dir)
             .field("default_model", &self.default_model)
             .field("sse_replay_limit", &self.sse_replay_limit)
+            .field("sse_heartbeat_ms", &self.sse_heartbeat_ms)
             .field("preview_throttle_ms", &self.preview_throttle_ms)
             .field("preview_base_url", &self.preview_base_url)
             .field("preview_public_url", &self.preview_public_url)
@@ -103,6 +105,11 @@ impl Config {
             .and_then(|value| value.parse::<usize>().ok())
             .unwrap_or(500)
             .clamp(1, 10_000);
+        let sse_heartbeat_ms = env::var("RUNTIME_SSE_HEARTBEAT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(15_000)
+            .clamp(50, 60_000);
         let preview_throttle_ms = env::var("RUNTIME_PREVIEW_THROTTLE_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -133,6 +140,7 @@ impl Config {
             workspace_dir,
             default_model,
             sse_replay_limit,
+            sse_heartbeat_ms,
             preview_throttle_ms,
             preview_base_url,
             preview_public_url,
@@ -195,6 +203,7 @@ mod tests {
             workspace_dir: PathBuf::from("."),
             default_model: "stub/echo".into(),
             sse_replay_limit: 500,
+            sse_heartbeat_ms: 15_000,
             preview_throttle_ms: 65,
             preview_base_url: "http://127.0.0.1:5173".into(),
             preview_public_url: "http://localhost:5173".into(),

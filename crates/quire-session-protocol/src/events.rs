@@ -41,6 +41,18 @@ impl SessionEvent {
     pub const fn event_name(&self) -> &'static str {
         self.kind.event_name()
     }
+
+    /// Owning run for trace aggregation, or `None` for session-level control/signal frames.
+    ///
+    /// Subagent activity is grouped under its root run through `parent_run_id`. Session-level
+    /// frames never contribute to a run trace, so synthetic run IDs such as `queue` or
+    /// `compaction` cannot materialise as phantom traces.
+    pub fn trace_run_id(&self) -> Option<&str> {
+        if !self.kind.is_run_scoped() {
+            return None;
+        }
+        Some(self.parent_run_id.as_deref().unwrap_or(&self.run_id))
+    }
 }
 
 /// Event variants carried inside [`SessionEvent`].
@@ -179,6 +191,31 @@ impl SessionEventKind {
                 | Self::TurnFailed { .. }
                 | Self::SyncRequired { .. }
                 | Self::QuestionnaireRequested { .. }
+        )
+    }
+
+    /// Whether the event belongs to a run's durable lifecycle/activity log.
+    ///
+    /// Session control frames (`pending_queue_updated`, compaction, `sync_required`) and
+    /// invalidation signals (`doc_linked`, `session_title_updated`, `user_message_added`,
+    /// questionnaire resolution) are excluded: they must not create or mutate run traces, even
+    /// when they carry a synthetic `run_id`.
+    pub const fn is_run_scoped(&self) -> bool {
+        matches!(
+            self,
+            Self::TurnStarted
+                | Self::TurnFinished
+                | Self::TurnFailed { .. }
+                | Self::ThinkingDelta { .. }
+                | Self::TextDelta { .. }
+                | Self::TaskFocus { .. }
+                | Self::ToolCallStarted { .. }
+                | Self::ToolCallFinished { .. }
+                | Self::SubagentStarted { .. }
+                | Self::SubagentFinished { .. }
+                | Self::ContextUsage { .. }
+                | Self::QuestionnaireRequested { .. }
+                | Self::UserMessageInjected { .. }
         )
     }
 }
@@ -358,5 +395,70 @@ mod tests {
         ] {
             assert!(rendered.contains(event), "missing {event} in schema");
         }
+    }
+
+    #[test]
+    fn session_control_and_signal_frames_never_own_a_trace() {
+        let queue = SessionEvent::new(
+            2,
+            "queue",
+            "system",
+            None,
+            SessionEventKind::PendingQueueUpdated { items: vec![] },
+        );
+        assert_eq!(queue.trace_run_id(), None);
+
+        let compaction = SessionEvent::new(
+            3,
+            "compaction",
+            "main",
+            None,
+            SessionEventKind::CompactionStarted,
+        );
+        assert_eq!(compaction.trace_run_id(), None);
+
+        let added = SessionEvent::new(
+            4,
+            "run_main",
+            "queue",
+            None,
+            SessionEventKind::UserMessageAdded {
+                message_id: "msg_1".into(),
+            },
+        );
+        assert_eq!(added.trace_run_id(), None);
+
+        let linked = SessionEvent::new(
+            5,
+            "run_main",
+            "main",
+            None,
+            SessionEventKind::DocLinked {
+                doc_id: "doc_1".into(),
+                title: "Report".into(),
+            },
+        );
+        assert_eq!(linked.trace_run_id(), None);
+    }
+
+    #[test]
+    fn run_scoped_frames_group_subagents_under_the_root_run() {
+        let main = SessionEvent::new(1, "run_main", "main", None, SessionEventKind::TurnStarted);
+        assert_eq!(main.trace_run_id(), Some("run_main"));
+
+        let subagent = SessionEvent::new(
+            2,
+            "run_sub_1",
+            "alpha",
+            Some("run_main".into()),
+            SessionEventKind::ThinkingDelta {
+                delta: "plan".into(),
+            },
+        );
+        assert_eq!(subagent.trace_run_id(), Some("run_main"));
+
+        let terminal =
+            SessionEvent::new(3, "run_main", "main", None, SessionEventKind::TurnFinished);
+        assert_eq!(terminal.trace_run_id(), Some("run_main"));
     }
 }

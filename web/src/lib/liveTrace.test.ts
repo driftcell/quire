@@ -84,6 +84,7 @@ describe("active run hydration", () => {
   const startedAt = new Date(now - 12_000).toISOString();
   const thinkingStartedAt = new Date(now - 8_000).toISOString();
   const streamingThinkingAt = new Date(now - 2_000).toISOString();
+  const subagentThinkingStartedAt = new Date(now - 3_000).toISOString();
 
   const subagent: RunTraceSubagent = {
     subagent_run_id: "sub-1",
@@ -92,21 +93,30 @@ describe("active run hydration", () => {
     task: "核对统计口径",
     status: "running",
     started_at: new Date(now - 10_000).toISOString(),
-    thinking: "子代理正在核对数据。",
-    thinking_started_at: new Date(now - 3_000).toISOString(),
-    text: "子代理已返回部分结论。",
-    task_focus: { title: "核对统计口径" },
-    tools: [
+    segments: [
       {
-        tool_call_id: "sub-tool",
-        tool_name: "read_blocks",
-        status: "completed",
-        input_preview: "{}",
-        output_preview: "{}",
-        duration_ms: 500,
-        truncated: false,
+        kind: "thinking",
+        text: "子代理正在核对数据。",
+        started_at: subagentThinkingStartedAt,
       },
+      {
+        kind: "execution",
+        tools: [
+          {
+            tool_call_id: "sub-tool",
+            tool_name: "read_blocks",
+            status: "completed",
+            input_preview: "{}",
+            output_preview: "{}",
+            duration_ms: 500,
+            truncated: false,
+          },
+        ],
+        subagents: [],
+      },
+      { kind: "text", text: "子代理已返回部分结论。" },
     ],
+    task_focus: { title: "核对统计口径" },
   };
 
   const trace: RunTraceSummary = {
@@ -214,9 +224,7 @@ describe("active run hydration", () => {
     }
     expect(thinking.text).toBe("子代理正在核对数据。");
     expect(thinking.durationMs).toBeUndefined();
-    expect(thinking.startedAtMs).toBe(
-      Date.parse(subagent.thinking_started_at ?? ""),
-    );
+    expect(thinking.startedAtMs).toBe(Date.parse(subagentThinkingStartedAt));
 
     const execution = live.trace.segments[1];
     if (execution?.kind !== "execution") {

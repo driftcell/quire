@@ -213,16 +213,17 @@ impl ModelRegistry {
 
     pub fn spawn_invalidation_listener(&self) -> tokio::task::JoinHandle<()> {
         let cache = self.cache.clone();
-        let bus = self.store.bus().clone();
-        tokio::spawn(async move {
-            let Ok(mut subscriber) = bus.subscribe_model_invalidation().await else {
-                return;
-            };
-            while subscriber.next_invalidation().await.is_some() {
-                cache.invalidate_all();
-                cache.run_pending_tasks().await;
-            }
-        })
+        crate::bus::spawn_resilient_invalidation_listener(
+            self.store.bus().clone(),
+            crate::bus::RedisBus::model_invalidation_subscription,
+            Box::new(move || {
+                let cache = cache.clone();
+                Box::pin(async move {
+                    cache.invalidate_all();
+                    cache.run_pending_tasks().await;
+                })
+            }),
+        )
     }
 
     pub async fn list_providers(&self) -> RuntimeResult<Vec<ProviderRecord>> {

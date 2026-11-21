@@ -19,7 +19,6 @@ use quire_session_protocol::{
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
-use serde_json::Value;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
@@ -33,8 +32,8 @@ use crate::{
     },
     config::Config,
     control::{RunRegistry, spawn_interrupt_listener},
-    delta::{CoalescedDelta, DeltaCoalescer, DeltaKind},
     error::{RuntimeError, RuntimeResult},
+    events::{EventScope, EventSink, project},
     kb::{KbService, SeedReport},
     mcp_client::RmcpClient,
     mcp_registry::McpRegistry,
@@ -301,37 +300,23 @@ impl PendingQueueCoordinator {
             comment_refs,
             attachment_ids,
         };
-        let (message, _) = if inject_into_run {
-            self.store
-                .insert_injected_user_message(session_id, run_id, &request)
-                .await?
-        } else {
-            self.store.insert_user_message(session_id, &request).await?
+        let queue_ids = batch
+            .iter()
+            .map(|item| item.queue_id.clone())
+            .collect::<Vec<_>>();
+        let Some(message) = self
+            .store
+            .claim_pending_batch(session_id, run_id, &request, &queue_ids, inject_into_run)
+            .await?
+        else {
+            return Ok(None);
         };
-        self.store
-            .remove_pending_items(
-                session_id,
-                &batch
-                    .iter()
-                    .map(|item| item.queue_id.clone())
-                    .collect::<Vec<_>>(),
-            )
-            .await?;
-        self.emit_queue_update(session_id).await?;
-        if !inject_into_run {
-            self.store
-                .append_event(
-                    session_id,
-                    run_id,
-                    "queue",
-                    None,
-                    SessionEventKind::UserMessageAdded {
-                        message_id: message.message_id.clone(),
-                    },
-                )
-                .await?;
-        }
         Ok(Some(PendingBatch { message }))
+    }
+
+    /// Release the in-memory gate when a session is deleted.
+    pub(crate) async fn remove_session_gate(&self, session_id: &str) {
+        self.session_gates.lock().await.remove(session_id);
     }
 
     /// Acquire the session gate and take one pending batch.
@@ -535,7 +520,11 @@ impl RuntimeService {
     }
 
     pub async fn delete_session(&self, session_id: &str) -> RuntimeResult<()> {
-        self.store.delete_session(session_id).await
+        let result = self.store.delete_session(session_id).await;
+        if result.is_ok() {
+            self.queue.remove_session_gate(session_id).await;
+        }
+        result
     }
 
     async fn session_gate(&self, session_id: &str) -> Arc<Mutex<()>> {
@@ -863,6 +852,8 @@ impl RuntimeService {
         answers: &[QuestionAnswer],
         skipped: bool,
     ) -> RuntimeResult<SessionDetail> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
         let question = self
             .store
             .pending_question_by_id(session_id, question_id)
@@ -1052,36 +1043,40 @@ impl RuntimeService {
                 "run does not belong to this session".into(),
             ));
         }
-        self.store
+        let _ = self.runs.cancel(&run.run_id).await;
+        if let Err(error) = self
+            .store
             .bus()
             .publish_interrupt(&InterruptCommand {
                 session_id: session_id.to_string(),
                 run_id: run.run_id.clone(),
             })
-            .await?;
-        let _ = self.runs.cancel(&run.run_id).await;
-        if let Some(run) = self
-            .store
-            .interrupt_run(&run.run_id, "interrupted by user")
-            .await?
+            .await
         {
-            self.emit(
-                session_id,
-                &run.run_id,
-                &run.agent_id,
-                run.parent_run_id.as_deref(),
-                SessionEventKind::TurnFailed {
-                    error: "interrupted by user".into(),
-                    recoverable: true,
-                },
-            )
-            .await?;
-            self.runs.remove(&run.run_id).await;
+            warn!(%error, %session_id, run_id = %run.run_id, "failed to publish cross-instance interrupt; continuing local cancellation");
         }
+
+        // Let the owning turn flush its remaining deltas and finish itself. Only
+        // a bounded fallback writes the terminal event here; the conditional
+        // transition guarantees there is exactly one winner and one terminal frame.
+        let mut finalized = false;
+        for _ in 0..40 {
+            if self.store.get_run(&run.run_id).await?.status != "running" {
+                finalized = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        if !finalized {
+            self.finish_cancelled_run(&run.run_id).await?;
+        }
+        self.runs.remove(&run.run_id).await;
         self.store.get_session_detail(session_id).await
     }
 
     pub async fn retry(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
         let messages = self.store.list_messages(session_id).await?;
         let Some(last_user) = messages
             .iter()
@@ -1632,19 +1627,20 @@ impl RuntimeService {
                 Ok(())
             }
             Err(error) => {
-                if !token.is_cancelled() {
+                let was_cancelled = token.is_cancelled();
+                // Stop the producer before reporting failure: a persistence or mapping error
+                // must not leave the agent executing tools after the run is marked as failed.
+                token.cancel();
+                if !was_cancelled {
+                    let message = error.to_string();
                     let _ = self
                         .store
-                        .finish_run(run_id, "failed", Some(&error.to_string()))
-                        .await;
-                    let _ = self
-                        .emit(
-                            session_id,
+                        .finish_run_with_event(
                             run_id,
-                            "main",
-                            None,
+                            "failed",
+                            Some(&message),
                             SessionEventKind::TurnFailed {
-                                error: error.to_string(),
+                                error: message.clone(),
                                 recoverable: true,
                             },
                         )
@@ -1653,6 +1649,24 @@ impl RuntimeService {
                 Err(error)
             }
         }
+    }
+
+    /// Finish a user-cancelled run after the turn has flushed its deltas.
+    /// A concurrent finisher simply makes this a no-op.
+    async fn finish_cancelled_run(&self, run_id: &str) -> RuntimeResult<()> {
+        let _ = self
+            .store
+            .finish_run_with_event(
+                run_id,
+                "cancelled",
+                Some("interrupted by user"),
+                SessionEventKind::TurnFailed {
+                    error: "interrupted by user".into(),
+                    recoverable: true,
+                },
+            )
+            .await?;
+        Ok(())
     }
 
     async fn execute_turn(
@@ -1679,17 +1693,16 @@ impl RuntimeService {
             assemble_context_history(&messages, &state, session.doc_id.as_deref(), synced_version);
         let context = build_resume_context(&pinned, &history, content, kb_version, synced_version);
         if token.is_cancelled() {
+            self.finish_cancelled_run(run_id).await?;
             return Ok(());
         }
-        self.emit(
-            session_id,
-            run_id,
-            "main",
-            None,
-            SessionEventKind::TurnStarted,
-        )
-        .await?;
+        let mut sink = EventSink::new(session_id, self.store.clone());
+        let main_scope = EventScope::main(run_id);
+        self.store
+            .start_run_with_event(run_id, SessionEventKind::TurnStarted)
+            .await?;
         if token.is_cancelled() {
+            self.finish_cancelled_run(run_id).await?;
             return Ok(());
         }
         let branch = session.kb_branch.clone();
@@ -1699,7 +1712,6 @@ impl RuntimeService {
             .map(|agent| agent.model.clone())
             .unwrap_or_else(|| self.config.default_model.clone());
         let allowed_tools = agent.map(|agent| agent.allowed_tools).unwrap_or_default();
-        let mut coalescer = DeltaCoalescer::default();
         let request = ModelTurnRequest {
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
@@ -1722,264 +1734,33 @@ impl RuntimeService {
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
-                    let deltas = coalescer.flush_all();
-                    self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                    sink.flush().await?;
+                    self.finish_cancelled_run(run_id).await?;
                     return Ok(());
                 }
                 _ = tick.tick() => {
-                    let deltas = coalescer.flush_due(Instant::now());
-                    self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                    sink.flush_due(Instant::now()).await?;
                 }
                 item = stream.next() => {
                     match item {
-                        Some(Ok(ModelStreamEvent::ThinkingDelta(delta))) => {
-                            let deltas = coalescer.push(
-                                Instant::now(),
-                                run_id,
-                                "main",
-                                DeltaKind::Thinking,
-                                &delta,
-                            );
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                        }
-                        Some(Ok(ModelStreamEvent::TextDelta(delta))) => {
-                            response.push_str(&delta);
-                            let deltas = coalescer.push(
-                                Instant::now(),
-                                run_id,
-                                "main",
-                                DeltaKind::Text,
-                                &delta,
-                            );
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                        }
-                        Some(Ok(ModelStreamEvent::TaskFocus {
-                            title,
-                            detail,
-                            section_id,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                SessionEventKind::TaskFocus {
-                                    title,
-                                    detail,
-                                    section_id,
-                                },
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::DocLinked { doc_id, title })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                SessionEventKind::DocLinked { doc_id, title },
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::SessionTitleUpdated { title })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                SessionEventKind::SessionTitleUpdated { title },
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::SubagentStarted {
-                            subagent_run_id,
-                            agent_name,
-                            display_name,
-                            task,
-                            section_id,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                &agent_name,
-                                Some(run_id),
-                                SessionEventKind::SubagentStarted {
-                                    subagent_run_id,
-                                    agent_name: agent_name.clone(),
-                                    display_name,
-                                    task,
-                                    section_id,
-                                },
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::SubagentFinished {
-                            subagent_run_id,
-                            status,
-                            summary,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                "main",
-                                Some(run_id),
-                                SessionEventKind::SubagentFinished {
-                                    subagent_run_id,
-                                    status,
-                                    summary,
-                                },
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::SubagentEvent {
-                            subagent_run_id,
-                            agent_name,
-                            event,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.handle_subagent_event(
-                                session_id,
-                                run_id,
-                                &subagent_run_id,
-                                &agent_name,
-                                *event,
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::ToolCallStarted {
-                            tool_call_id,
-                            tool_name,
-                            input_preview,
-                            truncated,
-                            input,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.record_stream_tool_started(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                &tool_call_id,
-                                &tool_name,
-                                &input_preview,
-                                truncated,
-                                input,
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::ToolCallFinished {
-                            tool_call_id,
-                            tool_name,
-                            status,
-                            output_preview,
-                            truncated,
-                            duration_ms,
-                            input,
-                            output,
-                            error,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.record_stream_tool_finished(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                &tool_call_id,
-                                &tool_name,
-                                &status,
-                                &output_preview,
-                                truncated,
-                                duration_ms,
-                                input,
-                                output,
-                                error,
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::UserMessageInjected {
-                            message_id,
-                            content,
-                            created_at,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                SessionEventKind::UserMessageInjected {
-                                    message_id,
-                                    content,
-                                    created_at,
-                                },
-                            )
-                            .await?;
-                        }
-                        Some(Ok(ModelStreamEvent::QuestionnaireRequested {
-                            tool_call_id,
-                            questions,
-                        })) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            let question = self
-                                .store
-                                .create_question(
-                                    session_id,
-                                    run_id,
-                                    tool_call_id.as_deref(),
-                                    &questions,
-                                )
-                                .await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                SessionEventKind::QuestionnaireRequested {
-                                    question_id: question.question_id.clone(),
-                                    tool_call_id: question.tool_call_id.clone(),
-                                    questions: question.questions.clone(),
-                                },
-                            )
-                            .await?;
-                            suspended_question = Some(question);
-                        }
-                        Some(Ok(ModelStreamEvent::Usage(usage))) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
-                            self.emit(
-                                session_id,
-                                run_id,
-                                "main",
-                                None,
-                                SessionEventKind::ContextUsage {
-                                    input_tokens: usage.input_tokens,
-                                    output_tokens: usage.output_tokens,
-                                    cached_tokens: usage.cached_tokens,
-                                    context_used: usage.context_used,
-                                    context_limit: usage.context_limit,
-                                },
-                            )
-                            .await?;
-                            reported_usage = Some(usage);
+                        Some(Ok(event)) => {
+                            let action = project(main_scope.clone(), event);
+                            if let Some(text) = action.main_text_delta() {
+                                response.push_str(text);
+                            }
+                            let outcome = sink.apply(action).await?;
+                            if let Some(reason) = outcome.ignored {
+                                warn!(%session_id, %run_id, reason, "ignoring out-of-scope model event");
+                            }
+                            if let Some(usage) = outcome.main_usage {
+                                reported_usage = Some(usage);
+                            }
+                            if let Some(question) = outcome.question {
+                                suspended_question = Some(question);
+                            }
                         }
                         Some(Err(error)) => {
-                            let deltas = coalescer.flush_all();
-                            self.emit_coalesced(session_id, run_id, "main", deltas).await?;
+                            sink.flush().await?;
                             return Err(error);
                         }
                         None => break,
@@ -1987,10 +1768,9 @@ impl RuntimeService {
                 }
             }
         }
-        let deltas = coalescer.flush_all();
-        self.emit_coalesced(session_id, run_id, "main", deltas)
-            .await?;
+        sink.flush().await?;
         if token.is_cancelled() {
+            self.finish_cancelled_run(run_id).await?;
             return Ok(());
         }
         if let Some(question) = suspended_question {
@@ -2020,11 +1800,8 @@ impl RuntimeService {
                         &response,
                     )
                     .await;
-                self.emit(
-                    session_id,
-                    run_id,
-                    "main",
-                    None,
+                sink.emit(
+                    main_scope.clone(),
                     SessionEventKind::ContextUsage {
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
@@ -2039,296 +1816,23 @@ impl RuntimeService {
         };
         self.store.update_context_usage(session_id, &usage).await?;
         if token.is_cancelled() {
+            self.finish_cancelled_run(run_id).await?;
             return Ok(());
         }
-        self.emit(
-            session_id,
-            run_id,
-            "main",
-            None,
-            SessionEventKind::TurnFinished,
-        )
-        .await?;
+        let Some(_terminal) = self
+            .store
+            .finish_run_with_event(run_id, "completed", None, SessionEventKind::TurnFinished)
+            .await?
+        else {
+            // A user interrupt won the terminal transition; do not emit a second
+            // terminal event or advance the session as a completed run.
+            return Ok(());
+        };
         if kb_version > synced_version {
             self.store
                 .advance_synced_kb_version(session_id, kb_version)
                 .await?;
         }
-        self.store.finish_run(run_id, "completed", None).await?;
-        Ok(())
-    }
-
-    async fn handle_subagent_event(
-        &self,
-        session_id: &str,
-        parent_run_id: &str,
-        subagent_run_id: &str,
-        agent_name: &str,
-        event: ModelStreamEvent,
-    ) -> RuntimeResult<()> {
-        let parent = Some(parent_run_id);
-        match event {
-            ModelStreamEvent::ThinkingDelta(delta) => {
-                self.emit(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    SessionEventKind::ThinkingDelta { delta },
-                )
-                .await?;
-            }
-            ModelStreamEvent::TextDelta(delta) => {
-                self.emit(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    SessionEventKind::TextDelta { delta },
-                )
-                .await?;
-            }
-            ModelStreamEvent::TaskFocus {
-                title,
-                detail,
-                section_id,
-            } => {
-                self.emit(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    SessionEventKind::TaskFocus {
-                        title,
-                        detail,
-                        section_id,
-                    },
-                )
-                .await?;
-            }
-            ModelStreamEvent::DocLinked { .. } | ModelStreamEvent::SessionTitleUpdated { .. } => {}
-            ModelStreamEvent::SubagentStarted {
-                subagent_run_id: nested_id,
-                agent_name: nested_name,
-                display_name,
-                task,
-                section_id,
-            } => {
-                self.emit(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    SessionEventKind::SubagentStarted {
-                        subagent_run_id: nested_id,
-                        agent_name: nested_name,
-                        display_name,
-                        task,
-                        section_id,
-                    },
-                )
-                .await?;
-            }
-            ModelStreamEvent::SubagentFinished {
-                subagent_run_id: nested_id,
-                status,
-                summary,
-            } => {
-                self.emit(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    SessionEventKind::SubagentFinished {
-                        subagent_run_id: nested_id,
-                        status,
-                        summary,
-                    },
-                )
-                .await?;
-            }
-            ModelStreamEvent::SubagentEvent {
-                subagent_run_id: nested_id,
-                agent_name: nested_name,
-                event,
-            } => {
-                Box::pin(self.handle_subagent_event(
-                    session_id,
-                    parent_run_id,
-                    &nested_id,
-                    &nested_name,
-                    *event,
-                ))
-                .await?;
-            }
-            ModelStreamEvent::ToolCallStarted {
-                tool_call_id,
-                tool_name,
-                input_preview,
-                truncated,
-                input,
-            } => {
-                self.record_stream_tool_started(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    &tool_call_id,
-                    &tool_name,
-                    &input_preview,
-                    truncated,
-                    input,
-                )
-                .await?;
-            }
-            ModelStreamEvent::ToolCallFinished {
-                tool_call_id,
-                tool_name,
-                status,
-                output_preview,
-                truncated,
-                duration_ms,
-                input,
-                output,
-                error,
-            } => {
-                self.record_stream_tool_finished(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    &tool_call_id,
-                    &tool_name,
-                    &status,
-                    &output_preview,
-                    truncated,
-                    duration_ms,
-                    input,
-                    output,
-                    error,
-                )
-                .await?;
-            }
-            ModelStreamEvent::Usage(usage) => {
-                self.emit(
-                    session_id,
-                    subagent_run_id,
-                    agent_name,
-                    parent,
-                    SessionEventKind::ContextUsage {
-                        input_tokens: usage.input_tokens,
-                        output_tokens: usage.output_tokens,
-                        cached_tokens: usage.cached_tokens,
-                        context_used: usage.context_used,
-                        context_limit: usage.context_limit,
-                    },
-                )
-                .await?;
-            }
-            ModelStreamEvent::UserMessageInjected { .. } => {
-                warn!(
-                    session = %session_id,
-                    subagent = %subagent_run_id,
-                    "pending user messages are only injected into the main agent"
-                );
-            }
-            ModelStreamEvent::QuestionnaireRequested { .. } => {
-                warn!(
-                    session = %session_id,
-                    subagent = %subagent_run_id,
-                    "ask_user is only supported by the main agent"
-                );
-            }
-        }
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn record_stream_tool_started(
-        &self,
-        session_id: &str,
-        run_id: &str,
-        agent_id: &str,
-        parent_run_id: Option<&str>,
-        tool_call_id: &str,
-        tool_name: &str,
-        input_preview: &str,
-        truncated: bool,
-        input: Value,
-    ) -> RuntimeResult<()> {
-        let detail = ToolCallDetail {
-            tool_call_id: tool_call_id.to_string(),
-            session_id: session_id.to_string(),
-            run_id: run_id.to_string(),
-            tool_name: tool_name.to_string(),
-            status: "running".into(),
-            input,
-            output: Value::Null,
-            error: None,
-            duration_ms: 0,
-            created_at: chrono::Utc::now(),
-        };
-        self.store.save_tool_call(&detail).await?;
-        self.emit(
-            session_id,
-            run_id,
-            agent_id,
-            parent_run_id,
-            SessionEventKind::ToolCallStarted {
-                tool_call_id: tool_call_id.to_string(),
-                tool_name: tool_name.to_string(),
-                input_preview: input_preview.to_string(),
-                truncated,
-            },
-        )
-        .await?;
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    async fn record_stream_tool_finished(
-        &self,
-        session_id: &str,
-        run_id: &str,
-        agent_id: &str,
-        parent_run_id: Option<&str>,
-        tool_call_id: &str,
-        tool_name: &str,
-        status: &str,
-        output_preview: &str,
-        truncated: bool,
-        duration_ms: u64,
-        input: Value,
-        output: Value,
-        error: Option<String>,
-    ) -> RuntimeResult<()> {
-        let detail = ToolCallDetail {
-            tool_call_id: tool_call_id.to_string(),
-            session_id: session_id.to_string(),
-            run_id: run_id.to_string(),
-            tool_name: tool_name.to_string(),
-            status: status.to_string(),
-            input,
-            output,
-            error: error.clone(),
-            duration_ms,
-            created_at: chrono::Utc::now(),
-        };
-        self.store.save_tool_call(&detail).await?;
-        self.emit(
-            session_id,
-            run_id,
-            agent_id,
-            parent_run_id,
-            SessionEventKind::ToolCallFinished {
-                tool_call_id: tool_call_id.to_string(),
-                status: status.to_string(),
-                output_preview: output_preview.to_string(),
-                truncated,
-                duration_ms,
-            },
-        )
-        .await?;
         Ok(())
     }
 
@@ -2359,23 +1863,6 @@ impl RuntimeService {
             .unwrap_or(0),
             context_limit,
         }
-    }
-
-    async fn emit_coalesced(
-        &self,
-        session_id: &str,
-        run_id: &str,
-        agent_id: &str,
-        deltas: Vec<CoalescedDelta>,
-    ) -> RuntimeResult<()> {
-        for delta in deltas {
-            let kind = match delta.kind {
-                DeltaKind::Thinking => SessionEventKind::ThinkingDelta { delta: delta.delta },
-                DeltaKind::Text => SessionEventKind::TextDelta { delta: delta.delta },
-            };
-            self.emit(session_id, run_id, agent_id, None, kind).await?;
-        }
-        Ok(())
     }
 
     async fn emit(

@@ -1,0 +1,759 @@
+{
+  "events": [
+    {
+      "seq": 1,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "event": "turn_started"
+    },
+    {
+      "seq": 2,
+      "run_id": "run_main",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:01Z",
+      "event": "subagent_started",
+      "subagent_run_id": "run_sub_1",
+      "agent_name": "alpha",
+      "display_name": "Alpha",
+      "task": "multi-round analysis",
+      "section_id": "analysis"
+    },
+    {
+      "seq": 3,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:02Z",
+      "event": "thinking_delta",
+      "delta": "round one"
+    },
+    {
+      "seq": 4,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:03Z",
+      "event": "tool_call_started",
+      "tool_call_id": "tc_1",
+      "tool_name": "read_blocks",
+      "input_preview": "{}",
+      "truncated": false
+    },
+    {
+      "seq": 5,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:04Z",
+      "event": "tool_call_finished",
+      "tool_call_id": "tc_1",
+      "status": "completed",
+      "output_preview": "first result",
+      "truncated": false,
+      "duration_ms": 25
+    },
+    {
+      "seq": 6,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:05Z",
+      "event": "thinking_delta",
+      "delta": "round two"
+    },
+    {
+      "seq": 7,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:06Z",
+      "event": "tool_call_started",
+      "tool_call_id": "tc_2",
+      "tool_name": "apply_operations",
+      "input_preview": "{\"ops\":[",
+      "truncated": true
+    },
+    {
+      "seq": 8,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:07Z",
+      "event": "tool_call_finished",
+      "tool_call_id": "tc_2",
+      "status": "completed",
+      "output_preview": "second result",
+      "truncated": false,
+      "duration_ms": 50
+    },
+    {
+      "seq": 9,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:08Z",
+      "event": "text_delta",
+      "delta": "final answer"
+    },
+    {
+      "seq": 10,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:09Z",
+      "event": "subagent_finished",
+      "subagent_run_id": "run_sub_1",
+      "status": "completed",
+      "summary": "done"
+    },
+    {
+      "seq": 11,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:10Z",
+      "event": "turn_finished"
+    }
+  ],
+  "expected_traces": [
+    {
+      "run_id": "run_main",
+      "status": "completed",
+      "started_at": "2026-01-01T00:00:00Z",
+      "duration_ms": 10000,
+      "segments": [
+        {
+          "kind": "execution",
+          "tools": [],
+          "subagents": [
+            {
+              "subagent_run_id": "run_sub_1",
+              "agent_name": "alpha",
+              "display_name": "Alpha",
+              "task": "multi-round analysis",
+              "section_id": "analysis",
+              "status": "completed",
+              "started_at": "2026-01-01T00:00:01Z",
+              "summary": "done",
+              "segments": [
+                {
+                  "kind": "thinking",
+                  "text": "round one",
+                  "duration_ms": 1000,
+                  "started_at": "2026-01-01T00:00:02Z"
+                },
+                {
+                  "kind": "execution",
+                  "tools": [
+                    {
+                      "tool_call_id": "tc_1",
+                      "tool_name": "read_blocks",
+                      "status": "completed",
+                      "input_preview": "{}",
+                      "output_preview": "first result",
+                      "duration_ms": 25,
+                      "truncated": false
+                    }
+                  ],
+                  "subagents": []
+                },
+                {
+                  "kind": "thinking",
+                  "text": "round two",
+                  "duration_ms": 1000,
+                  "started_at": "2026-01-01T00:00:05Z"
+                },
+                {
+                  "kind": "execution",
+                  "tools": [
+                    {
+                      "tool_call_id": "tc_2",
+                      "tool_name": "apply_operations",
+                      "status": "completed",
+                      "input_preview": "{\"ops\":[",
+                      "output_preview": "second result",
+                      "duration_ms": 50,
+                      "truncated": false
+                    }
+                  ],
+                  "subagents": []
+                },
+                {
+                  "kind": "text",
+                  "text": "final answer"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "prefix_traces": [
+    [],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": []
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "started_at": "2026-01-01T00:00:02Z"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "running",
+                        "input_preview": "{}",
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "thinking",
+                    "text": "round two",
+                    "started_at": "2026-01-01T00:00:05Z"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "thinking",
+                    "text": "round two",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:05Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_2",
+                        "tool_name": "apply_operations",
+                        "status": "running",
+                        "input_preview": "{\"ops\":[",
+                        "truncated": true
+                      }
+                    ],
+                    "subagents": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "thinking",
+                    "text": "round two",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:05Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_2",
+                        "tool_name": "apply_operations",
+                        "status": "completed",
+                        "input_preview": "{\"ops\":[",
+                        "output_preview": "second result",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "thinking",
+                    "text": "round two",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:05Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_2",
+                        "tool_name": "apply_operations",
+                        "status": "completed",
+                        "input_preview": "{\"ops\":[",
+                        "output_preview": "second result",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "text",
+                    "text": "final answer"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "completed",
+                "started_at": "2026-01-01T00:00:01Z",
+                "summary": "done",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "thinking",
+                    "text": "round two",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:05Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_2",
+                        "tool_name": "apply_operations",
+                        "status": "completed",
+                        "input_preview": "{\"ops\":[",
+                        "output_preview": "second result",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "text",
+                    "text": "final answer"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "completed",
+        "started_at": "2026-01-01T00:00:00Z",
+        "duration_ms": 10000,
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "multi-round analysis",
+                "section_id": "analysis",
+                "status": "completed",
+                "started_at": "2026-01-01T00:00:01Z",
+                "summary": "done",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "round one",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_1",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "first result",
+                        "duration_ms": 25,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "thinking",
+                    "text": "round two",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:05Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_2",
+                        "tool_name": "apply_operations",
+                        "status": "completed",
+                        "input_preview": "{\"ops\":[",
+                        "output_preview": "second result",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "text",
+                    "text": "final answer"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  ]
+}

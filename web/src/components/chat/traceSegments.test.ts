@@ -30,7 +30,7 @@ function subagent(id: string): RunTraceSubagent {
     agent_name: "writer",
     task: "write chapter",
     status: "completed",
-    thinking: "",
+    segments: [],
   };
 }
 

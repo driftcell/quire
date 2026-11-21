@@ -104,13 +104,15 @@ impl RigModelCore {
         task: SubagentTask,
     ) -> SubagentOutcome {
         let subagent_run_id = short_id("run_sub");
-        parent_scope.send_raw(ModelStreamEvent::SubagentStarted {
-            subagent_run_id: subagent_run_id.clone(),
-            agent_name: task.agent_name.clone(),
-            display_name: task.display_name.clone(),
-            task: task.task.clone(),
-            section_id: task.section_id.clone(),
-        });
+        parent_scope
+            .send_raw(ModelStreamEvent::SubagentStarted {
+                subagent_run_id: subagent_run_id.clone(),
+                agent_name: task.agent_name.clone(),
+                display_name: task.display_name.clone(),
+                task: task.task.clone(),
+                section_id: task.section_id.clone(),
+            })
+            .await;
         let result = async {
             if parent.cancellation.is_cancelled() {
                 return Err(RuntimeError::InvalidRequest("run cancelled".into()));
@@ -160,11 +162,13 @@ impl RigModelCore {
             }
             Err(error) => ("failed".to_string(), error.to_string()),
         };
-        parent_scope.send_raw(ModelStreamEvent::SubagentFinished {
-            subagent_run_id,
-            status: status.clone(),
-            summary: summary.clone(),
-        });
+        parent_scope
+            .send_raw(ModelStreamEvent::SubagentFinished {
+                subagent_run_id,
+                status: status.clone(),
+                summary: summary.clone(),
+            })
+            .await;
         SubagentOutcome {
             agent_name: task.agent_name,
             status,

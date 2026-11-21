@@ -281,23 +281,18 @@ export interface RunTraceSubagent {
   agent_name: string;
   display_name?: string | null;
   section_id?: string | null;
+  /**
+   * Ordered subagent activity, isomorphic to the main run's segments. Text
+   * closes the preceding thinking/execution phase, so multi-round tool use
+   * keeps the same order in live and hydrated views.
+   */
+  segments?: RunTraceSegment[];
   started_at?: string | null;
   status: string;
   subagent_run_id: string;
   summary?: string | null;
   task: string;
   task_focus?: RunTaskFocus | null;
-  /**
-   * Text streamed by the subagent before it finishes.
-   */
-  text?: string;
-  thinking: string;
-  thinking_duration_ms?: number | null;
-  /**
-   * Start of the currently streaming thinking phase. `None` once settled.
-   */
-  thinking_started_at?: string | null;
-  tools?: RunTraceToolItem[];
   [k: string]: unknown;
 }
 export interface RunTaskFocus {

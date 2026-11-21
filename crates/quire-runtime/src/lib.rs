@@ -10,6 +10,7 @@ pub mod config;
 pub mod control;
 pub mod delta;
 pub mod error;
+pub mod events;
 pub mod http;
 pub(crate) mod http_client;
 pub mod kb;

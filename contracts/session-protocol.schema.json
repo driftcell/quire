@@ -517,6 +517,14 @@
             "null"
           ]
         },
+        "segments": {
+          "description": "Ordered subagent activity, isomorphic to the main run's segments. Text\ncloses the preceding thinking/execution phase, so multi-round tool use\nkeeps the same order in live and hydrated views.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RunTraceSegment"
+          }
+        },
         "started_at": {
           "type": [
             "string",
@@ -548,44 +556,13 @@
               "type": "null"
             }
           ]
-        },
-        "text": {
-          "description": "Text streamed by the subagent before it finishes.",
-          "type": "string"
-        },
-        "thinking": {
-          "type": "string"
-        },
-        "thinking_duration_ms": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
-        },
-        "thinking_started_at": {
-          "description": "Start of the currently streaming thinking phase. `None` once settled.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time"
-        },
-        "tools": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/RunTraceToolItem"
-          }
         }
       },
       "required": [
         "subagent_run_id",
         "agent_name",
         "task",
-        "status",
-        "thinking"
+        "status"
       ]
     },
     "RunTraceSummary": {

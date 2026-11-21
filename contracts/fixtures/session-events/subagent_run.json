@@ -1,0 +1,455 @@
+{
+  "events": [
+    {
+      "seq": 1,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "event": "turn_started"
+    },
+    {
+      "seq": 2,
+      "run_id": "run_main",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:01Z",
+      "event": "subagent_started",
+      "subagent_run_id": "run_sub_1",
+      "agent_name": "alpha",
+      "display_name": "Alpha",
+      "task": "draft intro",
+      "section_id": "intro"
+    },
+    {
+      "seq": 3,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:02Z",
+      "event": "thinking_delta",
+      "delta": "sub plan"
+    },
+    {
+      "seq": 4,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:03Z",
+      "event": "tool_call_started",
+      "tool_call_id": "tc_sub",
+      "tool_name": "read_blocks",
+      "input_preview": "{}",
+      "truncated": false
+    },
+    {
+      "seq": 5,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:04Z",
+      "event": "tool_call_finished",
+      "tool_call_id": "tc_sub",
+      "status": "completed",
+      "output_preview": "ok",
+      "truncated": false,
+      "duration_ms": 50
+    },
+    {
+      "seq": 6,
+      "run_id": "run_sub_1",
+      "agent_id": "alpha",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:05Z",
+      "event": "text_delta",
+      "delta": "sub answer"
+    },
+    {
+      "seq": 7,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": "run_main",
+      "timestamp": "2026-01-01T00:00:06Z",
+      "event": "subagent_finished",
+      "subagent_run_id": "run_sub_1",
+      "status": "completed",
+      "summary": "done"
+    },
+    {
+      "seq": 8,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:07Z",
+      "event": "turn_finished"
+    }
+  ],
+  "expected_traces": [
+    {
+      "run_id": "run_main",
+      "status": "completed",
+      "started_at": "2026-01-01T00:00:00Z",
+      "duration_ms": 7000,
+      "segments": [
+        {
+          "kind": "execution",
+          "tools": [],
+          "subagents": [
+            {
+              "subagent_run_id": "run_sub_1",
+              "agent_name": "alpha",
+              "display_name": "Alpha",
+              "task": "draft intro",
+              "section_id": "intro",
+              "status": "completed",
+              "started_at": "2026-01-01T00:00:01Z",
+              "summary": "done",
+              "segments": [
+                {
+                  "kind": "thinking",
+                  "text": "sub plan",
+                  "duration_ms": 1000,
+                  "started_at": "2026-01-01T00:00:02Z"
+                },
+                {
+                  "kind": "execution",
+                  "tools": [
+                    {
+                      "tool_call_id": "tc_sub",
+                      "tool_name": "read_blocks",
+                      "status": "completed",
+                      "input_preview": "{}",
+                      "output_preview": "ok",
+                      "duration_ms": 50,
+                      "truncated": false
+                    }
+                  ],
+                  "subagents": []
+                },
+                {
+                  "kind": "text",
+                  "text": "sub answer"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "prefix_traces": [
+    [],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "draft intro",
+                "section_id": "intro",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": []
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "draft intro",
+                "section_id": "intro",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "sub plan",
+                    "started_at": "2026-01-01T00:00:02Z"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "draft intro",
+                "section_id": "intro",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "sub plan",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_sub",
+                        "tool_name": "read_blocks",
+                        "status": "running",
+                        "input_preview": "{}",
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "draft intro",
+                "section_id": "intro",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "sub plan",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_sub",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "ok",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "draft intro",
+                "section_id": "intro",
+                "status": "running",
+                "started_at": "2026-01-01T00:00:01Z",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "sub plan",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_sub",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "ok",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "text",
+                    "text": "sub answer"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "draft intro",
+                "section_id": "intro",
+                "status": "completed",
+                "started_at": "2026-01-01T00:00:01Z",
+                "summary": "done",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "sub plan",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_sub",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "ok",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "text",
+                    "text": "sub answer"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "completed",
+        "started_at": "2026-01-01T00:00:00Z",
+        "duration_ms": 7000,
+        "segments": [
+          {
+            "kind": "execution",
+            "tools": [],
+            "subagents": [
+              {
+                "subagent_run_id": "run_sub_1",
+                "agent_name": "alpha",
+                "display_name": "Alpha",
+                "task": "draft intro",
+                "section_id": "intro",
+                "status": "completed",
+                "started_at": "2026-01-01T00:00:01Z",
+                "summary": "done",
+                "segments": [
+                  {
+                    "kind": "thinking",
+                    "text": "sub plan",
+                    "duration_ms": 1000,
+                    "started_at": "2026-01-01T00:00:02Z"
+                  },
+                  {
+                    "kind": "execution",
+                    "tools": [
+                      {
+                        "tool_call_id": "tc_sub",
+                        "tool_name": "read_blocks",
+                        "status": "completed",
+                        "input_preview": "{}",
+                        "output_preview": "ok",
+                        "duration_ms": 50,
+                        "truncated": false
+                      }
+                    ],
+                    "subagents": []
+                  },
+                  {
+                    "kind": "text",
+                    "text": "sub answer"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  ]
+}

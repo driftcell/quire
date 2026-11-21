@@ -1,18 +1,16 @@
 //! PostgreSQL persistence for sessions, messages, runs, events and tool calls.
 
-use std::collections::HashMap;
-
 use chrono::{DateTime, Utc};
 use quire_protocol::short_id;
 use quire_session_protocol::{
     ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, PendingQueueItem,
-    PendingQueueSource, QuestionAnswer, QuestionItem, ResolvedQuestion, RunTaskFocus,
-    RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
-    SessionCommentRef, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
-    SessionStatus, SessionSummary, ToolCallDetail,
+    PendingQueueSource, QuestionAnswer, QuestionItem, ResolvedQuestion, RunTraceSegment,
+    RunTraceSubagent, RunTraceSummary, SendMessageRequest, SessionCommentRef, SessionDetail,
+    SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
+    aggregate_run_traces,
 };
 use serde_json::Value;
-use sqlx::{PgPool, Row, postgres::PgRow};
+use sqlx::{PgPool, Postgres, Row, Transaction, postgres::PgRow};
 use tracing::warn;
 
 use crate::{
@@ -33,6 +31,21 @@ pub struct CompactionWrite<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct SessionEventDraft {
+    pub run_id: String,
+    pub agent_id: String,
+    pub parent_run_id: Option<String>,
+    pub kind: SessionEventKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionEventFrame {
+    pub seq: u64,
+    pub event_type: String,
+    pub event: Value,
+}
+
+#[derive(Debug, Clone)]
 pub struct RunRecord {
     pub run_id: String,
     pub session_id: String,
@@ -43,6 +56,9 @@ pub struct RunRecord {
     pub error: Option<String>,
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
+    /// Sequence of this run's `turn_started` event, recorded in the same
+    /// transaction. Active-run hydration uses it for a primary-key range scan.
+    pub start_seq: Option<u64>,
 }
 
 /// Fields that may be changed on an existing session. `None` keeps the
@@ -184,11 +200,30 @@ impl RuntimeStore {
 
     pub async fn get_session_detail(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
         let summary = self.get_session_summary(session_id).await?;
-        let events = self
-            .events_through(session_id, summary.last_event_seq)
-            .await?;
-        let (active_run_trace, active_subagent_traces) =
-            active_trace_snapshot(&summary, aggregate_run_traces(&events));
+        let active_run = self.latest_active_run(session_id).await?;
+        let (active_run_trace, active_subagent_traces) = match active_run.as_ref() {
+            Some(run) => {
+                let events = match run.start_seq {
+                    Some(start_seq) => {
+                        self.events_between(session_id, start_seq, summary.last_event_seq)
+                            .await?
+                    }
+                    // Legacy active runs without a recorded start_seq retain the
+                    // safe whole-history fallback; new runs never take this path.
+                    None => {
+                        self.events_through(session_id, summary.last_event_seq)
+                            .await?
+                    }
+                };
+                active_trace_snapshot(
+                    &summary,
+                    Some(run.run_id.as_str()),
+                    aggregate_run_traces(&events),
+                )
+            }
+            // Idle sessions do not need to read or aggregate any event history.
+            None => (None, Vec::new()),
+        };
         let messages = self.list_messages(session_id).await?;
         let attachments = self.list_attachments(session_id).await?;
         let pending_question = self.pending_question(session_id).await?;
@@ -211,21 +246,61 @@ impl RuntimeStore {
         session_id: &str,
         max_seq: u64,
     ) -> RuntimeResult<Vec<SessionEvent>> {
+        let frames = self.event_frames_between(session_id, 0, max_seq).await?;
+        Ok(decode_projection_events(frames))
+    }
+
+    /// Read one active run's events through the `(session_id, seq)` primary key.
+    async fn events_between(
+        &self,
+        session_id: &str,
+        start_seq: u64,
+        end_seq: u64,
+    ) -> RuntimeResult<Vec<SessionEvent>> {
+        let frames = self
+            .event_frames_between(session_id, start_seq, end_seq)
+            .await?;
+        Ok(decode_projection_events(frames))
+    }
+
+    async fn event_frames_between(
+        &self,
+        session_id: &str,
+        start_seq: u64,
+        end_seq: u64,
+    ) -> RuntimeResult<Vec<SessionEventFrame>> {
         let rows = sqlx::query(
-            r#"SELECT event FROM session_events
-               WHERE session_id = $1 AND seq <= $2
+            r#"SELECT seq, event_type, event FROM session_events
+               WHERE session_id = $1 AND seq >= $2 AND seq <= $3
                ORDER BY seq ASC"#,
         )
         .bind(session_id)
-        .bind(i64::try_from(max_seq).unwrap_or(i64::MAX))
+        .bind(i64::try_from(start_seq).unwrap_or(i64::MAX))
+        .bind(i64::try_from(end_seq).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
         .await?;
-        rows.iter()
-            .map(|row| {
-                let value: Value = row.try_get("event")?;
-                Ok(serde_json::from_value(value)?)
-            })
-            .collect()
+        rows.iter().map(row_to_event_frame).collect()
+    }
+
+    /// Opaque frames for SSE transport. Unlike projection, transport does not
+    /// need to understand the event variant and can relay newer writers safely.
+    pub async fn list_event_frames(
+        &self,
+        session_id: &str,
+        after_seq: u64,
+        limit: i64,
+    ) -> RuntimeResult<Vec<SessionEventFrame>> {
+        let rows = sqlx::query(
+            r#"SELECT seq, event_type, event FROM session_events
+               WHERE session_id = $1 AND seq > $2
+               ORDER BY seq ASC LIMIT $3"#,
+        )
+        .bind(session_id)
+        .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
+        .bind(limit.clamp(1, 10_000))
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_event_frame).collect()
     }
 
     pub async fn list_sessions(
@@ -529,6 +604,21 @@ impl RuntimeStore {
         request: &SendMessageRequest,
         run_id: Option<&str>,
     ) -> RuntimeResult<(SessionMessage, bool)> {
+        let mut tx = self.pool.begin().await?;
+        let message = self
+            .insert_user_message_with_run_in(&mut tx, session_id, request, run_id)
+            .await?;
+        tx.commit().await?;
+        Ok(message)
+    }
+
+    async fn insert_user_message_with_run_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &str,
+        request: &SendMessageRequest,
+        run_id: Option<&str>,
+    ) -> RuntimeResult<(SessionMessage, bool)> {
         if request.client_msg_id.trim().is_empty() {
             return Err(RuntimeError::InvalidRequest(
                 "client_msg_id must not be empty".into(),
@@ -556,7 +646,7 @@ impl RuntimeStore {
         .bind(comment_refs)
         .bind(attachment_ids)
         .bind(run_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut **tx)
         .await?;
         if let Some(row) = inserted {
             return Ok((row_to_message(&row)?, true));
@@ -567,7 +657,7 @@ impl RuntimeStore {
         )
         .bind(session_id)
         .bind(&request.client_msg_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut **tx)
         .await?
         .ok_or_else(|| RuntimeError::Internal("idempotent message vanished".into()))?;
         Ok((row_to_message(&row)?, false))
@@ -829,6 +919,120 @@ impl RuntimeStore {
         Ok(deleted.rows_affected())
     }
 
+    async fn list_pending_queue_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &str,
+    ) -> RuntimeResult<Vec<PendingQueueItem>> {
+        let rows = sqlx::query(
+            r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
+               FROM session_pending_queue
+               WHERE session_id = $1
+               ORDER BY sequence ASC"#,
+        )
+        .bind(session_id)
+        .fetch_all(&mut **tx)
+        .await?;
+        rows.iter().map(row_to_pending_queue_item).collect()
+    }
+
+    async fn remove_pending_items_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &str,
+        queue_ids: &[String],
+    ) -> RuntimeResult<u64> {
+        if queue_ids.is_empty() {
+            return Ok(0);
+        }
+        let deleted = sqlx::query(
+            r#"DELETE FROM session_pending_queue
+               WHERE session_id = $1 AND queue_id = ANY($2)"#,
+        )
+        .bind(session_id)
+        .bind(queue_ids)
+        .execute(&mut **tx)
+        .await?;
+        Ok(deleted.rows_affected())
+    }
+
+    /// Atomically persist a claimed queue batch, remove its items and emit the
+    /// resulting queue/message events. A crash can no longer leave a persisted
+    /// user message beside an unclaimed queue item.
+    pub async fn claim_pending_batch(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        request: &SendMessageRequest,
+        queue_ids: &[String],
+        inject_into_run: bool,
+    ) -> RuntimeResult<Option<SessionMessage>> {
+        if queue_ids.is_empty() {
+            return Ok(None);
+        }
+        let mut tx = self.pool.begin().await?;
+        let _status: String = sqlx::query_scalar(
+            "SELECT active_run_status FROM agent_sessions WHERE session_id = $1 FOR UPDATE",
+        )
+        .bind(session_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
+        // Another runtime may have claimed the same batch before this lock was
+        // acquired. Re-check ownership instead of emitting a duplicate message.
+        let claimable: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM session_pending_queue WHERE session_id = $1 AND queue_id = ANY($2)",
+        )
+        .bind(session_id)
+        .bind(queue_ids)
+        .fetch_one(&mut *tx)
+        .await?;
+        if claimable != i64::try_from(queue_ids.len()).unwrap_or(i64::MAX) {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let run_id = inject_into_run.then_some(run_id);
+        let (message, _inserted) = self
+            .insert_user_message_with_run_in(&mut tx, session_id, request, run_id)
+            .await?;
+        self.remove_pending_items_in(&mut tx, session_id, queue_ids)
+            .await?;
+        let remaining = self.list_pending_queue_in(&mut tx, session_id).await?;
+        let queue_event = self
+            .append_event_in(
+                &mut tx,
+                session_id,
+                "queue",
+                "system",
+                None,
+                SessionEventKind::PendingQueueUpdated { items: remaining },
+            )
+            .await?;
+        let added_event = if inject_into_run {
+            None
+        } else {
+            Some(
+                self.append_event_in(
+                    &mut tx,
+                    session_id,
+                    run_id.unwrap_or("queue"),
+                    "queue",
+                    None,
+                    SessionEventKind::UserMessageAdded {
+                        message_id: message.message_id.clone(),
+                    },
+                )
+                .await?,
+            )
+        };
+        tx.commit().await?;
+        self.publish_event(queue_event, session_id).await;
+        if let Some(event) = added_event {
+            self.publish_event(event, session_id).await;
+        }
+        Ok(Some(message))
+    }
+
     pub async fn remove_pending_comment_thread(
         &self,
         session_id: &str,
@@ -891,6 +1095,22 @@ impl RuntimeStore {
         tool_call_id: Option<&str>,
         questions: &[QuestionItem],
     ) -> RuntimeResult<PendingQuestion> {
+        let mut tx = self.pool.begin().await?;
+        let question = self
+            .create_question_in(&mut tx, session_id, run_id, tool_call_id, questions)
+            .await?;
+        tx.commit().await?;
+        Ok(question)
+    }
+
+    async fn create_question_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &str,
+        run_id: &str,
+        tool_call_id: Option<&str>,
+        questions: &[QuestionItem],
+    ) -> RuntimeResult<PendingQuestion> {
         let question_id = short_id("q");
         let questions_value = serde_json::to_value(questions)?;
         let created_at: DateTime<Utc> = sqlx::query_scalar(
@@ -904,7 +1124,7 @@ impl RuntimeStore {
         .bind(run_id)
         .bind(tool_call_id)
         .bind(questions_value)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut **tx)
         .await?;
         Ok(PendingQuestion {
             question_id,
@@ -1161,6 +1381,23 @@ impl RuntimeStore {
         agent_id: &str,
         model: &str,
     ) -> RuntimeResult<RunRecord> {
+        let mut tx = self.pool.begin().await?;
+        if parent_run_id.is_none() {
+            let status: Option<String> = sqlx::query_scalar(
+                "SELECT active_run_status FROM agent_sessions WHERE session_id = $1 FOR UPDATE",
+            )
+            .bind(session_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+            let Some(status) = status else {
+                return Err(RuntimeError::SessionNotFound(session_id.to_string()));
+            };
+            if matches!(status.as_str(), "running" | "awaiting_input") {
+                return Err(RuntimeError::InvalidRequest(format!(
+                    "session `{session_id}` already has an active run; queue the message instead"
+                )));
+            }
+        }
         let run_id = short_id("run");
         sqlx::query(
             r#"INSERT INTO agent_runs (run_id, session_id, parent_run_id, agent_id, status, model)
@@ -1171,22 +1408,61 @@ impl RuntimeStore {
         .bind(parent_run_id)
         .bind(agent_id)
         .bind(model)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
         sqlx::query(
             r#"UPDATE agent_sessions SET active_run_status = 'running', updated_at = NOW()
                WHERE session_id = $1"#,
         )
         .bind(session_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        tx.commit().await?;
         self.get_run(&run_id).await
+    }
+
+    /// Append `turn_started` and record its sequence as the run's hydration
+    /// cursor in the same transaction.
+    pub async fn start_run_with_event(
+        &self,
+        run_id: &str,
+        kind: SessionEventKind,
+    ) -> RuntimeResult<SessionEvent> {
+        let mut tx = self.pool.begin().await?;
+        let row = sqlx::query(
+            "SELECT session_id, agent_id, parent_run_id FROM agent_runs WHERE run_id = $1",
+        )
+        .bind(run_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| RuntimeError::RunNotFound(run_id.to_string()))?;
+        let session_id: String = row.try_get("session_id")?;
+        let agent_id: String = row.try_get("agent_id")?;
+        let parent_run_id: Option<String> = row.try_get("parent_run_id")?;
+        let event = self
+            .append_event_in(
+                &mut tx,
+                &session_id,
+                run_id,
+                &agent_id,
+                parent_run_id.as_deref(),
+                kind,
+            )
+            .await?;
+        sqlx::query("UPDATE agent_runs SET start_seq = $2 WHERE run_id = $1 AND start_seq IS NULL")
+            .bind(run_id)
+            .bind(i64::try_from(event.seq).unwrap_or(i64::MAX))
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        self.publish_event(event.clone(), &session_id).await;
+        Ok(event)
     }
 
     pub async fn get_run(&self, run_id: &str) -> RuntimeResult<RunRecord> {
         let row = sqlx::query(
             r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
-                      started_at, finished_at
+                      started_at, finished_at, start_seq
                FROM agent_runs WHERE run_id = $1"#,
         )
         .bind(run_id)
@@ -1199,9 +1475,24 @@ impl RuntimeStore {
     pub async fn latest_running_run(&self, session_id: &str) -> RuntimeResult<Option<RunRecord>> {
         let row = sqlx::query(
             r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
-                      started_at, finished_at
+                      started_at, finished_at, start_seq
                FROM agent_runs
                WHERE session_id = $1 AND status = 'running'
+               ORDER BY started_at DESC LIMIT 1"#,
+        )
+        .bind(session_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        row.map(|row| row_to_run(&row)).transpose()
+    }
+
+    /// Latest run that still owns the live pane (`running` or `awaiting_input`).
+    pub async fn latest_active_run(&self, session_id: &str) -> RuntimeResult<Option<RunRecord>> {
+        let row = sqlx::query(
+            r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
+                      started_at, finished_at, start_seq
+               FROM agent_runs
+               WHERE session_id = $1 AND status IN ('running', 'awaiting_input')
                ORDER BY started_at DESC LIMIT 1"#,
         )
         .bind(session_id)
@@ -1213,7 +1504,7 @@ impl RuntimeStore {
     pub async fn latest_run(&self, session_id: &str) -> RuntimeResult<Option<RunRecord>> {
         let row = sqlx::query(
             r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
-                      started_at, finished_at
+                      started_at, finished_at, start_seq
                FROM agent_runs
                WHERE session_id = $1
                ORDER BY started_at DESC LIMIT 1"#,
@@ -1224,112 +1515,22 @@ impl RuntimeStore {
         row.map(|row| row_to_run(&row)).transpose()
     }
 
-    pub async fn finish_run(
-        &self,
-        run_id: &str,
-        status: &str,
-        error: Option<&str>,
-    ) -> RuntimeResult<()> {
-        let row = sqlx::query(
-            r#"UPDATE agent_runs
-               SET status = $2, error = $3, finished_at = NOW()
-               WHERE run_id = $1 AND status = 'running'
-               RETURNING session_id"#,
-        )
-        .bind(run_id)
-        .bind(status)
-        .bind(error)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(row) = row else {
-            let exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM agent_runs WHERE run_id = $1)",
-            )
-            .bind(run_id)
-            .fetch_one(&self.pool)
-            .await?;
-            return if exists {
-                Ok(())
-            } else {
-                Err(RuntimeError::RunNotFound(run_id.to_string()))
-            };
-        };
-        let session_id: String = row.try_get("session_id")?;
-        let session_status = match status {
-            "completed" => "idle",
-            "cancelled" | "interrupted" => "interrupted",
-            "failed" => "failed",
-            _ => "idle",
-        };
-        sqlx::query(
-            r#"UPDATE agent_sessions SET active_run_status = $2, updated_at = NOW()
-               WHERE session_id = $1"#,
-        )
-        .bind(&session_id)
-        .bind(session_status)
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn interrupt_run(
-        &self,
-        run_id: &str,
-        reason: &str,
-    ) -> RuntimeResult<Option<RunRecord>> {
-        let row = sqlx::query(
-            r#"UPDATE agent_runs
-               SET status = 'cancelled', error = $2, finished_at = NOW()
-               WHERE run_id = $1 AND status = 'running'
-               RETURNING run_id, session_id, parent_run_id, agent_id, status, model, error,
-                         started_at, finished_at"#,
-        )
-        .bind(run_id)
-        .bind(reason)
-        .fetch_optional(&self.pool)
-        .await?;
-        let Some(row) = row else {
-            return Ok(None);
-        };
-        let run = row_to_run(&row)?;
-        sqlx::query(
-            r#"UPDATE agent_sessions SET active_run_status = 'interrupted', updated_at = NOW()
-               WHERE session_id = $1"#,
-        )
-        .bind(&run.session_id)
-        .execute(&self.pool)
-        .await?;
-        Ok(Some(run))
-    }
-
     /// Mark every surviving `running` run as interrupted after a runtime restart.
     pub async fn recover_running_runs(&self) -> RuntimeResult<usize> {
         let rows = sqlx::query(
-            r#"UPDATE agent_runs
-               SET status = 'interrupted',
-                   error = COALESCE(error, 'runtime restarted while run was active'),
-                   finished_at = NOW()
-               WHERE status = 'running'
-               RETURNING run_id, session_id, parent_run_id, agent_id, status, model, error,
-                         started_at, finished_at"#,
+            r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
+                      started_at, finished_at, start_seq
+               FROM agent_runs WHERE status = 'running'"#,
         )
         .fetch_all(&self.pool)
         .await?;
         for row in &rows {
             let run = row_to_run(row)?;
-            sqlx::query(
-                r#"UPDATE agent_sessions SET active_run_status = 'interrupted', updated_at = NOW()
-                   WHERE session_id = $1"#,
-            )
-            .bind(&run.session_id)
-            .execute(&self.pool)
-            .await?;
             let _ = self
-                .append_event(
-                    &run.session_id,
+                .finish_run_with_event(
                     &run.run_id,
-                    &run.agent_id,
-                    run.parent_run_id.as_deref(),
+                    "interrupted",
+                    Some("runtime restarted while run was active"),
                     SessionEventKind::TurnFailed {
                         error: "runtime restarted while run was active".into(),
                         recoverable: true,
@@ -1355,6 +1556,25 @@ impl RuntimeStore {
         Ok(())
     }
 
+    /// Append an event inside a caller-owned transaction. The session row lock
+    /// allocates `seq`, so lifecycle status and event rows can commit atomically.
+    pub async fn append_event_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        session_id: &str,
+        run_id: &str,
+        agent_id: &str,
+        parent_run_id: Option<&str>,
+        kind: SessionEventKind,
+    ) -> RuntimeResult<SessionEvent> {
+        let last_seq = lock_event_seq(tx, session_id).await?;
+        let seq = last_seq.saturating_add(1);
+        let event =
+            insert_event(tx, session_id, seq, run_id, agent_id, parent_run_id, kind).await?;
+        update_event_seq(tx, session_id, seq).await?;
+        Ok(event)
+    }
+
     pub async fn append_event(
         &self,
         session_id: &str,
@@ -1364,50 +1584,172 @@ impl RuntimeStore {
         kind: SessionEventKind,
     ) -> RuntimeResult<SessionEvent> {
         let mut tx = self.pool.begin().await?;
+        let event = self
+            .append_event_in(&mut tx, session_id, run_id, agent_id, parent_run_id, kind)
+            .await?;
+        tx.commit().await?;
+        self.publish_event(event.clone(), session_id).await;
+        Ok(event)
+    }
+
+    /// Append a coalesced batch with one sequence lock and one transaction.
+    pub async fn append_event_batch(
+        &self,
+        session_id: &str,
+        drafts: Vec<SessionEventDraft>,
+    ) -> RuntimeResult<Vec<SessionEvent>> {
+        if drafts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await?;
+        let mut seq = lock_event_seq(&mut tx, session_id).await?;
+        let mut events = Vec::with_capacity(drafts.len());
+        for draft in drafts {
+            seq = seq.saturating_add(1);
+            let event = insert_event(
+                &mut tx,
+                session_id,
+                seq,
+                &draft.run_id,
+                &draft.agent_id,
+                draft.parent_run_id.as_deref(),
+                draft.kind,
+            )
+            .await?;
+            events.push(event);
+        }
+        update_event_seq(&mut tx, session_id, seq).await?;
+        tx.commit().await?;
+        for event in &events {
+            self.publish_event(event.clone(), session_id).await;
+        }
+        Ok(events)
+    }
+
+    /// Persist a tool row and its wire event atomically.
+    pub async fn save_tool_call_with_event(
+        &self,
+        detail: &ToolCallDetail,
+        agent_id: &str,
+        parent_run_id: Option<&str>,
+        kind: SessionEventKind,
+    ) -> RuntimeResult<SessionEvent> {
+        let mut tx = self.pool.begin().await?;
+        self.save_tool_call_in(&mut tx, detail).await?;
+        let event = self
+            .append_event_in(
+                &mut tx,
+                &detail.session_id,
+                &detail.run_id,
+                agent_id,
+                parent_run_id,
+                kind,
+            )
+            .await?;
+        tx.commit().await?;
+        self.publish_event(event.clone(), &detail.session_id).await;
+        Ok(event)
+    }
+
+    /// Create an `ask_user` question and emit its request in one transaction.
+    pub async fn create_question_with_event(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        agent_id: &str,
+        parent_run_id: Option<&str>,
+        tool_call_id: Option<&str>,
+        questions: &[QuestionItem],
+    ) -> RuntimeResult<(PendingQuestion, SessionEvent)> {
+        let mut tx = self.pool.begin().await?;
+        let question = self
+            .create_question_in(&mut tx, session_id, run_id, tool_call_id, questions)
+            .await?;
+        let kind = SessionEventKind::QuestionnaireRequested {
+            question_id: question.question_id.clone(),
+            tool_call_id: question.tool_call_id.clone(),
+            questions: question.questions.clone(),
+        };
+        let event = self
+            .append_event_in(&mut tx, session_id, run_id, agent_id, parent_run_id, kind)
+            .await?;
+        tx.commit().await?;
+        self.publish_event(event.clone(), session_id).await;
+        Ok((question, event))
+    }
+
+    /// Atomically transition a running run to a terminal state and append its
+    /// terminal event. `None` means another writer already terminated the run,
+    /// so no second terminal event may be emitted.
+    pub async fn finish_run_with_event(
+        &self,
+        run_id: &str,
+        status: &str,
+        error: Option<&str>,
+        kind: SessionEventKind,
+    ) -> RuntimeResult<Option<SessionEvent>> {
+        let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
-            "SELECT last_event_seq FROM agent_sessions WHERE session_id = $1 FOR UPDATE",
+            r#"UPDATE agent_runs
+               SET status = $2, error = $3, finished_at = NOW()
+               WHERE run_id = $1 AND status = 'running'
+               RETURNING session_id, agent_id, parent_run_id"#,
         )
-        .bind(session_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
-        let last_seq: i64 = row.try_get("last_event_seq")?;
-        let seq = u64::try_from(last_seq).unwrap_or(0).saturating_add(1);
-        let event = SessionEvent::new(
-            seq,
-            run_id,
-            agent_id,
-            parent_run_id.map(str::to_string),
-            kind,
-        );
-        let event_value = serde_json::to_value(&event)?;
-        sqlx::query(
-            r#"INSERT INTO session_events
-               (session_id, seq, run_id, agent_id, parent_run_id, event_type, event, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
-        )
-        .bind(session_id)
-        .bind(i64::try_from(seq).unwrap_or(i64::MAX))
         .bind(run_id)
-        .bind(agent_id)
-        .bind(parent_run_id)
-        .bind(event.event_name())
-        .bind(event_value)
-        .bind(event.timestamp)
-        .execute(&mut *tx)
+        .bind(status)
+        .bind(error)
+        .fetch_optional(&mut *tx)
         .await?;
+        let Some(row) = row else {
+            let exists = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM agent_runs WHERE run_id = $1)",
+            )
+            .bind(run_id)
+            .fetch_one(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            return if exists {
+                Ok(None)
+            } else {
+                Err(RuntimeError::RunNotFound(run_id.to_string()))
+            };
+        };
+        let session_id: String = row.try_get("session_id")?;
+        let agent_id: String = row.try_get("agent_id")?;
+        let parent_run_id: Option<String> = row.try_get("parent_run_id")?;
+        let session_status = match status {
+            "completed" => "idle",
+            "cancelled" | "interrupted" => "interrupted",
+            "failed" => "failed",
+            _ => "idle",
+        };
+        let event = self
+            .append_event_in(
+                &mut tx,
+                &session_id,
+                run_id,
+                &agent_id,
+                parent_run_id.as_deref(),
+                kind,
+            )
+            .await?;
         sqlx::query(
-            "UPDATE agent_sessions SET last_event_seq = $2, updated_at = NOW() WHERE session_id = $1",
+            "UPDATE agent_sessions SET active_run_status = $2, updated_at = NOW() WHERE session_id = $1",
         )
-        .bind(session_id)
-        .bind(i64::try_from(seq).unwrap_or(i64::MAX))
+        .bind(&session_id)
+        .bind(session_status)
         .execute(&mut *tx)
         .await?;
         tx.commit().await?;
+        self.publish_event(event.clone(), &session_id).await;
+        Ok(Some(event))
+    }
+
+    async fn publish_event(&self, event: SessionEvent, session_id: &str) {
+        let seq = event.seq;
         if let Err(error) = self.bus.publish_event(&event, session_id).await {
             warn!(%error, %session_id, seq, "failed to publish live session event");
         }
-        Ok(event)
     }
 
     pub async fn list_events(
@@ -1437,19 +1779,8 @@ impl RuntimeStore {
     /// Aggregate persisted `session_events` into lightweight per-run traces.
     pub async fn list_run_traces(&self, session_id: &str) -> RuntimeResult<Vec<RunTraceSummary>> {
         self.get_session_summary(session_id).await?;
-        let rows = sqlx::query(
-            r#"SELECT event FROM session_events
-               WHERE session_id = $1
-               ORDER BY seq ASC"#,
-        )
-        .bind(session_id)
-        .fetch_all(&self.pool)
-        .await?;
-        let mut events = Vec::with_capacity(rows.len());
-        for row in &rows {
-            let value: Value = row.try_get("event")?;
-            events.push(serde_json::from_value::<SessionEvent>(value)?);
-        }
+        let frames = self.event_frames_between(session_id, 0, u64::MAX).await?;
+        let events = decode_projection_events(frames);
         Ok(aggregate_run_traces(&events))
     }
 
@@ -1465,6 +1796,17 @@ impl RuntimeStore {
     }
 
     pub async fn save_tool_call(&self, detail: &ToolCallDetail) -> RuntimeResult<()> {
+        let mut tx = self.pool.begin().await?;
+        self.save_tool_call_in(&mut tx, detail).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn save_tool_call_in(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        detail: &ToolCallDetail,
+    ) -> RuntimeResult<()> {
         sqlx::query(
             r#"INSERT INTO agent_tool_calls
                (tool_call_id, session_id, run_id, tool_name, status, input, output, error,
@@ -1486,7 +1828,7 @@ impl RuntimeStore {
         .bind(&detail.error)
         .bind(i64::try_from(detail.duration_ms).unwrap_or(i64::MAX))
         .bind(detail.created_at)
-        .execute(&self.pool)
+        .execute(&mut **tx)
         .await?;
         Ok(())
     }
@@ -1540,6 +1882,95 @@ impl RuntimeStore {
         }
         Ok(version)
     }
+}
+
+async fn lock_event_seq(
+    tx: &mut Transaction<'_, Postgres>,
+    session_id: &str,
+) -> RuntimeResult<u64> {
+    let row =
+        sqlx::query("SELECT last_event_seq FROM agent_sessions WHERE session_id = $1 FOR UPDATE")
+            .bind(session_id)
+            .fetch_optional(&mut **tx)
+            .await?
+            .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
+    let last_seq: i64 = row.try_get("last_event_seq")?;
+    Ok(u64::try_from(last_seq).unwrap_or(0))
+}
+
+async fn insert_event(
+    tx: &mut Transaction<'_, Postgres>,
+    session_id: &str,
+    seq: u64,
+    run_id: &str,
+    agent_id: &str,
+    parent_run_id: Option<&str>,
+    kind: SessionEventKind,
+) -> RuntimeResult<SessionEvent> {
+    let event = SessionEvent::new(
+        seq,
+        run_id,
+        agent_id,
+        parent_run_id.map(str::to_string),
+        kind,
+    );
+    let event_value = serde_json::to_value(&event)?;
+    sqlx::query(
+        r#"INSERT INTO session_events
+           (session_id, seq, run_id, agent_id, parent_run_id, event_type, event, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
+    )
+    .bind(session_id)
+    .bind(i64::try_from(seq).unwrap_or(i64::MAX))
+    .bind(run_id)
+    .bind(agent_id)
+    .bind(parent_run_id)
+    .bind(event.event_name())
+    .bind(event_value)
+    .bind(event.timestamp)
+    .execute(&mut **tx)
+    .await?;
+    Ok(event)
+}
+
+async fn update_event_seq(
+    tx: &mut Transaction<'_, Postgres>,
+    session_id: &str,
+    seq: u64,
+) -> RuntimeResult<()> {
+    sqlx::query(
+        "UPDATE agent_sessions SET last_event_seq = $2, updated_at = NOW() WHERE session_id = $1",
+    )
+    .bind(session_id)
+    .bind(i64::try_from(seq).unwrap_or(i64::MAX))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+fn row_to_event_frame(row: &PgRow) -> RuntimeResult<SessionEventFrame> {
+    let seq: i64 = row.try_get("seq")?;
+    Ok(SessionEventFrame {
+        seq: u64::try_from(seq).unwrap_or(0),
+        event_type: row.try_get("event_type")?,
+        event: row.try_get("event")?,
+    })
+}
+
+/// Projection tolerates event variants written by a newer runtime. Transport
+/// still relays them verbatim; trace aggregation simply ignores what it cannot
+/// classify instead of failing the whole session detail request.
+fn decode_projection_events(frames: Vec<SessionEventFrame>) -> Vec<SessionEvent> {
+    let mut events = Vec::with_capacity(frames.len());
+    for frame in frames {
+        match serde_json::from_value::<SessionEvent>(frame.event) {
+            Ok(event) => events.push(event),
+            Err(error) => {
+                warn!(%error, seq = frame.seq, event_type = %frame.event_type, "skipping session event unknown to this runtime during trace projection");
+            }
+        }
+    }
+    events
 }
 
 fn row_to_pending_question(row: &PgRow) -> RuntimeResult<PendingQuestion> {
@@ -1632,582 +2063,20 @@ fn row_to_pending_queue_item(row: &PgRow) -> RuntimeResult<PendingQueueItem> {
     })
 }
 
-struct RunTraceAccumulator {
-    summary: RunTraceSummary,
-    started_at: Option<DateTime<Utc>>,
-    active_main_thinking_start: Option<DateTime<Utc>>,
-    active_sub_thinking_start: HashMap<String, DateTime<Utc>>,
-}
-
-fn ensure_run_trace(
-    traces: &mut Vec<RunTraceAccumulator>,
-    index: &mut HashMap<String, usize>,
-    run_id: &str,
-    timestamp: DateTime<Utc>,
-) -> usize {
-    if let Some(position) = index.get(run_id) {
-        return *position;
-    }
-    let position = traces.len();
-    traces.push(RunTraceAccumulator {
-        summary: RunTraceSummary {
-            run_id: run_id.to_string(),
-            status: "running".to_string(),
-            started_at: Some(timestamp),
-            duration_ms: None,
-            task_focus: None,
-            segments: Vec::new(),
-        },
-        started_at: Some(timestamp),
-        active_main_thinking_start: None,
-        active_sub_thinking_start: HashMap::new(),
-    });
-    index.insert(run_id.to_string(), position);
-    position
-}
-
-fn is_subagent_event(event: &SessionEvent) -> bool {
-    event.parent_run_id.is_some() || event.agent_id != "main"
-}
-
-fn append_thinking_segment(summary: &mut RunTraceSummary, delta: &str, started_at: DateTime<Utc>) {
-    if let Some(RunTraceSegment::Thinking {
-        text,
-        started_at: current,
-        ..
-    }) = summary.segments.last_mut()
-    {
-        text.push_str(delta);
-        if current.is_none() {
-            *current = Some(started_at);
-        }
-        return;
-    }
-    summary.segments.push(RunTraceSegment::Thinking {
-        text: delta.to_string(),
-        duration_ms: None,
-        started_at: Some(started_at),
-    });
-}
-
-fn append_text_segment(summary: &mut RunTraceSummary, delta: &str) {
-    if let Some(RunTraceSegment::Text { text }) = summary.segments.last_mut() {
-        text.push_str(delta);
-        return;
-    }
-    summary.segments.push(RunTraceSegment::Text {
-        text: delta.to_string(),
-    });
-}
-
-fn append_execution_tool(summary: &mut RunTraceSummary, item: RunTraceToolItem) {
-    if let Some(RunTraceSegment::Execution { tools, .. }) = summary.segments.last_mut() {
-        tools.push(item);
-        return;
-    }
-    summary.segments.push(RunTraceSegment::Execution {
-        tools: vec![item],
-        subagents: Vec::new(),
-    });
-}
-
-fn append_execution_subagent(
-    summary: &mut RunTraceSummary,
-    subagent: RunTraceSubagent,
-) -> Option<(usize, usize)> {
-    if let Some(segment_index) = summary.segments.len().checked_sub(1)
-        && let Some(RunTraceSegment::Execution { subagents, .. }) =
-            summary.segments.get_mut(segment_index)
-    {
-        subagents.push(subagent);
-        return Some((segment_index, subagents.len().saturating_sub(1)));
-    }
-    summary.segments.push(RunTraceSegment::Execution {
-        tools: Vec::new(),
-        subagents: vec![subagent],
-    });
-    Some((summary.segments.len().saturating_sub(1), 0))
-}
-
-fn find_tool_location(summary: &RunTraceSummary, tool_call_id: &str) -> Option<(usize, usize)> {
-    for (segment_index, segment) in summary.segments.iter().enumerate().rev() {
-        if let RunTraceSegment::Execution { tools, .. } = segment
-            && let Some(tool_index) = tools
-                .iter()
-                .rposition(|tool| tool.tool_call_id == tool_call_id)
-        {
-            return Some((segment_index, tool_index));
-        }
-    }
-    None
-}
-
-fn finish_tool(
-    summary: &mut RunTraceSummary,
-    tool_call_id: &str,
-    status: &str,
-    output_preview: &str,
-    truncated: bool,
-    duration_ms: u64,
-) {
-    let Some((segment_index, tool_index)) = find_tool_location(summary, tool_call_id) else {
-        return;
-    };
-    let Some(RunTraceSegment::Execution { tools, .. }) = summary.segments.get_mut(segment_index)
-    else {
-        return;
-    };
-    let Some(tool) = tools.get_mut(tool_index) else {
-        return;
-    };
-    tool.status = status.to_string();
-    tool.output_preview = Some(output_preview.to_string());
-    tool.duration_ms = Some(duration_ms);
-    tool.truncated = truncated;
-}
-
-fn find_subagent_location<F>(summary: &RunTraceSummary, matches: F) -> Option<(usize, usize)>
-where
-    F: Fn(&RunTraceSubagent) -> bool,
-{
-    for (segment_index, segment) in summary.segments.iter().enumerate().rev() {
-        if let RunTraceSegment::Execution { subagents, .. } = segment
-            && let Some(subagent_index) = subagents.iter().rposition(&matches)
-        {
-            return Some((segment_index, subagent_index));
-        }
-    }
-    None
-}
-
-fn subagent_mut(
-    summary: &mut RunTraceSummary,
-    (segment_index, subagent_index): (usize, usize),
-) -> Option<&mut RunTraceSubagent> {
-    let Some(RunTraceSegment::Execution { subagents, .. }) =
-        summary.segments.get_mut(segment_index)
-    else {
-        return None;
-    };
-    subagents.get_mut(subagent_index)
-}
-
-fn ensure_subagent(summary: &mut RunTraceSummary, event: &SessionEvent) -> Option<(usize, usize)> {
-    if let Some(location) =
-        find_subagent_location(summary, |sub| sub.subagent_run_id == event.run_id)
-    {
-        return Some(location);
-    }
-    append_execution_subagent(
-        summary,
-        RunTraceSubagent {
-            subagent_run_id: event.run_id.clone(),
-            agent_name: event.agent_id.clone(),
-            display_name: None,
-            task: String::new(),
-            section_id: None,
-            status: "running".to_string(),
-            started_at: Some(event.timestamp),
-            summary: None,
-            thinking: String::new(),
-            thinking_duration_ms: None,
-            thinking_started_at: None,
-            text: String::new(),
-            task_focus: None,
-            tools: Vec::new(),
-        },
-    )
-}
-
-fn elapsed_ms(started_at: Option<DateTime<Utc>>, finished_at: DateTime<Utc>) -> Option<u64> {
-    started_at.and_then(|start| u64::try_from((finished_at - start).num_milliseconds().max(0)).ok())
-}
-
-impl RunTraceAccumulator {
-    fn settle_main_thinking(&mut self, at: DateTime<Utc>) {
-        let Some(started) = self.active_main_thinking_start.take() else {
-            return;
-        };
-        if let Some(RunTraceSegment::Thinking { duration_ms, .. }) =
-            self.summary.segments.last_mut()
-        {
-            *duration_ms = elapsed_ms(Some(started), at);
-        }
-    }
-
-    fn settle_sub_thinking(&mut self, run_id: &str, at: DateTime<Utc>) {
-        let Some(started) = self.active_sub_thinking_start.remove(run_id) else {
-            return;
-        };
-        let Some(location) =
-            find_subagent_location(&self.summary, |sub| sub.subagent_run_id == run_id)
-        else {
-            return;
-        };
-        let Some(record) = subagent_mut(&mut self.summary, location) else {
-            return;
-        };
-        let elapsed = elapsed_ms(Some(started), at).unwrap_or(0);
-        record.thinking_duration_ms = Some(
-            record
-                .thinking_duration_ms
-                .unwrap_or(0)
-                .saturating_add(elapsed),
-        );
-        record.thinking_started_at = None;
-    }
-
-    fn finalize_active_clocks(&mut self) {
-        if let Some(started) = self.active_main_thinking_start.take()
-            && let Some(RunTraceSegment::Thinking { started_at, .. }) =
-                self.summary.segments.last_mut()
-        {
-            *started_at = Some(started);
-        }
-        let active_sub_starts = std::mem::take(&mut self.active_sub_thinking_start);
-        for (run_id, started) in active_sub_starts {
-            let Some(location) =
-                find_subagent_location(&self.summary, |sub| sub.subagent_run_id == run_id)
-            else {
-                continue;
-            };
-            let Some(record) = subagent_mut(&mut self.summary, location) else {
-                continue;
-            };
-            record.thinking_started_at = Some(started);
-        }
-    }
-}
-
-fn settles_main_thinking(kind: &SessionEventKind) -> bool {
-    matches!(
-        kind,
-        SessionEventKind::TextDelta { .. }
-            | SessionEventKind::ToolCallStarted { .. }
-            | SessionEventKind::SubagentStarted { .. }
-            | SessionEventKind::UserMessageInjected { .. }
-            | SessionEventKind::QuestionnaireRequested { .. }
-            | SessionEventKind::TurnFinished
-            | SessionEventKind::TurnFailed { .. }
-    )
-}
-
-fn settles_sub_thinking(kind: &SessionEventKind) -> bool {
-    matches!(
-        kind,
-        SessionEventKind::ToolCallStarted { .. }
-            | SessionEventKind::TextDelta { .. }
-            | SessionEventKind::SubagentFinished { .. }
-            | SessionEventKind::TurnFinished
-            | SessionEventKind::TurnFailed { .. }
-    )
-}
-
-fn upsert_tool_finished(
-    tools: &mut Vec<RunTraceToolItem>,
-    tool_call_id: &str,
-    status: &str,
-    output_preview: &str,
-    truncated: bool,
-    duration_ms: u64,
-) {
-    if let Some(tool) = tools
-        .iter_mut()
-        .find(|item| item.tool_call_id == tool_call_id)
-    {
-        tool.status = status.to_string();
-        tool.output_preview = Some(output_preview.to_string());
-        tool.duration_ms = Some(duration_ms);
-        tool.truncated = truncated;
-        return;
-    }
-    tools.push(RunTraceToolItem {
-        tool_call_id: tool_call_id.to_string(),
-        tool_name: String::new(),
-        status: status.to_string(),
-        input_preview: String::new(),
-        output_preview: Some(output_preview.to_string()),
-        duration_ms: Some(duration_ms),
-        truncated,
-    });
-}
-
-/// Pure aggregation over persisted session events, ordered by their SSE sequence.
-pub(crate) fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
-    let mut traces: Vec<RunTraceAccumulator> = Vec::new();
-    let mut index: HashMap<String, usize> = HashMap::new();
-
-    for event in events {
-        if matches!(
-            event.kind,
-            SessionEventKind::CompactionStarted | SessionEventKind::CompactionFinished { .. }
-        ) {
-            continue;
-        }
-        let trace_run_id = event.parent_run_id.as_deref().unwrap_or(&event.run_id);
-        let position = ensure_run_trace(&mut traces, &mut index, trace_run_id, event.timestamp);
-        let Some(trace) = traces.get_mut(position) else {
-            continue;
-        };
-        let subagent_event = is_subagent_event(event);
-
-        if subagent_event {
-            if settles_sub_thinking(&event.kind) {
-                trace.settle_sub_thinking(&event.run_id, event.timestamp);
-            }
-        } else if settles_main_thinking(&event.kind) {
-            trace.settle_main_thinking(event.timestamp);
-        }
-
-        match &event.kind {
-            SessionEventKind::TurnStarted => {
-                trace.summary.status = "running".to_string();
-                if trace.started_at.is_none() {
-                    trace.started_at = Some(event.timestamp);
-                }
-                if trace.summary.started_at.is_none() {
-                    trace.summary.started_at = Some(event.timestamp);
-                }
-            }
-            SessionEventKind::TurnFinished => {
-                trace.summary.status = "completed".to_string();
-                trace.summary.duration_ms = elapsed_ms(trace.started_at, event.timestamp);
-            }
-            SessionEventKind::TurnFailed { recoverable, .. } => {
-                trace.summary.status = if *recoverable {
-                    "interrupted".to_string()
-                } else {
-                    "failed".to_string()
-                };
-                trace.summary.duration_ms = elapsed_ms(trace.started_at, event.timestamp);
-            }
-            SessionEventKind::ThinkingDelta { delta } => {
-                if subagent_event {
-                    let thinking_start = *trace
-                        .active_sub_thinking_start
-                        .entry(event.run_id.clone())
-                        .or_insert(event.timestamp);
-                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
-                        && let Some(record) = subagent_mut(&mut trace.summary, location)
-                    {
-                        record.thinking.push_str(delta);
-                        record.thinking_started_at = Some(thinking_start);
-                    }
-                } else {
-                    if !matches!(
-                        trace.summary.segments.last(),
-                        Some(RunTraceSegment::Thinking { .. })
-                    ) {
-                        trace.active_main_thinking_start = Some(event.timestamp);
-                    }
-                    append_thinking_segment(&mut trace.summary, delta, event.timestamp);
-                }
-            }
-            SessionEventKind::TextDelta { delta } => {
-                if subagent_event {
-                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
-                        && let Some(record) = subagent_mut(&mut trace.summary, location)
-                    {
-                        record.text.push_str(delta);
-                    }
-                } else {
-                    append_text_segment(&mut trace.summary, delta);
-                }
-            }
-            SessionEventKind::TaskFocus {
-                title,
-                detail,
-                section_id,
-            } => {
-                let focus = RunTaskFocus {
-                    title: title.clone(),
-                    detail: detail.clone(),
-                    section_id: section_id.clone(),
-                };
-                if subagent_event {
-                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
-                        && let Some(record) = subagent_mut(&mut trace.summary, location)
-                    {
-                        record.task_focus = Some(focus);
-                    }
-                } else {
-                    trace.summary.task_focus = Some(focus);
-                }
-            }
-            SessionEventKind::ToolCallStarted {
-                tool_call_id,
-                tool_name,
-                input_preview,
-                truncated,
-            } => {
-                let item = RunTraceToolItem {
-                    tool_call_id: tool_call_id.clone(),
-                    tool_name: tool_name.clone(),
-                    status: "running".to_string(),
-                    input_preview: input_preview.clone(),
-                    output_preview: None,
-                    duration_ms: None,
-                    truncated: *truncated,
-                };
-                if subagent_event {
-                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
-                        && let Some(record) = subagent_mut(&mut trace.summary, location)
-                    {
-                        record.tools.push(item);
-                    }
-                } else {
-                    append_execution_tool(&mut trace.summary, item);
-                }
-            }
-            SessionEventKind::ToolCallFinished {
-                tool_call_id,
-                status,
-                output_preview,
-                truncated,
-                duration_ms,
-            } => {
-                if subagent_event {
-                    if let Some(location) = ensure_subagent(&mut trace.summary, event)
-                        && let Some(record) = subagent_mut(&mut trace.summary, location)
-                    {
-                        upsert_tool_finished(
-                            &mut record.tools,
-                            tool_call_id,
-                            status,
-                            output_preview,
-                            *truncated,
-                            *duration_ms,
-                        );
-                    }
-                } else {
-                    finish_tool(
-                        &mut trace.summary,
-                        tool_call_id,
-                        status,
-                        output_preview,
-                        *truncated,
-                        *duration_ms,
-                    );
-                }
-            }
-            SessionEventKind::SubagentStarted {
-                subagent_run_id,
-                agent_name,
-                display_name,
-                task,
-                section_id,
-            } => {
-                let existing = find_subagent_location(&trace.summary, |sub| {
-                    sub.subagent_run_id == *subagent_run_id
-                });
-                if let Some(location) = existing
-                    && let Some(subagent) = subagent_mut(&mut trace.summary, location)
-                {
-                    subagent.subagent_run_id = subagent_run_id.clone();
-                    subagent.agent_name = agent_name.clone();
-                    subagent.display_name = display_name.clone();
-                    subagent.task = task.clone();
-                    subagent.section_id = section_id.clone();
-                    subagent.status = "running".to_string();
-                    if subagent.started_at.is_none() {
-                        subagent.started_at = Some(event.timestamp);
-                    }
-                } else {
-                    append_execution_subagent(
-                        &mut trace.summary,
-                        RunTraceSubagent {
-                            subagent_run_id: subagent_run_id.clone(),
-                            agent_name: agent_name.clone(),
-                            display_name: display_name.clone(),
-                            task: task.clone(),
-                            section_id: section_id.clone(),
-                            status: "running".to_string(),
-                            started_at: Some(event.timestamp),
-                            summary: None,
-                            thinking: String::new(),
-                            thinking_duration_ms: None,
-                            thinking_started_at: None,
-                            text: String::new(),
-                            task_focus: None,
-                            tools: Vec::new(),
-                        },
-                    );
-                }
-            }
-            SessionEventKind::SubagentFinished {
-                subagent_run_id,
-                status,
-                summary,
-            } => {
-                let existing = find_subagent_location(&trace.summary, |sub| {
-                    sub.subagent_run_id == *subagent_run_id
-                });
-                if let Some(location) = existing
-                    && let Some(subagent) = subagent_mut(&mut trace.summary, location)
-                {
-                    subagent.status = status.clone();
-                    if !summary.is_empty() {
-                        subagent.summary = Some(summary.clone());
-                    }
-                } else {
-                    append_execution_subagent(
-                        &mut trace.summary,
-                        RunTraceSubagent {
-                            subagent_run_id: subagent_run_id.clone(),
-                            agent_name: event.agent_id.clone(),
-                            display_name: None,
-                            task: String::new(),
-                            section_id: None,
-                            status: status.clone(),
-                            started_at: Some(event.timestamp),
-                            summary: if summary.is_empty() {
-                                None
-                            } else {
-                                Some(summary.clone())
-                            },
-                            thinking: String::new(),
-                            thinking_duration_ms: None,
-                            thinking_started_at: None,
-                            text: String::new(),
-                            task_focus: None,
-                            tools: Vec::new(),
-                        },
-                    );
-                }
-            }
-            SessionEventKind::UserMessageInjected {
-                message_id,
-                content,
-                created_at,
-            } => {
-                trace.summary.segments.push(RunTraceSegment::UserMessage {
-                    message_id: message_id.clone(),
-                    content: content.clone(),
-                    created_at: *created_at,
-                });
-            }
-            SessionEventKind::SyncRequired { .. }
-            | SessionEventKind::ContextUsage { .. }
-            | SessionEventKind::QuestionnaireRequested { .. }
-            | SessionEventKind::QuestionnaireAnswered { .. }
-            | SessionEventKind::QuestionnaireDismissed { .. }
-            | SessionEventKind::DocLinked { .. }
-            | SessionEventKind::SessionTitleUpdated { .. }
-            | SessionEventKind::UserMessageAdded { .. }
-            | SessionEventKind::PendingQueueUpdated { .. }
-            | SessionEventKind::CompactionStarted
-            | SessionEventKind::CompactionFinished { .. } => {}
-        }
-    }
-
-    for trace in &mut traces {
-        trace.finalize_active_clocks();
-    }
-    traces.into_iter().map(|trace| trace.summary).collect()
+/// Select the trace owned by the active run. Never fall back to the most recent trace: session
+/// control frames and later runs must not be mistaken for the active run's activity.
+fn select_active_trace(
+    traces: Vec<RunTraceSummary>,
+    active_run_id: &str,
+) -> Option<RunTraceSummary> {
+    traces
+        .into_iter()
+        .find(|trace| trace.run_id == active_run_id && trace.status == "running")
 }
 
 fn active_trace_snapshot(
     summary: &SessionSummary,
+    active_run_id: Option<&str>,
     traces: Vec<RunTraceSummary>,
 ) -> (Option<RunTraceSummary>, Vec<RunTraceSubagent>) {
     if !matches!(
@@ -2216,12 +2085,9 @@ fn active_trace_snapshot(
     ) {
         return (None, Vec::new());
     }
-    let Some(trace) = traces.into_iter().next_back() else {
+    let Some(trace) = active_run_id.and_then(|run_id| select_active_trace(traces, run_id)) else {
         return (None, Vec::new());
     };
-    if trace.status != "running" {
-        return (None, Vec::new());
-    }
     let mut subagents = Vec::new();
     for segment in &trace.segments {
         if let RunTraceSegment::Execution {
@@ -2245,12 +2111,51 @@ fn row_to_run(row: &PgRow) -> RuntimeResult<RunRecord> {
         error: row.try_get("error")?,
         started_at: row.try_get("started_at")?,
         finished_at: row.try_get("finished_at")?,
+        start_seq: row
+            .try_get::<Option<i64>, _>("start_seq")?
+            .map(|seq| u64::try_from(seq).unwrap_or(0)),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quire_session_protocol::RunTraceToolItem;
+
+    fn subagent_thinking(subagent: &RunTraceSubagent) -> String {
+        subagent
+            .segments
+            .iter()
+            .filter_map(|segment| match segment {
+                RunTraceSegment::Thinking { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    fn subagent_tools(subagent: &RunTraceSubagent) -> Vec<RunTraceToolItem> {
+        subagent
+            .segments
+            .iter()
+            .flat_map(|segment| match segment {
+                RunTraceSegment::Execution { tools, .. } => tools.clone(),
+                _ => Vec::new(),
+            })
+            .collect()
+    }
+
+    fn subagent_thinking_duration_ms(subagent: &RunTraceSubagent) -> Option<u64> {
+        let total = subagent
+            .segments
+            .iter()
+            .filter_map(|segment| match segment {
+                RunTraceSegment::Thinking { duration_ms, .. } => *duration_ms,
+                _ => None,
+            })
+            .sum::<u64>();
+        (total > 0).then_some(total)
+    }
 
     #[test]
     fn role_and_status_mappings_are_total_for_known_rows() {
@@ -2395,12 +2300,15 @@ mod tests {
         assert_eq!(subagents.len(), 1);
         let subagent = subagents.first().expect("subagent");
         assert_eq!(subagent.subagent_run_id, "sub_1");
-        assert_eq!(subagent.thinking, "sub-thought");
+        assert_eq!(subagent_thinking(subagent), "sub-thought");
         assert_eq!(subagent.status, "completed");
         assert_eq!(subagent.summary.as_deref(), Some("intro drafted"));
-        assert_eq!(subagent.tools.len(), 1);
+        assert_eq!(subagent_tools(subagent).len(), 1);
         assert_eq!(
-            subagent.tools.first().expect("sub tool").duration_ms,
+            subagent_tools(subagent)
+                .first()
+                .expect("sub tool")
+                .duration_ms,
             Some(42)
         );
     }
@@ -2734,7 +2642,7 @@ mod tests {
             panic!("second segment should be execution");
         };
         let subagent = subagents.first().expect("subagent");
-        assert_eq!(subagent.thinking_duration_ms, Some(5_000));
+        assert_eq!(subagent_thinking_duration_ms(subagent), Some(5_000));
     }
 
     #[test]
@@ -2835,5 +2743,147 @@ mod tests {
         let trace = traces.first().expect("trace");
         assert_eq!(trace.status, "interrupted");
         assert!(trace.duration_ms.is_some());
+    }
+
+    fn trace_summary(run_id: &str, status: &str) -> RunTraceSummary {
+        RunTraceSummary {
+            run_id: run_id.into(),
+            status: status.into(),
+            started_at: None,
+            duration_ms: None,
+            task_focus: None,
+            segments: Vec::new(),
+        }
+    }
+
+    fn running_summary(status: ActiveRunStatus) -> SessionSummary {
+        SessionSummary {
+            session_id: "sess_1".into(),
+            title: "title".into(),
+            doc_id: None,
+            linked_doc_id: None,
+            kb_branch: None,
+            status: SessionStatus::Active,
+            active_run_status: status,
+            last_event_seq: 0,
+            context_usage: quire_session_protocol::ContextUsage::default(),
+            compacting: false,
+            compacted_at: None,
+            pinned_at: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn session_control_frames_do_not_create_phantom_traces() {
+        let events = vec![
+            SessionEvent::new(1, "run_main", "main", None, SessionEventKind::TurnStarted),
+            SessionEvent::new(
+                2,
+                "queue",
+                "system",
+                None,
+                SessionEventKind::PendingQueueUpdated { items: vec![] },
+            ),
+            SessionEvent::new(
+                3,
+                "compaction",
+                "main",
+                None,
+                SessionEventKind::CompactionStarted,
+            ),
+            SessionEvent::new(
+                4,
+                "compaction",
+                "main",
+                None,
+                SessionEventKind::CompactionFinished { success: true },
+            ),
+            SessionEvent::new(
+                5,
+                "run_main",
+                "queue",
+                None,
+                SessionEventKind::UserMessageAdded {
+                    message_id: "msg_1".into(),
+                },
+            ),
+            SessionEvent::new(
+                6,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::DocLinked {
+                    doc_id: "doc_1".into(),
+                    title: "Report".into(),
+                },
+            ),
+            SessionEvent::new(
+                7,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::SessionTitleUpdated {
+                    title: "Report".into(),
+                },
+            ),
+            SessionEvent::new(
+                8,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::ThinkingDelta {
+                    delta: "plan".into(),
+                },
+            ),
+            SessionEvent::new(9, "run_main", "main", None, SessionEventKind::TurnFinished),
+        ];
+
+        let traces = aggregate_run_traces(&events);
+        assert_eq!(traces.len(), 1, "control frames must not create traces");
+        let trace = traces.first().expect("run trace");
+        assert_eq!(trace.run_id, "run_main");
+        assert_eq!(
+            trace.started_at,
+            events.first().map(|event| event.timestamp),
+            "the run clock starts at turn_started, not at a queue signal"
+        );
+    }
+
+    #[test]
+    fn active_trace_is_selected_by_run_id_not_by_recency() {
+        let traces = vec![
+            trace_summary("run_main", "running"),
+            trace_summary("queue", "running"),
+        ];
+        let selected = select_active_trace(traces.clone(), "run_main").expect("active trace");
+        assert_eq!(selected.run_id, "run_main");
+        assert!(select_active_trace(traces.clone(), "run_missing").is_none());
+
+        let completed = vec![trace_summary("run_main", "completed")];
+        assert!(select_active_trace(completed, "run_main").is_none());
+    }
+
+    #[test]
+    fn active_snapshot_requires_the_active_run_id() {
+        let summary = running_summary(ActiveRunStatus::Running);
+        let traces = vec![trace_summary("queue", "running")];
+
+        let (trace, subagents) = active_trace_snapshot(&summary, None, traces.clone());
+        assert!(trace.is_none());
+        assert!(subagents.is_empty());
+
+        let (trace, _) = active_trace_snapshot(&summary, Some("run_main"), traces);
+        assert!(trace.is_none(), "a queue trace must not hydrate a run");
+
+        let traces = vec![trace_summary("run_main", "running")];
+        let (trace, _) = active_trace_snapshot(&summary, Some("run_main"), traces);
+        assert_eq!(trace.map(|trace| trace.run_id), Some("run_main".into()));
+
+        let idle = running_summary(ActiveRunStatus::Idle);
+        let traces = vec![trace_summary("run_main", "running")];
+        let (trace, _) = active_trace_snapshot(&idle, Some("run_main"), traces);
+        assert!(trace.is_none());
     }
 }

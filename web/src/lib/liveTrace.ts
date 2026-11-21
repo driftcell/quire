@@ -121,12 +121,11 @@ function liveSegmentFromTrace(
  * Rebuild a live main-agent trace from the server's active-run snapshot.
  * `started_at` preserves the original `turn_started` clock across refreshes.
  */
-export function liveTraceFromSummary(
-  trace: RunTraceSummary,
-  isStreaming = trace.status === "running",
-): LiveAgentTrace {
-  const startedAtMs = serverTimeMs(trace.started_at);
-  const source = trace.segments ?? [];
+function liveSegmentsFromTraceSegments(
+  source: RunTraceSegment[],
+  isStreaming: boolean,
+  fallbackStartedAtMs: number | undefined,
+): LiveTraceSegment[] {
   const lastIndex = source.length - 1;
   const segments: LiveTraceSegment[] = [];
   source.forEach((segment, index) => {
@@ -135,12 +134,25 @@ export function liveTraceFromSummary(
       index,
       lastIndex,
       isStreaming,
-      startedAtMs,
+      fallbackStartedAtMs,
     );
     if (live) {
       segments.push(live);
     }
   });
+  return segments;
+}
+
+export function liveTraceFromSummary(
+  trace: RunTraceSummary,
+  isStreaming = trace.status === "running",
+): LiveAgentTrace {
+  const startedAtMs = serverTimeMs(trace.started_at);
+  const segments = liveSegmentsFromTraceSegments(
+    trace.segments ?? [],
+    isStreaming,
+    startedAtMs,
+  );
   return {
     agentId: "main",
     runId: trace.run_id,
@@ -179,27 +191,11 @@ export function liveSubagentFromSummary(
 ): LiveSubagentRun {
   const status = liveSubagentStatus(subagent.status);
   const startedAtMs = serverTimeMs(subagent.started_at);
-  const thinkingDurationMs = subagent.thinking_duration_ms ?? undefined;
-  const thinkingStartedAtMs =
-    serverTimeMs(subagent.thinking_started_at) ??
-    (thinkingDurationMs === undefined ? startedAtMs : undefined);
-  const segments: LiveTraceSegment[] = [];
-  if (subagent.thinking.length > 0) {
-    segments.push({
-      kind: "thinking",
-      text: subagent.thinking,
-      durationMs: thinkingDurationMs,
-      startedAtMs:
-        thinkingDurationMs === undefined ? thinkingStartedAtMs : undefined,
-    });
-  }
-  const tools = toToolTraceItems(subagent.tools);
-  if (tools.length > 0) {
-    segments.push({ kind: "execution", tools, subagentRunIds: [] });
-  }
-  if (subagent.text) {
-    segments.push({ kind: "text", text: subagent.text });
-  }
+  const segments = liveSegmentsFromTraceSegments(
+    subagent.segments ?? [],
+    isStreaming,
+    startedAtMs,
+  );
   return {
     subagentRunId: subagent.subagent_run_id,
     agentName: subagent.agent_name,
@@ -294,6 +290,7 @@ export function emptyLiveTrace(
     runId,
     startedAtMs,
     segments: [],
+    taskFocus: undefined,
     isStreaming: true,
   };
 }
@@ -459,6 +456,7 @@ export interface ToolFinishPatch {
   status: ToolCallTraceItem["status"];
   outputPreview?: string;
   durationMs?: number;
+  truncated?: boolean;
 }
 
 export function finishToolSegment(
@@ -484,6 +482,7 @@ export function finishToolSegment(
             status: patch.status,
             outputPreview: patch.outputPreview,
             durationMs: patch.durationMs,
+            truncated: patch.truncated ?? tool.truncated,
           }
         : tool,
     );

@@ -125,16 +125,17 @@ impl McpRegistry {
 
     pub fn spawn_invalidation_listener(&self) -> tokio::task::JoinHandle<()> {
         let cache = self.cache.clone();
-        let bus = self.store.bus().clone();
-        tokio::spawn(async move {
-            let Ok(mut subscriber) = bus.subscribe_mcp_invalidation().await else {
-                return;
-            };
-            while subscriber.next_invalidation().await.is_some() {
-                cache.invalidate_all();
-                cache.run_pending_tasks().await;
-            }
-        })
+        crate::bus::spawn_resilient_invalidation_listener(
+            self.store.bus().clone(),
+            crate::bus::RedisBus::mcp_invalidation_subscription,
+            Box::new(move || {
+                let cache = cache.clone();
+                Box::pin(async move {
+                    cache.invalidate_all();
+                    cache.run_pending_tasks().await;
+                })
+            }),
+        )
     }
 
     /// Idempotently register the built-in Quire report MCP server. Never overwrites admin state.

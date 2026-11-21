@@ -1,9 +1,10 @@
 //! Run cancellation registry and cross-instance interrupt listener.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 use crate::bus::RedisBus;
 
@@ -52,16 +53,28 @@ impl RunRegistry {
     }
 }
 
+/// Cancel local runs on cross-instance interrupt commands.
+///
+/// The listener must never die silently: a failed subscription or a dropped Pub/Sub connection
+/// is retried with a short backoff, and malformed frames are skipped by the subscriber itself.
 pub fn spawn_interrupt_listener(
     bus: RedisBus,
     registry: RunRegistry,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let Ok(mut subscriber) = bus.subscribe_interrupts().await else {
-            return;
-        };
-        while let Some(command) = subscriber.next_command().await {
-            let _ = registry.cancel(&command.run_id).await;
+        loop {
+            match bus.subscribe_interrupts().await {
+                Ok(mut subscriber) => {
+                    while let Some(command) = subscriber.next_command().await {
+                        let _ = registry.cancel(&command.run_id).await;
+                    }
+                    warn!("interrupt subscription ended; resubscribing");
+                }
+                Err(error) => {
+                    warn!(%error, "failed to subscribe to runtime interrupts; retrying");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     })
 }

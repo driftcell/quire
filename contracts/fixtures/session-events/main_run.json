@@ -1,0 +1,273 @@
+{
+  "events": [
+    {
+      "seq": 1,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:00Z",
+      "event": "turn_started"
+    },
+    {
+      "seq": 2,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:01Z",
+      "event": "thinking_delta",
+      "delta": "plan"
+    },
+    {
+      "seq": 3,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:02Z",
+      "event": "thinking_delta",
+      "delta": " more"
+    },
+    {
+      "seq": 4,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:03Z",
+      "event": "tool_call_started",
+      "tool_call_id": "tc_1",
+      "tool_name": "apply_operations",
+      "input_preview": "{\"ops\":[",
+      "truncated": true
+    },
+    {
+      "seq": 5,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:04Z",
+      "event": "tool_call_finished",
+      "tool_call_id": "tc_1",
+      "status": "completed",
+      "output_preview": "{\"ok\":true}",
+      "truncated": false,
+      "duration_ms": 120
+    },
+    {
+      "seq": 6,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:05Z",
+      "event": "text_delta",
+      "delta": "answer"
+    },
+    {
+      "seq": 7,
+      "run_id": "run_main",
+      "agent_id": "main",
+      "parent_run_id": null,
+      "timestamp": "2026-01-01T00:00:06Z",
+      "event": "turn_finished"
+    }
+  ],
+  "expected_traces": [
+    {
+      "run_id": "run_main",
+      "status": "completed",
+      "started_at": "2026-01-01T00:00:00Z",
+      "duration_ms": 6000,
+      "segments": [
+        {
+          "kind": "thinking",
+          "text": "plan more",
+          "duration_ms": 2000,
+          "started_at": "2026-01-01T00:00:01Z"
+        },
+        {
+          "kind": "execution",
+          "tools": [
+            {
+              "tool_call_id": "tc_1",
+              "tool_name": "apply_operations",
+              "status": "completed",
+              "input_preview": "{\"ops\":[",
+              "output_preview": "{\"ok\":true}",
+              "duration_ms": 120,
+              "truncated": false
+            }
+          ],
+          "subagents": []
+        },
+        {
+          "kind": "text",
+          "text": "answer"
+        }
+      ]
+    }
+  ],
+  "prefix_traces": [
+    [],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": []
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "thinking",
+            "text": "plan",
+            "started_at": "2026-01-01T00:00:01Z"
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "thinking",
+            "text": "plan more",
+            "started_at": "2026-01-01T00:00:01Z"
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "thinking",
+            "text": "plan more",
+            "duration_ms": 2000,
+            "started_at": "2026-01-01T00:00:01Z"
+          },
+          {
+            "kind": "execution",
+            "tools": [
+              {
+                "tool_call_id": "tc_1",
+                "tool_name": "apply_operations",
+                "status": "running",
+                "input_preview": "{\"ops\":[",
+                "truncated": true
+              }
+            ],
+            "subagents": []
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "thinking",
+            "text": "plan more",
+            "duration_ms": 2000,
+            "started_at": "2026-01-01T00:00:01Z"
+          },
+          {
+            "kind": "execution",
+            "tools": [
+              {
+                "tool_call_id": "tc_1",
+                "tool_name": "apply_operations",
+                "status": "completed",
+                "input_preview": "{\"ops\":[",
+                "output_preview": "{\"ok\":true}",
+                "duration_ms": 120,
+                "truncated": false
+              }
+            ],
+            "subagents": []
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "running",
+        "started_at": "2026-01-01T00:00:00Z",
+        "segments": [
+          {
+            "kind": "thinking",
+            "text": "plan more",
+            "duration_ms": 2000,
+            "started_at": "2026-01-01T00:00:01Z"
+          },
+          {
+            "kind": "execution",
+            "tools": [
+              {
+                "tool_call_id": "tc_1",
+                "tool_name": "apply_operations",
+                "status": "completed",
+                "input_preview": "{\"ops\":[",
+                "output_preview": "{\"ok\":true}",
+                "duration_ms": 120,
+                "truncated": false
+              }
+            ],
+            "subagents": []
+          },
+          {
+            "kind": "text",
+            "text": "answer"
+          }
+        ]
+      }
+    ],
+    [
+      {
+        "run_id": "run_main",
+        "status": "completed",
+        "started_at": "2026-01-01T00:00:00Z",
+        "duration_ms": 6000,
+        "segments": [
+          {
+            "kind": "thinking",
+            "text": "plan more",
+            "duration_ms": 2000,
+            "started_at": "2026-01-01T00:00:01Z"
+          },
+          {
+            "kind": "execution",
+            "tools": [
+              {
+                "tool_call_id": "tc_1",
+                "tool_name": "apply_operations",
+                "status": "completed",
+                "input_preview": "{\"ops\":[",
+                "output_preview": "{\"ok\":true}",
+                "duration_ms": 120,
+                "truncated": false
+              }
+            ],
+            "subagents": []
+          },
+          {
+            "kind": "text",
+            "text": "answer"
+          }
+        ]
+      }
+    ]
+  ]
+}

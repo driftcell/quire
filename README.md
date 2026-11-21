@@ -90,6 +90,7 @@ rolls back and validates `computed` frontend metadata.
 | `MODEL_BASE_URL` | — | Optional provider base URL override |
 | `MODELS_DEV_URL` | `https://models.dev/api.json` | Catalog source for model imports |
 | `RUNTIME_SSE_REPLAY_LIMIT` | `500` | Maximum Session-SSE replay frames before `sync_required` |
+| `RUNTIME_SSE_HEARTBEAT_MS` | `15000` | Session-SSE heartbeat and durable `last_event_seq` reconcile interval |
 | `RUNTIME_PREVIEW_THROTTLE_MS` | `65` | Tool-argument preview throttle (clamped to 50–80 ms) |
 | `PREVIEW_BASE_URL` | `http://127.0.0.1:5173` | Frontend origin loaded by Playwright for `preview_report` |
 | `PREVIEW_PUBLIC_URL` | `http://localhost:5173` | Preview origin returned to the user |

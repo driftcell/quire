@@ -30,7 +30,10 @@ use crate::{
     kb::KbService,
     mcp_client::RmcpClient,
     mcp_registry::McpRegistry,
-    model_stream::{ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest},
+    model_stream::{
+        ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest,
+        spawn_producer_stream,
+    },
     models::{ModelRegistry, ProviderProtocol},
     prompt::ContextMessage,
     sandbox::{SandboxLease, SandboxProvider, sandbox_spec_from_config},
@@ -89,26 +92,14 @@ impl ModelStreamProvider for RigModelStreamProvider {
     async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream> {
         let core = self.core.clone();
         let cancellation = request.cancellation.clone();
-        let (sender, mut receiver) = mpsc::unbounded_channel::<RuntimeResult<ModelStreamEvent>>();
-        tokio::spawn(async move {
-            if let Err(error) = core.run_main_turn(request, sender.clone()).await {
-                let _ = sender.send(Err(error));
-            }
-        });
-        let stream = async_stream::stream! {
-            loop {
-                tokio::select! {
-                    _ = cancellation.cancelled() => break,
-                    item = receiver.recv() => {
-                        match item {
-                            Some(item) => yield item,
-                            None => break,
-                        }
-                    }
+        Ok(spawn_producer_stream(
+            cancellation,
+            move |sender| async move {
+                if let Err(error) = core.run_main_turn(request, sender.clone()).await {
+                    let _ = sender.send(Err(error)).await;
                 }
-            }
-        };
-        Ok(Box::pin(stream))
+            },
+        ))
     }
 }
 
@@ -143,14 +134,14 @@ struct SubagentScope {
 
 #[derive(Clone)]
 struct EventScope {
-    sender: mpsc::UnboundedSender<RuntimeResult<ModelStreamEvent>>,
+    sender: mpsc::Sender<RuntimeResult<ModelStreamEvent>>,
     subagent: Option<SubagentScope>,
     cancellation: CancellationToken,
 }
 
 impl EventScope {
     fn top(
-        sender: mpsc::UnboundedSender<RuntimeResult<ModelStreamEvent>>,
+        sender: mpsc::Sender<RuntimeResult<ModelStreamEvent>>,
         token: CancellationToken,
     ) -> Self {
         Self {
@@ -171,7 +162,7 @@ impl EventScope {
         }
     }
 
-    fn send(&self, event: ModelStreamEvent) {
+    async fn send(&self, event: ModelStreamEvent) {
         let event = match &self.subagent {
             Some(scope) => ModelStreamEvent::SubagentEvent {
                 subagent_run_id: scope.subagent_run_id.clone(),
@@ -180,11 +171,11 @@ impl EventScope {
             },
             None => event,
         };
-        let _ = self.sender.send(Ok(event));
+        let _ = self.sender.send(Ok(event)).await;
     }
 
-    fn send_raw(&self, event: ModelStreamEvent) {
-        let _ = self.sender.send(Ok(event));
+    async fn send_raw(&self, event: ModelStreamEvent) {
+        let _ = self.sender.send(Ok(event)).await;
     }
 }
 
@@ -192,7 +183,7 @@ impl RigModelCore {
     async fn run_main_turn(
         self: Arc<Self>,
         request: ModelTurnRequest,
-        sender: mpsc::UnboundedSender<RuntimeResult<ModelStreamEvent>>,
+        sender: mpsc::Sender<RuntimeResult<ModelStreamEvent>>,
     ) -> RuntimeResult<()> {
         let branch = request.kb_branch.clone();
         let agent = self
@@ -397,7 +388,7 @@ impl RigModelCore {
             last_usage = response.usage;
             let text = response_text(&response);
             if !streamed_text && !text.is_empty() {
-                scope.send(ModelStreamEvent::TextDelta(text.clone()));
+                scope.send(ModelStreamEvent::TextDelta(text.clone())).await;
             }
             let calls: Vec<ToolCall> = response
                 .choice
@@ -442,7 +433,9 @@ impl RigModelCore {
                     } else {
                         execution.doc_id = Some(doc_id.clone());
                         *doc_id_state.lock().await = Some(doc_id.clone());
-                        scope.send(ModelStreamEvent::DocLinked { doc_id, title });
+                        scope
+                            .send(ModelStreamEvent::DocLinked { doc_id, title })
+                            .await;
                     }
                 }
                 answers.push(answer);
@@ -484,11 +477,13 @@ impl RigModelCore {
             {
                 // Route the event through the ordered stream so it is persisted after the tool
                 // result that preceded it, never before.
-                scope.send(ModelStreamEvent::UserMessageInjected {
-                    message_id: batch.message.message_id.clone(),
-                    content: batch.message.content.clone(),
-                    created_at: batch.message.created_at,
-                });
+                scope
+                    .send(ModelStreamEvent::UserMessageInjected {
+                        message_id: batch.message.message_id.clone(),
+                        content: batch.message.content.clone(),
+                        created_at: batch.message.created_at,
+                    })
+                    .await;
                 messages.push(Message::user(render_stored_user_message(&batch.message)));
             }
         }
@@ -498,10 +493,12 @@ impl RigModelCore {
         if execution.cancellation.is_cancelled() {
             return Ok(final_text);
         }
-        scope.send(ModelStreamEvent::Usage(context_usage(
-            &last_usage,
-            context_limit,
-        )));
+        scope
+            .send(ModelStreamEvent::Usage(context_usage(
+                &last_usage,
+                context_limit,
+            )))
+            .await;
         Ok(final_text)
     }
 }
@@ -585,11 +582,13 @@ async fn handle_stream_event(
             false
         }
         StreamEvent::Text { text, .. } => {
-            scope.send(ModelStreamEvent::TextDelta(text.clone()));
+            scope.send(ModelStreamEvent::TextDelta(text.clone())).await;
             true
         }
         StreamEvent::Reasoning { text, .. } => {
-            scope.send(ModelStreamEvent::ThinkingDelta(text.clone()));
+            scope
+                .send(ModelStreamEvent::ThinkingDelta(text.clone()))
+                .await;
             false
         }
         StreamEvent::Arguments { part, json } => {
@@ -614,13 +613,15 @@ async fn request_questionnaire(
     let tool_call_id = format!("{}:{}", execution.run_id, provider_call_id);
     let arguments = call.function.arguments_value();
     let (input_preview, input_truncated) = preview_json(&arguments);
-    scope.send(ModelStreamEvent::ToolCallStarted {
-        tool_call_id: tool_call_id.clone(),
-        tool_name: "ask_user".into(),
-        input_preview,
-        truncated: input_truncated,
-        input: arguments.clone(),
-    });
+    scope
+        .send(ModelStreamEvent::ToolCallStarted {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: "ask_user".into(),
+            input_preview,
+            truncated: input_truncated,
+            input: arguments.clone(),
+        })
+        .await;
     let questions_value = arguments.get("questions").cloned().ok_or_else(|| {
         RuntimeError::InvalidRequest("ask_user requires a `questions` array".into())
     })?;
@@ -633,21 +634,25 @@ async fn request_questionnaire(
             "ask_user requires at least one question".into(),
         ));
     }
-    scope.send(ModelStreamEvent::QuestionnaireRequested {
-        tool_call_id: Some(tool_call_id.clone()),
-        questions,
-    });
-    scope.send(ModelStreamEvent::ToolCallFinished {
-        tool_call_id,
-        tool_name: "ask_user".into(),
-        status: "awaiting_input".into(),
-        output_preview: "{\"awaiting_input\":true}".into(),
-        truncated: false,
-        duration_ms: 0,
-        input: arguments,
-        output: json!({"awaiting_input": true}),
-        error: None,
-    });
+    scope
+        .send(ModelStreamEvent::QuestionnaireRequested {
+            tool_call_id: Some(tool_call_id.clone()),
+            questions,
+        })
+        .await;
+    scope
+        .send(ModelStreamEvent::ToolCallFinished {
+            tool_call_id,
+            tool_name: "ask_user".into(),
+            status: "awaiting_input".into(),
+            output_preview: "{\"awaiting_input\":true}".into(),
+            truncated: false,
+            duration_ms: 0,
+            input: arguments,
+            output: json!({"awaiting_input": true}),
+            error: None,
+        })
+        .await;
     Ok(())
 }
 
@@ -675,13 +680,15 @@ async fn execute_tool_call(
         inject_preview_ids(&mut arguments, &preview_ids);
     }
     let (input_preview, input_truncated) = preview_json(&arguments);
-    scope.send(ModelStreamEvent::ToolCallStarted {
-        tool_call_id: tool_call_id.clone(),
-        tool_name: tool_name.clone(),
-        input_preview,
-        truncated: input_truncated,
-        input: arguments.clone(),
-    });
+    scope
+        .send(ModelStreamEvent::ToolCallStarted {
+            tool_call_id: tool_call_id.clone(),
+            tool_name: tool_name.clone(),
+            input_preview,
+            truncated: input_truncated,
+            input: arguments.clone(),
+        })
+        .await;
     let started = Instant::now();
     let outcome = if let Some(invalid) = call.function.invalid_arguments.clone() {
         let message = format_invalid_tool_arguments_error(&invalid);
@@ -745,17 +752,19 @@ async fn execute_tool_call(
         None
     };
     let (output_preview, output_truncated) = preview_json(&output_value);
-    scope.send(ModelStreamEvent::ToolCallFinished {
-        tool_call_id,
-        tool_name,
-        status,
-        output_preview,
-        truncated: output_truncated,
-        duration_ms,
-        input: arguments,
-        output: output_value,
-        error,
-    });
+    scope
+        .send(ModelStreamEvent::ToolCallFinished {
+            tool_call_id,
+            tool_name,
+            status,
+            output_preview,
+            truncated: output_truncated,
+            duration_ms,
+            input: arguments,
+            output: output_value,
+            error,
+        })
+        .await;
     (call.answer(&result), linked_doc)
 }
 
@@ -834,7 +843,7 @@ mod tests {
         let mut tool_map = BTreeMap::new();
         tool_map.insert("probe".to_string(), tool);
 
-        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (sender, mut receiver) = mpsc::channel(16);
         let scope = EventScope::top(sender, CancellationToken::new());
         let execution = AgentExecution {
             agent_id: "main".into(),
@@ -918,7 +927,7 @@ mod tests {
     async fn ask_user_emits_questionnaire_and_pauses_the_run() {
         use rig_core::message::{ToolFunction, ToolName};
 
-        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (sender, mut receiver) = mpsc::channel(16);
         let scope = EventScope::top(sender, CancellationToken::new());
         let execution = AgentExecution {
             agent_id: "main".into(),

@@ -3,44 +3,25 @@ import { useQueryClient } from "@tanstack/react-query";
 import { subscribeSessionEvents } from "@/api/sse";
 import type {
   ActiveRunStatus,
-  ContextUsage,
-  PendingQuestion,
-  QuestionAnswer,
   RunTraceSubagent,
   RunTraceSummary,
   SessionDetail,
   SessionEvent,
 } from "@/contracts/session-protocol";
+import { mergeHydratedSubagents, hydrateActiveRun } from "@/lib/liveTrace";
 import {
-  appendSubagentSegment,
-  appendTextSegment,
-  appendThinkingSegment,
-  appendToolSegment,
-  appendUserMessageSegment,
-  emptyLiveTrace,
-  ensureLiveTraceStarted,
-  finishThinkingSegment,
-  finishToolSegment,
-  hydrateActiveRun,
-  mergeHydratedSubagents,
-  type LiveAgentTrace,
-  type LiveSubagentRun,
-} from "@/lib/liveTrace";
+  clearLivePendingQuestion as clearPendingQuestion,
+  emptyLiveSessionState,
+  hydrateLiveSession,
+  recordResolvedQuestion as applyResolvedQuestion,
+  reduceSessionEvent,
+  resetLiveRun,
+  type LiveSessionState,
+  type SessionEventEffect,
+} from "@/lib/sessionEventReducer";
 
-function matchesSubagent(sub: LiveSubagentRun, runId: string): boolean {
-  return sub.subagentRunId === runId;
-}
-
-function eventTimestampMs(timestamp: string): number {
-  const parsed = Date.parse(timestamp);
-  return Number.isFinite(parsed) ? parsed : Date.now();
-}
-
-export interface ResolvedQuestionEntry {
-  question: PendingQuestion;
-  status: "answered" | "skipped" | "dismissed";
-  answers?: QuestionAnswer[];
-}
+export type { ResolvedQuestionEntry } from "@/lib/sessionEventReducer";
+import type { ResolvedQuestionEntry } from "@/lib/sessionEventReducer";
 
 export interface UseSessionEventStreamOptions {
   sessionId: string;
@@ -49,8 +30,89 @@ export interface UseSessionEventStreamOptions {
   serverActiveRunStatus?: ActiveRunStatus;
   activeRunTrace?: RunTraceSummary | null;
   activeSubagentTraces?: RunTraceSubagent[];
-  serverPendingQuestion?: PendingQuestion | null;
+  serverPendingQuestion?: SessionDetail["pending_question"];
   serverResolvedQuestions?: SessionDetail["resolved_questions"];
+}
+
+function applyEffect(
+  effect: SessionEventEffect,
+  sessionId: string,
+  queryClient: ReturnType<typeof useQueryClient>,
+  liveStateRef: { current: LiveSessionState },
+  setLiveState: (state: LiveSessionState) => void,
+  afterSeqRef: { current: number },
+  hydratedRunIdRef: { current: string | null },
+  setSseGeneration: (update: (generation: number) => number) => void,
+) {
+  switch (effect.type) {
+    case "invalidate": {
+      const queryKey =
+        effect.target === "session"
+          ? ["session", sessionId]
+          : effect.target === "traces"
+            ? ["session-traces", sessionId]
+            : ["sessions"];
+      void queryClient.invalidateQueries({ queryKey });
+      break;
+    }
+    case "set-compacting":
+      queryClient.setQueryData<SessionDetail>(
+        ["session", sessionId],
+        (current) =>
+          current ? { ...current, compacting: effect.value } : current,
+      );
+      break;
+    case "set-pending-queue":
+      queryClient.setQueryData<SessionDetail>(
+        ["session", sessionId],
+        (current) =>
+          current ? { ...current, pending_queue: effect.items } : current,
+      );
+      break;
+    case "refetch-and-clear":
+      void (async () => {
+        try {
+          await Promise.all([
+            queryClient.refetchQueries({
+              queryKey: ["session", sessionId],
+            }),
+            queryClient.refetchQueries({
+              queryKey: ["session-traces", sessionId],
+            }),
+          ]);
+        } catch {
+          return;
+        }
+        const next = resetLiveRun(liveStateRef.current, effect.runId);
+        liveStateRef.current = next;
+        setLiveState(next);
+        hydratedRunIdRef.current = null;
+      })();
+      break;
+    case "sync-required":
+      void (async () => {
+        try {
+          await queryClient.refetchQueries({
+            queryKey: ["session", sessionId],
+          });
+          const detail = queryClient.getQueryData<SessionDetail>([
+            "session",
+            sessionId,
+          ]);
+          if (detail && typeof detail.last_event_seq === "number") {
+            afterSeqRef.current = Math.max(
+              afterSeqRef.current,
+              detail.last_event_seq,
+            );
+          }
+        } catch {
+          // Reconnect anyway; the server replays from the current cursor.
+        } finally {
+          setSseGeneration((generation) => generation + 1);
+        }
+      })();
+      break;
+  }
 }
 
 export function useSessionEventStream({
@@ -64,29 +126,22 @@ export function useSessionEventStream({
   serverResolvedQuestions,
 }: UseSessionEventStreamOptions) {
   const queryClient = useQueryClient();
-  const [liveDocId, setLiveDocId] = useState<string | null>(null);
-  const [liveRunStatus, setLiveRunStatus] = useState<ActiveRunStatus | null>(
-    null,
-  );
-  const [liveUsage, setLiveUsage] = useState<ContextUsage | null>(null);
-  const [liveMain, setLiveMain] = useState<LiveAgentTrace | null>(null);
-  const [liveSubagents, setLiveSubagents] = useState<LiveSubagentRun[]>([]);
-  const [livePendingQuestion, setLivePendingQuestion] =
-    useState<PendingQuestion | null>(null);
-  const [resolvedQuestions, setResolvedQuestions] = useState<
-    ResolvedQuestionEntry[]
-  >([]);
+  const [liveState, setLiveState] = useState<LiveSessionState>(() => ({
+    ...emptyLiveSessionState(lastEventSeq),
+    livePendingQuestion: serverPendingQuestion ?? null,
+  }));
   const [sseGeneration, setSseGeneration] = useState(0);
 
-  const afterSeqRef = useRef<number>(0);
+  const liveStateRef = useRef<LiveSessionState>(liveState);
+  useEffect(() => {
+    liveStateRef.current = liveState;
+  }, [liveState]);
+
+  const afterSeqRef = useRef<number>(lastEventSeq);
   useEffect(() => {
     afterSeqRef.current = lastEventSeq;
   }, [lastEventSeq]);
 
-  const liveMainRef = useRef<LiveAgentTrace | null>(null);
-  useEffect(() => {
-    liveMainRef.current = liveMain;
-  }, [liveMain]);
   const hydratedRunIdRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -94,7 +149,7 @@ export function useSessionEventStream({
       return;
     }
     const runId = activeRunTrace.run_id;
-    const current = liveMainRef.current;
+    const current = liveStateRef.current.liveMain;
     const isStreaming =
       serverActiveRunStatus === "running" ||
       serverActiveRunStatus === "awaiting_input" ||
@@ -110,50 +165,55 @@ export function useSessionEventStream({
         activeSubagentTraces,
         isStreaming,
       );
-      setLiveSubagents((previous) =>
-        mergeHydratedSubagents(previous, hydrated.subagents),
-      );
+      const next = {
+        ...liveStateRef.current,
+        liveSubagents: mergeHydratedSubagents(
+          liveStateRef.current.liveSubagents,
+          hydrated.subagents,
+        ),
+        liveRunOwnerId: runId,
+      };
+      liveStateRef.current = next;
+      setLiveState(next);
       hydratedRunIdRef.current = runId;
       return;
     }
-    const hydrated = hydrateActiveRun(
+    const next = hydrateLiveSession(
       activeRunTrace,
       activeSubagentTraces,
       isStreaming,
+      liveStateRef.current,
     );
-    setLiveMain(hydrated.main);
-    setLiveSubagents(hydrated.subagents);
+    liveStateRef.current = next;
+    setLiveState(next);
     hydratedRunIdRef.current = runId;
   }, [enabled, activeRunTrace, activeSubagentTraces, serverActiveRunStatus]);
 
   const effectivePendingQuestion =
-    livePendingQuestion ?? serverPendingQuestion ?? null;
-  const effectivePendingQuestionRef = useRef<PendingQuestion | null>(
-    effectivePendingQuestion,
-  );
-  useEffect(() => {
-    effectivePendingQuestionRef.current = effectivePendingQuestion;
-  }, [effectivePendingQuestion]);
+    liveState.livePendingQuestion ?? serverPendingQuestion ?? null;
 
   const recordResolvedQuestion = useCallback(
     (
-      question: PendingQuestion,
+      question: NonNullable<SessionDetail["pending_question"]>,
       status: "answered" | "skipped" | "dismissed",
-      answers?: QuestionAnswer[],
+      answers?: Parameters<typeof applyResolvedQuestion>[3],
     ) => {
-      setResolvedQuestions((prev) => {
-        const next = prev.filter(
-          (item) => item.question.question_id !== question.question_id,
-        );
-        next.push({ question, status, answers });
-        return next;
-      });
+      const next = applyResolvedQuestion(
+        liveStateRef.current,
+        question,
+        status,
+        answers,
+      );
+      liveStateRef.current = next;
+      setLiveState(next);
     },
     [],
   );
 
   const clearLivePendingQuestion = useCallback(() => {
-    setLivePendingQuestion(null);
+    const next = clearPendingQuestion(liveStateRef.current);
+    liveStateRef.current = next;
+    setLiveState(next);
   }, []);
 
   const mergedResolvedQuestions = useMemo(() => {
@@ -168,381 +228,49 @@ export function useSessionEventStream({
         answers: item.answers,
       });
     }
-    for (const item of resolvedQuestions) {
+    for (const item of liveState.resolvedQuestions) {
       byId.set(item.question.question_id, item);
     }
     return Array.from(byId.values());
-  }, [serverResolvedQuestions, resolvedQuestions]);
+  }, [serverResolvedQuestions, liveState.resolvedQuestions]);
 
   useEffect(() => {
     if (!enabled) return undefined;
 
-    const handleEvent = (ev: SessionEvent) => {
-      if (ev.event !== "sync_required" && ev.seq > 0) {
-        afterSeqRef.current = Math.max(afterSeqRef.current, ev.seq);
-      }
-      const isSubagentEvent =
-        Boolean(ev.parent_run_id) ||
-        (ev.agent_id !== "main" && ev.agent_id.length > 0);
-      const eventTs = eventTimestampMs(ev.timestamp);
-      const mainTrace = (previous: LiveAgentTrace | null): LiveAgentTrace =>
-        ensureLiveTraceStarted(
-          previous ?? emptyLiveTrace("main", ev.run_id, eventTs),
-          eventTs,
+    const handleEvent = (event: SessionEvent) => {
+      const result = reduceSessionEvent(liveStateRef.current, event);
+      liveStateRef.current = result.state;
+      setLiveState(result.state);
+      afterSeqRef.current = Math.max(
+        afterSeqRef.current,
+        result.state.afterSeq,
+      );
+      for (const effect of result.effects) {
+        applyEffect(
+          effect,
+          sessionId,
+          queryClient,
+          liveStateRef,
+          setLiveState,
+          afterSeqRef,
+          hydratedRunIdRef,
+          setSseGeneration,
         );
-      const subagentTrace = (trace: LiveAgentTrace): LiveAgentTrace =>
-        ensureLiveTraceStarted(trace, eventTs);
-
-      if (ev.event === "doc_linked") {
-        setLiveDocId(ev.doc_id);
-        void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      } else if (ev.event === "session_title_updated") {
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-        void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      } else if (ev.event === "user_message_added") {
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      } else if (ev.event === "user_message_injected") {
-        setLiveMain((prev) =>
-          appendUserMessageSegment(
-            finishThinkingSegment(mainTrace(prev), eventTs),
-            ev.message_id,
-            ev.content,
-            ev.created_at,
-          ),
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["session-traces", sessionId],
-        });
-      } else if (ev.event === "turn_started") {
-        setLiveRunStatus("running");
-        setLiveMain(emptyLiveTrace("main", ev.run_id, eventTs));
-        setLiveSubagents([]);
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      } else if (ev.event === "thinking_delta") {
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: appendThinkingSegment(
-                      subagentTrace(sub.trace),
-                      ev.delta,
-                      eventTs,
-                    ),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            appendThinkingSegment(mainTrace(prev), ev.delta, eventTs),
-          );
-        }
-      } else if (ev.event === "text_delta") {
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: appendTextSegment(
-                      finishThinkingSegment(subagentTrace(sub.trace), eventTs),
-                      ev.delta,
-                    ),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            appendTextSegment(
-              finishThinkingSegment(mainTrace(prev), eventTs),
-              ev.delta,
-            ),
-          );
-        }
-      } else if (ev.event === "task_focus") {
-        const focus = {
-          title: ev.title,
-          detail: ev.detail ?? undefined,
-          sectionId: ev.section_id ?? undefined,
-        };
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: { ...subagentTrace(sub.trace), taskFocus: focus },
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) => ({
-            ...mainTrace(prev),
-            taskFocus: focus,
-          }));
-        }
-      } else if (ev.event === "tool_call_started") {
-        const toolItem = {
-          toolCallId: ev.tool_call_id,
-          toolName: ev.tool_name,
-          status: "running" as const,
-          inputPreview: ev.input_preview,
-          truncated: ev.truncated,
-        };
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: appendToolSegment(
-                      finishThinkingSegment(subagentTrace(sub.trace), eventTs),
-                      toolItem,
-                    ),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            appendToolSegment(
-              finishThinkingSegment(mainTrace(prev), eventTs),
-              toolItem,
-            ),
-          );
-        }
-      } else if (ev.event === "tool_call_finished") {
-        const nextStatus: "completed" | "failed" =
-          ev.status === "failed" || ev.status === "error"
-            ? "failed"
-            : "completed";
-        const patch = {
-          status: nextStatus,
-          outputPreview: ev.output_preview,
-          durationMs: ev.duration_ms,
-        };
-        if (isSubagentEvent) {
-          setLiveSubagents((prev) =>
-            prev.map((sub) =>
-              matchesSubagent(sub, ev.run_id)
-                ? {
-                    ...sub,
-                    trace: finishToolSegment(sub.trace, ev.tool_call_id, patch),
-                  }
-                : sub,
-            ),
-          );
-        } else {
-          setLiveMain((prev) =>
-            prev ? finishToolSegment(prev, ev.tool_call_id, patch) : prev,
-          );
-        }
-      } else if (ev.event === "subagent_started") {
-        setLiveMain((prev) =>
-          appendSubagentSegment(
-            finishThinkingSegment(mainTrace(prev), eventTs),
-            ev.subagent_run_id,
-          ),
-        );
-        setLiveSubagents((prev) => [
-          ...prev,
-          {
-            subagentRunId: ev.subagent_run_id,
-            agentName: ev.agent_name,
-            displayName: ev.display_name ?? undefined,
-            task: ev.task,
-            sectionId: ev.section_id ?? undefined,
-            status: "running",
-            trace: emptyLiveTrace(ev.agent_name, ev.subagent_run_id, eventTs),
-          },
-        ]);
-      } else if (ev.event === "subagent_finished") {
-        setLiveSubagents((prev) =>
-          prev.map((sub) =>
-            sub.subagentRunId === ev.subagent_run_id
-              ? {
-                  ...sub,
-                  status: ev.status === "failed" ? "failed" : "completed",
-                  summary: ev.summary,
-                  trace: {
-                    ...finishThinkingSegment(sub.trace, eventTs),
-                    isStreaming: false,
-                  },
-                }
-              : sub,
-          ),
-        );
-      } else if (ev.event === "context_usage") {
-        setLiveUsage({
-          input_tokens: ev.input_tokens,
-          output_tokens: ev.output_tokens,
-          cached_tokens: ev.cached_tokens,
-          context_used: ev.context_used,
-          context_limit: ev.context_limit,
-        });
-      } else if (ev.event === "compaction_started") {
-        queryClient.setQueryData<SessionDetail>(
-          ["session", sessionId],
-          (current) => (current ? { ...current, compacting: true } : current),
-        );
-      } else if (ev.event === "compaction_finished") {
-        queryClient.setQueryData<SessionDetail>(
-          ["session", sessionId],
-          (current) => (current ? { ...current, compacting: false } : current),
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      } else if (ev.event === "questionnaire_requested") {
-        setLiveRunStatus("awaiting_input");
-        setLiveMain((prev) =>
-          prev ? finishThinkingSegment(prev, eventTs) : prev,
-        );
-        setLivePendingQuestion({
-          question_id: ev.question_id,
-          run_id: ev.run_id,
-          tool_call_id: ev.tool_call_id,
-          questions: ev.questions,
-          created_at: ev.timestamp,
-        });
-      } else if (ev.event === "questionnaire_answered") {
-        const target = effectivePendingQuestionRef.current;
-        if (target && target.question_id === ev.question_id) {
-          recordResolvedQuestion(
-            target,
-            ev.skipped_all ? "skipped" : "answered",
-            ev.answers,
-          );
-        }
-        setLivePendingQuestion((curr) =>
-          curr?.question_id === ev.question_id ? null : curr,
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["session-traces", sessionId],
-        });
-      } else if (ev.event === "questionnaire_dismissed") {
-        const target = effectivePendingQuestionRef.current;
-        if (target && target.question_id === ev.question_id) {
-          recordResolvedQuestion(target, "dismissed");
-        }
-        setLivePendingQuestion((curr) =>
-          curr?.question_id === ev.question_id ? null : curr,
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-        void queryClient.invalidateQueries({
-          queryKey: ["session-traces", sessionId],
-        });
-      } else if (ev.event === "turn_finished") {
-        setLiveRunStatus("idle");
-        setLiveMain((prev) =>
-          prev ? finishThinkingSegment(prev, eventTs) : prev,
-        );
-        setLiveSubagents((prev) =>
-          prev.map((sub) => ({
-            ...sub,
-            trace: finishThinkingSegment(sub.trace, eventTs),
-          })),
-        );
-        void (async () => {
-          await Promise.all([
-            queryClient.refetchQueries({
-              queryKey: ["session", sessionId],
-            }),
-            queryClient.refetchQueries({
-              queryKey: ["session-traces", sessionId],
-            }),
-          ]);
-          setLiveMain(null);
-          setLiveSubagents([]);
-          hydratedRunIdRef.current = null;
-        })();
-        void queryClient.invalidateQueries({ queryKey: ["sessions"] });
-      } else if (ev.event === "turn_failed") {
-        setLiveRunStatus(ev.recoverable ? "interrupted" : "failed");
-        setLiveMain((prev) =>
-          prev
-            ? { ...finishThinkingSegment(prev, eventTs), isStreaming: false }
-            : null,
-        );
-        setLiveSubagents((prev) =>
-          prev.map((sub) => ({
-            ...sub,
-            trace: finishThinkingSegment(sub.trace, eventTs),
-          })),
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
-      } else if (ev.event === "sync_required") {
-        void (async () => {
-          try {
-            await queryClient.refetchQueries({
-              queryKey: ["session", sessionId],
-            });
-            const detail = queryClient.getQueryData<SessionDetail>([
-              "session",
-              sessionId,
-            ]);
-            if (detail && typeof detail.last_event_seq === "number") {
-              afterSeqRef.current = Math.max(
-                afterSeqRef.current,
-                detail.last_event_seq,
-              );
-            }
-          } catch {
-            // Reconnect anyway; the server replays from the current cursor.
-          } finally {
-            setSseGeneration((generation) => generation + 1);
-          }
-        })();
-      } else if (ev.event === "pending_queue_updated") {
-        queryClient.setQueryData<SessionDetail>(
-          ["session", sessionId],
-          (current) =>
-            current ? { ...current, pending_queue: ev.items } : current,
-        );
-        void queryClient.invalidateQueries({
-          queryKey: ["session", sessionId],
-        });
       }
     };
 
     return subscribeSessionEvents(sessionId, () => afterSeqRef.current, {
       onEvent: handleEvent,
     });
-  }, [
-    sessionId,
-    enabled,
-    queryClient,
-    recordResolvedQuestion,
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- bumping generation intentionally tears down and recreates the SSE stream
-    sseGeneration,
-  ]);
+  }, [sessionId, enabled, queryClient, sseGeneration]);
 
   return {
-    liveDocId,
-    liveRunStatus,
-    liveUsage,
-    liveMain,
-    liveSubagents,
+    liveDocId: liveState.liveDocId,
+    liveRunStatus: liveState.liveRunStatus,
+    liveUsage: liveState.liveUsage,
+    liveMain: liveState.liveMain,
+    liveSubagents: liveState.liveSubagents,
     effectivePendingQuestion,
     mergedResolvedQuestions,
     recordResolvedQuestion,

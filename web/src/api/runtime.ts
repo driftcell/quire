@@ -201,9 +201,9 @@ function isRunTraceSubagent(value: unknown): value is RunTraceSubagent {
     typeof value.agent_name === "string" &&
     typeof value.task === "string" &&
     typeof value.status === "string" &&
-    typeof value.thinking === "string" &&
-    (value.tools === undefined ||
-      (Array.isArray(value.tools) && value.tools.every(isRunTraceToolItem)))
+    (value.segments === undefined ||
+      (Array.isArray(value.segments) &&
+        value.segments.every(isRunTraceSegment)))
   );
 }
 

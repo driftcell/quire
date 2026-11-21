@@ -875,7 +875,7 @@ async fn read_skill_resource_tool(
         section_id = "Optional `block_id` of the report heading currently being worked on."
     )
 )]
-fn describe_task_tool(
+async fn describe_task_tool(
     #[rig(context)] context: &mut ToolContext,
     title: String,
     detail: Option<String>,
@@ -888,11 +888,14 @@ fn describe_task_tool(
             "`title` must be a non-empty status phrase",
         ));
     }
-    runtime.event_scope.send(ModelStreamEvent::TaskFocus {
-        title: title.clone(),
-        detail: detail.clone(),
-        section_id: section_id.clone(),
-    });
+    runtime
+        .event_scope
+        .send(ModelStreamEvent::TaskFocus {
+            title: title.clone(),
+            detail: detail.clone(),
+            section_id: section_id.clone(),
+        })
+        .await;
     Ok(json!({
         "title": title,
         "detail": detail,
@@ -932,7 +935,8 @@ async fn set_session_title_tool(
         .event_scope
         .send(ModelStreamEvent::SessionTitleUpdated {
             title: title.clone(),
-        });
+        })
+        .await;
     Ok(json!({
         "session_id": runtime.execution.session_id,
         "title": title,
