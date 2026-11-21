@@ -172,3 +172,59 @@ describe("run lifecycle guards", () => {
     expect(mainUsage?.context_used).toBe(15);
   });
 });
+
+describe("refetch-reducing effects", () => {
+  test("session_title_updated updates the cache without a detail refetch", () => {
+    const { effects } = reduceSessionEvent(emptyLiveSessionState(), {
+      seq: 1,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:00Z",
+      event: "session_title_updated",
+      title: "Report",
+    });
+    expect(effects).toEqual([{ type: "set-session-title", title: "Report" }]);
+  });
+
+  test("pending_queue_updated only patches the pending queue", () => {
+    const { effects } = reduceSessionEvent(emptyLiveSessionState(), {
+      seq: 1,
+      run_id: "queue",
+      agent_id: "system",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:00Z",
+      event: "pending_queue_updated",
+      items: [],
+    });
+    expect(effects).toEqual([{ type: "set-pending-queue", items: [] }]);
+  });
+
+  test("turn_started patches active_run_status instead of refetching", () => {
+    const { effects } = reduceSessionEvent(emptyLiveSessionState(), {
+      seq: 1,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:00Z",
+      event: "turn_started",
+    });
+    expect(effects).toEqual([{ type: "set-run-status", value: "running" }]);
+  });
+
+  test("doc_linked patches the bound document", () => {
+    const { effects } = reduceSessionEvent(emptyLiveSessionState(), {
+      seq: 1,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:00Z",
+      event: "doc_linked",
+      doc_id: "doc_1",
+      title: "Report",
+    });
+    expect(effects).toEqual([
+      { type: "set-doc-linked", doc_id: "doc_1", title: "Report" },
+    ]);
+  });
+});

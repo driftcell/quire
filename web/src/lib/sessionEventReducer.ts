@@ -54,6 +54,9 @@ export type SessionEventEffect =
   | { type: "refetch-and-clear"; runId: string }
   | { type: "set-compacting"; value: boolean }
   | { type: "set-pending-queue"; items: PendingQueueItem[] }
+  | { type: "set-session-title"; title: string }
+  | { type: "set-doc-linked"; doc_id: string; title: string }
+  | { type: "set-run-status"; value: ActiveRunStatus }
   | { type: "sync-required" };
 
 export interface ReduceResult {
@@ -216,11 +219,14 @@ export function reduceSessionEvent(
   switch (event.event) {
     case "doc_linked":
       next = { ...next, liveDocId: event.doc_id };
-      effects.push({ type: "invalidate", target: "sessions" });
+      effects.push({
+        type: "set-doc-linked",
+        doc_id: event.doc_id,
+        title: event.title,
+      });
       break;
     case "session_title_updated":
-      effects.push({ type: "invalidate", target: "session" });
-      effects.push({ type: "invalidate", target: "sessions" });
+      effects.push({ type: "set-session-title", title: event.title });
       break;
     case "user_message_added":
       effects.push({ type: "invalidate", target: "session" });
@@ -246,7 +252,7 @@ export function reduceSessionEvent(
         liveMain: emptyLiveTrace("main", event.run_id, eventTs),
         liveSubagents: [],
       };
-      effects.push({ type: "invalidate", target: "session" });
+      effects.push({ type: "set-run-status", value: "running" });
       break;
     case "thinking_delta":
       if (isSubagentEvent) {
@@ -528,7 +534,6 @@ export function reduceSessionEvent(
     case "pending_queue_updated":
       next = { ...next, pendingQueue: event.items };
       effects.push({ type: "set-pending-queue", items: event.items });
-      effects.push({ type: "invalidate", target: "session" });
       break;
     default:
       return assertNever(event);

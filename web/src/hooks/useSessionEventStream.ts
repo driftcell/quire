@@ -69,6 +69,34 @@ function applyEffect(
           current ? { ...current, pending_queue: effect.items } : current,
       );
       break;
+    case "set-session-title":
+      queryClient.setQueryData<SessionDetail>(
+        ["session", sessionId],
+        (current) => (current ? { ...current, title: effect.title } : current),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      break;
+    case "set-doc-linked":
+      queryClient.setQueryData<SessionDetail>(
+        ["session", sessionId],
+        (current) =>
+          current
+            ? {
+                ...current,
+                doc_id: effect.doc_id,
+                linked_doc_id: effect.doc_id,
+              }
+            : current,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      break;
+    case "set-run-status":
+      queryClient.setQueryData<SessionDetail>(
+        ["session", sessionId],
+        (current) =>
+          current ? { ...current, active_run_status: effect.value } : current,
+      );
+      break;
     case "refetch-and-clear":
       void (async () => {
         try {

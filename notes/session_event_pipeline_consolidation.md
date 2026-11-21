@@ -426,5 +426,8 @@ pnpm --dir web gen:types
   `agent_runs.trace_summary` materialization at terminal transitions, lazy backfill, and
   `min_available_seq` retention with `POST /api/sessions/{session_id}/prune-events`. `/traces` now
   reads stored traces and only the active run is aggregated live.
-- **Next:** preview handoff, subagent `resume_run_id`, frontend refetch reduction and
-  `docs/RUNTIME_SESSION_EVENTS.md`.
+- **Frontend refetch reduction landed:** `SessionTitleUpdated`, `DocLinked`, `PendingQueueUpdated`
+  and `TurnStarted` now patch the query cache directly instead of invalidating the full session
+  detail. Refetches remain only for structurally incomplete frames and terminal/synchronization
+  boundaries. Reducer effect tests pin this contract.
+- **Next:** preview handoff, subagent `resume_run_id` and `docs/RUNTIME_SESSION_EVENTS.md`.
