@@ -2873,6 +2873,25 @@ fn qr423_enforces_policy_terms_year_ranges_and_document_numbers() {
 }
 
 #[test]
+fn pending_heading_is_qr401_not_qr418() {
+    let mut pending = doc();
+    pending.blocks.push(heading(
+        "pending-heading",
+        2,
+        "[待拟标题：国自然立项体量与结构对标]",
+    ));
+    let report = lint_document(&pending);
+    assert!(
+        has_code(&report, "QR401"),
+        "pending headings must be blocked"
+    );
+    assert!(
+        !has_code(&report, "QR418"),
+        "a concrete placeholder title is not a generic counting heading"
+    );
+}
+
+#[test]
 fn qr418_flags_generic_and_counting_headings() {
     let mut generic = doc();
     generic

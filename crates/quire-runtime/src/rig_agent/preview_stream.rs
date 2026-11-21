@@ -2,8 +2,14 @@
 
 use std::{
     collections::{BTreeSet, HashMap},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
+
+use tokio::sync::{Notify, watch};
 
 use quire_protocol::{
     BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
@@ -15,6 +21,7 @@ use rig_core::{
 };
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
+use tracing::warn;
 
 use crate::{
     config::Config,
@@ -57,11 +64,147 @@ impl PreviewThrottle {
     }
 }
 
+#[derive(Clone)]
+struct PreviewJob {
+    id: u64,
+    payload: EphemeralPayload,
+    base_url: String,
+    doc_id: String,
+    token: SecretString,
+    client: reqwest::Client,
+}
+
+impl PreviewJob {
+    async fn send(self) -> RuntimeResult<bool> {
+        let response = self
+            .client
+            .post(format!(
+                "{}/api/docs/{}/ephemeral",
+                self.base_url, self.doc_id
+            ))
+            .header(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {}", self.token.expose_secret()),
+            )
+            .json(&self.payload)
+            .send()
+            .await;
+        let response = response?;
+        if !response.status().is_success() {
+            return Err(RuntimeError::Internal(format!(
+                "preview publish failed with {}",
+                response.status()
+            )));
+        }
+        Ok(true)
+    }
+}
+
+struct PreviewSenderGuard(tokio::task::JoinHandle<()>);
+
+impl Drop for PreviewSenderGuard {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// Latest-frame-wins asynchronous transport. Intermediate frames never block
+/// the model stream; `flush` is the ordering barrier used before a real commit.
+struct PreviewTransport {
+    latest: watch::Sender<Option<PreviewJob>>,
+    inflight: Arc<AtomicU64>,
+    sent: Arc<AtomicU64>,
+    notify: Arc<Notify>,
+    base_url: String,
+    doc_id: String,
+    token: SecretString,
+    client: reqwest::Client,
+    task: Option<PreviewSenderGuard>,
+}
+
+impl PreviewTransport {
+    fn new(base_url: &str, token: SecretString, doc_id: &str) -> Self {
+        let (latest, _) = watch::channel::<Option<PreviewJob>>(None);
+        let inflight = Arc::new(AtomicU64::new(0));
+        let sent = Arc::new(AtomicU64::new(0));
+        let notify = Arc::new(Notify::new());
+        let base_url = base_url.trim_end_matches('/').to_string();
+        let doc_id = doc_id.to_string();
+        let client = crate::http_client::timed_client(Duration::from_secs(30));
+        Self {
+            latest,
+            inflight,
+            sent,
+            notify,
+            base_url,
+            doc_id,
+            token,
+            client,
+            task: None,
+        }
+    }
+
+    fn spawn_task(
+        mut receiver: watch::Receiver<Option<PreviewJob>>,
+        sent: Arc<AtomicU64>,
+        notify: Arc<Notify>,
+    ) -> PreviewSenderGuard {
+        PreviewSenderGuard(tokio::spawn(async move {
+            loop {
+                if receiver.changed().await.is_err() {
+                    break;
+                }
+                let Some(job) = receiver.borrow_and_update().clone() else {
+                    continue;
+                };
+                let id = job.id;
+                if let Err(error) = job.send().await {
+                    warn!(%error, "ephemeral preview publish failed");
+                }
+                // `watch` may drop intermediate frames. Track the last completed
+                // frame ID, not the number of completed sends, or latest-frame-wins
+                // would make flush wait forever after an intermediate frame is replaced.
+                sent.store(id, Ordering::SeqCst);
+                notify.notify_waiters();
+            }
+        }))
+    }
+
+    fn enqueue(&mut self, payload: EphemeralPayload) {
+        if self.task.is_none() {
+            self.task = Some(Self::spawn_task(
+                self.latest.subscribe(),
+                Arc::clone(&self.sent),
+                Arc::clone(&self.notify),
+            ));
+        }
+        let id = self.inflight.fetch_add(1, Ordering::SeqCst) + 1;
+        let job = PreviewJob {
+            id,
+            payload,
+            base_url: self.base_url.clone(),
+            doc_id: self.doc_id.clone(),
+            token: self.token.clone(),
+            client: self.client.clone(),
+        };
+        let _ = self.latest.send(Some(job));
+    }
+
+    async fn flush(&self) -> RuntimeResult<()> {
+        let target = self.inflight.load(Ordering::SeqCst);
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while self.sent.load(Ordering::SeqCst) < target {
+                self.notify.notified().await;
+            }
+        })
+        .await
+        .map_err(|_| RuntimeError::Internal("preview publish flush timed out".into()))
+    }
+}
+
 /// Sends partial tool-argument previews to Quire's ephemeral preview endpoint.
 pub struct ToolPreviewStreamer {
-    http: reqwest::Client,
-    base_url: String,
-    token: SecretString,
+    transport: PreviewTransport,
     doc_id: String,
     preview_id: String,
     actor: String,
@@ -82,11 +225,11 @@ impl ToolPreviewStreamer {
         throttle_ms: u64,
     ) -> Self {
         let block_id = block_id.into();
+        let base_url = base_url.into();
+        let doc_id = doc_id.into();
         Self {
-            http: crate::http_client::timed_client(Duration::from_secs(30)),
-            base_url: base_url.into().trim_end_matches('/').to_string(),
-            token,
-            doc_id: doc_id.into(),
+            transport: PreviewTransport::new(&base_url, token, &doc_id),
+            doc_id,
             preview_id: preview_id.into(),
             actor: actor.into(),
             anchor: PreviewAnchor::ReplaceBlock {
@@ -123,7 +266,6 @@ impl ToolPreviewStreamer {
             level: None,
             text: Some(text.to_string()),
         })
-        .await
     }
 
     /// Build the next ephemeral event with the resolved anchor without sending it.
@@ -155,46 +297,28 @@ impl ToolPreviewStreamer {
     }
 
     /// Push one partial block frame. The streamer remains responsible for throttling and
-    /// monotonic sequence numbers.
-    pub async fn push_block(&mut self, block: PartialBlockPreview) -> RuntimeResult<bool> {
+    /// monotonic sequence numbers. This only enqueues the latest frame and never waits for HTTP.
+    pub fn push_block(&mut self, block: PartialBlockPreview) -> RuntimeResult<bool> {
         if !self.throttle.should_emit() {
             return Ok(false);
         }
-        self.send_block(block).await
+        self.send_block(block)
     }
 
-    /// Push the final frame even when the throttle window has not elapsed. Used once the
-    /// complete tool arguments reveal the real anchor so an earlier provisional frame
-    /// cannot be the last event the frontend sees.
+    /// Push the final frame even when the throttle window has not elapsed, then wait for the
+    /// asynchronous sender to catch up. This is the ordering barrier before a real commit.
     pub(super) async fn push_block_now(
         &mut self,
         block: PartialBlockPreview,
     ) -> RuntimeResult<bool> {
-        self.send_block(block).await
+        self.send_block(block)?;
+        self.transport.flush().await?;
+        Ok(true)
     }
 
-    async fn send_block(&mut self, block: PartialBlockPreview) -> RuntimeResult<bool> {
+    fn send_block(&mut self, block: PartialBlockPreview) -> RuntimeResult<bool> {
         let event = self.next_preview_event(block)?;
-        let payload = EphemeralPayload::Preview { event };
-        let response = self
-            .http
-            .post(format!(
-                "{}/api/docs/{}/ephemeral",
-                self.base_url, self.doc_id
-            ))
-            .header(
-                reqwest::header::AUTHORIZATION,
-                format!("Bearer {}", self.token.expose_secret()),
-            )
-            .json(&payload)
-            .send()
-            .await?;
-        if !response.status().is_success() {
-            return Err(RuntimeError::Internal(format!(
-                "preview publish failed with {}",
-                response.status()
-            )));
-        }
+        self.transport.enqueue(EphemeralPayload::Preview { event });
         Ok(true)
     }
 }
@@ -320,10 +444,13 @@ impl PreviewState {
                         .unwrap_or_else(|| format!("preview{part}{index}")),
                 )
                 .unwrap_or_else(|_| BlockId::pending());
-                if let Err(error) = streamer.push_block(candidate.partial(block_id)).await {
-                    tracing::warn!(%error, tool = %stream.tool_name, "ephemeral preview publish failed");
-                } else {
-                    stream.preview_ids.insert(preview_id_for(streamer));
+                match streamer.push_block(candidate.partial(block_id)) {
+                    Ok(_) => {
+                        stream.preview_ids.insert(preview_id_for(streamer));
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, tool = %stream.tool_name, "ephemeral preview publish failed");
+                    }
                 }
             }
         }
@@ -907,5 +1034,95 @@ mod tests {
         assert_eq!(ids.len(), 2);
         assert_eq!(ids.first().and_then(Value::as_str), Some("old"));
         assert_eq!(ids.last().and_then(Value::as_str), Some("new"));
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
+    use tokio::sync::Mutex;
+
+    async fn record_preview(
+        State(requests): State<Arc<Mutex<Vec<Value>>>>,
+        Json(payload): Json<Value>,
+    ) -> StatusCode {
+        let mut requests = requests.lock().await;
+        let delay = if requests.is_empty() { 200 } else { 0 };
+        requests.push(payload);
+        drop(requests);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+        StatusCode::OK
+    }
+
+    async fn spawn_server() -> (String, Arc<Mutex<Vec<Value>>>) {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let app = Router::new()
+            .route("/api/docs/doc/ephemeral", post(record_preview))
+            .with_state(Arc::clone(&requests));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        (format!("http://{address}"), requests)
+    }
+
+    fn block(text: &str) -> PartialBlockPreview {
+        PartialBlockPreview {
+            block_id: Some(BlockId::pending()),
+            block_type: "paragraph".into(),
+            title: None,
+            level: None,
+            text: Some(text.to_string()),
+        }
+    }
+
+    fn preview_text(payload: &Value) -> String {
+        payload
+            .get("event")
+            .unwrap_or(payload)
+            .get("block")
+            .and_then(|block| block.get("text"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[tokio::test]
+    async fn intermediate_frames_are_latest_wins_and_flush_waits_for_the_final_frame() {
+        let (base_url, requests) = spawn_server().await;
+        let mut streamer = ToolPreviewStreamer::new(
+            &base_url,
+            SecretString::from("test-token"),
+            "doc",
+            "preview-1",
+            "main",
+            "block-1",
+            50,
+        );
+
+        streamer.push_block(block("first")).unwrap();
+        streamer.push_block(block("second")).unwrap();
+        streamer.push_block(block("third")).unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            streamer.push_block_now(block("final")),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        let requests = requests.lock().await;
+        let texts = requests.iter().map(preview_text).collect::<Vec<_>>();
+        assert_eq!(texts.last().map(String::as_str), Some("final"));
+        assert!(
+            texts.len() <= 2,
+            "latest-frame-wins must not replay every intermediate frame: {texts:?}"
+        );
     }
 }

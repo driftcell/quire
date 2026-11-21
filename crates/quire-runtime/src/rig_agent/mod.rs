@@ -82,6 +82,7 @@ impl RigModelStreamProvider {
                 mcp,
                 sandbox_provider,
                 queue,
+                subagent_history: Arc::new(Mutex::new(subagents::SubagentHistory::default())),
             }),
         }
     }
@@ -110,6 +111,7 @@ struct RigModelCore {
     mcp: Arc<McpRegistry>,
     sandbox_provider: Arc<dyn SandboxProvider>,
     queue: PendingQueueCoordinator,
+    subagent_history: Arc<Mutex<subagents::SubagentHistory>>,
 }
 
 #[derive(Clone)]
@@ -232,7 +234,7 @@ impl RigModelCore {
         mut execution: AgentExecution,
         mut messages: Vec<Message>,
         scope: EventScope,
-    ) -> RuntimeResult<String> {
+    ) -> RuntimeResult<(String, Vec<Message>)> {
         let resolved = self
             .models
             .resolve(&execution.model_route)
@@ -335,7 +337,7 @@ impl RigModelCore {
         let mut suspended = false;
         loop {
             if execution.cancellation.is_cancelled() {
-                return Ok(final_text);
+                return Ok((final_text, messages));
             }
             let definitions: Vec<ToolDefinition> =
                 tool_map.values().map(|tool| tool.definition()).collect();
@@ -353,7 +355,7 @@ impl RigModelCore {
             loop {
                 tokio::select! {
                     _ = execution.cancellation.cancelled() => {
-                        return Ok(final_text);
+                        return Ok((final_text, messages));
                     }
                     item = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()) => {
                         match item {
@@ -491,7 +493,7 @@ impl RigModelCore {
             warn!(%error, run_id = %execution.run_id, "sandbox cleanup failed; provider TTL remains the backstop");
         }
         if execution.cancellation.is_cancelled() {
-            return Ok(final_text);
+            return Ok((final_text, messages));
         }
         scope
             .send(ModelStreamEvent::Usage(context_usage(
@@ -499,7 +501,7 @@ impl RigModelCore {
                 context_limit,
             )))
             .await;
-        Ok(final_text)
+        Ok((final_text, messages))
     }
 }
 

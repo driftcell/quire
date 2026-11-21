@@ -938,7 +938,7 @@ fn first_placeholder(text: &str) -> Option<String> {
             return Some(token.to_string());
         }
     }
-    for (open, close) in [('【', '】'), ('（', '）'), ('(', ')')] {
+    for (open, close) in [('【', '】'), ('（', '）'), ('(', ')'), ('[', ']')] {
         if let Some(token) = wrapped_pending_placeholder(text, open, close) {
             return Some(token);
         }
