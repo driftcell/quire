@@ -4385,29 +4385,42 @@ async fn tool_boundary_supersedes_run_and_starts_queued_turn() {
     let detail = service.session_detail(&session.session_id).await.unwrap();
     assert!(detail.pending_queue.is_empty());
 
-    let requests = mock_state.requests.lock().await;
-    assert!(
-        requests.len() >= 2,
-        "expected a second LLM request after the tool result; events={:?}; traces={:?}",
-        store
-            .list_events(&session.session_id, 0, 1_000)
-            .await
-            .unwrap(),
-        store.list_run_traces(&session.session_id).await.unwrap()
-    );
-    let second_messages = requests[1]["messages"]
-        .as_array()
-        .or_else(|| requests[1]["input"].as_array())
-        .unwrap_or_else(|| panic!("second request messages missing: {}", requests[1]));
-    let tool_index = second_messages
-        .iter()
-        .rposition(|message| message["type"] == "function_call_output")
-        .unwrap_or_else(|| {
-            panic!("second request must contain a tool result: {second_messages:?}")
-        });
-    let injected = second_messages
-        .get(tool_index + 1)
-        .expect("queued message must follow the tool result");
+    let mut injected = None;
+    for _ in 0..150 {
+        let requests = mock_state.requests.lock().await;
+        for request in requests.iter() {
+            let Some(messages) = request["messages"]
+                .as_array()
+                .or_else(|| request["input"].as_array())
+            else {
+                continue;
+            };
+            if let Some(tool_index) = messages
+                .iter()
+                .rposition(|message| message["type"] == "function_call_output")
+                && let Some(candidate) = messages.get(tool_index + 1)
+                && candidate["role"] == "user"
+                && candidate["type"] == "message"
+                && candidate["content"].as_array().is_some_and(|parts| {
+                    parts.iter().any(|part| {
+                        part["text"]
+                            .as_str()
+                            .is_some_and(|text| text.contains("排队指令：请补充风险提示。"))
+                    })
+                })
+            {
+                injected = Some(candidate.clone());
+                break;
+            }
+        }
+        if injected.is_some() {
+            break;
+        }
+        drop(requests);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let injected = injected
+        .expect("a request must place the queued message immediately after the real tool result");
     assert_eq!(injected["role"], "user");
     assert_eq!(injected["type"], "message");
     assert!(

@@ -202,8 +202,10 @@ judgment after a colon.
 
 `QR419` detects dense prose sections that should become a visual. It tracks the current H1/H2 section,
 resets on a new H1/H2 and after any Table/ECharts/CustomHtml, and does not let H3-H6 split a prose run.
-Four or more non-visual paragraphs (or non-empty quotes) totaling 1000+ visible characters in a
-non-exempt section report once. Opening, conclusion and abstract sections are exempt at either level,
+Four or more non-visual paragraphs (or non-empty quotes) totaling 1500+ visible characters in a
+non-exempt section report once. The higher macro-density threshold leaves room for focused short
+paragraphs after `QR417` catches individual walls, instead of treating every normal split as a new
+visual requirement. Opening, conclusion and abstract sections are exempt at either level,
 as are recommendation, next-step, implementation and safeguard sections; labels containing `建议`,
 `举措` or `路径` receive the same prose-friendly treatment. A section already containing at least two
 Table/ECharts/CustomHtml blocks is visually served and does not report, regardless of where its prose

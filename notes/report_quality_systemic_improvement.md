@@ -50,7 +50,10 @@ Implement a layered contract:
    `QR103` attribution without weakening citation identity checks.
 2. **Tools:** add read-only `list_sources` with optional exact-ID filtering, and aggregate prose,
    paragraph, visual and cited-source counts in the document digest. Analysts receive report preview;
-   reviewers receive source listing and read-only web search/fetch.
+   reviewers receive source listing and read-only web search/fetch. After fresh-report acceptance,
+   `QR419` moves from 1000 to 1500 visible characters because its old threshold fired on focused
+   180–220-character paragraphs that had just been correctly split; `QR417` remains the wall-of-text
+   guard while `QR419` catches only genuinely dense macro runs.
 3. **Authoring workflow:** track explicit user requirements, distinguish verified/conflicting/hypothesis
    facts, pilot one chapter before broad parallel writing, centralize derived metrics and visuals, require
    lead section-by-section reading, and bind approval to a revision.

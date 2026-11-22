@@ -2784,7 +2784,7 @@ fn qr417_flags_only_single_paragraph_walls_of_text() {
     assert!(!has_code(&lint_document(&list_doc), "QR417"));
 
     let mut run = doc();
-    let paragraph_text = "数".repeat(200);
+    let paragraph_text = "数".repeat(300);
     for index in 1..=5 {
         let id = format!("run-{index}");
         run.blocks
@@ -2811,7 +2811,7 @@ fn qr417_flags_only_single_paragraph_walls_of_text() {
 
 #[test]
 fn qr419_flags_dense_prose_runs_with_section_exemptions() {
-    let text = "数".repeat(250);
+    let text = "数".repeat(400);
     let mut normal = doc();
     normal.blocks.push(heading("dense-h2", 2, "规模结构"));
     for index in 1..=4 {
@@ -2823,12 +2823,26 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
     assert_eq!(diagnostic.severity, Severity::Warning);
     assert!(diagnostic.suppressible);
     assert!(
-        diagnostic.message.contains("4-block (1000-char)"),
+        diagnostic.message.contains("4-block (1600-char)"),
         "{}",
         diagnostic.message
     );
     assert!(diagnostic.hint.contains("Table or ECharts"));
     assert!(diagnostic.hint.contains("Never insert a duplicate"));
+
+    let concise_text = "数".repeat(200);
+    let mut concise = doc();
+    concise.blocks.push(heading("concise-h2", 2, "规模结构"));
+    for index in 1..=5 {
+        concise.blocks.push(paragraph(
+            &format!("concise-{index}"),
+            concise_text.as_str(),
+        ));
+    }
+    assert!(
+        !has_code(&lint_document(&concise), "QR419"),
+        "focused short paragraphs must not be treated as a wall merely for totaling 1000 chars"
+    );
 
     for title in [
         "导论",
@@ -2856,7 +2870,7 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
         );
     }
 
-    let long_text = "数".repeat(350);
+    let long_text = "数".repeat(400);
     let mut reset = doc();
     reset.blocks.push(heading("reset-h2", 2, "规模结构"));
     for index in 1..=3 {
@@ -2921,7 +2935,7 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
     }
     assert!(!has_code(&lint_document(&h1_path), "QR419"));
 
-    let medium_text = "数".repeat(300);
+    let medium_text = "数".repeat(400);
     let mut h3 = doc();
     h3.blocks.push(heading("h3-section", 2, "规模结构"));
     h3.blocks

@@ -678,7 +678,7 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 if !exempt {
                     prose_blocks = prose_blocks.saturating_add(1);
                     prose_chars = prose_chars.saturating_add(wall_of_text_char_count(text));
-                    if !reported && prose_blocks >= 4 && prose_chars >= 1000 {
+                    if !reported && prose_blocks >= 4 && prose_chars >= 1500 {
                         reported = true;
                         engine.report(
                             RuleId::DenseProseRunNeedsVisual,
@@ -697,7 +697,7 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 if !exempt {
                     prose_blocks = prose_blocks.saturating_add(1);
                     prose_chars = prose_chars.saturating_add(wall_of_text_char_count(text));
-                    if !reported && prose_blocks >= 4 && prose_chars >= 1000 {
+                    if !reported && prose_blocks >= 4 && prose_chars >= 1500 {
                         reported = true;
                         engine.report(
                             RuleId::DenseProseRunNeedsVisual,
