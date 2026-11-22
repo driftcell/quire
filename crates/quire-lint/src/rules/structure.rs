@@ -25,6 +25,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
     check_consecutive_visuals(document, engine);
     check_boring_headings(document, engine);
     check_duplicate_note_prefix(document, engine);
+    check_duplicate_source_prefix(document, engine);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -701,6 +702,64 @@ fn has_redundant_note_prefix(note: &str) -> bool {
         || trimmed
             .get(..5)
             .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Note:"))
+}
+
+fn check_duplicate_source_prefix(document: &ReportDocument, engine: &mut Engine<'_>) {
+    for (index, block) in document.blocks.iter().enumerate() {
+        if !matches!(
+            &block.body,
+            BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_)
+        ) {
+            continue;
+        }
+        let Some(source_note) = block.source_note.as_deref() else {
+            continue;
+        };
+        let Some(prefix) = redundant_source_prefix(source_note) else {
+            continue;
+        };
+        engine.report(
+            RuleId::DuplicateSourcePrefix,
+            format!(
+                "{} `{}` source_note starts with a redundant `{prefix}：` prefix",
+                block.block_type(),
+                block.id
+            ),
+            "In `source_note` via apply_operations (UpdateBlock) or preview_echarts, strip the leading `资料来源：` / `数据来源：` / `来源：` prefix because the report renderer prepends `资料来源：` automatically; keep only the institution or document name.",
+            Some(block.id.clone()),
+            Some(format!("blocks[{index}].source_note")),
+        );
+    }
+}
+
+/// Detect a leading source label followed by a colon. The label set is
+/// deliberately open-ended: any short Chinese label ending in `来源` or
+/// `出处` (including chains such as `资料来源：来源：`) is redundant because
+/// the renderer always prepends `资料来源：`.
+fn redundant_source_prefix(source_note: &str) -> Option<&str> {
+    let trimmed = source_note.trim_start();
+    let colon = trimmed.find([':', '：'])?;
+    let label = trimmed.get(..colon)?.trim();
+    if label.is_empty() || label.chars().count() > 16 || label.contains('\n') {
+        return None;
+    }
+    let compact: String = label
+        .chars()
+        .filter(|value| !value.is_whitespace())
+        .collect();
+    let base = compact
+        .split(['（', '('])
+        .next()
+        .unwrap_or(compact.as_str());
+    if base.ends_with("来源") || base.ends_with("出处") {
+        return Some(label);
+    }
+    let lowered = label.to_ascii_lowercase();
+    matches!(
+        lowered.as_str(),
+        "source" | "sources" | "data source" | "data sources" | "reference" | "references"
+    )
+    .then_some(label)
 }
 
 pub(super) fn dense_prose_section_exempt(text: &str) -> bool {

@@ -3003,6 +3003,103 @@ fn qr420_flags_redundant_note_prefixes() {
 }
 
 #[test]
+fn qr425_flags_redundant_source_note_prefixes() {
+    let prefixed = [
+        "资料来源：四校公开年度报告及主管部门公示材料汇总整理。",
+        "资料来源: 四校公开年度报告及主管部门公示材料汇总整理。",
+        "数据来源：教育部。",
+        "数据来源: 教育部。",
+        "来源：国家统计局。",
+        "信息来源：学校官网。",
+        "材料来源：年度质量报告。",
+        "数据出处：统计年鉴。",
+        "资料来源：来源：教育部。",
+        "资料来源：数据来源：四校公开年度报告及主管部门公示材料汇总整理。",
+        "数据来源（教育部）：四校公开年度报告。",
+        "资料来源(四校年报)：汇总整理。",
+        "Source: Ministry of Education.",
+        "References: Annual reports.",
+    ];
+
+    let mut flagged = doc();
+    for (index, source_note) in prefixed.iter().enumerate() {
+        let mut block = table(
+            &format!("source-prefix-{index}"),
+            None,
+            vec![ColumnNode::leaf("a", "A")],
+            vec![row(&[("a", CellValue::text("x"))])],
+        );
+        block.source_note = Some((*source_note).into());
+        flagged.blocks.push(block);
+    }
+    let mut chart = chart_named(
+        "source-prefix-chart",
+        serde_json::json!({"series": [{"type": "bar", "data": [1, 2]}]}),
+    );
+    chart.source_note = Some("数据来源：教育部。".into());
+    flagged.blocks.push(chart);
+    let mut html = custom_html("<div>KPI</div>", "KPI");
+    html.source_note = Some("来源：学校官网。".into());
+    flagged.blocks.push(html);
+
+    let report = lint_document(&flagged);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR425")
+        .collect();
+    assert_eq!(hits.len(), prefixed.len() + 2, "{:?}", report.diagnostics);
+    assert!(hits.iter().all(|diagnostic| diagnostic.suppressible
+        && diagnostic.severity == Severity::Warning
+        && diagnostic.message.contains("redundant `")));
+    assert!(
+        hits.iter()
+            .any(|diagnostic| diagnostic.path.as_deref() == Some("blocks[0].source_note")),
+        "{:?}",
+        report.diagnostics
+    );
+
+    let mut clean = doc();
+    for (index, source_note) in [
+        "四校公开年度报告及主管部门公示材料汇总整理。",
+        "来源与口径：四校公开年度报告。",
+        "来源与口径（2025）：四校公开年度报告。",
+        "2025年数据来源说明：教育部。",
+        "https://example.com/data",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut block = table(
+            &format!("clean-source-{index}"),
+            None,
+            vec![ColumnNode::leaf("a", "A")],
+            vec![row(&[("a", CellValue::text("x"))])],
+        );
+        block.source_note = Some((*source_note).into());
+        clean.blocks.push(block);
+    }
+    let mut paragraph = paragraph("paragraph-source", "正文");
+    paragraph.source_note = Some("资料来源：教育部。".into());
+    clean.blocks.push(paragraph);
+    assert!(!has_code(&lint_document(&clean), "QR425"));
+
+    let mut ignored = table(
+        "ignored-source",
+        None,
+        vec![ColumnNode::leaf("a", "A")],
+        vec![row(&[("a", CellValue::text("x"))])],
+    );
+    ignored.source_note = Some("资料来源：教育部。".into());
+    ignored.lint_ignore = vec!["QR425".into()];
+    let mut ignored_document = doc();
+    ignored_document.blocks.push(ignored);
+    let report = lint_document(&ignored_document);
+    assert!(!has_code(&report, "QR425"));
+    assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
 fn qr421_detects_blind_ordinals_and_academic_jargon() {
     for (id, text) in [
         ("blind-pair", "第一项与第三项占优。"),

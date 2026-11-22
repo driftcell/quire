@@ -243,6 +243,15 @@ table names, `LATEST`, `学科云index系统`, panel terminology, and cell-level
 `双优库无数据`. Repairs must translate these into formal business Chinese or `—` / `暂未收录`, never
 merely hide the rule.
 
+`QR425` flags Table, ECharts and CustomHtml `source_note` values whose trimmed start is a short label
+ending in `来源` or `出处`, followed by `:` or `：`. The renderer always prepends `资料来源：`, so
+prefixes such as `资料来源：`, `数据来源：`, `来源：`, `信息来源：`, `材料来源：`, `数据出处：` and
+chains such as `资料来源：来源：` would produce duplicated attributions. Trailing parenthetical
+qualifiers are normalized first, so `数据来源（教育部）：` and `资料来源(四校年报)：` are also
+flagged. English `Source:`, `Sources:`, `Data source:`, `Reference:` and `References:` are covered.
+The label must be at most 16 characters before the first colon; ordinary prose, `来源与口径：` and
+colon-bearing URLs are not flagged.
+
 ### Matching and filter layers
 
 `rule_matches_token` accepts:
@@ -321,7 +330,9 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
   shares a multi-paragraph diagnostic with `QR419`; `QR418` skips level-1 headings, numbering-only
   prefixes and positional introduction/conclusion headings; `QR419` reports once per non-exempt H1/H2
   prose run and never demands a third visual in an already visually served section; `QR420` only inspects
-  Table/ECharts notes.
+  Table/ECharts notes, while `QR425` only inspects `source_note` on Table/ECharts/CustomHtml blocks and
+  recognizes short `来源`/`出处` labels (including trailing parenthetical variants) plus English
+  `Source`/`Reference` labels.
 - `QR108` matches hosts exactly or as subdomains, so lookalike domains do not report; `QR205` permits
   explicit percentage indicator rows without permitting mixed units in an ordinary numeric column;
   `QR206` distinguishes metric time-window totals from table summaries, reports at most once per
