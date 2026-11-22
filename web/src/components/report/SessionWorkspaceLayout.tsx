@@ -133,9 +133,7 @@ export function SessionWorkspaceLayout({
               data-state={rightSidebarOpen ? "expanded" : "collapsed"}
               aria-hidden={!rightSidebarOpen}
               className={`h-full min-h-0 min-w-0 shrink-0 overflow-hidden ${
-                rightSidebarOpen
-                  ? "border-l border-border/60"
-                  : "pointer-events-none invisible"
+                rightSidebarOpen ? "" : "pointer-events-none invisible"
               }`}
               style={{ width: rightSidebarOpen ? `${rightPanelPct}%` : "0%" }}
             >
