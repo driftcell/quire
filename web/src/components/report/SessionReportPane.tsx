@@ -31,6 +31,7 @@ export interface SessionReportPaneProps {
   onJumpToSection: (blockId: string) => void;
   onShowComments: () => void;
   onOpenCommentForBlock: (anchor: FloatingCommentAnchor) => void;
+  onSelectCommentThread?: (thread: CommentThread) => void;
   onAskAgentWithQuote: (selection: ReportSelectionDescriptor) => void;
   activeSelection?: ReportSelectionDescriptor | null;
   onActiveSelectionChange?: (
@@ -56,6 +57,7 @@ export function SessionReportPane({
   onJumpToSection,
   onShowComments,
   onOpenCommentForBlock,
+  onSelectCommentThread,
   onAskAgentWithQuote,
   activeSelection,
   onActiveSelectionChange,
@@ -155,6 +157,7 @@ export function SessionReportPane({
           comments={comments}
           activeThreadId={activeThreadId}
           onOpenCommentForBlock={onOpenCommentForBlock}
+          onSelectCommentThread={onSelectCommentThread}
           onAskAgentWithQuote={onAskAgentWithQuote}
           onJumpToSection={onJumpToSection}
           activeSelection={activeSelection}

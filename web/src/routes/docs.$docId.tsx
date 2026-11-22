@@ -53,7 +53,7 @@ function DocumentPage() {
   }, []);
 
   const openCommentsCount =
-    commentsQuery.data?.filter((c) => c.status !== "archived").length ?? 0;
+    commentsQuery.data?.filter((c) => c.status === "open").length ?? 0;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -124,6 +124,10 @@ function DocumentPage() {
             viewMode={prefs.reportViewMode}
             comments={commentsQuery.data}
             activeThreadId={activeCommentThreadId}
+            onSelectCommentThread={(thread) => {
+              setActiveCommentThreadId(thread.thread_id);
+              setCommentsOpen(true);
+            }}
             onJumpToSection={jumpToSection}
           />
         )}

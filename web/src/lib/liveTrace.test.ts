@@ -4,7 +4,9 @@ import type {
   RunTraceSummary,
 } from "@/contracts/session-protocol";
 import {
+  appendSubagentSegment,
   appendTextSegment,
+  appendToolSegment,
   appendThinkingSegment,
   emptyLiveTrace,
   ensureLiveTraceStarted,
@@ -256,5 +258,28 @@ describe("active run hydration", () => {
     expect(mergeHydratedSubagents([completed], [running])[0]?.status).toBe(
       "completed",
     );
+  });
+
+  test("re-anchors a resumed subagent into the latest execution segment after intermediate text or tools", () => {
+    let resumed = emptyLiveTrace("main", "run-1", 1_000);
+    resumed = appendSubagentSegment(resumed, "sub-review");
+    resumed = appendTextSegment(resumed, "主代理已完成第一轮修订，准备继续复审。");
+    resumed = appendToolSegment(resumed, {
+      toolCallId: "apply-1",
+      toolName: "apply_operations",
+      status: "completed",
+      inputPreview: "{}",
+    });
+    resumed = appendSubagentSegment(resumed, "sub-review");
+
+    expect(resumed.segments).toHaveLength(2);
+    expect(resumed.segments[0]).toEqual({
+      kind: "text",
+      text: "主代理已完成第一轮修订，准备继续复审。",
+    });
+    expect(resumed.segments[1]).toMatchObject({
+      kind: "execution",
+      subagentRunIds: ["sub-review"],
+    });
   });
 });

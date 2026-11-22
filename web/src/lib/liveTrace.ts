@@ -396,23 +396,29 @@ export function appendSubagentSegment(
   trace: LiveAgentTrace,
   subagentRunId: string,
 ): LiveAgentTrace {
-  if (
-    trace.segments.some(
-      (segment) =>
-        segment.kind === "execution" &&
-        segment.subagentRunIds.includes(subagentRunId),
-    )
-  ) {
-    return trace;
-  }
-  const last = trace.segments[trace.segments.length - 1];
-  if (last?.kind === "execution") {
-    if (last.subagentRunIds.includes(subagentRunId)) {
-      return trace;
+  const cleaned: LiveTraceSegment[] = [];
+  for (const segment of trace.segments) {
+    if (segment.kind !== "execution") {
+      cleaned.push(segment);
+      continue;
     }
+    const subagentRunIds = segment.subagentRunIds.filter(
+      (id) => id !== subagentRunId,
+    );
+    if (segment.tools.length === 0 && subagentRunIds.length === 0) {
+      continue;
+    }
+    cleaned.push(
+      subagentRunIds.length === segment.subagentRunIds.length
+        ? segment
+        : { ...segment, subagentRunIds },
+    );
+  }
+  const last = cleaned[cleaned.length - 1];
+  if (last?.kind === "execution") {
     return {
       ...trace,
-      segments: replaceLast(trace.segments, {
+      segments: replaceLast(cleaned, {
         ...last,
         subagentRunIds: [...last.subagentRunIds, subagentRunId],
       }),
@@ -421,7 +427,7 @@ export function appendSubagentSegment(
   return {
     ...trace,
     segments: [
-      ...trace.segments,
+      ...cleaned,
       { kind: "execution", tools: [], subagentRunIds: [subagentRunId] },
     ],
   };

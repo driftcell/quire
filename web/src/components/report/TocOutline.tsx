@@ -238,7 +238,7 @@ export function TocOutline({
 
   const commentsByBlock = new Map<string, number>();
   for (const c of comments) {
-    if (c.status !== "archived" && !c.anchor_detached) {
+    if (c.status === "open" && !c.anchor_detached) {
       const target = c.section_id ?? c.block_id;
       commentsByBlock.set(target, (commentsByBlock.get(target) ?? 0) + 1);
     }

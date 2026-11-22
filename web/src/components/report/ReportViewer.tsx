@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { CommentHoverCard } from "@/components/report/CommentHoverCard";
 import { EphemeralPreviewCard } from "@/components/report/EphemeralPreviewCard";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import {
@@ -65,6 +66,7 @@ export interface ReportViewerProps {
   pageFilter?: number;
   onPagesReady?: (totalPages: number) => void;
   onOpenCommentForBlock?: (anchor: FloatingCommentAnchor) => void;
+  onSelectCommentThread?: (thread: CommentThread) => void;
   onAskAgentWithQuote?: (selection: ReportSelectionDescriptor) => void;
   onJumpToSection?: (blockId: string) => void;
   activeSelection?: ReportSelectionDescriptor | null;
@@ -86,6 +88,7 @@ export function ReportViewer({
   pageFilter,
   onPagesReady,
   onOpenCommentForBlock,
+  onSelectCommentThread,
   onAskAgentWithQuote,
   onJumpToSection,
   activeSelection = null,
@@ -124,11 +127,18 @@ export function ReportViewer({
     onAskAgentWithQuote,
   });
 
-  const { supported: highlightSupported } = useReportHighlights({
+  const {
+    supported: highlightSupported,
+    hoveredComment,
+    keepHoverOpen,
+    scheduleHoverClose,
+    dismissHover,
+  } = useReportHighlights({
     containerRef: rootRef,
     comments,
     activeThreadId,
     pendingSelection,
+    enableHoverPreview: !suppressChrome,
   });
 
   const nonTextBlockIds = useMemo(
@@ -152,7 +162,9 @@ export function ReportViewer({
       }
     };
     for (const thread of comments) {
-      if (thread.status === "archived" || thread.anchor_detached) {
+      // Only open threads stay visible on the report canvas; resolved
+      // (addressed/archived) threads are hidden unless actively selected.
+      if (thread.status !== "open" || thread.anchor_detached) {
         continue;
       }
       const blockIds = commentThreadBlockIds(thread);
@@ -164,7 +176,7 @@ export function ReportViewer({
     const active = comments.find(
       (thread) => thread.thread_id === activeThreadId,
     );
-    if (active) {
+    if (active && !active.anchor_detached) {
       const blockIds = commentThreadBlockIds(active);
       for (const blockId of blockIds) {
         addOutline(blockId, !highlightSupported);
@@ -397,6 +409,17 @@ export function ReportViewer({
       data-theme-preset={document.theme.preset ?? "default"}
       className="report-root relative w-full"
     >
+      {!suppressChrome && !quoteAction && (
+        <CommentHoverCard
+          hovered={hoveredComment}
+          onMouseEnter={keepHoverOpen}
+          onMouseLeave={scheduleHoverClose}
+          onDismiss={dismissHover}
+          onOpenPopoverForBlock={onOpenCommentForBlock}
+          onSelectThread={onSelectCommentThread}
+        />
+      )}
+
       {quoteAction &&
         (onOpenCommentForBlock || onAskAgentWithQuote) &&
         !suppressChrome && (

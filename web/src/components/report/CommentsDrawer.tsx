@@ -24,7 +24,7 @@ import type {
 import { toast } from "sonner";
 import { errorMessage } from "@/lib/errors";
 
-type CommentFilter = "open" | "addressed" | "archived";
+type CommentViewFilter = "open" | "resolved";
 
 export interface CommentsPanelProps {
   docId: string;
@@ -61,19 +61,17 @@ function summarizeBlock(block: Block): string {
   return `[HTML] ${title}`;
 }
 
-function statusLabel(status: CommentFilter): string {
-  if (status === "open") return "待处理";
-  if (status === "addressed") return "已处理";
-  return "已归档";
+function isResolvedStatus(status: CommentStatus): boolean {
+  return status === "addressed" || status === "archived";
 }
 
-function StatusDot({ status }: { status: CommentFilter }) {
-  const color =
-    status === "open"
-      ? "bg-amber-500"
-      : status === "addressed"
-        ? "bg-emerald-500"
-        : "bg-muted-foreground/40";
+function statusLabel(status: CommentStatus): string {
+  if (status === "open") return "待处理";
+  return "已解决";
+}
+
+function StatusDot({ status }: { status: CommentStatus | CommentViewFilter }) {
+  const color = status === "open" ? "bg-amber-500" : "bg-emerald-500";
   return (
     <span
       className={`size-1.5 shrink-0 rounded-full ${color}`}
@@ -95,7 +93,7 @@ export function CommentsPanel({
   onUpdateStatus,
   onDeleteThread,
 }: CommentsPanelProps) {
-  const [filter, setFilter] = useState<CommentFilter>("open");
+  const [filter, setFilter] = useState<CommentViewFilter>("open");
   const [busyThreadIds, setBusyThreadIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -112,14 +110,17 @@ export function CommentsPanel({
   const counts = useMemo(
     () => ({
       open: threads.filter((thread) => thread.status === "open").length,
-      addressed: threads.filter((thread) => thread.status === "addressed")
+      resolved: threads.filter((thread) => isResolvedStatus(thread.status))
         .length,
-      archived: threads.filter((thread) => thread.status === "archived").length,
     }),
     [threads],
   );
   const filtered = useMemo(() => {
-    const base = threads.filter((thread) => thread.status === filter);
+    const base = threads.filter((thread) =>
+      filter === "open"
+        ? thread.status === "open"
+        : isResolvedStatus(thread.status),
+    );
     const active = threads.find(
       (thread) => thread.thread_id === activeThreadId,
     );
@@ -206,22 +207,21 @@ export function CommentsPanel({
           <div className="ml-auto flex items-center gap-0.5">
             {(
               [
-                ["open", counts.open],
-                ["addressed", counts.addressed],
-                ["archived", counts.archived],
+                ["open", "待处理", counts.open],
+                ["resolved", "已解决", counts.resolved],
               ] as const
-            ).map(([value, count]) => (
+            ).map(([value, label, count]) => (
               <Button
                 key={value}
                 type="button"
                 size="xs"
                 variant={filter === value ? "secondary" : "ghost"}
-                className="h-7 gap-1 px-1.5 text-[10px] text-muted-foreground"
+                className="h-7 gap-1 px-2 text-[11px] text-muted-foreground"
                 aria-pressed={filter === value}
                 onClick={() => setFilter(value)}
               >
                 <StatusDot status={value} />
-                {statusLabel(value)}
+                {label}
                 <span className="tabular-nums opacity-70">{count}</span>
               </Button>
             ))}
@@ -242,41 +242,13 @@ export function CommentsPanel({
         <div className="no-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-3">
           {filtered.length === 0 ? (
             <div className="py-12 text-center text-xs text-muted-foreground">
-              {filter === "open"
-                ? "暂无待处理批注"
-                : filter === "addressed"
-                  ? "暂无已处理批注"
-                  : "暂无已归档批注"}
+              {filter === "open" ? "暂无待处理批注" : "暂无已解决批注"}
             </div>
           ) : (
             filtered.map((thread) => {
               const active = thread.thread_id === activeThreadId;
               const isThreadBusy = busyThreadIds.has(thread.thread_id);
-              const latestMessage =
-                thread.messages[thread.messages.length - 1] ?? null;
-              const latestAgentMessage =
-                [...thread.messages]
-                  .reverse()
-                  .find((message) => message.author_type === "agent") ?? null;
-              const addressedMessages: CommentThread["messages"] = [];
-              const firstMessage = thread.messages[0];
-              if (firstMessage) {
-                addressedMessages.push(firstMessage);
-              }
-              for (const message of [latestAgentMessage, latestMessage]) {
-                if (
-                  message &&
-                  !addressedMessages.some(
-                    (entry) => entry.message_id === message.message_id,
-                  )
-                ) {
-                  addressedMessages.push(message);
-                }
-              }
-              const messagesToShow =
-                thread.status === "addressed"
-                  ? addressedMessages
-                  : thread.messages;
+              const resolved = isResolvedStatus(thread.status);
               return (
                 <div
                   key={thread.thread_id}
@@ -304,12 +276,11 @@ export function CommentsPanel({
                     <span className="text-[11px] text-muted-foreground">
                       {statusLabel(thread.status)}
                     </span>
-                    {thread.status !== "archived" &&
-                      pendingThreadIds?.has(thread.thread_id) && (
-                        <span className="text-[10px] text-muted-foreground">
-                          排队中
-                        </span>
-                      )}
+                    {!resolved && pendingThreadIds?.has(thread.thread_id) && (
+                      <span className="text-[10px] text-muted-foreground">
+                        排队中
+                      </span>
+                    )}
                     {thread.anchor_detached && (
                       <span className="text-[10px] text-muted-foreground/70">
                         位置已失效
@@ -364,7 +335,7 @@ export function CommentsPanel({
                   ) : null}
 
                   <div className="space-y-2">
-                    {messagesToShow.map((message, index) => (
+                    {thread.messages.map((message, index) => (
                       <div
                         key={message.message_id}
                         className={
@@ -474,6 +445,7 @@ export function CommentsPanel({
                       onUpdateStatus && (
                         <button
                           type="button"
+                          title="标记为已解决并从报告正文隐藏"
                           className="hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                           disabled={isThreadBusy}
                           onClick={(event) => {
@@ -486,40 +458,21 @@ export function CommentsPanel({
                           归档
                         </button>
                       )}
-                    {!readOnly &&
-                      thread.status === "addressed" &&
-                      onUpdateStatus && (
-                        <button
-                          type="button"
-                          className="hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                          disabled={isThreadBusy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void runThreadAction(thread.thread_id, () =>
-                              onUpdateStatus(thread.thread_id, "archived"),
-                            );
-                          }}
-                        >
-                          确认归档
-                        </button>
-                      )}
-                    {!readOnly &&
-                      thread.status === "archived" &&
-                      onUpdateStatus && (
-                        <button
-                          type="button"
-                          className="hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
-                          disabled={isThreadBusy}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void runThreadAction(thread.thread_id, () =>
-                              onUpdateStatus(thread.thread_id, "open"),
-                            );
-                          }}
-                        >
-                          重新打开
-                        </button>
-                      )}
+                    {!readOnly && resolved && onUpdateStatus && (
+                      <button
+                        type="button"
+                        className="hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+                        disabled={isThreadBusy}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void runThreadAction(thread.thread_id, () =>
+                            onUpdateStatus(thread.thread_id, "open"),
+                          );
+                        }}
+                      >
+                        重新打开
+                      </button>
+                    )}
                   </div>
                 </div>
               );

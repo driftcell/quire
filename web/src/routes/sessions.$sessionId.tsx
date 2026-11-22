@@ -8,7 +8,9 @@ import {
   getSession,
   interruptSession,
   listSessionTraces,
+  replySessionComment,
   retrySession,
+  updateSessionCommentStatus,
 } from "@/api/runtime";
 import type { QuotedChatSnippet } from "@/components/chat/PromptComposer";
 import { SessionChatPane } from "@/components/chat/SessionChatPane";
@@ -18,7 +20,10 @@ import {
   type FloatingCommentAnchor,
 } from "@/components/report/FloatingCommentPopover";
 import { SessionReportPane } from "@/components/report/SessionReportPane";
-import type { ReportSelectionDescriptor } from "@/components/report/reportSelection";
+import {
+  commentThreadBlockIds,
+  type ReportSelectionDescriptor,
+} from "@/components/report/reportSelection";
 import { SessionRightPane } from "@/components/report/SessionRightPane";
 import {
   SessionWorkspaceLayout,
@@ -233,8 +238,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     [showChat],
   );
 
+  // Only open (unresolved) threads count as active report comments.
   const openCommentsCount =
-    commentsQuery.data?.filter((c) => c.status !== "archived").length ?? 0;
+    commentsQuery.data?.filter((c) => c.status === "open").length ?? 0;
 
   const handleChatPanelResize = useCallback(
     (pct: number) => {
@@ -362,6 +368,10 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         onOpenCommentForBlock={(anchor) => {
           setFloatingComment(anchor);
         }}
+        onSelectCommentThread={(thread) => {
+          setActiveCommentThreadId(thread.thread_id);
+          showComments();
+        }}
         onAskAgentWithQuote={handleAskAgentWithQuote}
         activeSelection={activeReportSelection}
         onActiveSelectionChange={setActiveReportSelection}
@@ -378,6 +388,15 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       commentsPane={commentsPane}
     />
   );
+
+  const floatingBlockThreads = useMemo(() => {
+    if (!floatingComment) return [];
+    return (commentsQuery.data ?? []).filter(
+      (thread) =>
+        thread.status === "open" &&
+        commentThreadBlockIds(thread).includes(floatingComment.blockId),
+    );
+  }, [commentsQuery.data, floatingComment]);
 
   return (
     <>
@@ -403,15 +422,8 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       {effectiveDocId && (
         <FloatingCommentPopover
           anchor={floatingComment}
-          existingCount={
-            floatingComment
-              ? (commentsQuery.data ?? []).filter(
-                  (thread) =>
-                    thread.block_id === floatingComment.blockId &&
-                    thread.status !== "archived",
-                ).length
-              : 0
-          }
+          existingCount={floatingBlockThreads.length}
+          existingThreads={floatingBlockThreads}
           onClose={() => {
             setFloatingComment(null);
             setActiveReportSelection(null);
@@ -429,6 +441,28 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
             void queryClient.invalidateQueries({
               queryKey: ["comments", effectiveDocId],
             });
+            setActiveCommentThreadId(thread.thread_id);
+            showComments();
+          }}
+          onReplyThread={async (threadId, body) => {
+            await replySessionComment(sessionId, threadId, { body });
+            void queryClient.invalidateQueries({
+              queryKey: ["comments", effectiveDocId],
+            });
+          }}
+          onResolveThread={async (threadId) => {
+            await updateSessionCommentStatus(sessionId, threadId, "archived");
+            void queryClient.invalidateQueries({
+              queryKey: ["comments", effectiveDocId],
+            });
+            setPendingCommentRefs((prev) =>
+              prev.filter((ref) => ref.thread_id !== threadId),
+            );
+            setActiveCommentThreadId((current) =>
+              current === threadId ? null : current,
+            );
+          }}
+          onSelectThread={(thread) => {
             setActiveCommentThreadId(thread.thread_id);
             showComments();
           }}

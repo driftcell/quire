@@ -162,6 +162,23 @@ where
     None
 }
 
+fn remove_subagent_by_id(
+    segments: &mut Vec<RunTraceSegment>,
+    subagent_run_id: &str,
+) -> Option<RunTraceSubagent> {
+    let (segment_index, subagent_index) =
+        find_subagent_location(segments, |sub| sub.subagent_run_id == subagent_run_id)?;
+    let Some(RunTraceSegment::Execution { tools, subagents }) = segments.get_mut(segment_index)
+    else {
+        return None;
+    };
+    let removed = subagents.remove(subagent_index);
+    if tools.is_empty() && subagents.is_empty() {
+        segments.remove(segment_index);
+    }
+    Some(removed)
+}
+
 fn subagent_mut(
     segments: &mut [RunTraceSegment],
     (segment_index, subagent_index): (usize, usize),
@@ -336,6 +353,9 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
             if settles_sub_thinking(&event.kind) {
                 trace.settle_sub_thinking(&event.run_id, event.timestamp);
             }
+            if matches!(event.kind, SessionEventKind::SubagentStarted { .. }) {
+                trace.settle_main_thinking(event.timestamp);
+            }
         } else if settles_main_thinking(&event.kind) {
             trace.settle_main_thinking(event.timestamp);
         }
@@ -486,11 +506,8 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                 task,
                 section_id,
             } => {
-                let existing = find_subagent_location(&trace.summary.segments, |sub| {
-                    sub.subagent_run_id == *subagent_run_id
-                });
-                if let Some(location) = existing
-                    && let Some(subagent) = subagent_mut(&mut trace.summary.segments, location)
+                if let Some(mut subagent) =
+                    remove_subagent_by_id(&mut trace.summary.segments, subagent_run_id)
                 {
                     subagent.subagent_run_id = subagent_run_id.clone();
                     subagent.agent_name = agent_name.clone();
@@ -498,13 +515,14 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                     subagent.task = task.clone();
                     subagent.section_id = section_id.clone();
                     subagent.status = "running".to_string();
-                    // A resumed subagent starts a new round: its previous final
-                    // summary must not survive into the new round, and any active
-                    // thinking clock is settled before the next segment begins.
+                    // A resumed subagent starts a new round in the latest execution
+                    // block: its previous final summary must not survive into the new
+                    // round, while its accumulated segments and start clock are kept.
                     subagent.summary = None;
                     if subagent.started_at.is_none() {
                         subagent.started_at = Some(event.timestamp);
                     }
+                    append_execution_subagent(&mut trace.summary.segments, subagent);
                 } else {
                     append_execution_subagent(
                         &mut trace.summary.segments,

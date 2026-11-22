@@ -390,28 +390,30 @@ export function reduceSessionEvent(
       break;
     }
     case "subagent_started": {
-      const existingIndex = next.liveSubagents.findIndex(
+      const existing = next.liveSubagents.find(
         (subagent) => subagent.subagentRunId === event.subagent_run_id,
       );
-      if (existingIndex >= 0) {
+      if (existing) {
+        const resumed: LiveSubagentRun = {
+          ...existing,
+          task: event.task,
+          sectionId: event.section_id ?? existing.sectionId,
+          displayName: event.display_name ?? existing.displayName,
+          status: "running",
+          summary: undefined,
+          trace: {
+            ...finishThinkingSegment(existing.trace, eventTs),
+            isStreaming: true,
+          },
+        };
         next = {
           ...next,
-          liveSubagents: next.liveSubagents.map((subagent, index) =>
-            index === existingIndex
-              ? {
-                  ...subagent,
-                  task: event.task,
-                  sectionId: event.section_id ?? subagent.sectionId,
-                  displayName: event.display_name ?? subagent.displayName,
-                  status: "running",
-                  summary: undefined,
-                  trace: {
-                    ...finishThinkingSegment(subagent.trace, eventTs),
-                    isStreaming: true,
-                  },
-                }
-              : subagent,
-          ),
+          liveSubagents: [
+            ...next.liveSubagents.filter(
+              (subagent) => subagent.subagentRunId !== event.subagent_run_id,
+            ),
+            resumed,
+          ],
         };
       } else {
         next = {
@@ -436,10 +438,10 @@ export function reduceSessionEvent(
       }
       next = {
         ...next,
-        // Match the canonical backend projection: starting/resuming a child
-        // does not settle the main agent's current thinking segment.
+        // Starting or resuming a child settles any trailing main-agent thinking
+        // segment and anchors the subagent in the latest execution block.
         liveMain: appendSubagentSegment(
-          withMainTrace(next, event.run_id, eventTs),
+          finishMainThinking(next, event.run_id, eventTs),
           event.subagent_run_id,
         ),
       };

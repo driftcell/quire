@@ -165,6 +165,12 @@
       "duration_ms": 15000,
       "segments": [
         {
+          "kind": "thinking",
+          "text": "between review rounds",
+          "duration_ms": 1000,
+          "started_at": "2026-01-01T00:00:07Z"
+        },
+        {
           "kind": "execution",
           "tools": [],
           "subagents": [
@@ -231,12 +237,6 @@
               ]
             }
           ]
-        },
-        {
-          "kind": "thinking",
-          "text": "between review rounds",
-          "duration_ms": 8000,
-          "started_at": "2026-01-01T00:00:07Z"
         }
       ]
     }
@@ -566,6 +566,12 @@
         "started_at": "2026-01-01T00:00:00Z",
         "segments": [
           {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z",
+            "duration_ms": 1000
+          },
+          {
             "kind": "execution",
             "tools": [],
             "subagents": [
@@ -606,11 +612,6 @@
                 ]
               }
             ]
-          },
-          {
-            "kind": "thinking",
-            "text": "between review rounds",
-            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -621,6 +622,12 @@
         "status": "running",
         "started_at": "2026-01-01T00:00:00Z",
         "segments": [
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z",
+            "duration_ms": 1000
+          },
           {
             "kind": "execution",
             "tools": [],
@@ -667,11 +674,6 @@
                 ]
               }
             ]
-          },
-          {
-            "kind": "thinking",
-            "text": "between review rounds",
-            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -682,6 +684,12 @@
         "status": "running",
         "started_at": "2026-01-01T00:00:00Z",
         "segments": [
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z",
+            "duration_ms": 1000
+          },
           {
             "kind": "execution",
             "tools": [],
@@ -742,11 +750,6 @@
                 ]
               }
             ]
-          },
-          {
-            "kind": "thinking",
-            "text": "between review rounds",
-            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -757,6 +760,12 @@
         "status": "running",
         "started_at": "2026-01-01T00:00:00Z",
         "segments": [
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z",
+            "duration_ms": 1000
+          },
           {
             "kind": "execution",
             "tools": [],
@@ -819,11 +828,6 @@
                 ]
               }
             ]
-          },
-          {
-            "kind": "thinking",
-            "text": "between review rounds",
-            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -834,6 +838,12 @@
         "status": "running",
         "started_at": "2026-01-01T00:00:00Z",
         "segments": [
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z",
+            "duration_ms": 1000
+          },
           {
             "kind": "execution",
             "tools": [],
@@ -900,11 +910,6 @@
                 ]
               }
             ]
-          },
-          {
-            "kind": "thinking",
-            "text": "between review rounds",
-            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -915,6 +920,12 @@
         "status": "running",
         "started_at": "2026-01-01T00:00:00Z",
         "segments": [
+          {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "started_at": "2026-01-01T00:00:07Z",
+            "duration_ms": 1000
+          },
           {
             "kind": "execution",
             "tools": [],
@@ -982,11 +993,6 @@
                 ]
               }
             ]
-          },
-          {
-            "kind": "thinking",
-            "text": "between review rounds",
-            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
@@ -999,6 +1005,12 @@
         "duration_ms": 15000,
         "segments": [
           {
+            "kind": "thinking",
+            "text": "between review rounds",
+            "duration_ms": 1000,
+            "started_at": "2026-01-01T00:00:07Z"
+          },
+          {
             "kind": "execution",
             "tools": [],
             "subagents": [
@@ -1065,12 +1077,6 @@
                 ]
               }
             ]
-          },
-          {
-            "kind": "thinking",
-            "text": "between review rounds",
-            "duration_ms": 8000,
-            "started_at": "2026-01-01T00:00:07Z"
           }
         ]
       }
