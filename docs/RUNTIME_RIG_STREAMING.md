@@ -89,7 +89,9 @@ tools, and builds an `Agent`. Each run uses:
 - `.history(canonical_prefix)` and the current prompt;
 - `.max_turns(usize::MAX)` to preserve effectively unbounded product behavior;
 - `.max_invalid_tool_call_retries(3)` and `.max_consecutive_malformed_tool_calls(3)`;
-- `.tool_concurrency(1)` through the runner default;
+- `.tool_concurrency(8)` so independent calls in one model batch run concurrently. Rig commits
+  answers in call order, but tool bodies (including report writes) may interleave, so a report
+  mutation must not share a batch with reads or lints that depend on its committed revision;
 - native model `.with_idle_timeout(Some(120s))`.
 
 Two hooks are registered in this explicit order:

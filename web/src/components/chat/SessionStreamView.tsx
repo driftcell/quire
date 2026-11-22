@@ -474,26 +474,35 @@ export function SessionStreamView({
               );
             })}
 
-            {liveMain && (
-              <MessageScrollerItem messageId="live-main">
-                <MessageGroup>
-                  <Message align="start">
-                    <MessageContent className="w-full gap-1">
-                      <LiveRunSection
-                        key={liveMain.runId ?? "live-main"}
-                        sessionId={sessionId}
-                        trace={liveMain}
-                        subagents={liveSubagents}
-                        segments={liveSegments}
-                        questionSlots={questionSlots}
-                        onJumpToSection={onJumpToSection}
-                        onInterrupt={onInterrupt}
-                      />
-                    </MessageContent>
-                  </Message>
-                </MessageGroup>
-              </MessageScrollerItem>
-            )}
+            {liveMain &&
+              (liveMain.isStreaming ||
+                !liveMain.runId ||
+                !(
+                  traceByRunId.has(liveMain.runId) &&
+                  visibleMessages.some(
+                    (msg) =>
+                      msg.run_id === liveMain.runId && msg.role !== "user",
+                  )
+                )) && (
+                <MessageScrollerItem messageId="live-main">
+                  <MessageGroup>
+                    <Message align="start">
+                      <MessageContent className="w-full gap-1">
+                        <LiveRunSection
+                          key={liveMain.runId ?? "live-main"}
+                          sessionId={sessionId}
+                          trace={liveMain}
+                          subagents={liveSubagents}
+                          segments={liveSegments}
+                          questionSlots={questionSlots}
+                          onJumpToSection={onJumpToSection}
+                          onInterrupt={onInterrupt}
+                        />
+                      </MessageContent>
+                    </Message>
+                  </MessageGroup>
+                </MessageScrollerItem>
+              )}
 
             {pendingQueue.map((item, index) => (
               <MessageScrollerItem

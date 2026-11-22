@@ -151,8 +151,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const { ephemeralPreviews, activeActorsBySection } = useDocumentEventStream({
     docId: effectiveDocId,
-    enabled: docQuery.isSuccess,
+    enabled: Boolean(effectiveDocId),
     currentRev: docQuery.data?.current_rev ?? 0,
+    isRunActive: effectiveRunStatus === "running",
   });
 
   const blockCount = docQuery.data?.document.blocks.length ?? 0;

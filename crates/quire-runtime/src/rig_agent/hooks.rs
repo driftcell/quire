@@ -319,7 +319,7 @@ impl AgentHook for ToolLifecycleHook {
         _ctx: &HookContext,
         _event: CompletionCallEvent<'_>,
     ) -> CompletionCallAction {
-        self.previews.lock().await.clear_streams();
+        self.previews.lock().await.abort_all().await;
         CompletionCallAction::continue_run()
     }
 
@@ -333,7 +333,7 @@ impl AgentHook for ToolLifecycleHook {
         });
         self.state.lock().await.turn_has_ask_user = has_question;
         if has_question {
-            self.previews.lock().await.clear_streams();
+            self.previews.lock().await.abort_all().await;
         }
         ModelTurnAction::continue_run()
     }
@@ -367,6 +367,7 @@ impl AgentHook for ToolLifecycleHook {
         let mut arguments = Self::arguments(event.tool_args());
 
         if has_question && tool_name != "ask_user" {
+            self.previews.lock().await.abort_call(&call_id.wire()).await;
             self.send_started(tool_call_id, tool_name, arguments).await;
             let output = json!({
                 "kind": "skipped",
@@ -395,7 +396,8 @@ impl AgentHook for ToolLifecycleHook {
         let (Some(tool_name), Some(call_id)) = (event.tool_name(), event.call_id) else {
             return OutcomeAction::proceed();
         };
-        let tool_call_id = format!("{}:{}", self.execution.run_id, call_id.wire());
+        let wire_call_id = call_id.wire();
+        let tool_call_id = format!("{}:{}", self.execution.run_id, wire_call_id);
         let arguments = Self::arguments(event.tool_args());
         let duration_ms = self
             .state
@@ -436,6 +438,15 @@ impl AgentHook for ToolLifecycleHook {
                 .unwrap_or_else(|| "tool dispatch failed".into());
             ("failed", json!({"error": message.clone()}), Some(message))
         };
+
+        if tool_name == "apply_operations" {
+            let mut previews = self.previews.lock().await;
+            if status == "completed" {
+                previews.confirm_call(&wire_call_id);
+            } else {
+                previews.abort_call(&wire_call_id).await;
+            }
+        }
 
         let requested = (status == "completed" && tool_name == "ask_user")
             .then(|| {

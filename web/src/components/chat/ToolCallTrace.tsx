@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2Icon } from "lucide-react";
 import { getToolMeta } from "@/components/chat/toolMeta";
@@ -29,6 +29,87 @@ export interface ToolCallTraceProps {
   item: ToolCallTraceItem;
 }
 
+function extractJsonField(raw: string, field: string): string | null {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`"${escaped}"\\s*:\\s*"([^"\\\\]{1,64})"`);
+  const match = pattern.exec(raw);
+  return match?.[1]?.trim() || null;
+}
+
+function extractToolInlineSummary(item: ToolCallTraceItem): string | null {
+  const raw = item.inputPreview || "";
+  if (!raw) return null;
+
+  switch (item.toolName) {
+    case "apply_operations": {
+      const summary = extractJsonField(raw, "summary");
+      if (summary) return summary;
+      const sectionId =
+        extractJsonField(raw, "section_id") ??
+        extractJsonField(raw, "target_id") ??
+        extractJsonField(raw, "block_id");
+      return sectionId ? `#${sectionId}` : null;
+    }
+    case "commit_chart": {
+      const blockId = extractJsonField(raw, "block_id");
+      const summary = extractJsonField(raw, "summary");
+      return blockId ? `#${blockId}` : summary;
+    }
+    case "preview_echarts": {
+      return (
+        extractJsonField(raw, "title") ??
+        extractJsonField(raw, "based_on_preview_id")
+      );
+    }
+    case "create_report":
+    case "set_session_title":
+    case "describe_task": {
+      return extractJsonField(raw, "title");
+    }
+    case "get_document_digest":
+    case "read_as_markdown":
+    case "read_blocks": {
+      return (
+        extractJsonField(raw, "section_heading") ??
+        extractJsonField(raw, "query") ??
+        extractJsonField(raw, "doc_id")
+      );
+    }
+    case "load_skill":
+    case "read_skill_resource": {
+      const skill =
+        extractJsonField(raw, "name") ?? extractJsonField(raw, "skill");
+      const path = extractJsonField(raw, "path");
+      return skill && path ? `${skill}/${path}` : (skill ?? path);
+    }
+    case "sandbox_execute": {
+      return extractJsonField(raw, "language");
+    }
+    case "sandbox_read_file":
+    case "sandbox_write_file": {
+      return extractJsonField(raw, "path");
+    }
+    case "sandbox_mount_attachment": {
+      return extractJsonField(raw, "attachment_id");
+    }
+    default: {
+      return (
+        extractJsonField(raw, "title") ??
+        extractJsonField(raw, "query") ??
+        extractJsonField(raw, "name") ??
+        extractJsonField(raw, "school_name") ??
+        extractJsonField(raw, "university")
+      );
+    }
+  }
+}
+
+function formatDurationBadge(durationMs?: number): string | null {
+  if (durationMs === undefined || durationMs < 0) return null;
+  if (durationMs < 1000) return `${durationMs}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
 export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
   const [open, setOpen] = useState(false);
   const meta = getToolMeta(item.toolName);
@@ -40,6 +121,9 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
     enabled: open && item.status !== "running",
     staleTime: 5 * 60_000,
   });
+
+  const inlineSummary = useMemo(() => extractToolInlineSummary(item), [item]);
+  const durationBadge = formatDurationBadge(item.durationMs);
 
   const lineStatus =
     item.status === "running"
@@ -71,12 +155,24 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
               )}
             </TraceIcon>
             <TraceTitle className="text-xs">{meta.label}</TraceTitle>
-            {item.status === "skipped" && (
-              <TraceDescription className="text-[11px]">已跳过</TraceDescription>
+            {inlineSummary && (
+              <TraceDescription className="max-w-[210px] truncate text-[11px] text-muted-foreground/85">
+                {inlineSummary}
+              </TraceDescription>
             )}
-            {item.durationMs !== undefined && (
+            {item.status === "skipped" && (
               <TraceDescription className="text-[11px]">
-                {item.durationMs}ms
+                已跳过
+              </TraceDescription>
+            )}
+            {item.status === "failed" && (
+              <TraceDescription className="text-[11px] text-destructive">
+                失败
+              </TraceDescription>
+            )}
+            {durationBadge && (
+              <TraceDescription className="text-[11px] tabular-nums">
+                {durationBadge}
               </TraceDescription>
             )}
           </TraceLine>

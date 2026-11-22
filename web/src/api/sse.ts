@@ -46,11 +46,16 @@ export interface SessionStreamHandlers {
   onError?: (error: Error) => void;
 }
 
-const SESSION_RECONNECT_DELAY_MS = 1000;
+const BASE_RECONNECT_DELAY_MS = 800;
+const MAX_RECONNECT_DELAY_MS = 5000;
 
-function waitForReconnect(): Promise<void> {
+function waitForReconnect(attempt: number): Promise<void> {
+  const backoff = Math.min(
+    MAX_RECONNECT_DELAY_MS,
+    BASE_RECONNECT_DELAY_MS * Math.pow(1.5, Math.min(attempt, 5)),
+  );
   return new Promise((resolve) => {
-    globalThis.setTimeout(resolve, SESSION_RECONNECT_DELAY_MS);
+    globalThis.setTimeout(resolve, Math.round(backoff));
   });
 }
 
@@ -61,6 +66,7 @@ export function subscribeSessionEvents(
 ): () => void {
   const controller = new AbortController();
   let closed = false;
+  let attempt = 0;
   const { runtimeToken } = getAuthTokens();
 
   const connect = async () => {
@@ -78,6 +84,14 @@ export function subscribeSessionEvents(
               ...bearerHeaders(runtimeToken),
             },
             openWhenHidden: true,
+            async onopen(response) {
+              if (!response.ok) {
+                throw new Error(
+                  `Session SSE connection failed with status ${response.status}`,
+                );
+              }
+              attempt = 0;
+            },
             onmessage(msg) {
               if (!msg.data) {
                 return;
@@ -102,6 +116,7 @@ export function subscribeSessionEvents(
         if (closed || controller.signal.aborted) {
           return;
         }
+        attempt += 1;
         const error =
           err instanceof Error ? err : new Error("Session SSE error");
         handlers.onError?.(error);
@@ -109,7 +124,7 @@ export function subscribeSessionEvents(
       if (closed) {
         return;
       }
-      await waitForReconnect();
+      await waitForReconnect(attempt);
     }
   };
 
@@ -133,74 +148,113 @@ export interface DocumentStreamHandlers {
 
 export function subscribeDocumentEvents(
   docId: string,
-  sinceRev: number,
+  sinceRevOrGetter: number | (() => number),
   handlers: DocumentStreamHandlers,
 ): () => void {
   const controller = new AbortController();
+  let closed = false;
+  let attempt = 0;
   const { quireRoToken, quireRwToken } = getAuthTokens();
   const token = quireRoToken || quireRwToken;
+  const getSinceRev =
+    typeof sinceRevOrGetter === "function"
+      ? sinceRevOrGetter
+      : () => sinceRevOrGetter;
 
-  void fetchEventSource(
-    `/api/docs/${encodeURIComponent(docId)}/events?sinceRev=${sinceRev}`,
-    {
-      signal: controller.signal,
-      headers: {
-        ...bearerHeaders(token),
-      },
-      openWhenHidden: true,
-      onmessage(msg) {
-        if (!msg.data) {
+  const connect = async () => {
+    for (;;) {
+      if (closed) {
+        return;
+      }
+      const sinceRev = getSinceRev();
+      try {
+        await fetchEventSource(
+          `/api/docs/${encodeURIComponent(docId)}/events?sinceRev=${sinceRev}`,
+          {
+            signal: controller.signal,
+            headers: {
+              ...bearerHeaders(token),
+            },
+            openWhenHidden: true,
+            async onopen(response) {
+              if (!response.ok) {
+                throw new Error(
+                  `Document SSE connection failed with status ${response.status}`,
+                );
+              }
+              attempt = 0;
+            },
+            onmessage(msg) {
+              if (!msg.data) {
+                return;
+              }
+              try {
+                const data: unknown = JSON.parse(msg.data);
+                switch (msg.event) {
+                  case "revision":
+                    if (isRevisionDelta(data)) {
+                      handlers.onRevision(data);
+                    }
+                    break;
+                  case "ephemeral_preview":
+                    if (isEphemeralPreviewEvent(data)) {
+                      handlers.onEphemeralPreview(data);
+                    }
+                    break;
+                  case "ephemeral_clear":
+                    if (isEphemeralClearEvent(data)) {
+                      handlers.onEphemeralClear(data);
+                    }
+                    break;
+                  case "agent_presence":
+                    if (isAgentPresenceEvent(data)) {
+                      handlers.onAgentPresence(data);
+                    }
+                    break;
+                  case "comment_updated":
+                    if (isCommentUpdatedEvent(data)) {
+                      handlers.onCommentUpdated(data);
+                    }
+                    break;
+                  case "sync_required":
+                    if (isSyncRequiredDelta(data)) {
+                      handlers.onSyncRequired(data);
+                    }
+                    break;
+                  default:
+                    break;
+                }
+              } catch {
+                // Ignore malformed event payloads.
+              }
+            },
+            onerror(err) {
+              // Throw so fetchEventSource does not reconnect with a stale sinceRev URL;
+              // our outer loop reconnects with the latest getSinceRev() watermark.
+              throw err;
+            },
+          },
+        );
+      } catch (err) {
+        if (closed || controller.signal.aborted) {
           return;
         }
-        try {
-          const data: unknown = JSON.parse(msg.data);
-          switch (msg.event) {
-            case "revision":
-              if (isRevisionDelta(data)) {
-                handlers.onRevision(data);
-              }
-              break;
-            case "ephemeral_preview":
-              if (isEphemeralPreviewEvent(data)) {
-                handlers.onEphemeralPreview(data);
-              }
-              break;
-            case "ephemeral_clear":
-              if (isEphemeralClearEvent(data)) {
-                handlers.onEphemeralClear(data);
-              }
-              break;
-            case "agent_presence":
-              if (isAgentPresenceEvent(data)) {
-                handlers.onAgentPresence(data);
-              }
-              break;
-            case "comment_updated":
-              if (isCommentUpdatedEvent(data)) {
-                handlers.onCommentUpdated(data);
-              }
-              break;
-            case "sync_required":
-              if (isSyncRequiredDelta(data)) {
-                handlers.onSyncRequired(data);
-              }
-              break;
-            default:
-              break;
-          }
-        } catch {
-          // Ignore malformed event payloads.
-        }
-      },
-      onerror(err) {
+        attempt += 1;
         const error =
           err instanceof Error ? err : new Error("Document SSE error");
         handlers.onError?.(error);
-      },
-    },
-  );
+      }
+      if (closed) {
+        return;
+      }
+      await waitForReconnect(attempt);
+    }
+  };
+
+  void connect();
 
   return () => {
+    closed = true;
     controller.abort();
   };
 }

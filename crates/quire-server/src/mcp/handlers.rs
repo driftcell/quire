@@ -40,6 +40,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "get_protocol_guide",
+        annotations(read_only_hint = true),
         description = "Progressive protocol schema disclosure. Call quickstart first, then tables_and_charts, citations_and_css and parallel_workflow as needed."
     )]
     pub async fn get_protocol_guide(
@@ -163,6 +164,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "list_reports",
+        annotations(read_only_hint = true),
         description = "List reports, newest first, optionally filtered by doc_id or title substring."
     )]
     pub async fn list_reports(
@@ -199,6 +201,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "get_document_digest",
+        annotations(read_only_hint = true),
         description = "Low-token outline: current_rev, theme summary and compact blocks (id/type/level/preview/char_count/source_ids; empty fields omitted). Optional keyword query filters blocks."
     )]
     pub async fn get_document_digest(
@@ -229,6 +232,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "read_as_markdown",
+        annotations(read_only_hint = true),
         description = "Project an online report into token-efficient Markdown with block anchors, flattened tables, expanded chart data and expanded citations."
     )]
     pub async fn read_as_markdown(
@@ -287,6 +291,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "read_blocks",
+        annotations(read_only_hint = true),
         description = "Fetch full canonical protocol JSON for targeted blocks."
     )]
     pub async fn read_blocks(
@@ -803,6 +808,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "lint_document",
+        annotations(read_only_hint = true),
         description = "Run zero-browser static validation: dangling/unused citations, table schema/row keys, CSS syntax, custom_html fallback, heading/TOC/chart rules."
     )]
     pub async fn lint_document(
@@ -849,6 +855,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "list_comments",
+        annotations(read_only_hint = true),
         description = "List side-channel review threads. Archived threads are omitted unless status=archived is supplied. Includes anchor_snapshot and live anchor_detached flags."
     )]
     pub async fn list_comments(

@@ -45,6 +45,10 @@ use builtin_tools::{ToolBuildContext, warn_missing_allowed_tools};
 use hooks::{RunTermination, SharedTurnState, ToolLifecycleHook, TurnControlHook, TurnRunState};
 use preview_stream::PreviewState;
 
+/// Maximum concurrent tool executions per model batch. Rig commits answers in
+/// call order, but the tool bodies themselves may interleave.
+const DEFAULT_TOOL_CONCURRENCY: usize = 8;
+
 #[derive(Clone)]
 pub struct RigModelStreamProvider {
     core: Arc<RigModelCore>,
@@ -385,6 +389,7 @@ impl RigModelCore {
                 .prompt(prompt.clone())
                 .history(initial_history.clone())
                 .tool_context(tool_context)
+                .tool_concurrency(DEFAULT_TOOL_CONCURRENCY)
                 .max_turns(usize::MAX)
                 .max_invalid_tool_call_retries(3)
                 .max_consecutive_malformed_tool_calls(3)
@@ -437,6 +442,10 @@ impl RigModelCore {
                     }
                 }
             };
+            // Guarantee that any in-flight or aborted preview cards are cleared on the
+            // server whenever the run exits (cancelled, superseded, errored, or finished).
+            previews.lock().await.abort_all().await;
+
             let (text, full_history) = outcome?;
             if persist_history {
                 memory

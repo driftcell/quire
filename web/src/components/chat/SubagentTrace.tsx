@@ -46,6 +46,17 @@ export function SubagentTrace({
         ? "error"
         : undefined;
 
+  const toolCount = model.tools.length;
+  const runningToolCount = model.tools.filter(
+    (t) => t.status === "running",
+  ).length;
+  const telemetrySummary =
+    runningToolCount > 0
+      ? `并发执行 ${runningToolCount}/${toolCount}`
+      : toolCount > 0
+        ? `${toolCount} 次操作`
+        : null;
+
   return (
     <Trace
       data-slot="subagent"
@@ -72,6 +83,11 @@ export function SubagentTrace({
             {model.focusTitle && (
               <TraceDescription className="truncate text-[11px]">
                 {model.focusTitle}
+              </TraceDescription>
+            )}
+            {telemetrySummary && (
+              <TraceDescription className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/75">
+                {telemetrySummary}
               </TraceDescription>
             )}
           </TraceLine>

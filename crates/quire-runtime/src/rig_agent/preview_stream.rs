@@ -12,8 +12,8 @@ use std::{
 use tokio::sync::watch;
 
 use quire_protocol::{
-    BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
-    PreviewStatus, short_id,
+    BlockId, DocId, EphemeralClearEvent, EphemeralPayload, EphemeralPreviewEvent,
+    PartialBlockPreview, PreviewAnchor, PreviewStatus, short_id,
 };
 use rig::streaming::parse_partial_arguments;
 #[cfg(test)]
@@ -375,6 +375,10 @@ pub(super) struct PreviewState {
     throttle_ms: u64,
     streams: HashMap<usize, StreamingPreview>,
     previews_by_call: HashMap<String, Vec<String>>,
+    /// Preview IDs that have been handed off to `on_dispatch` and are awaiting
+    /// confirmation in `on_outcome`. If the tool call fails or is aborted,
+    /// these IDs are explicitly cleared via `EphemeralPayload::Clear`.
+    dispatched_previews: HashMap<String, Vec<String>>,
 }
 
 impl PreviewState {
@@ -388,6 +392,7 @@ impl PreviewState {
             throttle_ms: config.preview_throttle_ms,
             streams: HashMap::new(),
             previews_by_call: HashMap::new(),
+            dispatched_previews: HashMap::new(),
         }
     }
 
@@ -419,9 +424,68 @@ impl PreviewState {
         self.append_arguments(part, fragment).await;
     }
 
-    pub(super) fn clear_streams(&mut self) {
-        self.streams.clear();
-        self.previews_by_call.clear();
+    /// Clear all in-flight and unconfirmed previews locally and broadcast an
+    /// immediate `EphemeralPayload::Clear` to the Quire server so ghost cards
+    /// never linger on the document canvas when a turn is interrupted or
+    /// sibling tool calls are skipped by `ask_user`.
+    pub(super) async fn abort_all(&mut self) {
+        let mut ids = BTreeSet::new();
+        for (_, stream) in self.streams.drain() {
+            ids.extend(stream.preview_ids);
+        }
+        for (_, call_ids) in self.previews_by_call.drain() {
+            ids.extend(call_ids);
+        }
+        for (_, call_ids) in self.dispatched_previews.drain() {
+            ids.extend(call_ids);
+        }
+        self.publish_remote_clear(ids.into_iter().collect()).await;
+    }
+
+    /// Confirm that a dispatched tool call committed its revision (which
+    /// atomically cleared its `preview_ids` on the server).
+    pub(super) fn confirm_call(&mut self, call_id: &str) {
+        self.previews_by_call.remove(call_id);
+        self.dispatched_previews.remove(call_id);
+    }
+
+    /// Explicitly clear any previews associated with a tool call that failed
+    /// or was skipped before committing a revision.
+    pub(super) async fn abort_call(&mut self, call_id: &str) {
+        let mut ids = BTreeSet::new();
+        if let Some(call_ids) = self.previews_by_call.remove(call_id) {
+            ids.extend(call_ids);
+        }
+        if let Some(call_ids) = self.dispatched_previews.remove(call_id) {
+            ids.extend(call_ids);
+        }
+        self.publish_remote_clear(ids.into_iter().collect()).await;
+    }
+
+    async fn publish_remote_clear(&self, preview_ids: Vec<String>) {
+        if preview_ids.is_empty() || self.base_url.trim().is_empty() {
+            return;
+        }
+        let Some(raw_doc_id) = current_doc_id(&self.doc_id) else {
+            return;
+        };
+        let Ok(doc_id) = DocId::parse(raw_doc_id.clone()) else {
+            return;
+        };
+        let payload = EphemeralPayload::Clear {
+            event: EphemeralClearEvent::new(doc_id, preview_ids),
+        };
+        let job = PreviewJob {
+            id: 0,
+            payload,
+            base_url: self.base_url.trim_end_matches('/').to_string(),
+            doc_id: raw_doc_id,
+            token: self.token.clone(),
+            client: crate::http_client::timed_client(Duration::from_secs(10)),
+        };
+        if let Err(error) = job.send().await {
+            warn!(%error, "failed to publish ephemeral preview clear");
+        }
     }
 
     pub(super) async fn on_tool_delta(
@@ -521,12 +585,38 @@ impl PreviewState {
         tool_name: &str,
         arguments: &Value,
     ) {
-        let part = self
-            .streams
-            .iter()
-            .filter(|(_, stream)| stream.tool_name == tool_name)
-            .map(|(part, _)| *part)
-            .min();
+        let target_block_ids: BTreeSet<String> = extract_preview_blocks(arguments)
+            .into_iter()
+            .filter_map(|block| block.block_id)
+            .collect();
+        let matched_by_blocks = (!target_block_ids.is_empty())
+            .then(|| {
+                self.streams
+                    .iter()
+                    .filter(|(_, stream)| stream.tool_name == tool_name)
+                    .filter_map(|(part, stream)| {
+                        let overlap = stream
+                            .streamers
+                            .values()
+                            .filter(|streamer| target_block_ids.contains(&streamer.block_id))
+                            .count();
+                        (overlap > 0).then_some((*part, overlap))
+                    })
+                    .max_by(|(left_part, left_overlap), (right_part, right_overlap)| {
+                        left_overlap
+                            .cmp(right_overlap)
+                            .then_with(|| right_part.cmp(left_part))
+                    })
+                    .map(|(part, _)| part)
+            })
+            .flatten();
+        let part = matched_by_blocks.or_else(|| {
+            self.streams
+                .iter()
+                .filter(|(_, stream)| stream.tool_name == tool_name)
+                .map(|(part, _)| *part)
+                .min()
+        });
         if let Some(part) = part {
             self.finalize_part(part, call_id, arguments).await;
         }
@@ -616,7 +706,10 @@ impl PreviewState {
     }
 
     pub(super) fn take_preview_ids(&mut self, call_id: &str) -> Option<Vec<String>> {
-        self.previews_by_call.remove(call_id)
+        let ids = self.previews_by_call.remove(call_id)?;
+        self.dispatched_previews
+            .insert(call_id.to_string(), ids.clone());
+        Some(ids)
     }
 
     #[cfg(test)]
@@ -630,6 +723,7 @@ impl PreviewState {
             throttle_ms: 0,
             streams: HashMap::new(),
             previews_by_call: HashMap::new(),
+            dispatched_previews: HashMap::new(),
         }
     }
 }
@@ -781,12 +875,29 @@ fn collect_preview_blocks(
                 }
                 consumed_patch = true;
             }
-            if let Some(block) = preview_block(object, &next_anchor) {
+            let is_container =
+                object.contains_key("ops") || object.contains_key("blocks") || patch_op;
+            if !is_container && let Some(block) = preview_block(object, &next_anchor) {
                 push_preview_block(block, blocks, seen);
+                return;
             }
             let chained_insert = matches!(op_type, Some("insert_after" | "insert_before"));
             for (key, child) in object {
                 if key == "patch" && consumed_patch {
+                    continue;
+                }
+                // Never recurse into block-internal payload structures as if they were
+                // child document blocks (e.g., ECharts `option.title.text` or table cells).
+                if matches!(
+                    key.as_str(),
+                    "option"
+                        | "option_patch"
+                        | "rows"
+                        | "columns"
+                        | "sources"
+                        | "source_ids"
+                        | "numbering"
+                ) {
                     continue;
                 }
                 if chained_insert && key == "blocks" {
@@ -849,21 +960,114 @@ fn push_preview_block(
     }
 }
 
+/// Synthesize a compact pipe-separated table preview (`Col A | Col B\nRow1A | Row1B`)
+/// from partial `columns` and `rows` while a `table` block is streaming.
+fn synthesize_table_preview_text(object: &serde_json::Map<String, Value>) -> Option<String> {
+    let columns = object.get("columns").and_then(Value::as_array);
+    let rows = object.get("rows").and_then(Value::as_array);
+    let mut column_keys: Vec<&str> = Vec::new();
+    let mut header_labels: Vec<String> = Vec::new();
+    if let Some(cols) = columns {
+        for col in cols.iter().take(6) {
+            let Some(col_obj) = col.as_object() else {
+                continue;
+            };
+            if let Some(key) = col_obj.get("key").and_then(Value::as_str) {
+                column_keys.push(key);
+            }
+            let label = col_obj
+                .get("label")
+                .or_else(|| col_obj.get("title"))
+                .or_else(|| col_obj.get("key"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(label) = label {
+                header_labels.push(label.to_string());
+            }
+        }
+    }
+    let mut lines: Vec<String> = Vec::new();
+    if !header_labels.is_empty() {
+        lines.push(header_labels.join(" | "));
+    }
+    if let Some(row_list) = rows {
+        for row in row_list.iter().take(4) {
+            let cells: Vec<String> = match row {
+                Value::Object(row_obj) => {
+                    if !column_keys.is_empty() {
+                        column_keys
+                            .iter()
+                            .map(|key| format_cell_preview(row_obj.get(*key)))
+                            .collect()
+                    } else {
+                        row_obj
+                            .values()
+                            .take(6)
+                            .map(|val| format_cell_preview(Some(val)))
+                            .collect()
+                    }
+                }
+                Value::Array(arr) => arr
+                    .iter()
+                    .take(6)
+                    .map(|val| format_cell_preview(Some(val)))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if !cells.is_empty() && cells.iter().any(|cell| !cell.is_empty()) {
+                lines.push(cells.join(" | "));
+            }
+        }
+        if row_list.len() > 4 {
+            lines.push(format!("… 共 {} 行数据流式写入中", row_list.len()));
+        }
+    }
+    if lines.is_empty() {
+        object
+            .get("note")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    } else {
+        Some(lines.join("\n"))
+    }
+}
+
+fn format_cell_preview(value: Option<&Value>) -> String {
+    match value {
+        Some(Value::String(text)) => text.trim().chars().take(28).collect(),
+        Some(Value::Number(num)) => num.to_string(),
+        Some(Value::Bool(flag)) => flag.to_string(),
+        Some(Value::Object(obj)) => obj
+            .get("text")
+            .or_else(|| obj.get("value"))
+            .and_then(Value::as_str)
+            .map(|text| text.trim().chars().take(28).collect())
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
 fn preview_block(
     object: &serde_json::Map<String, Value>,
     anchor: &AnchorContext,
 ) -> Option<PreviewBlock> {
-    let text = object.get("text").and_then(Value::as_str);
-    let title = object.get("title").and_then(Value::as_str);
-    if text.is_none() && title.is_none() {
-        return None;
-    }
     let inferred_type = if object.contains_key("level") {
         "heading"
-    } else if object.contains_key("rows") || object.contains_key("columns") {
+    } else if object.contains_key("rows")
+        || object.contains_key("columns")
+        || object.contains_key("caption")
+    {
         "table"
-    } else if object.contains_key("option") {
+    } else if object.contains_key("option")
+        || object.contains_key("option_patch")
+        || object.contains_key("fallback_summary")
+    {
         "echarts"
+    } else if object.contains_key("html") || object.contains_key("fallback_text") {
+        "custom_html"
+    } else if object.contains_key("attribution") {
+        "quote"
     } else {
         "paragraph"
     };
@@ -877,6 +1081,55 @@ fn preview_block(
     ) {
         return None;
     }
+
+    let title = object
+        .get("title")
+        .or_else(|| object.get("caption"))
+        .or_else(|| {
+            (block_type == "quote")
+                .then(|| object.get("attribution"))
+                .flatten()
+        })
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| {
+            (block_type == "echarts")
+                .then(|| {
+                    object
+                        .get("option")
+                        .and_then(Value::as_object)
+                        .and_then(|opt| opt.get("title"))
+                        .and_then(Value::as_object)
+                        .and_then(|t| t.get("text"))
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .flatten()
+        });
+
+    let text = object
+        .get("text")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| match block_type {
+            "table" => synthesize_table_preview_text(object),
+            "echarts" => object
+                .get("fallback_summary")
+                .or_else(|| object.get("note"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            "custom_html" => object
+                .get("fallback_text")
+                .or_else(|| object.get("html"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            _ => None,
+        });
+
+    if text.is_none() && title.is_none() {
+        return None;
+    }
+
     let block_id = object
         .get("id")
         .and_then(Value::as_str)
@@ -889,9 +1142,9 @@ fn preview_block(
     Some(PreviewBlock {
         block_id,
         block_type: block_type.to_string(),
-        title: title.map(str::to_string),
+        title,
         level,
-        text: text.map(str::to_string),
+        text,
         anchor: anchor.anchor.clone(),
         anchor_resolved: anchor.resolved,
     })
@@ -947,6 +1200,60 @@ mod tests {
         assert_eq!(block.block_id.as_deref(), Some("q3-revenue"));
         assert_eq!(block.block_type, "paragraph");
         assert_eq!(block.text.as_deref(), Some("Revenue grew"));
+    }
+
+    #[test]
+    fn table_and_echarts_blocks_produce_single_rich_previews_without_inner_duplicates() {
+        let arguments = json!({
+            "ops": [{
+                "type": "append",
+                "blocks": [
+                    {
+                        "id": "ch1_table",
+                        "type": "table",
+                        "caption": "核心学科经费对比",
+                        "columns": [
+                            {"key": "school", "label": "高校"},
+                            {"key": "budget", "label": "经费（亿元）"}
+                        ],
+                        "rows": [
+                            {"school": "A校", "budget": "14.2"},
+                            {"school": "B校", "budget": "11.8"}
+                        ]
+                    },
+                    {
+                        "id": "ch1_chart",
+                        "type": "echarts",
+                        "title": "近五年经费趋势",
+                        "fallback_summary": "A校近五年持续增长",
+                        "option": {
+                            "title": {"text": "内部子标题不应生成独立段落块"},
+                            "series": [{"type": "line", "data": [10, 12, 14]}]
+                        }
+                    }
+                ]
+            }]
+        });
+        let blocks = extract_preview_blocks(&arguments);
+        assert_eq!(
+            blocks.len(),
+            2,
+            "nested option.title.text or table columns must not create extra blocks: {:?}",
+            blocks
+                .iter()
+                .map(|b| (&b.block_id, &b.block_type))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(blocks[0].block_id.as_deref(), Some("ch1_table"));
+        assert_eq!(blocks[0].block_type, "table");
+        assert_eq!(blocks[0].title.as_deref(), Some("核心学科经费对比"));
+        assert!(blocks[0].text.as_deref().is_some_and(
+            |text| text.contains("高校 | 经费（亿元）") && text.contains("A校 | 14.2")
+        ));
+        assert_eq!(blocks[1].block_id.as_deref(), Some("ch1_chart"));
+        assert_eq!(blocks[1].block_type, "echarts");
+        assert_eq!(blocks[1].title.as_deref(), Some("近五年经费趋势"));
+        assert_eq!(blocks[1].text.as_deref(), Some("A校近五年持续增长"));
     }
 
     #[test]
