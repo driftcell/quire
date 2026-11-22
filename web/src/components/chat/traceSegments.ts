@@ -52,16 +52,7 @@ type TextRenderSegment = {
   isStreaming: boolean;
 };
 
-export type UserRenderSegment = {
-  key: string;
-  kind: "user";
-  messageId: string;
-  content: string;
-  createdAt: string;
-};
-
-export type RenderSegment =
-  ActivityRenderSegment | UserRenderSegment | TextRenderSegment;
+export type RenderSegment = ActivityRenderSegment | TextRenderSegment;
 
 export type LiveToolTraceItem = ToolCallTraceItem;
 
@@ -177,9 +168,6 @@ export function extractSubagentLiveView(
       textParts.push(segment.text);
       continue;
     }
-    if (segment.kind === "user_message") {
-      continue;
-    }
     for (const tool of segment.tools) {
       if (isVisibleTraceTool(tool)) {
         tools.push(tool);
@@ -245,17 +233,6 @@ export function buildHistoricalSegments(
   };
 
   source.forEach((segment, index) => {
-    if (segment.kind === "user_message") {
-      flushActivity(false);
-      segments.push({
-        key: `user-${segment.message_id}`,
-        kind: "user",
-        messageId: segment.message_id,
-        content: segment.content,
-        createdAt: segment.created_at,
-      });
-      return;
-    }
     if (segment.kind === "text") {
       if (!segment.text.trim()) {
         return;
@@ -328,17 +305,6 @@ export function buildLiveSegments(
   };
 
   trace.segments.forEach((segment: LiveTraceSegment, index) => {
-    if (segment.kind === "user_message") {
-      flushActivity(false);
-      segments.push({
-        key: `user-${segment.messageId}`,
-        kind: "user",
-        messageId: segment.messageId,
-        content: segment.content,
-        createdAt: segment.createdAt,
-      });
-      return;
-    }
     if (segment.kind === "text") {
       if (!segment.text.trim()) {
         return;

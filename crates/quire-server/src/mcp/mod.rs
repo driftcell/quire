@@ -22,7 +22,7 @@ const SERVER_INSTRUCTIONS: &str = r#"QUIRE MULTI-AGENT REPORT ENGINE
 
 Workflow state machine: INIT -> SCHEMA -> AUTHOR -> VERIFY.
 
-INIT: send X-Session-Id on MCP HTTP requests. Call get_protocol_guide("quickstart"), then create_report or list_reports.
+INIT: send X-Session-Id headers or per-call _meta.quire.{session_id,run_id,agent_id}. Call get_protocol_guide("quickstart"), then create_report or list_reports.
 SCHEMA: call get_document_digest or read_as_markdown before editing. Block IDs are short semantic strings, never UUIDv4. Tables use recursive ColumnNode trees; never compute spans yourself.
 AUTHOR: mutate only via apply_operations(doc_id, expected_revision, summary, ops). Register citations with upsert_sources. Use disjoint block-ID prefixes when writing in parallel; Smart CAS rebases disjoint edits and returns detailed conflicts for overlapping edits.
 REVIEW: list_comments returns side-channel threads with anchor_snapshot and anchor_detached. add_comment and reply_comment are revision-free; mark_addressed moves open to addressed. Only humans may archive or reopen via REST.

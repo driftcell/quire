@@ -16,6 +16,7 @@ pub(crate) mod http_client;
 pub mod kb;
 pub mod mcp_client;
 pub mod mcp_registry;
+pub mod memory;
 pub mod model_stream;
 pub mod models;
 pub mod oss;

@@ -154,12 +154,6 @@ describe("active run hydration", () => {
         subagents: [subagent],
       },
       {
-        kind: "user_message",
-        message_id: "msg-1",
-        content: "补充 2025 年数据。",
-        created_at: new Date(now - 6_000).toISOString(),
-      },
-      {
         kind: "thinking",
         text: "正在继续思考。",
         started_at: streamingThinkingAt,
@@ -194,14 +188,7 @@ describe("active run hydration", () => {
     expect(execution.tools[1]?.status).toBe("running");
     expect(execution.subagentRunIds).toEqual(["sub-1"]);
 
-    expect(live.segments[2]).toEqual({
-      kind: "user_message",
-      messageId: "msg-1",
-      content: "补充 2025 年数据。",
-      createdAt: new Date(now - 6_000).toISOString(),
-    });
-
-    const streaming = live.segments[3];
+    const streaming = live.segments[2];
     if (streaming?.kind !== "thinking") {
       throw new Error("expected streaming thinking");
     }

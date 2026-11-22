@@ -2,8 +2,9 @@
 
 ## Metadata
 
-- **Status:** Accepted
+- **Status:** Superseded
 - **Date:** 2026-11-20
+- **Superseded By:** `runtime_rig_046_native_migration.md`
 - **Promoted To:** `../docs/RUNTIME_RIG_STREAMING.md`
 
 ## 1. Context & Problem

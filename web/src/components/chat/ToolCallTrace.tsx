@@ -17,7 +17,7 @@ import {
 export interface ToolCallTraceItem {
   toolCallId: string;
   toolName: string;
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "skipped";
   inputPreview: string;
   outputPreview?: string;
   truncated?: boolean;
@@ -71,6 +71,9 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
               )}
             </TraceIcon>
             <TraceTitle className="text-xs">{meta.label}</TraceTitle>
+            {item.status === "skipped" && (
+              <TraceDescription className="text-[11px]">已跳过</TraceDescription>
+            )}
             {item.durationMs !== undefined && (
               <TraceDescription className="text-[11px]">
                 {item.durationMs}ms

@@ -3,7 +3,6 @@ import mainRun from "../../../contracts/fixtures/session-events/main_run.json";
 import subagentRun from "../../../contracts/fixtures/session-events/subagent_run.json";
 import subagentResume from "../../../contracts/fixtures/session-events/subagent_resume.json";
 import subagentMultiRound from "../../../contracts/fixtures/session-events/subagent_multi_round.json";
-import inlineUserMessage from "../../../contracts/fixtures/session-events/inline_user_message.json";
 import sessionControlFrames from "../../../contracts/fixtures/session-events/session_control_frames.json";
 import type {
   RunTraceSummary,
@@ -47,7 +46,6 @@ const fixtures: Record<string, TraceFixture> = {
   subagentRun: parseFixture(subagentRun),
   subagentMultiRound: parseFixture(subagentMultiRound),
   subagentResume: parseFixture(subagentResume),
-  inlineUserMessage: parseFixture(inlineUserMessage),
   sessionControlFrames: parseFixture(sessionControlFrames),
 };
 
@@ -148,6 +146,63 @@ describe("run lifecycle guards", () => {
       recoverable: true,
     }).state;
     expect(failed.liveMain?.isStreaming).toBe(false);
+  });
+
+  test("turn_superseded ends the current run and requests trace refresh", () => {
+    const running = reduceAll([turnStarted]);
+    const result = reduceSessionEvent(running, {
+      seq: 2,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:01Z",
+      event: "turn_superseded",
+    });
+    expect(result.state.liveRunStatus).toBe("idle");
+    expect(result.effects).toContainEqual({
+      type: "refetch-and-clear",
+      runId: "run_1",
+    });
+    expect(result.effects).toContainEqual({
+      type: "invalidate",
+      target: "traces",
+    });
+  });
+
+  test("skipped sibling tools retain a terminal skipped status", () => {
+    const running = reduceAll([
+      turnStarted,
+      {
+        seq: 2,
+        run_id: "run_1",
+        agent_id: "main",
+        parent_run_id: null,
+        timestamp: "2026-01-01T00:00:01Z",
+        event: "tool_call_started",
+        tool_call_id: "call_1",
+        tool_name: "apply_operations",
+        input_preview: "{}",
+        truncated: false,
+      },
+    ]);
+    const finished = reduceSessionEvent(running, {
+      seq: 3,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:02Z",
+      event: "tool_call_finished",
+      tool_call_id: "call_1",
+      status: "skipped",
+      output_preview: "{}",
+      duration_ms: 0,
+      truncated: false,
+    }).state;
+    const segment = finished.liveMain?.segments.at(-1);
+    expect(segment?.kind).toBe("execution");
+    if (segment?.kind === "execution") {
+      expect(segment.tools[0]?.status).toBe("skipped");
+    }
   });
 
   test("subagent usage never updates the session meter", () => {

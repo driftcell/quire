@@ -1,46 +1,38 @@
-//! rig-core tool adaptation, MCP HTTP transport and the main agent turn loop.
+//! Native Rig agent construction, MCP adaptation and AgentRunner orchestration.
 
-use std::{
-    collections::BTreeMap,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::sync::Arc;
 
-use async_trait::async_trait;
 use futures::StreamExt;
-use quire_session_protocol::{ContextUsage, MessageRole, QuestionItem};
-use rig_core::{
-    completion::{
-        AssistantContent, CompletionRequest, CompletionResponse, Message, ToolDefinition, Usage,
-        message::ToolResult as MessageToolResult,
-    },
-    message::{AssistantMessage, ImageMediaType, ToolCall, UserContent},
-    streaming::{Item, StreamEvent},
-    tool::{DynamicTool, ToolExecutionError, ToolOutput, ToolResult as ExecutedToolResult},
+use quire_session_protocol::{ContextUsage, MessageRole};
+use rig::{
+    agent::{AgentBuilder, MultiTurnStreamItem},
+    completion::{Document, Message, PromptError, Usage},
+    message::ToolChoice,
+    tool::ToolContext,
 };
-use serde_json::{Value, json};
+use rig_rmcp::{McpMeta, rmcp::model::RequestMetaObject};
+use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::warn;
 
 use crate::{
-    comment_refs::render_stored_user_message,
     config::Config,
     error::{RuntimeError, RuntimeResult},
     kb::KbService,
-    mcp_client::RmcpClient,
     mcp_registry::McpRegistry,
     model_stream::{
         ModelEventStream, ModelStreamEvent, ModelStreamProvider, ModelTurnRequest,
         spawn_producer_stream,
     },
-    models::{ModelRegistry, ProviderProtocol},
-    prompt::ContextMessage,
+    models::ModelRegistry,
     sandbox::{SandboxLease, SandboxProvider, sandbox_spec_from_config},
     service::PendingQueueCoordinator,
 };
 
 mod builtin_tools;
+mod context;
+mod hooks;
 mod preview_stream;
 mod subagents;
 
@@ -49,16 +41,11 @@ pub use preview_stream::{PreviewThrottle, ToolPreviewStreamer};
 pub use subagents::{SubagentOutcome, SubagentTask, spawn_subagents};
 
 use builtin_tools::{ToolBuildContext, warn_missing_allowed_tools};
-use preview_stream::{PreviewState, inject_preview_ids};
-
-const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
-
-#[derive(Debug, Clone)]
-struct PreviewImage {
-    base64: String,
-    mime_type: String,
-    caption: String,
-}
+use hooks::{
+    InvalidToolCallHook, PreviewHook, QuestionHook, RunControlHook, RunTermination,
+    StreamEventHook, ToolAuditHook, UsageHook,
+};
+use preview_stream::PreviewState;
 
 #[derive(Clone)]
 pub struct RigModelStreamProvider {
@@ -82,13 +69,12 @@ impl RigModelStreamProvider {
                 mcp,
                 sandbox_provider,
                 queue,
-                subagent_history: Arc::new(Mutex::new(subagents::SubagentHistory::default())),
             }),
         }
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ModelStreamProvider for RigModelStreamProvider {
     async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream> {
         let core = self.core.clone();
@@ -111,7 +97,6 @@ struct RigModelCore {
     mcp: Arc<McpRegistry>,
     sandbox_provider: Arc<dyn SandboxProvider>,
     queue: PendingQueueCoordinator,
-    subagent_history: Arc<Mutex<subagents::SubagentHistory>>,
 }
 
 #[derive(Clone)]
@@ -211,7 +196,17 @@ impl RigModelCore {
         } else {
             request.allowed_tools.clone()
         };
-        let messages = messages_from_request(&request);
+        let extra_context = request
+            .history
+            .iter()
+            .filter(|message| matches!(message.role, MessageRole::System | MessageRole::Compaction))
+            .enumerate()
+            .map(|(index, message)| Document {
+                id: format!("quire-transient-{index}"),
+                text: message.content.clone(),
+                additional_props: Default::default(),
+            })
+            .collect();
         let execution = AgentExecution {
             agent_id: request.agent_id,
             model_route,
@@ -225,15 +220,26 @@ impl RigModelCore {
             cancellation: request.cancellation.clone(),
         };
         let scope = EventScope::top(sender, request.cancellation);
-        self.run_turn(execution, messages, scope).await?;
+        self.run_turn(
+            execution,
+            Message::user(request.user_message),
+            extra_context,
+            scope,
+            request.prompt_recorded,
+            request.persist_history,
+        )
+        .await?;
         Ok(())
     }
 
     async fn run_turn(
         self: Arc<Self>,
-        mut execution: AgentExecution,
-        mut messages: Vec<Message>,
+        execution: AgentExecution,
+        prompt: Message,
+        extra_context: Vec<Document>,
         scope: EventScope,
+        prompt_recorded: bool,
+        persist_history: bool,
     ) -> RuntimeResult<(String, Vec<Message>)> {
         let resolved = self
             .models
@@ -246,14 +252,10 @@ impl RigModelCore {
                 ))
             })?;
         let context_limit = u64::try_from(resolved.context_limit).unwrap_or(0);
-        let max_tokens = match resolved
+        let max_tokens = resolved
             .max_output_tokens
             .and_then(|value| u64::try_from(value).ok())
-        {
-            Some(value) => Some(value),
-            None if resolved.protocol == ProviderProtocol::Anthropic => Some(8192),
-            None => None,
-        };
+            .or((resolved.protocol == crate::models::ProviderProtocol::Anthropic).then_some(8192));
         let model = self
             .models
             .build_rig_model(&execution.model_route)
@@ -265,8 +267,6 @@ impl RigModelCore {
                 ))
             })?;
         let supports_vision = resolved.supports_vision;
-        let pending_preview_images: Arc<Mutex<Vec<PreviewImage>>> =
-            Arc::new(Mutex::new(Vec::new()));
         let doc_id_state = Arc::new(Mutex::new(execution.doc_id.clone()));
         let mut sandbox_spec = sandbox_spec_from_config(&self.config.sandbox);
         sandbox_spec
@@ -279,275 +279,207 @@ impl RigModelCore {
             Arc::clone(&self.sandbox_provider),
             sandbox_spec,
         ));
-        let mut tools = self.build_tools(ToolBuildContext {
-            execution: execution.clone(),
-            scope: scope.clone(),
-            engine: Arc::clone(&self),
-            pending_preview_images: Arc::clone(&pending_preview_images),
-            supports_vision,
-            sandbox: Arc::clone(&sandbox_lease),
-            doc_id: Arc::clone(&doc_id_state),
-        })?;
-        for binding in self.mcp.tools_for_agent(&execution.allowed_tools).await? {
-            let allowed: Vec<String> = binding
-                .tool_names
+
+        let result = async {
+            let memory = self.kb.store().memory().await?;
+            let memory_key = if execution.run_id.starts_with("run_sub_") {
+                crate::memory::ConversationMemory::subagent_log(
+                    &execution.session_id,
+                    &execution.run_id,
+                )
+            } else {
+                execution.session_id.clone()
+            };
+            let conversation = memory.load(&memory_key).await?;
+            let recorded_history: Vec<Message> = conversation
+                .messages()
                 .iter()
-                .filter(|name| !BUILTIN_TOOLS.contains(&name.as_str()))
-                .cloned()
+                .map(|message| message.as_ref().clone())
                 .collect();
-            if allowed.is_empty() {
-                continue;
-            }
-            match RmcpClient::connect(
-                &binding.url,
-                binding.auth_token,
-                &execution.session_id,
-                &execution.agent_id,
-            )
-            .await
-            {
-                Ok(client) => match client.dynamic_tools(&allowed) {
-                    Ok(mut remote) => tools.append(&mut remote),
-                    Err(error) => {
-                        warn!(
-                            %error,
-                            server_id = %binding.server_id,
-                            server_name = %binding.name,
-                            "skipping unavailable MCP server while assembling tools"
-                        );
-                    }
-                },
-                Err(error) => {
-                    warn!(
-                        %error,
-                        server_id = %binding.server_id,
-                        server_name = %binding.name,
-                        "skipping unavailable MCP server while assembling tools"
-                    );
+            let initial_history = if prompt_recorded && recorded_history.last() == Some(&prompt) {
+                let mut history = recorded_history.clone();
+                history.pop();
+                history
+            } else {
+                recorded_history.clone()
+            };
+
+            let built_in = self.build_tools(ToolBuildContext {
+                execution: execution.clone(),
+                scope: scope.clone(),
+                engine: Arc::clone(&self),
+                sandbox: Arc::clone(&sandbox_lease),
+                doc_id: Arc::clone(&doc_id_state),
+            });
+            let mut available_tools = built_in.names;
+            let mut remote_tools = Vec::new();
+            for binding in self.mcp.tools_for_agent(&execution.allowed_tools).await? {
+                let allowed: Vec<String> = binding
+                    .tool_names
+                    .iter()
+                    .filter(|name| !BUILTIN_TOOLS.contains(&name.as_str()))
+                    .cloned()
+                    .collect();
+                if allowed.is_empty() {
+                    continue;
+                }
+                match self.mcp.shared_client(&binding).await {
+                    Ok(client) => match client.dynamic_tools(&allowed) {
+                        Ok(remote) => {
+                            for tool in remote {
+                                available_tools.insert(tool.name().as_str().to_string());
+                                remote_tools.push(tool);
+                            }
+                        }
+                        Err(error) => warn!(%error, server_id = %binding.server_id, "skipping unavailable MCP tools"),
+                    },
+                    Err(error) => warn!(%error, server_id = %binding.server_id, "skipping unavailable MCP server"),
                 }
             }
-        }
-        let tool_map: BTreeMap<String, DynamicTool> = tools
-            .into_iter()
-            .map(|tool| (tool.name().as_str().to_string(), tool))
-            .collect();
-        warn_missing_allowed_tools(&execution.agent_id, &execution.allowed_tools, &tool_map);
-        let mut last_usage: Usage;
-        let mut final_text = String::new();
-        let mut suspended = false;
-        loop {
-            if execution.cancellation.is_cancelled() {
-                return Ok((final_text, messages));
+            warn_missing_allowed_tools(&execution.agent_id, &execution.allowed_tools, &available_tools);
+            let tool_server = built_in.server.dynamic_tools(remote_tools).run();
+
+            let agent = AgentBuilder::new(model)
+                .name(execution.agent_id.clone())
+                .preamble(runtime_preamble(&execution))
+                .tool_server_handle(tool_server)
+                .default_max_turns(usize::MAX)
+                .build();
+
+            let mut tool_context = ToolContext::new();
+            let mut mcp_meta = RequestMetaObject::new();
+            mcp_meta.insert(
+                "quire".into(),
+                serde_json::json!({
+                    "session_id": execution.session_id,
+                    "run_id": execution.run_id,
+                    "agent_id": execution.agent_id,
+                }),
+            );
+            tool_context
+                .insert(McpMeta(mcp_meta))
+                .map_err(|error| RuntimeError::Internal(error.to_string()))?;
+            tool_context
+                .insert(context::QuireTurnMeta {
+                    session_id: execution.session_id.clone(),
+                    run_id: execution.run_id.clone(),
+                    agent_id: execution.agent_id.clone(),
+                    kb_branch: execution.kb_branch.clone(),
+                    doc_id: execution.doc_id.clone(),
+                    supports_vision,
+                })
+                .map_err(|error| RuntimeError::Internal(error.to_string()))?;
+
+            let previews = Arc::new(Mutex::new(PreviewState::new(&execution, &self.config)));
+            let termination = Arc::new(Mutex::new(RunTermination::None));
+            let batch_has_question = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let last_usage = Arc::new(Mutex::new(None::<Usage>));
+            let mut runner = agent
+                .prompt(prompt.clone())
+                .history(initial_history.clone())
+                .tool_context(tool_context)
+                .max_turns(usize::MAX)
+                .max_invalid_tool_call_retries(3)
+                .max_consecutive_malformed_tool_calls(3)
+                .add_hook(QuestionHook::new(
+                    execution.clone(),
+                    scope.clone(),
+                    Arc::clone(&batch_has_question),
+                    Arc::clone(&termination),
+                ))
+                .add_hook(RunControlHook::new(
+                    execution.clone(),
+                    self.queue.clone(),
+                    Arc::clone(&doc_id_state),
+                    extra_context,
+                    Arc::clone(&termination),
+                ))
+                .add_hook(PreviewHook::new(Arc::clone(&previews)))
+                .add_hook(ToolAuditHook::new(
+                    execution.clone(),
+                    scope.clone(),
+                    self.kb.clone(),
+                    Arc::clone(&doc_id_state),
+                ))
+                .add_hook(StreamEventHook::new(
+                    execution.clone(),
+                    scope.clone(),
+                    Arc::clone(&termination),
+                ))
+                .add_hook(InvalidToolCallHook)
+                .add_hook(UsageHook::new(Arc::clone(&last_usage)));
+            if let Some(max_tokens) = max_tokens {
+                runner = runner.max_tokens(max_tokens);
             }
-            let definitions: Vec<ToolDefinition> =
-                tool_map.values().map(|tool| tool.definition()).collect();
-            let request = build_completion_request(&execution, &messages, definitions, max_tokens);
-            if let Err(error) = model.check(&request) {
-                warn!(
-                    %error,
-                    model = %execution.model_route,
-                    "model request preflight reported unsupported options"
-                );
+            if execution.disable_tools {
+                runner = runner.tool_choice(ToolChoice::None).max_turns(1);
             }
-            let mut stream = model.stream(request).map_err(model_provider_error)?;
-            let mut previews = PreviewState::new(&execution, &self.config);
-            let mut streamed_text = false;
-            loop {
+
+            let mut stream = runner.stream();
+            let mut final_text = String::new();
+            let outcome = loop {
                 tokio::select! {
                     _ = execution.cancellation.cancelled() => {
-                        return Ok((final_text, messages));
+                        *termination.lock().await = RunTermination::Cancelled;
+                        drop(stream);
+                        let mut history = initial_history.clone();
+                        history.push(prompt.clone());
+                        break Ok((final_text, history));
                     }
-                    item = tokio::time::timeout(STREAM_IDLE_TIMEOUT, stream.next()) => {
+                    item = stream.next() => {
                         match item {
-                            Ok(Some(Ok(Item::Event(event)))) => {
-                                if handle_stream_event(
-                                    &event,
-                                    &scope,
-                                    &mut previews,
-                                )
-                                .await
-                                {
-                                    streamed_text = true;
-                                }
+                            Some(Ok(MultiTurnStreamItem::FinalResponse(response))) => {
+                                final_text = response.output();
+                                let mut history = initial_history.clone();
+                                history.extend(response.messages);
+                                break Ok((final_text, history));
                             }
-                            Ok(Some(Ok(Item::Unknown(_)))) => {}
-                            Ok(Some(Err(error))) => return Err(model_provider_error(error)),
-                            Ok(None) => break,
-                            Err(_) => {
-                                return Err(RuntimeError::Internal(format!(
-                                    "model stream idle timeout after {}s",
-                                    STREAM_IDLE_TIMEOUT.as_secs()
-                                )));
+                            Some(Ok(_)) => {}
+                            Some(Err(PromptError::Cancelled { chat_history, .. })) => {
+                                break Ok((final_text, chat_history));
+                            }
+                            Some(Err(error)) => break Err(prompt_error(error)),
+                            None => {
+                                break Err(RuntimeError::Internal(
+                                    "agent stream ended without a final response".into(),
+                                ));
                             }
                         }
                     }
                 }
-            }
-            let response = stream.finish().await.map_err(model_provider_error)?;
-            // Context occupancy is the final request's prompt size, not the
-            // sum of every tool-round prompt. Keep the last call's usage so the
-            // session meter reflects the live context window.
-            last_usage = response.usage;
-            let text = response_text(&response);
-            if !streamed_text && !text.is_empty() {
-                scope.send(ModelStreamEvent::TextDelta(text.clone())).await;
-            }
-            let calls: Vec<ToolCall> = response
-                .choice
-                .iter()
-                .filter_map(|content| match content {
-                    AssistantContent::ToolCall(call) => Some(call.clone()),
-                    _ => None,
-                })
-                .collect();
-            append_assistant_message(&mut messages, &response);
-            if execution.disable_tools {
-                final_text = text;
-                break;
-            }
-            if calls.is_empty() {
-                final_text = text;
-                break;
-            }
-            let mut answers: Vec<MessageToolResult> = Vec::new();
-            for call in calls {
-                if !execution.run_id.starts_with("run_sub_")
-                    && call.function.name.as_str() == "ask_user"
-                {
-                    request_questionnaire(&scope, &execution, call).await?;
-                    suspended = true;
-                    break;
-                }
-                let (answer, linked_doc) =
-                    execute_tool_call(&tool_map, &scope, &execution, &mut previews, call).await;
-                if let Some((doc_id, title)) = linked_doc
-                    && !execution.run_id.starts_with("run_sub_")
-                {
-                    if let Err(error) = self
-                        .kb
-                        .store()
-                        .bind_doc(&execution.session_id, &doc_id)
-                        .await
-                    {
-                        tracing::warn!(%error, %doc_id, session_id = %execution.session_id, "failed to bind lazily created report");
-                    } else {
-                        execution.doc_id = Some(doc_id.clone());
-                        *doc_id_state.lock().await = Some(doc_id.clone());
-                        scope
-                            .send(ModelStreamEvent::DocLinked { doc_id, title })
-                            .await;
-                    }
-                }
-                answers.push(answer);
-            }
-            if suspended {
-                break;
-            }
-            messages.push(Message::tool_results(answers));
-            let preview_images = {
-                let mut guard = pending_preview_images.lock().await;
-                std::mem::take(&mut *guard)
             };
-            if !preview_images.is_empty() {
-                let mut parts = Vec::new();
-                for image in preview_images {
-                    if !image.caption.trim().is_empty() {
-                        parts.push(UserContent::text(image.caption));
-                    }
-                    let media_type = match image.mime_type.as_str() {
-                        "image/jpeg" => ImageMediaType::JPEG,
-                        "image/webp" => ImageMediaType::WEBP,
-                        _ => ImageMediaType::PNG,
-                    };
-                    parts.push(UserContent::image_base64(
-                        image.base64,
-                        Some(media_type),
-                        None,
-                    ));
-                }
-                if !parts.is_empty() {
-                    messages.push(Message::User { content: parts });
-                }
+            let (text, full_history) = outcome?;
+            if persist_history {
+                memory
+                    .commit(
+                        &memory_key,
+                        &recorded_history,
+                        full_history.clone(),
+                        (!execution.run_id.starts_with("run_sub_")).then_some(execution.run_id.as_str()),
+                    )
+                    .await?;
             }
-            if !execution.run_id.starts_with("run_sub_")
-                && let Some(batch) = self
-                    .queue
-                    .take_pending_batch(&execution.session_id, &execution.run_id)
-                    .await?
+
+            let termination = *termination.lock().await;
+            if termination == RunTermination::Superseded {
+                scope.send(ModelStreamEvent::Superseded).await;
+            }
+            if termination != RunTermination::Cancelled
+                && let Some(usage) = last_usage.lock().await.as_ref()
             {
-                // Route the event through the ordered stream so it is persisted after the tool
-                // result that preceded it, never before.
                 scope
-                    .send(ModelStreamEvent::UserMessageInjected {
-                        message_id: batch.message.message_id.clone(),
-                        content: batch.message.content.clone(),
-                        created_at: batch.message.created_at,
-                    })
+                    .send(ModelStreamEvent::Usage(context_usage(usage, context_limit)))
                     .await;
-                messages.push(Message::user(render_stored_user_message(&batch.message)));
             }
+            Ok((text, full_history))
         }
+        .await;
+
         if let Err(error) = sandbox_lease.close().await {
             warn!(%error, run_id = %execution.run_id, "sandbox cleanup failed; provider TTL remains the backstop");
         }
-        if execution.cancellation.is_cancelled() {
-            return Ok((final_text, messages));
-        }
-        scope
-            .send(ModelStreamEvent::Usage(context_usage(
-                &last_usage,
-                context_limit,
-            )))
-            .await;
-        Ok((final_text, messages))
+        result
     }
-}
-
-fn append_assistant_message(messages: &mut Vec<Message>, response: &CompletionResponse) {
-    if !response.choice.is_empty() {
-        messages.push(Message::Assistant(AssistantMessage::new(
-            response.choice.clone(),
-        )));
-    }
-}
-
-fn messages_from_request(request: &ModelTurnRequest) -> Vec<Message> {
-    let mut messages: Vec<Message> = request.history.iter().map(context_message).collect();
-    if !matches!(messages.last(), Some(Message::User { .. })) {
-        messages.push(Message::user(request.user_message.clone()));
-    }
-    messages
-}
-
-fn context_message(message: &ContextMessage) -> Message {
-    match message.role {
-        MessageRole::Assistant => Message::assistant(message.content.clone()),
-        // Later system reminders are transient host guidance. Sending them as user content keeps
-        // providers that only accept one leading system message happy.
-        MessageRole::System => Message::user(message.content.clone()),
-        MessageRole::Compaction => Message::user(message.content.clone()),
-        MessageRole::User | MessageRole::Tool => Message::user(message.content.clone()),
-    }
-}
-
-fn build_completion_request(
-    execution: &AgentExecution,
-    messages: &[Message],
-    tools: Vec<ToolDefinition>,
-    max_tokens: Option<u64>,
-) -> CompletionRequest {
-    let mut conversation = messages.to_vec();
-    let prompt = conversation
-        .pop()
-        .unwrap_or_else(|| Message::user(execution.system_prompt.clone()));
-    let mut request = CompletionRequest::new(prompt)
-        .preamble(runtime_preamble(execution))
-        .tools(tools)
-        .max_tokens(max_tokens);
-    if !conversation.is_empty() {
-        request = request.messages(conversation);
-    }
-    request
 }
 
 fn runtime_preamble(execution: &AgentExecution) -> String {
@@ -579,221 +511,12 @@ fn runtime_preamble(execution: &AgentExecution) -> String {
     preamble
 }
 
-async fn handle_stream_event(
-    event: &StreamEvent,
-    scope: &EventScope,
-    previews: &mut PreviewState,
-) -> bool {
-    match event {
-        StreamEvent::Start { part, kind, name } => {
-            previews.on_start(part.index(), *kind, name.as_ref());
-            false
-        }
-        StreamEvent::Text { text, .. } => {
-            scope.send(ModelStreamEvent::TextDelta(text.clone())).await;
-            true
-        }
-        StreamEvent::Reasoning { text, .. } => {
-            scope
-                .send(ModelStreamEvent::ThinkingDelta(text.clone()))
-                .await;
-            false
-        }
-        StreamEvent::Arguments { part, json } => {
-            previews.on_arguments(part.index(), json).await;
-            false
-        }
-        StreamEvent::End { part, content } => {
-            if let AssistantContent::ToolCall(call) = content {
-                previews.on_end(part.index(), call).await;
-            }
-            false
-        }
-    }
-}
-
-async fn request_questionnaire(
-    scope: &EventScope,
-    execution: &AgentExecution,
-    call: ToolCall,
-) -> RuntimeResult<()> {
-    let provider_call_id = call.id.wire().to_string();
-    let tool_call_id = format!("{}:{}", execution.run_id, provider_call_id);
-    let arguments = call.function.arguments_value();
-    let (input_preview, input_truncated) = preview_json(&arguments);
-    scope
-        .send(ModelStreamEvent::ToolCallStarted {
-            tool_call_id: tool_call_id.clone(),
-            tool_name: "ask_user".into(),
-            input_preview,
-            truncated: input_truncated,
-            input: arguments.clone(),
-        })
-        .await;
-    let questions_value = arguments.get("questions").cloned().ok_or_else(|| {
-        RuntimeError::InvalidRequest("ask_user requires a `questions` array".into())
-    })?;
-    let questions: Vec<QuestionItem> =
-        serde_json::from_value(questions_value).map_err(|error| {
-            RuntimeError::InvalidRequest(format!("invalid ask_user questions: {error}"))
-        })?;
-    if questions.is_empty() {
-        return Err(RuntimeError::InvalidRequest(
-            "ask_user requires at least one question".into(),
-        ));
-    }
-    scope
-        .send(ModelStreamEvent::QuestionnaireRequested {
-            tool_call_id: Some(tool_call_id.clone()),
-            questions,
-        })
-        .await;
-    scope
-        .send(ModelStreamEvent::ToolCallFinished {
-            tool_call_id,
-            tool_name: "ask_user".into(),
-            status: "awaiting_input".into(),
-            output_preview: "{\"awaiting_input\":true}".into(),
-            truncated: false,
-            duration_ms: 0,
-            input: arguments,
-            output: json!({"awaiting_input": true}),
-            error: None,
-        })
-        .await;
-    Ok(())
-}
-
-fn format_invalid_tool_arguments_error(invalid: &str) -> String {
-    match serde_json::from_str::<Value>(invalid) {
-        Err(err) => {
-            format!("invalid JSON in tool arguments (fix syntax and retry): {err}")
-        }
-        Ok(_) => format!("tool arguments must be a JSON object, got: {invalid}"),
-    }
-}
-
-async fn execute_tool_call(
-    tool_map: &BTreeMap<String, DynamicTool>,
-    scope: &EventScope,
-    execution: &AgentExecution,
-    previews: &mut PreviewState,
-    call: ToolCall,
-) -> (MessageToolResult, Option<(String, String)>) {
-    let provider_call_id = call.id.wire().to_string();
-    let tool_call_id = format!("{}:{provider_call_id}", execution.run_id);
-    let tool_name = call.function.name.as_str().to_string();
-    let mut arguments = call.function.arguments_value();
-    if let Some(preview_ids) = previews.take_preview_ids(&provider_call_id) {
-        inject_preview_ids(&mut arguments, &preview_ids);
-    }
-    let (input_preview, input_truncated) = preview_json(&arguments);
-    scope
-        .send(ModelStreamEvent::ToolCallStarted {
-            tool_call_id: tool_call_id.clone(),
-            tool_name: tool_name.clone(),
-            input_preview,
-            truncated: input_truncated,
-            input: arguments.clone(),
-        })
-        .await;
-    let started = Instant::now();
-    let outcome = if let Some(invalid) = call.function.invalid_arguments.clone() {
-        let message = format_invalid_tool_arguments_error(&invalid);
-        let model_output = json!({
-            "kind": "InvalidArgs",
-            "error": message.clone(),
-            "raw_arguments": invalid,
-        });
-        Err(ToolExecutionError::invalid_args(message)
-            .with_model_output(ToolOutput::json(model_output)))
-    } else if let Some(tool) = tool_map.get(&tool_name) {
-        tokio::select! {
-            _ = execution.cancellation.cancelled() => {
-                Err(ToolExecutionError::other("tool call cancelled by user"))
-            }
-            outcome = tool.run(arguments.clone()) => outcome,
-        }
-    } else {
-        Err(ToolExecutionError::not_found(format!(
-            "tool `{tool_name}` is not enabled for this agent"
-        )))
-    };
-    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-    let (result, output_value, error, status) = match outcome {
-        Ok(output) => {
-            let value = tool_output_value(&output);
-            (
-                ExecutedToolResult::success(output),
-                value,
-                None,
-                "completed".to_string(),
-            )
-        }
-        Err(error) => {
-            let message = error.to_string();
-            let value = json!({
-                "error": message,
-                "kind": format!("{:?}", error.kind()),
-            });
-            (
-                ExecutedToolResult::failed(error),
-                value,
-                Some(message),
-                "failed".to_string(),
-            )
-        }
-    };
-    let linked_doc = if error.is_none() && tool_name == "create_report" {
-        output_value
-            .get("doc_id")
-            .and_then(Value::as_str)
-            .map(|doc_id| {
-                let title = output_value
-                    .get("title")
-                    .and_then(Value::as_str)
-                    .or_else(|| arguments.get("title").and_then(Value::as_str))
-                    .unwrap_or("未命名报告");
-                (doc_id.to_string(), title.to_string())
-            })
-    } else {
-        None
-    };
-    let (output_preview, output_truncated) = preview_json(&output_value);
-    scope
-        .send(ModelStreamEvent::ToolCallFinished {
-            tool_call_id,
-            tool_name,
-            status,
-            output_preview,
-            truncated: output_truncated,
-            duration_ms,
-            input: arguments,
-            output: output_value,
-            error,
-        })
-        .await;
-    (call.answer(&result), linked_doc)
-}
-
-fn response_text(response: &CompletionResponse) -> String {
-    let parts: Vec<&str> = response
-        .choice
-        .iter()
-        .filter_map(|content| match content {
-            AssistantContent::Text(text) => Some(text.text.as_str()),
-            _ => None,
-        })
-        .collect();
-    parts.join("\n\n")
-}
-
-fn tool_output_value(output: &ToolOutput) -> Value {
+pub(super) fn tool_output_value(output: &rig::tool::ToolOutput) -> Value {
     if let Some(value) = output.as_json() {
         return value.clone();
     }
     if let Some(text) = output.as_text() {
-        return json!({"text": text});
+        return serde_json::json!({"text": text});
     }
     serde_json::to_value(output).unwrap_or(Value::Null)
 }
@@ -812,7 +535,7 @@ fn context_usage(usage: &Usage, context_limit: u64) -> ContextUsage {
     }
 }
 
-fn preview_json(value: &Value) -> (String, bool) {
+pub(super) fn preview_json(value: &Value) -> (String, bool) {
     let raw = serde_json::to_string(value).unwrap_or_default();
     let mut chars = raw.chars();
     let mut preview: String = chars.by_ref().take(240).collect();
@@ -823,126 +546,13 @@ fn preview_json(value: &Value) -> (String, bool) {
     (preview, truncated)
 }
 
-fn model_provider_error(error: rig_core::error::ProviderError) -> RuntimeError {
-    RuntimeError::Internal(format!("model provider error: {error}"))
+fn prompt_error(error: PromptError) -> RuntimeError {
+    RuntimeError::Internal(format!("agent run failed: {error}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_core::message::{ToolFunction, ToolName};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    async fn execute_invalid_arguments_call(raw: &str) -> (MessageToolResult, Value, usize) {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let tool_calls = Arc::clone(&calls);
-        let tool = DynamicTool::new(
-            ToolName::new("probe").unwrap(),
-            "Probe used to prove invalid arguments never execute.",
-            json!({}),
-            move |_args| {
-                let tool_calls = Arc::clone(&tool_calls);
-                Box::pin(async move {
-                    tool_calls.fetch_add(1, Ordering::SeqCst);
-                    Ok(ToolOutput::text("executed"))
-                })
-            },
-        );
-        let mut tool_map = BTreeMap::new();
-        tool_map.insert("probe".to_string(), tool);
-
-        let (sender, mut receiver) = mpsc::channel(16);
-        let scope = EventScope::top(sender, CancellationToken::new());
-        let execution = AgentExecution {
-            agent_id: "main".into(),
-            model_route: "stub/echo".into(),
-            allowed_tools: vec!["probe".into()],
-            disable_tools: false,
-            system_prompt: "test".into(),
-            kb_branch: Some("main".into()),
-            doc_id: None,
-            session_id: "sess_test".into(),
-            run_id: "run_test".into(),
-            cancellation: CancellationToken::new(),
-        };
-        let mut previews = PreviewState::for_test(&execution.run_id);
-        let call = ToolCall::from_wire(
-            "call_invalid",
-            ToolFunction::parse(ToolName::new("probe").unwrap(), raw),
-        );
-
-        let (result, linked_doc) =
-            execute_tool_call(&tool_map, &scope, &execution, &mut previews, call).await;
-        assert!(linked_doc.is_none());
-
-        let mut finished_output = Value::Null;
-        while let Ok(event) = receiver.try_recv() {
-            if let Ok(ModelStreamEvent::ToolCallFinished { output, .. }) = event {
-                finished_output = output;
-            }
-        }
-        (result, finished_output, calls.load(Ordering::SeqCst))
-    }
-
-    #[tokio::test]
-    async fn invalid_tool_arguments_never_execute_the_tool() {
-        for raw in [r#"{"total":"13%}"#, r#"["a"]"#] {
-            let (result, finished_output, calls) = execute_invalid_arguments_call(raw).await;
-            assert_eq!(calls, 0);
-            assert!(result.is_error);
-
-            let content = result
-                .content
-                .iter()
-                .find_map(|entry| entry.as_json())
-                .expect("structured invalid-arguments feedback");
-            assert_eq!(
-                content.get("kind").and_then(Value::as_str),
-                Some("InvalidArgs")
-            );
-            assert_eq!(
-                content.get("raw_arguments").and_then(Value::as_str),
-                Some(raw)
-            );
-            assert!(
-                content
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .is_some_and(|error| !error.trim().is_empty())
-            );
-            assert_eq!(
-                finished_output.get("kind").and_then(Value::as_str),
-                Some("InvalidArgs")
-            );
-        }
-    }
-
-    #[test]
-    fn final_assistant_response_is_retained_in_history() {
-        let response = CompletionResponse::new(
-            vec![AssistantContent::Text(rig_core::message::Text::from(
-                "final answer",
-            ))],
-            Usage::new(),
-            rig_core::message::Origin::new("openai.responses", "openai", "stub"),
-            json!({}),
-        );
-        let mut messages = Vec::new();
-        append_assistant_message(&mut messages, &response);
-        assert_eq!(messages.len(), 1);
-        let Some(Message::Assistant(assistant)) = messages.last() else {
-            panic!("expected an assistant message");
-        };
-        let text = assistant
-            .content
-            .iter()
-            .find_map(|content| match content {
-                AssistantContent::Text(text) => Some(text.text.as_str()),
-                _ => None,
-            })
-            .expect("assistant text");
-        assert_eq!(text, "final answer");
-    }
 
     #[test]
     fn usage_carries_real_tokens_and_context_limit() {
@@ -956,65 +566,5 @@ mod tests {
         assert_eq!(mapped.cached_tokens, 40);
         assert_eq!(mapped.context_used, 150);
         assert_eq!(mapped.context_limit, 64_000);
-    }
-
-    #[tokio::test]
-    async fn ask_user_emits_questionnaire_and_pauses_the_run() {
-        use rig_core::message::{ToolFunction, ToolName};
-
-        let (sender, mut receiver) = mpsc::channel(16);
-        let scope = EventScope::top(sender, CancellationToken::new());
-        let execution = AgentExecution {
-            agent_id: "main".into(),
-            model_route: "stub/echo".into(),
-            allowed_tools: vec!["ask_user".into()],
-            disable_tools: false,
-            system_prompt: "test".into(),
-            kb_branch: Some("main".into()),
-            doc_id: Some("report".into()),
-            session_id: "sess_test".into(),
-            run_id: "run_test".into(),
-            cancellation: CancellationToken::new(),
-        };
-        let call = ToolCall::from_wire(
-            "call_ask",
-            ToolFunction::new(
-                ToolName::new("ask_user").unwrap(),
-                json!({
-                    "questions": [{
-                        "id": "scope",
-                        "title": "Which scope?",
-                        "multiple": false,
-                        "required": true,
-                        "options": [{"id": "q3", "label": "Q3"}]
-                    }]
-                }),
-            ),
-        );
-        request_questionnaire(&scope, &execution, call)
-            .await
-            .unwrap();
-        assert!(matches!(
-            receiver.recv().await.unwrap().unwrap(),
-            ModelStreamEvent::ToolCallStarted { .. }
-        ));
-        let requested = receiver.recv().await.unwrap().unwrap();
-        match requested {
-            ModelStreamEvent::QuestionnaireRequested { questions, .. } => {
-                assert_eq!(questions.len(), 1);
-                assert_eq!(
-                    questions.first().map(|question| question.id.as_str()),
-                    Some("scope")
-                );
-            }
-            other => panic!("expected questionnaire, got {other:?}"),
-        }
-        assert!(matches!(
-            receiver.recv().await.unwrap().unwrap(),
-            ModelStreamEvent::ToolCallFinished {
-                status,
-                ..
-            } if status == "awaiting_input"
-        ));
     }
 }

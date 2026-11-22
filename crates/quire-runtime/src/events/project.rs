@@ -208,21 +208,6 @@ pub fn project(scope: EventScope, event: ModelStreamEvent) -> EventAction {
             output,
             error,
         }),
-        ModelStreamEvent::UserMessageInjected {
-            message_id,
-            content,
-            created_at,
-        } if scope.is_main() => EventAction::Emit {
-            scope,
-            kind: SessionEventKind::UserMessageInjected {
-                message_id,
-                content,
-                created_at,
-            },
-        },
-        ModelStreamEvent::UserMessageInjected { .. } => EventAction::Ignore {
-            reason: "pending user messages are only injected into the main agent",
-        },
         ModelStreamEvent::QuestionnaireRequested {
             tool_call_id,
             questions,
@@ -235,6 +220,10 @@ pub fn project(scope: EventScope, event: ModelStreamEvent) -> EventAction {
             reason: "ask_user is only supported by the main agent",
         },
         ModelStreamEvent::Usage(usage) => EventAction::Usage { scope, usage },
+        ModelStreamEvent::Superseded => EventAction::Emit {
+            scope,
+            kind: SessionEventKind::TurnSuperseded,
+        },
     }
 }
 

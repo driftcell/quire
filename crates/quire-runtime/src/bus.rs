@@ -18,6 +18,7 @@ const MODEL_INVALIDATE_CHANNEL: &str = "runtime:models:invalidate";
 const MCP_INVALIDATE_CHANNEL: &str = "runtime:mcp:invalidate";
 const CHART_PREVIEW_PREFIX: &str = "quire:chart_preview:";
 const CHART_PREVIEW_TTL_SECONDS: u64 = 1800;
+const HOT_EVENTS_TTL_SECONDS: u64 = 86_400;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InterruptCommand {
@@ -69,6 +70,117 @@ impl RedisBus {
         let mut pubsub = self.client.get_async_pubsub().await?;
         pubsub.subscribe(Self::event_channel(session_id)).await?;
         Ok(EventSubscriber { pubsub })
+    }
+
+    fn hot_seq_key(session_id: &str) -> String {
+        format!("runtime:session:{session_id}:hot_seq")
+    }
+
+    fn hot_events_key(session_id: &str) -> String {
+        format!("runtime:session:{session_id}:hot_events")
+    }
+
+    /// Atomically allocate a session sequence, retain the hot projection and publish it.
+    pub async fn append_session_event(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        agent_id: &str,
+        parent_run_id: Option<String>,
+        kind: quire_session_protocol::SessionEventKind,
+    ) -> RuntimeResult<SessionEvent> {
+        let event = SessionEvent::new(0, run_id, agent_id, parent_run_id, kind);
+        let payload = serde_json::to_string(&event)?;
+        let script = redis::Script::new(
+            r#"
+            local seq = redis.call('INCR', KEYS[1])
+            local payload = string.gsub(ARGV[1], '"seq":0', '"seq":' .. seq, 1)
+            redis.call('RPUSH', KEYS[2], payload)
+            redis.call('EXPIRE', KEYS[2], ARGV[2])
+            redis.call('PUBLISH', KEYS[3], payload)
+            return payload
+            "#,
+        );
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let payload: String = script
+            .key(Self::hot_seq_key(session_id))
+            .key(Self::hot_events_key(session_id))
+            .key(Self::event_channel(session_id))
+            .arg(payload)
+            .arg(HOT_EVENTS_TTL_SECONDS)
+            .invoke_async(&mut connection)
+            .await?;
+        Ok(serde_json::from_str(&payload)?)
+    }
+
+    pub async fn current_event_seq(&self, session_id: &str) -> RuntimeResult<u64> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        Ok(connection
+            .get::<_, Option<u64>>(Self::hot_seq_key(session_id))
+            .await?
+            .unwrap_or(0))
+    }
+
+    pub async fn hot_event_payloads(&self, session_id: &str) -> RuntimeResult<Vec<String>> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        Ok(connection
+            .lrange(Self::hot_events_key(session_id), 0, -1)
+            .await?)
+    }
+
+    pub async fn hot_events(&self, session_id: &str) -> RuntimeResult<Vec<SessionEvent>> {
+        let frames = self.hot_event_payloads(session_id).await?;
+        Ok(frames
+            .iter()
+            .filter_map(|payload| match serde_json::from_str(payload) {
+                Ok(event) => Some(event),
+                Err(error) => {
+                    warn!(%error, session_id, "discarding malformed hot session event");
+                    None
+                }
+            })
+            .collect())
+    }
+
+    pub async fn clear_hot_events(&self, session_id: &str) -> RuntimeResult<()> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let _: i64 = connection.del(Self::hot_events_key(session_id)).await?;
+        Ok(())
+    }
+
+    pub async fn trim_hot_events(&self, session_id: &str, min_seq: u64) -> RuntimeResult<u64> {
+        let script = redis::Script::new(
+            r#"
+            local frames = redis.call('LRANGE', KEYS[1], 0, -1)
+            local keep = {}
+            for _, payload in ipairs(frames) do
+              local event = cjson.decode(payload)
+              if tonumber(event['seq']) >= tonumber(ARGV[1]) then
+                table.insert(keep, payload)
+              end
+            end
+            redis.call('DEL', KEYS[1])
+            if #keep > 0 then
+              redis.call('RPUSH', KEYS[1], unpack(keep))
+              redis.call('EXPIRE', KEYS[1], ARGV[2])
+            end
+            return #frames - #keep
+            "#,
+        );
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        Ok(script
+            .key(Self::hot_events_key(session_id))
+            .arg(min_seq)
+            .arg(HOT_EVENTS_TTL_SECONDS)
+            .invoke_async(&mut connection)
+            .await?)
+    }
+
+    pub async fn delete_session_hot_state(&self, session_id: &str) -> RuntimeResult<()> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let _: i64 = connection.del(Self::hot_events_key(session_id)).await?;
+        let _: i64 = connection.del(Self::hot_seq_key(session_id)).await?;
+        Ok(())
     }
 
     pub async fn publish_interrupt(&self, command: &InterruptCommand) -> RuntimeResult<()> {

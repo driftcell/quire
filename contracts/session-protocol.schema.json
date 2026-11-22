@@ -3,47 +3,56 @@
   "title": "Quire Session Protocol",
   "type": "object",
   "properties": {
+    "session_event": {
+      "$ref": "#/$defs/SessionEvent"
+    },
+    "session_summary": {
+      "$ref": "#/$defs/SessionSummary"
+    },
+    "session_detail": {
+      "$ref": "#/$defs/SessionDetail"
+    },
+    "session_message": {
+      "$ref": "#/$defs/SessionMessage"
+    },
     "attachment_meta": {
       "$ref": "#/$defs/AttachmentMeta"
     },
     "create_session_request": {
       "$ref": "#/$defs/CreateSessionRequest"
     },
-    "pending_question": {
-      "$ref": "#/$defs/PendingQuestion"
-    },
-    "question_answer": {
-      "$ref": "#/$defs/QuestionAnswer"
-    },
-    "question_item": {
-      "$ref": "#/$defs/QuestionItem"
-    },
-    "question_option": {
-      "$ref": "#/$defs/QuestionOption"
-    },
-    "run_trace_summary": {
-      "$ref": "#/$defs/RunTraceSummary"
-    },
     "send_message_request": {
       "$ref": "#/$defs/SendMessageRequest"
     },
-    "session_detail": {
-      "$ref": "#/$defs/SessionDetail"
-    },
-    "session_event": {
-      "$ref": "#/$defs/SessionEvent"
-    },
-    "session_message": {
-      "$ref": "#/$defs/SessionMessage"
-    },
-    "session_summary": {
-      "$ref": "#/$defs/SessionSummary"
+    "update_pending_message_request": {
+      "$ref": "#/$defs/UpdatePendingMessageRequest"
     },
     "tool_call_detail": {
       "$ref": "#/$defs/ToolCallDetail"
     },
-    "update_pending_message_request": {
-      "$ref": "#/$defs/UpdatePendingMessageRequest"
+    "question_option": {
+      "$ref": "#/$defs/QuestionOption"
+    },
+    "question_item": {
+      "$ref": "#/$defs/QuestionItem"
+    },
+    "question_answer": {
+      "$ref": "#/$defs/QuestionAnswer"
+    },
+    "pending_question": {
+      "$ref": "#/$defs/PendingQuestion"
+    },
+    "ask_user_answer_payload": {
+      "$ref": "#/$defs/AskUserAnswerPayload"
+    },
+    "questionnaire_resolution_status": {
+      "$ref": "#/$defs/QuestionnaireResolutionStatus"
+    },
+    "resolved_question_item_answer": {
+      "$ref": "#/$defs/ResolvedQuestionItemAnswer"
+    },
+    "run_trace_summary": {
+      "$ref": "#/$defs/RunTraceSummary"
     }
   },
   "required": [
@@ -60,830 +69,24 @@
     "question_item",
     "question_answer",
     "pending_question",
+    "ask_user_answer_payload",
+    "questionnaire_resolution_status",
+    "resolved_question_item_answer",
     "run_trace_summary"
   ],
   "$defs": {
-    "ActiveRunStatus": {
-      "type": "string",
-      "enum": [
-        "idle",
-        "running",
-        "interrupted",
-        "failed",
-        "awaiting_input"
-      ]
-    },
-    "AttachmentMeta": {
-      "type": "object",
-      "properties": {
-        "attachment_id": {
-          "type": "string"
-        },
-        "filename": {
-          "type": "string"
-        },
-        "mime_type": {
-          "type": "string"
-        },
-        "size_bytes": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "attachment_id",
-        "filename",
-        "mime_type",
-        "size_bytes"
-      ]
-    },
-    "ContextUsage": {
-      "type": "object",
-      "properties": {
-        "cached_tokens": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "context_limit": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "context_used": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "input_tokens": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "output_tokens": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "input_tokens",
-        "output_tokens",
-        "cached_tokens",
-        "context_used",
-        "context_limit"
-      ]
-    },
-    "CreateSessionRequest": {
-      "type": "object",
-      "properties": {
-        "doc_id": {
-          "description": "Optional existing report to bind immediately.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "kb_branch": {
-          "description": "Test a draft knowledge-base branch. Omit to use the current active branch.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "default": null
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "title"
-      ]
-    },
-    "MessageRole": {
-      "type": "string",
-      "enum": [
-        "user",
-        "assistant",
-        "tool",
-        "system",
-        "compaction"
-      ]
-    },
-    "PendingQuestion": {
-      "type": "object",
-      "properties": {
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "question_id": {
-          "type": "string"
-        },
-        "questions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/QuestionItem"
-          }
-        },
-        "run_id": {
-          "type": "string"
-        },
-        "tool_call_id": {
-          "description": "The `ask_user` tool call that opened this question, when known.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "question_id",
-        "run_id",
-        "questions",
-        "created_at"
-      ]
-    },
-    "PendingQueueItem": {
-      "description": "One message waiting for the session's active run to finish.",
-      "type": "object",
-      "properties": {
-        "attachment_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "comment_refs": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SessionCommentRef"
-          }
-        },
-        "content": {
-          "type": "string"
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "queue_id": {
-          "type": "string"
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "source": {
-          "$ref": "#/$defs/PendingQueueSource"
-        },
-        "thread_id": {
-          "description": "Comment thread that produced this item, when `source` is `comment`.",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "queue_id",
-        "session_id",
-        "content",
-        "source",
-        "created_at"
-      ]
-    },
-    "PendingQueueSource": {
-      "description": "Why a message is waiting in the per-session queue.",
-      "type": "string",
-      "enum": [
-        "user",
-        "comment"
-      ]
-    },
-    "QuestionAnswer": {
-      "type": "object",
-      "properties": {
-        "freeform_text": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "question_id": {
-          "type": "string"
-        },
-        "selected_option_ids": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        },
-        "skipped": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "question_id"
-      ]
-    },
-    "QuestionItem": {
-      "type": "object",
-      "properties": {
-        "description": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "multiple": {
-          "type": "boolean",
-          "default": false
-        },
-        "options": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/QuestionOption"
-          }
-        },
-        "required": {
-          "type": "boolean",
-          "default": false
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "id",
-        "title"
-      ]
-    },
-    "QuestionOption": {
-      "type": "object",
-      "properties": {
-        "description": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "id": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "label"
-      ]
-    },
-    "ResolvedQuestion": {
-      "type": "object",
-      "properties": {
-        "answers": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/QuestionAnswer"
-          }
-        },
-        "question": {
-          "$ref": "#/$defs/PendingQuestion"
-        },
-        "status": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "question",
-        "status"
-      ]
-    },
-    "RunTaskFocus": {
-      "type": "object",
-      "properties": {
-        "detail": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "section_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "title": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "title"
-      ]
-    },
-    "RunTraceSegment": {
-      "description": "One ordered slice of a run. Text output closes the preceding thinking and\nexecution phase, so later reasoning or tools start a new segment instead of\nbeing folded back into an older block.",
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "duration_ms": {
-              "type": [
-                "integer",
-                "null"
-              ],
-              "format": "uint64",
-              "minimum": 0
-            },
-            "kind": {
-              "type": "string",
-              "const": "thinking"
-            },
-            "started_at": {
-              "description": "Server timestamp when this thinking phase started. Retained while the\nphase is still streaming so clients can continue the timer after refresh.",
-              "type": [
-                "string",
-                "null"
-              ],
-              "format": "date-time"
-            },
-            "text": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "text"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "execution"
-            },
-            "subagents": {
-              "type": "array",
-              "default": [],
-              "items": {
-                "$ref": "#/$defs/RunTraceSubagent"
-              }
-            },
-            "tools": {
-              "type": "array",
-              "default": [],
-              "items": {
-                "$ref": "#/$defs/RunTraceToolItem"
-              }
-            }
-          },
-          "required": [
-            "kind"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "content": {
-              "type": "string"
-            },
-            "created_at": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "kind": {
-              "type": "string",
-              "const": "user_message"
-            },
-            "message_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "message_id",
-            "content",
-            "created_at"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "text"
-            },
-            "text": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "text"
-          ]
-        }
-      ]
-    },
-    "RunTraceSubagent": {
-      "type": "object",
-      "properties": {
-        "agent_name": {
-          "type": "string"
-        },
-        "display_name": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "section_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "segments": {
-          "description": "Ordered subagent activity, isomorphic to the main run's segments. Text\ncloses the preceding thinking/execution phase, so multi-round tool use\nkeeps the same order in live and hydrated views.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/RunTraceSegment"
-          }
-        },
-        "started_at": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time"
-        },
-        "status": {
-          "type": "string"
-        },
-        "subagent_run_id": {
-          "type": "string"
-        },
-        "summary": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "task": {
-          "type": "string"
-        },
-        "task_focus": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RunTaskFocus"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "subagent_run_id",
-        "agent_name",
-        "task",
-        "status"
-      ]
-    },
-    "RunTraceSummary": {
-      "type": "object",
-      "properties": {
-        "duration_ms": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
-        },
-        "run_id": {
-          "type": "string"
-        },
-        "segments": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/RunTraceSegment"
-          }
-        },
-        "started_at": {
-          "description": "Server timestamp of the run's `turn_started` event.",
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time"
-        },
-        "status": {
-          "type": "string"
-        },
-        "task_focus": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RunTaskFocus"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "run_id",
-        "status"
-      ]
-    },
-    "RunTraceToolItem": {
-      "type": "object",
-      "properties": {
-        "duration_ms": {
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint64",
-          "minimum": 0
-        },
-        "input_preview": {
-          "type": "string"
-        },
-        "output_preview": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "status": {
-          "type": "string"
-        },
-        "tool_call_id": {
-          "type": "string"
-        },
-        "tool_name": {
-          "type": "string"
-        },
-        "truncated": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "required": [
-        "tool_call_id",
-        "tool_name",
-        "status",
-        "input_preview"
-      ]
-    },
-    "SendMessageRequest": {
-      "type": "object",
-      "properties": {
-        "attachment_ids": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "client_msg_id": {
-          "type": "string"
-        },
-        "comment_refs": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SessionCommentRef"
-          }
-        },
-        "content": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "client_msg_id",
-        "content"
-      ]
-    },
-    "SessionCommentRef": {
-      "description": "Immutable send-time snapshot of a report comment handed to the agent.",
-      "type": "object",
-      "properties": {
-        "anchor_blocks": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "anchor_snapshot": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "block_id": {
-          "type": "string"
-        },
-        "comment": {
-          "type": "string"
-        },
-        "end_block_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "end_quote": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "quote": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "status": {
-          "type": "string"
-        },
-        "thread_id": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "thread_id",
-        "block_id",
-        "status",
-        "comment"
-      ]
-    },
-    "SessionDetail": {
-      "type": "object",
-      "properties": {
-        "active_run_status": {
-          "$ref": "#/$defs/ActiveRunStatus"
-        },
-        "active_run_trace": {
-          "description": "Aggregated trace of the active run, captured at `last_event_seq`.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RunTraceSummary"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "active_subagent_traces": {
-          "description": "Subagents embedded in the active run, with their streaming clocks.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/RunTraceSubagent"
-          }
-        },
-        "attachments": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/AttachmentMeta"
-          }
-        },
-        "compacted_at": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time"
-        },
-        "compacting": {
-          "type": "boolean",
-          "default": false
-        },
-        "context_usage": {
-          "$ref": "#/$defs/ContextUsage",
-          "default": {
-            "cached_tokens": 0,
-            "context_limit": 0,
-            "context_used": 0,
-            "input_tokens": 0,
-            "output_tokens": 0
-          }
-        },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "doc_id": {
-          "description": "Quire report bound to this session. `None` until the first run auto-binds.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "kb_branch": {
-          "description": "Knowledge-base branch used by this session. `None` only for sessions created before\nbranch-scoped knowledge bases existed; those fall back to the current active branch.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "last_event_seq": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "linked_doc_id": {
-          "description": "Frontend-friendly alias of the bound report ID.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "messages": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SessionMessage"
-          }
-        },
-        "pending_question": {
-          "description": "Latest unresolved question card, restored after refresh or reconnect.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PendingQuestion"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "pending_queue": {
-          "description": "Messages waiting for the current run to finish, in FIFO order.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/PendingQueueItem"
-          }
-        },
-        "pinned_at": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time"
-        },
-        "resolved_questions": {
-          "description": "Answered, skipped and dismissed question cards in creation order.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ResolvedQuestion"
-          }
-        },
-        "session_id": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/$defs/SessionStatus"
-        },
-        "title": {
-          "type": "string"
-        },
-        "updated_at": {
-          "type": "string",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "session_id",
-        "title",
-        "status",
-        "active_run_status",
-        "last_event_seq",
-        "created_at",
-        "updated_at"
-      ]
-    },
     "SessionEvent": {
       "description": "Common envelope for every Session-SSE frame.",
       "type": "object",
       "properties": {
+        "seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "run_id": {
+          "type": "string"
+        },
         "agent_id": {
           "description": "`\"main\"` or a stable subagent identifier.",
           "type": "string"
@@ -894,19 +97,17 @@
             "null"
           ]
         },
-        "run_id": {
-          "type": "string"
-        },
-        "seq": {
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
         "timestamp": {
           "type": "string",
           "format": "date-time"
         }
       },
+      "required": [
+        "seq",
+        "run_id",
+        "agent_id",
+        "timestamp"
+      ],
       "oneOf": [
         {
           "type": "object",
@@ -935,12 +136,24 @@
         {
           "type": "object",
           "properties": {
-            "error": {
-              "type": "string"
-            },
+            "event": {
+              "type": "string",
+              "const": "turn_superseded"
+            }
+          },
+          "required": [
+            "event"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
             "event": {
               "type": "string",
               "const": "turn_failed"
+            },
+            "error": {
+              "type": "string"
             },
             "recoverable": {
               "type": "boolean"
@@ -955,14 +168,14 @@
         {
           "type": "object",
           "properties": {
+            "event": {
+              "type": "string",
+              "const": "sync_required"
+            },
             "after_seq": {
               "type": "integer",
               "format": "uint64",
               "minimum": 0
-            },
-            "event": {
-              "type": "string",
-              "const": "sync_required"
             },
             "reason": {
               "type": "string"
@@ -977,12 +190,12 @@
         {
           "type": "object",
           "properties": {
-            "delta": {
-              "type": "string"
-            },
             "event": {
               "type": "string",
               "const": "thinking_delta"
+            },
+            "delta": {
+              "type": "string"
             }
           },
           "required": [
@@ -993,12 +206,12 @@
         {
           "type": "object",
           "properties": {
-            "delta": {
-              "type": "string"
-            },
             "event": {
               "type": "string",
               "const": "text_delta"
+            },
+            "delta": {
+              "type": "string"
             }
           },
           "required": [
@@ -1009,24 +222,24 @@
         {
           "type": "object",
           "properties": {
+            "event": {
+              "type": "string",
+              "const": "task_focus"
+            },
+            "title": {
+              "type": "string"
+            },
             "detail": {
               "type": [
                 "string",
                 "null"
               ]
             },
-            "event": {
-              "type": "string",
-              "const": "task_focus"
-            },
             "section_id": {
               "type": [
                 "string",
                 "null"
               ]
-            },
-            "title": {
-              "type": "string"
             }
           },
           "required": [
@@ -1041,13 +254,13 @@
               "type": "string",
               "const": "tool_call_started"
             },
-            "input_preview": {
-              "type": "string"
-            },
             "tool_call_id": {
               "type": "string"
             },
             "tool_name": {
+              "type": "string"
+            },
+            "input_preview": {
               "type": "string"
             },
             "truncated": {
@@ -1065,26 +278,26 @@
         {
           "type": "object",
           "properties": {
-            "duration_ms": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            },
             "event": {
               "type": "string",
               "const": "tool_call_finished"
             },
-            "output_preview": {
+            "tool_call_id": {
               "type": "string"
             },
             "status": {
               "type": "string"
             },
-            "tool_call_id": {
+            "output_preview": {
               "type": "string"
             },
             "truncated": {
               "type": "boolean"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
             }
           },
           "required": [
@@ -1099,6 +312,13 @@
         {
           "type": "object",
           "properties": {
+            "event": {
+              "type": "string",
+              "const": "subagent_started"
+            },
+            "subagent_run_id": {
+              "type": "string"
+            },
             "agent_name": {
               "type": "string"
             },
@@ -1108,21 +328,14 @@
                 "null"
               ]
             },
-            "event": {
-              "type": "string",
-              "const": "subagent_started"
+            "task": {
+              "type": "string"
             },
             "section_id": {
               "type": [
                 "string",
                 "null"
               ]
-            },
-            "subagent_run_id": {
-              "type": "string"
-            },
-            "task": {
-              "type": "string"
             }
           },
           "required": [
@@ -1139,10 +352,10 @@
               "type": "string",
               "const": "subagent_finished"
             },
-            "status": {
+            "subagent_run_id": {
               "type": "string"
             },
-            "subagent_run_id": {
+            "status": {
               "type": "string"
             },
             "summary": {
@@ -1159,21 +372,6 @@
         {
           "type": "object",
           "properties": {
-            "cached_tokens": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            },
-            "context_limit": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            },
-            "context_used": {
-              "type": "integer",
-              "format": "uint64",
-              "minimum": 0
-            },
             "event": {
               "type": "string",
               "const": "context_usage"
@@ -1184,6 +382,21 @@
               "minimum": 0
             },
             "output_tokens": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "cached_tokens": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "context_used": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "context_limit": {
               "type": "integer",
               "format": "uint64",
               "minimum": 0
@@ -1208,17 +421,17 @@
             "question_id": {
               "type": "string"
             },
-            "questions": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/QuestionItem"
-              }
-            },
             "tool_call_id": {
               "type": [
                 "string",
                 "null"
               ]
+            },
+            "questions": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/QuestionItem"
+              }
             }
           },
           "required": [
@@ -1230,18 +443,18 @@
         {
           "type": "object",
           "properties": {
-            "answers": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/QuestionAnswer"
-              }
-            },
             "event": {
               "type": "string",
               "const": "questionnaire_answered"
             },
             "question_id": {
               "type": "string"
+            },
+            "answers": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/QuestionAnswer"
+              }
             },
             "skipped_all": {
               "type": "boolean"
@@ -1277,12 +490,12 @@
         {
           "type": "object",
           "properties": {
-            "doc_id": {
-              "type": "string"
-            },
             "event": {
               "type": "string",
               "const": "doc_linked"
+            },
+            "doc_id": {
+              "type": "string"
             },
             "title": {
               "type": "string"
@@ -1324,32 +537,6 @@
           "required": [
             "event",
             "message_id"
-          ]
-        },
-        {
-          "description": "A queued user message injected between tool results and the next model round.",
-          "type": "object",
-          "properties": {
-            "content": {
-              "type": "string"
-            },
-            "created_at": {
-              "type": "string",
-              "format": "date-time"
-            },
-            "event": {
-              "type": "string",
-              "const": "user_message_injected"
-            },
-            "message_id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "event",
-            "message_id",
-            "content",
-            "created_at"
           ]
         },
         {
@@ -1399,22 +586,107 @@
             "success"
           ]
         }
-      ],
-      "required": [
-        "seq",
-        "run_id",
-        "agent_id",
-        "timestamp"
       ]
     },
-    "SessionMessage": {
+    "QuestionItem": {
       "type": "object",
       "properties": {
-        "attachment_ids": {
+        "id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "multiple": {
+          "type": "boolean",
+          "default": false
+        },
+        "required": {
+          "type": "boolean",
+          "default": false
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title"
+      ]
+    },
+    "QuestionOption": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ]
+    },
+    "QuestionAnswer": {
+      "type": "object",
+      "properties": {
+        "question_id": {
+          "type": "string"
+        },
+        "selected_option_ids": {
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "default": []
+        },
+        "freeform_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skipped": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "question_id"
+      ]
+    },
+    "PendingQueueItem": {
+      "description": "One message waiting for the session's active run to finish.",
+      "type": "object",
+      "properties": {
+        "queue_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
         },
         "comment_refs": {
           "type": "array",
@@ -1422,77 +694,116 @@
             "$ref": "#/$defs/SessionCommentRef"
           }
         },
-        "content": {
-          "type": "string"
+        "source": {
+          "$ref": "#/$defs/PendingQueueSource"
         },
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "message_id": {
-          "type": "string"
-        },
-        "role": {
-          "$ref": "#/$defs/MessageRole"
-        },
-        "run_id": {
+        "thread_id": {
+          "description": "Comment thread that produced this item, when `source` is `comment`.",
           "type": [
             "string",
             "null"
           ]
         },
-        "session_id": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "message_id",
-        "session_id",
-        "role",
-        "content",
-        "created_at"
-      ]
-    },
-    "SessionStatus": {
-      "type": "string",
-      "enum": [
-        "active",
-        "archived"
-      ]
-    },
-    "SessionSummary": {
-      "type": "object",
-      "properties": {
-        "active_run_status": {
-          "$ref": "#/$defs/ActiveRunStatus"
-        },
-        "compacted_at": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "format": "date-time"
-        },
-        "compacting": {
-          "type": "boolean",
-          "default": false
-        },
-        "context_usage": {
-          "$ref": "#/$defs/ContextUsage",
-          "default": {
-            "cached_tokens": 0,
-            "context_limit": 0,
-            "context_used": 0,
-            "input_tokens": 0,
-            "output_tokens": 0
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
           }
         },
         "created_at": {
           "type": "string",
           "format": "date-time"
+        }
+      },
+      "required": [
+        "queue_id",
+        "session_id",
+        "content",
+        "source",
+        "created_at"
+      ]
+    },
+    "SessionCommentRef": {
+      "description": "Immutable send-time snapshot of a report comment handed to the agent.",
+      "type": "object",
+      "properties": {
+        "thread_id": {
+          "type": "string"
+        },
+        "block_id": {
+          "type": "string"
+        },
+        "end_block_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "anchor_blocks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "status": {
+          "type": "string"
+        },
+        "quote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "end_quote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "anchor_snapshot": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comment": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "thread_id",
+        "block_id",
+        "status",
+        "comment"
+      ]
+    },
+    "PendingQueueSource": {
+      "description": "Why a message is waiting in the per-session queue.",
+      "type": "string",
+      "enum": [
+        "user",
+        "comment"
+      ]
+    },
+    "SessionSummary": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
         },
         "doc_id": {
           "description": "Quire report bound to this session. `None` until the first run auto-binds.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "linked_doc_id": {
+          "description": "Frontend-friendly alias of the bound report ID.",
           "type": [
             "string",
             "null"
@@ -1505,17 +816,37 @@
             "null"
           ]
         },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        },
+        "active_run_status": {
+          "$ref": "#/$defs/ActiveRunStatus"
+        },
         "last_event_seq": {
           "type": "integer",
           "format": "uint64",
           "minimum": 0
         },
-        "linked_doc_id": {
-          "description": "Frontend-friendly alias of the bound report ID.",
+        "context_usage": {
+          "$ref": "#/$defs/ContextUsage",
+          "default": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_tokens": 0,
+            "context_used": 0,
+            "context_limit": 0
+          }
+        },
+        "compacting": {
+          "type": "boolean",
+          "default": false
+        },
+        "compacted_at": {
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "format": "date-time"
         },
         "pinned_at": {
           "type": [
@@ -1524,14 +855,9 @@
           ],
           "format": "date-time"
         },
-        "session_id": {
-          "type": "string"
-        },
-        "status": {
-          "$ref": "#/$defs/SessionStatus"
-        },
-        "title": {
-          "type": "string"
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
         },
         "updated_at": {
           "type": "string",
@@ -1548,23 +874,689 @@
         "updated_at"
       ]
     },
-    "ToolCallDetail": {
+    "SessionStatus": {
+      "type": "string",
+      "enum": [
+        "active",
+        "archived"
+      ]
+    },
+    "ActiveRunStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "interrupted",
+        "failed",
+        "awaiting_input"
+      ]
+    },
+    "ContextUsage": {
       "type": "object",
       "properties": {
-        "created_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "duration_ms": {
+        "input_tokens": {
           "type": "integer",
           "format": "uint64",
           "minimum": 0
         },
-        "error": {
+        "output_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "cached_tokens": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "context_used": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "context_limit": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "context_used",
+        "context_limit"
+      ]
+    },
+    "SessionDetail": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "doc_id": {
+          "description": "Quire report bound to this session. `None` until the first run auto-binds.",
           "type": [
             "string",
             "null"
           ]
+        },
+        "linked_doc_id": {
+          "description": "Frontend-friendly alias of the bound report ID.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kb_branch": {
+          "description": "Knowledge-base branch used by this session. `None` only for sessions created before\nbranch-scoped knowledge bases existed; those fall back to the current active branch.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        },
+        "active_run_status": {
+          "$ref": "#/$defs/ActiveRunStatus"
+        },
+        "last_event_seq": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "context_usage": {
+          "$ref": "#/$defs/ContextUsage",
+          "default": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_tokens": 0,
+            "context_used": 0,
+            "context_limit": 0
+          }
+        },
+        "compacting": {
+          "type": "boolean",
+          "default": false
+        },
+        "compacted_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "pinned_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionMessage"
+          }
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AttachmentMeta"
+          }
+        },
+        "pending_question": {
+          "description": "Latest unresolved question card, restored after refresh or reconnect.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PendingQuestion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolved_questions": {
+          "description": "Answered, skipped and dismissed question cards in creation order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResolvedQuestion"
+          }
+        },
+        "pending_queue": {
+          "description": "Messages waiting for the current run to finish, in FIFO order.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PendingQueueItem"
+          }
+        },
+        "active_run_trace": {
+          "description": "Aggregated trace of the active run, captured at `last_event_seq`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunTraceSummary"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "active_subagent_traces": {
+          "description": "Subagents embedded in the active run, with their streaming clocks.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunTraceSubagent"
+          }
+        }
+      },
+      "required": [
+        "session_id",
+        "title",
+        "status",
+        "active_run_status",
+        "last_event_seq",
+        "created_at",
+        "updated_at"
+      ]
+    },
+    "SessionMessage": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "role": {
+          "$ref": "#/$defs/MessageRole"
+        },
+        "content": {
+          "type": "string"
+        },
+        "comment_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionCommentRef"
+          }
+        },
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "run_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "message_id",
+        "session_id",
+        "role",
+        "content",
+        "created_at"
+      ]
+    },
+    "MessageRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant",
+        "tool",
+        "system",
+        "compaction"
+      ]
+    },
+    "AttachmentMeta": {
+      "type": "object",
+      "properties": {
+        "attachment_id": {
+          "type": "string"
+        },
+        "filename": {
+          "type": "string"
+        },
+        "mime_type": {
+          "type": "string"
+        },
+        "size_bytes": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "attachment_id",
+        "filename",
+        "mime_type",
+        "size_bytes"
+      ]
+    },
+    "PendingQuestion": {
+      "type": "object",
+      "properties": {
+        "question_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "description": "The `ask_user` tool call that opened this question, when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestionItem"
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "question_id",
+        "run_id",
+        "questions",
+        "created_at"
+      ]
+    },
+    "ResolvedQuestion": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "$ref": "#/$defs/PendingQuestion"
+        },
+        "status": {
+          "type": "string"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QuestionAnswer"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "question",
+        "status"
+      ]
+    },
+    "RunTraceSummary": {
+      "type": "object",
+      "properties": {
+        "run_id": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "started_at": {
+          "description": "Server timestamp of the run's `turn_started` event.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "task_focus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunTaskFocus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunTraceSegment"
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "run_id",
+        "status"
+      ]
+    },
+    "RunTaskFocus": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "RunTraceSegment": {
+      "description": "One ordered slice of a run. Text output closes the preceding thinking and\nexecution phase, so later reasoning or tools start a new segment instead of\nbeing folded back into an older block.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "thinking"
+            },
+            "text": {
+              "type": "string"
+            },
+            "duration_ms": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "started_at": {
+              "description": "Server timestamp when this thinking phase started. Retained while the\nphase is still streaming so clients can continue the timer after refresh.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "execution"
+            },
+            "tools": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RunTraceToolItem"
+              },
+              "default": []
+            },
+            "subagents": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RunTraceSubagent"
+              },
+              "default": []
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "text"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "text"
+          ]
+        }
+      ]
+    },
+    "RunTraceToolItem": {
+      "type": "object",
+      "properties": {
+        "tool_call_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "input_preview": {
+          "type": "string"
+        },
+        "output_preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "truncated": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "tool_call_id",
+        "tool_name",
+        "status",
+        "input_preview"
+      ]
+    },
+    "RunTraceSubagent": {
+      "type": "object",
+      "properties": {
+        "subagent_run_id": {
+          "type": "string"
+        },
+        "agent_name": {
+          "type": "string"
+        },
+        "display_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task": {
+          "type": "string"
+        },
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": "string"
+        },
+        "started_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "summary": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segments": {
+          "description": "Ordered subagent activity, isomorphic to the main run's segments. Text\ncloses the preceding thinking/execution phase, so multi-round tool use\nkeeps the same order in live and hydrated views.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RunTraceSegment"
+          },
+          "default": []
+        },
+        "task_focus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RunTaskFocus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "subagent_run_id",
+        "agent_name",
+        "task",
+        "status"
+      ]
+    },
+    "CreateSessionRequest": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "doc_id": {
+          "description": "Optional existing report to bind immediately.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "kb_branch": {
+          "description": "Test a draft knowledge-base branch. Omit to use the current active branch.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "title"
+      ]
+    },
+    "SendMessageRequest": {
+      "type": "object",
+      "properties": {
+        "client_msg_id": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        },
+        "comment_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionCommentRef"
+          }
+        },
+        "attachment_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "client_msg_id",
+        "content"
+      ]
+    },
+    "UpdatePendingMessageRequest": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string"
+        },
+        "comment_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SessionCommentRef"
+          },
+          "default": []
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "content"
+      ]
+    },
+    "ToolCallDetail": {
+      "type": "object",
+      "properties": {
+        "tool_call_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "tool_name": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
         },
         "input": {
           "default": null
@@ -1572,20 +1564,20 @@
         "output": {
           "default": null
         },
-        "run_id": {
-          "type": "string"
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
         },
-        "session_id": {
-          "type": "string"
+        "duration_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
         },
-        "status": {
-          "type": "string"
-        },
-        "tool_call_id": {
-          "type": "string"
-        },
-        "tool_name": {
-          "type": "string"
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
         }
       },
       "required": [
@@ -1598,23 +1590,87 @@
         "created_at"
       ]
     },
-    "UpdatePendingMessageRequest": {
+    "AskUserAnswerPayload": {
+      "description": "The only model input produced when an ask_user card is answered or skipped.",
       "type": "object",
       "properties": {
-        "comment_refs": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/SessionCommentRef"
-          }
-        },
-        "content": {
+        "kind": {
           "type": "string"
+        },
+        "question_id": {
+          "type": "string"
+        },
+        "tool_call_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/QuestionnaireResolutionStatus"
+        },
+        "skipped_all": {
+          "type": "boolean"
+        },
+        "answers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ResolvedQuestionItemAnswer"
+          }
         }
       },
-      "additionalProperties": false,
       "required": [
-        "content"
+        "kind",
+        "question_id",
+        "status",
+        "skipped_all",
+        "answers"
+      ]
+    },
+    "QuestionnaireResolutionStatus": {
+      "type": "string",
+      "enum": [
+        "answered",
+        "skipped"
+      ]
+    },
+    "ResolvedQuestionItemAnswer": {
+      "type": "object",
+      "properties": {
+        "question_id": {
+          "type": "string"
+        },
+        "question_title": {
+          "type": "string"
+        },
+        "selected_option_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "selected_option_labels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "freeform_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "skipped": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "question_id",
+        "question_title",
+        "selected_option_ids",
+        "selected_option_labels",
+        "skipped"
       ]
     }
   }

@@ -3,7 +3,6 @@
 use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use futures::Stream;
 use quire_session_protocol::{ContextUsage, QuestionItem};
 use serde_json::Value;
@@ -68,18 +67,14 @@ pub enum ModelStreamEvent {
         output: Value,
         error: Option<String>,
     },
-    /// A queued user message consumed between tool results and the next model round.
-    UserMessageInjected {
-        message_id: String,
-        content: String,
-        created_at: DateTime<Utc>,
-    },
     QuestionnaireRequested {
         tool_call_id: Option<String>,
         questions: Vec<QuestionItem>,
     },
     /// Real upstream token counts plus the resolved model context limit.
     Usage(ContextUsage),
+    /// A queued user message takes over at the next safe model boundary.
+    Superseded,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +98,10 @@ pub struct ModelTurnRequest {
     pub disable_tools: bool,
     /// Cancels model streaming, tool execution and subagent inference.
     pub cancellation: CancellationToken,
+    /// Whether the canonical memory already ends with this request's user prompt.
+    pub prompt_recorded: bool,
+    /// Whether this run commits its canonical suffix back to the loaded memory log.
+    pub persist_history: bool,
 }
 
 pub type ModelEventStream =
@@ -268,11 +267,6 @@ pub(crate) fn sample_model_stream_events() -> Vec<ModelStreamEvent> {
             output: serde_json::json!({}),
             error: None,
         },
-        ModelStreamEvent::UserMessageInjected {
-            message_id: "msg_1".into(),
-            content: "content".into(),
-            created_at: chrono::Utc::now(),
-        },
         ModelStreamEvent::QuestionnaireRequested {
             tool_call_id: Some("tc_ask".into()),
             questions: vec![],
@@ -284,6 +278,7 @@ pub(crate) fn sample_model_stream_events() -> Vec<ModelStreamEvent> {
             context_used: 2,
             context_limit: 100,
         }),
+        ModelStreamEvent::Superseded,
     ]
 }
 

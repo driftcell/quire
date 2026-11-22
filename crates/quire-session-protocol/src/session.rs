@@ -224,6 +224,93 @@ pub struct QuestionAnswer {
     pub skipped: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionnaireResolutionStatus {
+    Answered,
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ResolvedQuestionItemAnswer {
+    pub question_id: String,
+    pub question_title: String,
+    pub selected_option_ids: Vec<String>,
+    pub selected_option_labels: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freeform_text: Option<String>,
+    pub skipped: bool,
+}
+
+/// The only model input produced when an ask_user card is answered or skipped.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AskUserAnswerPayload {
+    pub kind: String,
+    pub question_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    pub status: QuestionnaireResolutionStatus,
+    pub skipped_all: bool,
+    pub answers: Vec<ResolvedQuestionItemAnswer>,
+}
+
+impl AskUserAnswerPayload {
+    pub const KIND: &'static str = "ask_user_response";
+
+    pub fn from_resolution(
+        question: &PendingQuestion,
+        answers: &[QuestionAnswer],
+        skipped_all: bool,
+    ) -> Self {
+        let answers = if skipped_all {
+            Vec::new()
+        } else {
+            answers
+                .iter()
+                .map(|answer| {
+                    let definition = question
+                        .questions
+                        .iter()
+                        .find(|item| item.id == answer.question_id);
+                    let selected_option_labels = answer
+                        .selected_option_ids
+                        .iter()
+                        .filter_map(|selected| {
+                            definition
+                                .and_then(|item| {
+                                    item.options.iter().find(|option| option.id == *selected)
+                                })
+                                .map(|option| option.label.clone())
+                        })
+                        .collect();
+                    ResolvedQuestionItemAnswer {
+                        question_id: answer.question_id.clone(),
+                        question_title: definition
+                            .map(|item| item.title.clone())
+                            .unwrap_or_default(),
+                        selected_option_ids: answer.selected_option_ids.clone(),
+                        selected_option_labels,
+                        freeform_text: answer.freeform_text.clone(),
+                        skipped: answer.skipped,
+                    }
+                })
+                .collect()
+        };
+        Self {
+            kind: Self::KIND.to_string(),
+            question_id: question.question_id.clone(),
+            tool_call_id: question.tool_call_id.clone(),
+            status: if skipped_all {
+                QuestionnaireResolutionStatus::Skipped
+            } else {
+                QuestionnaireResolutionStatus::Answered
+            },
+            skipped_all,
+            answers,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PendingQuestion {
     pub question_id: String,
@@ -301,11 +388,6 @@ pub enum RunTraceSegment {
         tools: Vec<RunTraceToolItem>,
         #[serde(default)]
         subagents: Vec<RunTraceSubagent>,
-    },
-    UserMessage {
-        message_id: String,
-        content: String,
-        created_at: DateTime<Utc>,
     },
     Text {
         text: String,
@@ -536,6 +618,41 @@ mod tests {
         let update: UpdatePendingMessageRequest =
             serde_json::from_value(serde_json::json!({"content": "edited"})).unwrap();
         assert!(update.comment_refs.is_empty());
+    }
+
+    #[test]
+    fn ask_user_answer_payload_is_structured_and_resolves_labels() {
+        let question = PendingQuestion {
+            question_id: "q_1".into(),
+            run_id: "run_1".into(),
+            tool_call_id: Some("run_1:call_1".into()),
+            questions: vec![QuestionItem {
+                id: "scope".into(),
+                title: "Which scope?".into(),
+                description: None,
+                multiple: false,
+                required: true,
+                options: vec![QuestionOption {
+                    id: "q3".into(),
+                    label: "Q3".into(),
+                    description: None,
+                }],
+            }],
+            created_at: Utc::now(),
+        };
+        let answers = vec![QuestionAnswer {
+            question_id: "scope".into(),
+            selected_option_ids: vec!["q3".into()],
+            freeform_text: None,
+            skipped: false,
+        }];
+        let payload = AskUserAnswerPayload::from_resolution(&question, &answers, false);
+        let value = serde_json::to_value(payload).unwrap();
+        assert_eq!(value["kind"], "ask_user_response");
+        assert_eq!(value["status"], "answered");
+        assert_eq!(value["answers"][0]["question_title"], "Which scope?");
+        assert_eq!(value["answers"][0]["selected_option_labels"][0], "Q3");
+        assert!(value.get("The user answered questionnaire").is_none());
     }
 
     #[test]

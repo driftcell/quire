@@ -1,6 +1,6 @@
 //! Built-in tool definitions, schemas and credential/URL redaction helpers.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeSet, future::Future, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use quire_lint::lint_echarts_block;
@@ -9,18 +9,18 @@ use quire_protocol::{
     chart_requirements, merge_chart_option_patch, short_id,
 };
 use quire_session_protocol::QuestionItem;
+use rig::tool::server::ToolServer;
 use rig_core::{
-    message::ToolName,
+    completion::ToolAnnotations,
+    message::{ImageMediaType, ToolResultContent},
     rig_tool,
-    serve::adapters::ToolAdapter,
-    tool::{DynamicTool, Tool, ToolContext, ToolExecutionError},
+    tool::{Tool, ToolContext, ToolExecutionError, ToolOutput, Touches},
 };
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::{
-    error::{RuntimeError, RuntimeResult},
     mcp_client::RmcpClient,
     mcp_registry::tool_pattern_matches,
     model_stream::ModelStreamEvent,
@@ -29,10 +29,22 @@ use crate::{
     store::SessionPatch,
 };
 
-use super::{AgentExecution, EventScope, PreviewImage, RigModelCore, subagents::RunSubagentsTool};
+use super::{
+    AgentExecution, EventScope, RigModelCore,
+    context::{AskUserRequestedMeta, QuireTurnMeta},
+    subagents::RunSubagentsTool,
+};
 
 const REPORT_PREVIEW_CAPTION: &str = "Rendered screenshot from preview_report. Inspect visual layout, spacing, tables, and charts alongside the diagnostic JSON.";
 const CHART_PREVIEW_CAPTION: &str = "Rendered ECharts screenshot from preview_echarts. Verify the chart type, series data, axis labels, legend, tooltip/static labels, colors, clipping/overflow, and that the visual matches fallback_summary. Refine with preview_echarts + based_on_preview_id + option_patch only, then call commit_chart once it looks right.";
+
+fn image_media_type(mime_type: &str) -> ImageMediaType {
+    match mime_type {
+        "image/jpeg" => ImageMediaType::JPEG,
+        "image/webp" => ImageMediaType::WEBP,
+        _ => ImageMediaType::PNG,
+    }
+}
 
 pub const BUILTIN_TOOLS: &[&str] = &[
     "load_skill",
@@ -58,7 +70,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
 /// against the tool-name portion because assembled MCP tools keep bare names.
 fn missing_allowed_tool_patterns(
     allowed_tools: &[String],
-    tool_map: &BTreeMap<String, DynamicTool>,
+    available_tools: &BTreeSet<String>,
 ) -> Vec<String> {
     let mut missing = Vec::new();
     for pattern in allowed_tools {
@@ -75,11 +87,11 @@ fn missing_allowed_tool_patterns(
             continue;
         }
         let available = if effective.contains('*') {
-            tool_map
-                .keys()
+            available_tools
+                .iter()
                 .any(|name| tool_pattern_matches(effective, name))
         } else {
-            tool_map.contains_key(effective)
+            available_tools.contains(effective)
         };
         if !available {
             missing.push(trimmed.to_string());
@@ -91,9 +103,9 @@ fn missing_allowed_tool_patterns(
 pub(super) fn warn_missing_allowed_tools(
     agent_id: &str,
     allowed_tools: &[String],
-    tool_map: &BTreeMap<String, DynamicTool>,
+    available_tools: &BTreeSet<String>,
 ) -> Vec<String> {
-    let missing = missing_allowed_tool_patterns(allowed_tools, tool_map);
+    let missing = missing_allowed_tool_patterns(allowed_tools, available_tools);
     for pattern in &missing {
         warn!(
             agent_id = %agent_id,
@@ -114,19 +126,20 @@ pub(super) struct ToolBuildContext {
     pub(super) execution: AgentExecution,
     pub(super) scope: EventScope,
     pub(super) engine: Arc<RigModelCore>,
-    pub(super) pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
-    pub(super) supports_vision: bool,
     pub(super) sandbox: Arc<SandboxLease>,
     pub(super) doc_id: Arc<Mutex<Option<String>>>,
 }
 
+pub(super) struct BuiltInTools {
+    pub(super) server: ToolServer,
+    pub(super) names: BTreeSet<String>,
+}
+
 pub(super) struct RuntimeToolScope {
     pub(super) engine: Arc<RigModelCore>,
-    pub(super) execution: AgentExecution,
     pub(super) event_scope: EventScope,
-    pending_preview_images: Arc<Mutex<Vec<PreviewImage>>>,
-    supports_vision: bool,
     sandbox: Arc<SandboxLease>,
+    pub(super) cancellation: tokio_util::sync::CancellationToken,
     /// Latest bound report ID, shared across the turn so subagents spawned
     /// after a lazy `create_report` inherit the new document.
     pub(super) doc_id: Arc<Mutex<Option<String>>>,
@@ -140,27 +153,61 @@ pub(super) fn runtime_tool_scope(
         .ok_or_else(|| ToolExecutionError::other("missing runtime tool context"))
 }
 
-fn scoped_dynamic_tool<T>(
-    scope: Arc<RuntimeToolScope>,
-    factory: fn() -> T,
-) -> RuntimeResult<DynamicTool>
-where
-    T: Tool + Default + 'static,
-{
-    let template = factory();
-    let name = ToolName::new(T::NAME).map_err(|error| RuntimeError::Internal(error.to_string()))?;
-    let description = template.description();
-    let parameters = template.parameters();
-    Ok(DynamicTool::new_with_context(
-        name,
-        description,
-        parameters,
-        move |context, arguments| {
-            let mut context = context.clone().with_scope(scope.clone());
-            let adapter = ToolAdapter::new(factory());
-            Box::pin(async move { adapter.run_with(&mut context, arguments).await })
-        },
-    ))
+pub(super) fn quire_turn_meta(context: &ToolContext) -> Result<QuireTurnMeta, ToolExecutionError> {
+    context
+        .require::<QuireTurnMeta>()
+        .map_err(|error| ToolExecutionError::other(error.to_string()))
+}
+
+pub(super) struct RuntimeTool<T> {
+    inner: T,
+    runtime: Arc<RuntimeToolScope>,
+}
+
+impl<T> RuntimeTool<T> {
+    fn new(runtime: Arc<RuntimeToolScope>, inner: T) -> Self {
+        Self { inner, runtime }
+    }
+}
+
+impl<T: Tool> Tool for RuntimeTool<T> {
+    const NAME: &'static str = T::NAME;
+    type Args = T::Args;
+    type Output = T::Output;
+    type Error = T::Error;
+
+    fn description(&self) -> String {
+        self.inner.description()
+    }
+
+    fn parameters(&self) -> Value {
+        self.inner.parameters()
+    }
+
+    fn annotations(&self) -> ToolAnnotations {
+        self.inner.annotations()
+    }
+
+    fn footprint(&self, args: &Self::Args) -> Touches {
+        self.inner.footprint(args)
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        self.inner.map_error(error)
+    }
+
+    fn call(
+        &self,
+        context: &mut ToolContext,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send {
+        let mut scoped = context.clone().with_scope(self.runtime.clone());
+        async move {
+            let result = self.inner.call(&mut scoped, args).await;
+            context.accept_dispatch_result(scoped);
+            result
+        }
+    }
 }
 
 pub(super) fn tool_other(error: impl std::fmt::Display) -> ToolExecutionError {
@@ -295,12 +342,13 @@ async fn sandbox_mount_attachment_tool(
     attachment_id: String,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let attachment_id = safe_attachment_id(&attachment_id).map_err(tool_other)?;
     let stored = runtime
         .engine
         .kb
         .store()
-        .get_session_attachment(&runtime.execution.session_id, attachment_id)
+        .get_session_attachment(&turn.session_id, attachment_id)
         .await
         .map_err(tool_other)?;
     let attachment_id = safe_attachment_id(&stored.attachment_id).map_err(tool_other)?;
@@ -316,7 +364,7 @@ async fn sandbox_mount_attachment_tool(
                 .engine
                 .config
                 .oss
-                .owns_object_key(&runtime.execution.session_id, object_key)
+                .owns_object_key(&turn.session_id, object_key)
             {
                 return Err(ToolExecutionError::other(
                     "attachment object key does not belong to this session",
@@ -488,8 +536,9 @@ async fn preview_report_tool(
     page: Option<usize>,
     rev: Option<u64>,
     include_styles: Option<bool>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<ToolOutput, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let input = crate::preview::PreviewReportInput {
         doc_id,
         mode: mode.unwrap_or_default(),
@@ -498,25 +547,21 @@ async fn preview_report_tool(
         page,
         rev,
         include_styles: include_styles.unwrap_or(true),
-        include_image: runtime.supports_vision,
+        include_image: turn.supports_vision,
     };
     let result = crate::preview::execute_preview_report(&runtime.engine.config, input)
         .await
         .map_err(tool_other)?;
-    if let (Some(base64), Some(mime_type)) =
-        (result.image_base64.clone(), result.image_mime_type.clone())
-    {
-        runtime
-            .pending_preview_images
-            .lock()
-            .await
-            .push(PreviewImage {
-                base64,
-                mime_type,
-                caption: REPORT_PREVIEW_CAPTION.to_string(),
-            });
+    let mut content = vec![ToolResultContent::json(result.to_diagnostics_json())];
+    if let (Some(base64), Some(mime_type)) = (result.image_base64, result.image_mime_type) {
+        content.push(ToolResultContent::text(REPORT_PREVIEW_CAPTION));
+        content.push(ToolResultContent::image_base64(
+            base64,
+            Some(image_media_type(&mime_type)),
+            None,
+        ));
     }
-    Ok(result.to_diagnostics_json())
+    ToolOutput::content(content)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -533,8 +578,9 @@ async fn preview_echarts_tool(
     title: Option<String>,
     note: Option<String>,
     fallback_summary: Option<String>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<ToolOutput, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let config = runtime.engine.config.as_ref();
     let bus = runtime.engine.kb.store().bus();
     let based_on = based_on_preview_id
@@ -640,22 +686,15 @@ async fn preview_echarts_tool(
     let mut preview_url = crate::preview::build_public_chart_preview_url(config, &preview_id);
     let mut preview_error = None;
     let mut image_included = false;
-    if runtime.supports_vision {
+    let mut preview_image = None;
+    if turn.supports_vision {
         match crate::preview::execute_preview_echarts(config, &preview_id).await {
             Ok(result) => {
                 preview_url = result.preview_url;
                 if let (Some(base64), Some(mime_type)) =
                     (result.image_base64, result.image_mime_type)
                 {
-                    runtime
-                        .pending_preview_images
-                        .lock()
-                        .await
-                        .push(PreviewImage {
-                            base64,
-                            mime_type,
-                            caption: CHART_PREVIEW_CAPTION.to_string(),
-                        });
+                    preview_image = Some((base64, mime_type));
                     image_included = true;
                 }
             }
@@ -665,14 +704,24 @@ async fn preview_echarts_tool(
 
     let lint_issues = lint.diagnostics;
     let lint_summary = lint.summary;
-    Ok(json!({
+    let diagnostics = json!({
         "preview_id": preview_id,
         "preview_url": preview_url,
         "lint_issues": lint_issues,
         "lint_summary": lint_summary,
         "image_included": image_included,
         "preview_error": preview_error,
-    }))
+    });
+    let mut content = vec![ToolResultContent::json(diagnostics)];
+    if let Some((base64, mime_type)) = preview_image {
+        content.push(ToolResultContent::text(CHART_PREVIEW_CAPTION));
+        content.push(ToolResultContent::image_base64(
+            base64,
+            Some(image_media_type(&mime_type)),
+            None,
+        ));
+    }
+    ToolOutput::content(content)
 }
 
 fn normalize_optional_text(value: Option<String>) -> Option<String> {
@@ -698,6 +747,7 @@ async fn commit_chart_tool(
     summary: Option<String>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let preview_id = preview_id.trim().to_string();
     if preview_id.is_empty() {
         return Err(ToolExecutionError::invalid_args(
@@ -766,8 +816,8 @@ async fn commit_chart_tool(
     let client = RmcpClient::connect(
         &config.quire_base_url,
         Some(config.quire_rw_token.clone()),
-        &runtime.execution.session_id,
-        &runtime.execution.agent_id,
+        &turn.session_id,
+        &turn.agent_id,
     )
     .await
     .map_err(tool_other)?;
@@ -827,10 +877,11 @@ async fn load_skill_tool(
     name: String,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let skill = runtime
         .engine
         .kb
-        .get_skill_on(runtime.execution.kb_branch.as_deref(), &name)
+        .get_skill_on(turn.kb_branch.as_deref(), &name)
         .await
         .map_err(tool_other)?
         .ok_or_else(|| ToolExecutionError::not_found(format!("skill `{name}`")))?;
@@ -847,10 +898,11 @@ async fn read_skill_resource_tool(
     path: String,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let definition = runtime
         .engine
         .kb
-        .get_skill_on(runtime.execution.kb_branch.as_deref(), &skill)
+        .get_skill_on(turn.kb_branch.as_deref(), &skill)
         .await
         .map_err(tool_other)?
         .ok_or_else(|| ToolExecutionError::not_found(format!("skill `{skill}`")))?;
@@ -912,6 +964,7 @@ async fn set_session_title_tool(
     title: String,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let title: String = title.trim().chars().take(60).collect();
     if title.is_empty() {
         return Err(ToolExecutionError::invalid_args(
@@ -923,7 +976,7 @@ async fn set_session_title_tool(
         .kb
         .store()
         .update_session(
-            &runtime.execution.session_id,
+            &turn.session_id,
             SessionPatch {
                 title: Some(&title),
                 ..SessionPatch::default()
@@ -938,23 +991,46 @@ async fn set_session_title_tool(
         })
         .await;
     Ok(json!({
-        "session_id": runtime.execution.session_id,
+        "session_id": turn.session_id,
         "title": title,
     }))
 }
 
 #[rig_tool(
     name = "ask_user",
-    description = "Pause the run and request structured choices from the user."
+    description = "Emit a one-shot structured questionnaire and end the current turn. Any sibling tool calls in the same model turn are skipped without execution."
 )]
 fn ask_user_tool(
-    #[rig(context)] _context: &mut ToolContext,
+    #[rig(context)] context: &mut ToolContext,
     questions: Vec<QuestionItem>,
 ) -> Result<Value, ToolExecutionError> {
-    let _ = questions;
-    Err(ToolExecutionError::other(
-        "ask_user is handled by the runtime question loop",
-    ))
+    if questions.is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "`ask_user` requires at least one question item",
+        ));
+    }
+    for item in &questions {
+        if item.id.trim().is_empty() || item.title.trim().is_empty() {
+            return Err(ToolExecutionError::invalid_args(
+                "every question item must have a non-empty `id` and `title`",
+            ));
+        }
+        if item.options.is_empty() {
+            return Err(ToolExecutionError::invalid_args(format!(
+                "question `{}` must provide at least one option",
+                item.id
+            )));
+        }
+    }
+    context
+        .insert_result(AskUserRequestedMeta {
+            questions: questions.clone(),
+        })
+        .map_err(|error| ToolExecutionError::other(error.to_string()))?;
+    Ok(json!({
+        "status": "awaiting_input",
+        "question_count": questions.len()
+    }))
 }
 
 #[rig_tool(
@@ -965,17 +1041,16 @@ async fn list_subagents_tool(
     #[rig(context)] context: &mut ToolContext,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
     let agents = runtime
         .engine
         .kb
-        .list_agents_on(runtime.execution.kb_branch.as_deref())
+        .list_agents_on(turn.kb_branch.as_deref())
         .await
         .map_err(tool_other)?;
     let subagents: Vec<Value> = agents
         .into_iter()
-        .filter(|agent| {
-            agent.enabled && !agent.is_default && agent.name != runtime.execution.agent_id
-        })
+        .filter(|agent| agent.enabled && !agent.is_default && agent.name != turn.agent_id)
         .map(|agent| {
             json!({
                 "name": agent.name,
@@ -989,117 +1064,114 @@ async fn list_subagents_tool(
 }
 
 impl RigModelCore {
-    pub(super) fn build_tools(&self, context: ToolBuildContext) -> RuntimeResult<Vec<DynamicTool>> {
+    pub(super) fn build_tools(&self, context: ToolBuildContext) -> BuiltInTools {
         let ToolBuildContext {
             execution,
             scope,
             engine,
-            pending_preview_images,
-            supports_vision,
             sandbox,
             doc_id,
         } = context;
         let runtime = Arc::new(RuntimeToolScope {
             engine,
-            execution: execution.clone(),
             event_scope: scope,
-            pending_preview_images,
-            supports_vision,
             sandbox,
+            cancellation: execution.cancellation.clone(),
             doc_id,
         });
-        let mut tools = Vec::new();
-        if allow_list_matches(&execution.allowed_tools, "preview_report") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                PreviewReportTool
-            })?);
+        let mut server = ToolServer::new();
+        let mut names = BTreeSet::new();
+        macro_rules! register {
+            ($name:literal, $enabled:expr, $tool:expr) => {
+                if $enabled {
+                    names.insert($name.to_string());
+                    server = server.tool(RuntimeTool::new(Arc::clone(&runtime), $tool));
+                }
+            };
         }
-        if allow_list_matches(&execution.allowed_tools, "preview_echarts") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                PreviewEchartsTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "commit_chart") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                CommitChartTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "sandbox_execute") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                SandboxExecuteTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "sandbox_read_file") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                SandboxReadFileTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "sandbox_write_file") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                SandboxWriteFileTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "sandbox_mount_attachment") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                SandboxMountAttachmentTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "load_skill") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || LoadSkillTool)?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "read_skill_resource") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                ReadSkillResourceTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "describe_task") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                DescribeTaskTool
-            })?);
-        }
-        if !execution.run_id.starts_with("run_sub_")
-            && (allow_list_matches(&execution.allowed_tools, "set_session_title")
-                || allow_list_matches(&execution.allowed_tools, "describe_task"))
-        {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                SetSessionTitleTool
-            })?);
-        }
-        if !execution.run_id.starts_with("run_sub_")
-            && allow_list_matches(&execution.allowed_tools, "ask_user")
-        {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || AskUserTool)?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "list_subagents")
-            || (!execution.run_id.starts_with("run_sub_")
-                && allow_list_matches(&execution.allowed_tools, "spawn_subagents"))
-        {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                ListSubagentsTool
-            })?);
-        }
-        if allow_list_matches(&execution.allowed_tools, "spawn_subagents") {
-            tools.push(scoped_dynamic_tool(Arc::clone(&runtime), || {
-                RunSubagentsTool
-            })?);
-        }
-        Ok(tools)
+
+        register!(
+            "preview_report",
+            allow_list_matches(&execution.allowed_tools, "preview_report"),
+            PreviewReportTool
+        );
+        register!(
+            "preview_echarts",
+            allow_list_matches(&execution.allowed_tools, "preview_echarts"),
+            PreviewEchartsTool
+        );
+        register!(
+            "commit_chart",
+            allow_list_matches(&execution.allowed_tools, "commit_chart"),
+            CommitChartTool
+        );
+        register!(
+            "sandbox_execute",
+            allow_list_matches(&execution.allowed_tools, "sandbox_execute"),
+            SandboxExecuteTool
+        );
+        register!(
+            "sandbox_read_file",
+            allow_list_matches(&execution.allowed_tools, "sandbox_read_file"),
+            SandboxReadFileTool
+        );
+        register!(
+            "sandbox_write_file",
+            allow_list_matches(&execution.allowed_tools, "sandbox_write_file"),
+            SandboxWriteFileTool
+        );
+        register!(
+            "sandbox_mount_attachment",
+            allow_list_matches(&execution.allowed_tools, "sandbox_mount_attachment"),
+            SandboxMountAttachmentTool
+        );
+        register!(
+            "load_skill",
+            allow_list_matches(&execution.allowed_tools, "load_skill"),
+            LoadSkillTool
+        );
+        register!(
+            "read_skill_resource",
+            allow_list_matches(&execution.allowed_tools, "read_skill_resource"),
+            ReadSkillResourceTool
+        );
+        register!(
+            "describe_task",
+            allow_list_matches(&execution.allowed_tools, "describe_task"),
+            DescribeTaskTool
+        );
+        register!(
+            "set_session_title",
+            !execution.run_id.starts_with("run_sub_")
+                && (allow_list_matches(&execution.allowed_tools, "set_session_title")
+                    || allow_list_matches(&execution.allowed_tools, "describe_task")),
+            SetSessionTitleTool
+        );
+        register!(
+            "ask_user",
+            !execution.run_id.starts_with("run_sub_")
+                && allow_list_matches(&execution.allowed_tools, "ask_user"),
+            AskUserTool
+        );
+        register!(
+            "list_subagents",
+            allow_list_matches(&execution.allowed_tools, "list_subagents")
+                || (!execution.run_id.starts_with("run_sub_")
+                    && allow_list_matches(&execution.allowed_tools, "spawn_subagents")),
+            ListSubagentsTool
+        );
+        register!(
+            "spawn_subagents",
+            allow_list_matches(&execution.allowed_tools, "spawn_subagents"),
+            RunSubagentsTool
+        );
+        BuiltInTools { server, names }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_core::tool::ToolOutput;
-
-    fn test_tool(name: &str) -> DynamicTool {
-        DynamicTool::new(
-            ToolName::new(name).unwrap(),
-            "test tool",
-            json!({}),
-            move |_args| Box::pin(async move { Ok(ToolOutput::text("ok")) }),
-        )
-    }
 
     #[test]
     fn wildcard_allow_list_enables_every_builtin_tool() {
@@ -1179,19 +1251,10 @@ mod tests {
 
     #[test]
     fn warn_missing_allowed_tools_expands_wildcards_instead_of_literal_lookup() {
-        let tool_map = BTreeMap::from([
-            (
-                "subjectcloud_detail".to_string(),
-                test_tool("subjectcloud_detail"),
-            ),
-            (
-                "subjectcloud_overview".to_string(),
-                test_tool("subjectcloud_overview"),
-            ),
-            (
-                "shuangyou_profile".to_string(),
-                test_tool("shuangyou_profile"),
-            ),
+        let tool_map = BTreeSet::from([
+            "subjectcloud_detail".to_string(),
+            "subjectcloud_overview".to_string(),
+            "shuangyou_profile".to_string(),
         ]);
 
         let valid = vec![

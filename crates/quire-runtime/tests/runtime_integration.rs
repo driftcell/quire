@@ -30,7 +30,7 @@ use quire_runtime::{
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
-    mcp_registry::{McpServerInput, McpServerPatch},
+    mcp_registry::{McpServerBinding, McpServerInput, McpServerPatch},
     models::ModelInput,
     preview::ChartPreviewRecord,
     sandbox::build_sandbox_provider,
@@ -49,6 +49,11 @@ use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 
 fn test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn migration_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -151,6 +156,16 @@ async fn mock_mcp_tools_list(axum::Json(body): axum::Json<Value>) -> axum::Json<
     axum::Json(json!({"jsonrpc": "2.0", "id": id, "result": result}))
 }
 
+async fn counting_mcp_tools_list(
+    axum::extract::State(initializes): axum::extract::State<Arc<AtomicUsize>>,
+    body: axum::Json<Value>,
+) -> axum::Json<Value> {
+    if body.0.get("method").and_then(Value::as_str) == Some("initialize") {
+        initializes.fetch_add(1, Ordering::SeqCst);
+    }
+    mock_mcp_tools_list(body).await
+}
+
 fn database_url() -> String {
     let _ = dotenvy::dotenv();
     let url = std::env::var("TEST_DATABASE_URL")
@@ -214,7 +229,9 @@ async fn test_service_with_config(config: Config) -> (RuntimeService, RuntimeSto
     let store = RuntimeStore::connect(&database_url(), &redis_url())
         .await
         .expect("PostgreSQL and Redis are required");
+    let _migration_guard = migration_lock().lock().await;
     store.migrate().await.expect("runtime migrations");
+    drop(_migration_guard);
     let kb = KbService::new(store.clone());
     let models = ModelRegistry::new(
         store.clone(),
@@ -668,54 +685,6 @@ impl ModelStreamProvider for RecordingStreamProvider {
         Ok(Box::pin(futures::stream::iter(
             events.into_iter().map(Ok).collect::<Vec<_>>(),
         )))
-    }
-}
-
-struct BlockingSummaryProvider {
-    released: Arc<AtomicBool>,
-    notify: Arc<tokio::sync::Notify>,
-}
-
-impl BlockingSummaryProvider {
-    fn new() -> Self {
-        Self {
-            released: Arc::new(AtomicBool::new(false)),
-            notify: Arc::new(tokio::sync::Notify::new()),
-        }
-    }
-
-    fn release(&self) {
-        self.released.store(true, Ordering::SeqCst);
-        self.notify.notify_waiters();
-    }
-}
-
-#[async_trait::async_trait]
-impl ModelStreamProvider for BlockingSummaryProvider {
-    async fn stream_turn(
-        &self,
-        _request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        while !self.released.load(Ordering::SeqCst) {
-            self.notify.notified().await;
-        }
-        Ok(Box::pin(futures::stream::iter(vec![Ok(
-            ModelStreamEvent::TextDelta(compaction_summary_text().into()),
-        )])))
-    }
-}
-
-struct FailingStreamProvider;
-
-#[async_trait::async_trait]
-impl ModelStreamProvider for FailingStreamProvider {
-    async fn stream_turn(
-        &self,
-        _request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        Ok(Box::pin(futures::stream::iter(vec![Err(
-            RuntimeError::Internal("summary provider failed".into()),
-        )])))
     }
 }
 
@@ -1425,6 +1394,8 @@ async fn event_stream_replays_a_small_gap_without_disconnecting() {
     .expect("live event 4");
     assert_eq!(live_four.seq, 4);
 
+    let redis = redis::Client::open(service.config().redis_url.clone()).unwrap();
+    let mut connection = redis.get_multiplexed_async_connection().await.unwrap();
     for seq in 5..=6 {
         let event = SessionEvent::new(
             seq,
@@ -1435,29 +1406,19 @@ async fn event_stream_replays_a_small_gap_without_disconnecting() {
                 delta: format!("missing-{seq}"),
             },
         );
-        let event_value = serde_json::to_value(&event).unwrap();
-        sqlx::query(
-            r#"INSERT INTO session_events
-               (session_id, seq, run_id, agent_id, parent_run_id, event_type, event, created_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
-        )
-        .bind(&session.session_id)
-        .bind(i64::try_from(seq).unwrap())
-        .bind(&event.run_id)
-        .bind(&event.agent_id)
-        .bind(event.parent_run_id.as_deref())
-        .bind(event.event_name())
-        .bind(event_value)
-        .bind(event.timestamp)
-        .execute(store.pool())
-        .await
-        .unwrap();
+        let allocated: u64 = redis::cmd("INCR")
+            .arg(format!("runtime:session:{}:hot_seq", session.session_id))
+            .query_async(&mut connection)
+            .await
+            .unwrap();
+        assert_eq!(allocated, seq);
+        let _: i64 = redis::cmd("RPUSH")
+            .arg(format!("runtime:session:{}:hot_events", session.session_id))
+            .arg(serde_json::to_string(&event).unwrap())
+            .query_async(&mut connection)
+            .await
+            .unwrap();
     }
-    sqlx::query("UPDATE agent_sessions SET last_event_seq = 6 WHERE session_id = $1")
-        .bind(&session.session_id)
-        .execute(store.pool())
-        .await
-        .unwrap();
     store
         .append_event(
             &session.session_id,
@@ -2310,40 +2271,27 @@ async fn knowledge_update_is_injected_once_and_synced_version_advances() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compaction_reuses_prefix_and_preserves_pending_state() {
+async fn canonical_compaction_preserves_pending_state() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
-    let (provider, requests) = RecordingStreamProvider::new(vec![ModelStreamEvent::TextDelta(
-        compaction_summary_text().into(),
-    )]);
-    let service = service.with_model_stream_provider(Arc::new(provider));
     let session = service
         .create_session(&unique("compact"), Some("runtime-doc"))
         .await
         .unwrap();
-    let old_prompt = "OLD PINNED PROMPT";
     store
-        .set_pinned_prompt(&session.session_id, old_prompt, 0)
-        .await
-        .unwrap();
-    store
-        .insert_context_message(
+        .insert_user_message(
             &session.session_id,
-            MessageRole::User,
-            "old question",
-            "compact:old-user",
-            None,
+            &SendMessageRequest {
+                client_msg_id: unique("compact-old"),
+                content: "old question".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
         )
         .await
         .unwrap();
     store
-        .insert_context_message(
-            &session.session_id,
-            MessageRole::Assistant,
-            "old answer",
-            "compact:old-assistant",
-            None,
-        )
+        .insert_assistant_message(&session.session_id, "old answer", "run_old")
         .await
         .unwrap();
     store
@@ -2362,20 +2310,13 @@ async fn compaction_reuses_prefix_and_preserves_pending_state() {
         .create_question(&session.session_id, "run_pending", None, &question_items())
         .await
         .unwrap();
-    store
-        .update_context_usage(
-            &session.session_id,
-            &ContextUsage {
-                context_used: 180_000,
-                context_limit: 200_000,
-                ..ContextUsage::default()
-            },
-        )
+
+    let memory = store.memory().await.unwrap();
+    let marker = memory
+        .apply_compaction(&session.session_id, compaction_summary_text(), None)
         .await
         .unwrap();
-
-    let detail = service.compact(&session.session_id).await.unwrap();
-    assert!(detail.summary.compacted_at.is_some());
+    let detail = service.session_detail(&session.session_id).await.unwrap();
     assert!(
         detail
             .pending_queue
@@ -2383,153 +2324,57 @@ async fn compaction_reuses_prefix_and_preserves_pending_state() {
             .any(|item| item.content == "queued follow-up")
     );
     assert!(detail.pending_question.is_some());
-    let marker = detail
-        .messages
-        .iter()
-        .find(|message| message.role == MessageRole::Compaction)
-        .expect("compaction marker");
-    assert!(marker.content.contains("handoff summary"));
-
-    let captured = requests.lock().await;
-    assert_eq!(captured.len(), 1);
-    assert_eq!(captured[0].system_prompt, old_prompt);
-    assert!(captured[0].disable_tools);
-    assert_eq!(
-        captured[0]
-            .history
-            .iter()
-            .find(|message| message.content == "old answer")
-            .map(|message| message.content.as_str()),
-        Some("old answer")
-    );
-    drop(captured);
-
-    let (pinned, synced) = store.pinned_prompt(&session.session_id).await.unwrap();
-    assert_ne!(pinned.as_deref(), Some(old_prompt));
-    assert_eq!(synced, service.kb().current_version().await.unwrap());
-    let usage = detail.summary.context_usage.clone();
-    assert!(usage.context_used > 0 && usage.context_used < 180_000);
-    let events = store
-        .list_events(&session.session_id, 0, 500)
-        .await
-        .unwrap();
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event.kind, SessionEventKind::CompactionStarted))
-    );
-    assert!(events.iter().any(|event| matches!(
-        event.kind,
-        SessionEventKind::CompactionFinished { success: true }
-    )));
-
-    let again = service.compact(&session.session_id).await.unwrap();
-    assert_eq!(requests.lock().await.len(), 1);
-    assert_eq!(again.messages.len(), detail.messages.len());
-
-    store
-        .insert_context_message(
-            &session.session_id,
-            MessageRole::User,
-            "after anchor",
-            "compact:after",
-            None,
-        )
-        .await
-        .unwrap();
-    let resumed = service
-        .resume_context(&session.session_id, "next")
-        .await
-        .unwrap();
-    assert!(
-        resumed
-            .messages
-            .first()
-            .is_some_and(|message| message.content.contains("handoff summary"))
-    );
-    assert!(
-        resumed
+        detail
             .messages
             .iter()
-            .any(|message| message.content == "after anchor")
+            .any(|message| message.message_id == marker.message_id)
     );
     assert!(
-        !resumed
+        !detail
             .messages
             .iter()
             .any(|message| message.content == "old question")
     );
-    assert!(
-        resumed
-            .messages
-            .iter()
-            .any(|message| message.content.contains("<report_state>"))
+    let conversation = memory.load(&session.session_id).await.unwrap();
+    assert_eq!(
+        rig_memory::summary_state(&conversation).summary,
+        compaction_summary_text()
     );
     service.delete_session(&session.session_id).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compaction_failure_leaves_anchor_prompt_and_usage_untouched() {
+async fn failed_canonical_compaction_leaves_history_untouched() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
-    let service = service.with_model_stream_provider(Arc::new(FailingStreamProvider));
     let session = service
         .create_session(&unique("compact-fail"), Some("runtime-doc"))
         .await
         .unwrap();
     store
-        .set_pinned_prompt(&session.session_id, "OLD PINNED PROMPT", 0)
-        .await
-        .unwrap();
-    store
-        .insert_context_message(
+        .insert_user_message(
             &session.session_id,
-            MessageRole::User,
-            "keep me",
-            "compact-fail:user",
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .update_context_usage(
-            &session.session_id,
-            &ContextUsage {
-                context_used: 190_000,
-                context_limit: 200_000,
-                ..ContextUsage::default()
+            &SendMessageRequest {
+                client_msg_id: unique("compact-fail-user"),
+                content: "keep me".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
             },
         )
         .await
         .unwrap();
     let before = service.session_detail(&session.session_id).await.unwrap();
-
-    assert!(service.compact(&session.session_id).await.is_err());
+    let error = store
+        .memory()
+        .await
+        .unwrap()
+        .apply_compaction(&session.session_id, "", None)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RuntimeError::InvalidRequest(_)));
     let after = service.session_detail(&session.session_id).await.unwrap();
-    let state = store.compaction_state(&session.session_id).await.unwrap();
-    assert!(state.summary.is_none());
-    assert!(state.up_to_message_id.is_none());
-    assert!(!after.summary.compacting);
-    assert_eq!(
-        store
-            .pinned_prompt(&session.session_id)
-            .await
-            .unwrap()
-            .0
-            .as_deref(),
-        Some("OLD PINNED PROMPT")
-    );
-    assert_eq!(
-        after.summary.context_usage.context_used,
-        before.summary.context_usage.context_used
-    );
-    assert_eq!(after.messages.len(), before.messages.len());
-    assert!(
-        !after
-            .messages
-            .iter()
-            .any(|message| message.role == MessageRole::Compaction)
-    );
+    assert_eq!(after.messages, before.messages);
     service.delete_session(&session.session_id).await.unwrap();
 }
 
@@ -2545,7 +2390,6 @@ async fn compaction_conflicts_while_a_run_is_active() {
         .create_run(&session.session_id, None, "main", "stub/echo")
         .await
         .unwrap();
-
     let error = service.compact(&session.session_id).await.unwrap_err();
     assert!(matches!(error, RuntimeError::CompactionConflict(_)));
     store
@@ -2561,113 +2405,35 @@ async fn compaction_conflicts_while_a_run_is_active() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compacting_state_survives_a_client_refresh_until_finished() {
+async fn canonical_compaction_excludes_the_new_user_message() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
-    let provider = Arc::new(BlockingSummaryProvider::new());
-    let release = Arc::clone(&provider);
-    let service = service.with_model_stream_provider(provider);
-    let session = service
-        .create_session(&unique("compact-state"), Some("runtime-doc"))
-        .await
-        .unwrap();
-    store
-        .insert_context_message(
-            &session.session_id,
-            MessageRole::User,
-            "summarize this",
-            "compact-state:user",
-            None,
-        )
-        .await
-        .unwrap();
-
-    let compact_session = session.session_id.clone();
-    let task_service = service.clone();
-    let handle = tokio::spawn(async move { task_service.compact(&compact_session).await });
-
-    let mut saw_compacting = false;
-    for _ in 0..100 {
-        let detail = store.get_session_detail(&session.session_id).await.unwrap();
-        if detail.summary.compacting {
-            saw_compacting = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(saw_compacting, "compaction state must be persisted");
-
-    release.release();
-    let result = handle.await.unwrap();
-    assert!(result.is_ok());
-    let detail = store.get_session_detail(&session.session_id).await.unwrap();
-    assert!(!detail.summary.compacting);
-    assert!(
-        detail
-            .messages
-            .iter()
-            .any(|message| message.role == MessageRole::Compaction)
-    );
-    service.delete_session(&session.session_id).await.unwrap();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn automatic_compaction_excludes_the_new_user_message_from_the_anchor() {
-    let _guard = test_lock().lock().await;
-    let (service, store) = test_service().await;
-    let (provider, requests) = RecordingStreamProvider::with_turns(vec![
-        vec![ModelStreamEvent::TextDelta(
-            compaction_summary_text().into(),
-        )],
-        vec![ModelStreamEvent::TextDelta("normal reply".into())],
-    ]);
-    let service = service.with_model_stream_provider(Arc::new(provider));
     let session = service
         .create_session(&unique("compact-auto"), Some("runtime-doc"))
         .await
         .unwrap();
     store
-        .set_pinned_prompt(&session.session_id, "OLD PINNED PROMPT", 0)
-        .await
-        .unwrap();
-    store
-        .insert_context_message(
+        .insert_user_message(
             &session.session_id,
-            MessageRole::User,
-            "old question",
-            "compact-auto:user",
-            None,
-        )
-        .await
-        .unwrap();
-    let anchor = store
-        .insert_context_message(
-            &session.session_id,
-            MessageRole::Assistant,
-            "old answer",
-            "compact-auto:assistant",
-            None,
-        )
-        .await
-        .unwrap();
-    store
-        .update_context_usage(
-            &session.session_id,
-            &ContextUsage {
-                context_used: 180_000,
-                context_limit: 200_000,
-                ..ContextUsage::default()
+            &SendMessageRequest {
+                client_msg_id: unique("compact-auto-old"),
+                content: "old question".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
             },
         )
         .await
         .unwrap();
-
+    store
+        .insert_assistant_message(&session.session_id, "old answer", "run_old")
+        .await
+        .unwrap();
     let new_content = "new request after auto compaction";
-    service
-        .post_message(
+    let (new_message, _) = store
+        .insert_user_message(
             &session.session_id,
             &SendMessageRequest {
-                client_msg_id: unique("compact-auto:new"),
+                client_msg_id: unique("compact-auto-new"),
                 content: new_content.into(),
                 comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
@@ -2675,35 +2441,18 @@ async fn automatic_compaction_excludes_the_new_user_message_from_the_anchor() {
         )
         .await
         .unwrap();
-    wait_for_idle(&store, &session.session_id).await;
-
-    let captured = requests.lock().await;
-    assert!(captured.len() >= 2);
-    assert!(captured[0].disable_tools);
-    assert!(
-        !captured[0]
-            .history
-            .iter()
-            .any(|message| message.content == new_content)
-    );
-    assert_eq!(captured[1].user_message, new_content);
-    drop(captured);
-
-    let state = store.compaction_state(&session.session_id).await.unwrap();
-    assert_eq!(
-        state.up_to_message_id.as_deref(),
-        Some(anchor.message_id.as_str())
-    );
+    store
+        .memory()
+        .await
+        .unwrap()
+        .apply_compaction(
+            &session.session_id,
+            compaction_summary_text(),
+            Some(&new_message.message_id),
+        )
+        .await
+        .unwrap();
     let detail = service.session_detail(&session.session_id).await.unwrap();
-    let new_message = detail
-        .messages
-        .iter()
-        .find(|message| message.role == MessageRole::User && message.content == new_content)
-        .expect("new user message");
-    assert_ne!(
-        state.up_to_message_id.as_deref(),
-        Some(new_message.message_id.as_str())
-    );
     let marker_index = detail
         .messages
         .iter()
@@ -2713,9 +2462,14 @@ async fn automatic_compaction_excludes_the_new_user_message_from_the_anchor() {
         .messages
         .iter()
         .position(|message| message.message_id == new_message.message_id)
-        .expect("new message position");
+        .expect("new message");
     assert!(marker_index < new_index);
-    assert!(detail.summary.context_usage.context_used < 180_000);
+    assert!(
+        !detail
+            .messages
+            .iter()
+            .any(|message| message.content == "old question")
+    );
     service.delete_session(&session.session_id).await.unwrap();
 }
 
@@ -3756,7 +3510,7 @@ async fn ask_user_skip_marks_skipped_and_continues() {
         .expect("pending question");
 
     let app = quire_runtime::http::router(service.clone());
-    let (status, _) = http_json(
+    let (status, body) = http_json(
         &app,
         axum::http::Method::POST,
         &format!(
@@ -3767,7 +3521,7 @@ async fn ask_user_skip_marks_skipped_and_continues() {
         Some(json!({"answers": [], "skipped": true})),
     )
     .await;
-    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(status, axum::http::StatusCode::OK, "{body}");
     wait_for_idle(&store, &session.session_id).await;
 
     let detail = service.session_detail(&session.session_id).await.unwrap();
@@ -3799,7 +3553,7 @@ async fn ask_user_skip_marks_skipped_and_continues() {
         request
             .history
             .iter()
-            .any(|message| message.content.contains("skipped questionnaire"))
+            .any(|message| message.content.contains("\"status\":\"skipped\""))
     }));
     drop(requests);
     service.delete_session(&session.session_id).await.unwrap();
@@ -4107,6 +3861,34 @@ async fn mcp_auth_token_is_masked_in_http_and_admin_receipts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_mcp_clients_reuse_one_initialized_connection() {
+    let _guard = test_lock().lock().await;
+    let (service, _store) = test_service().await;
+    let initializes = Arc::new(AtomicUsize::new(0));
+    let app = axum::Router::new()
+        .route("/mcp", axum::routing::post(counting_mcp_tools_list))
+        .with_state(Arc::clone(&initializes));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let binding = McpServerBinding {
+        server_id: unique("mcp-pool"),
+        name: "Pooled MCP".into(),
+        url: format!("http://{address}/mcp"),
+        auth_token: None,
+        tool_names: vec!["alpha_tool".into()],
+    };
+    let first = service.mcp().shared_client(&binding).await.unwrap();
+    let second = service.mcp().shared_client(&binding).await.unwrap();
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(initializes.load(Ordering::SeqCst), 1);
+    assert_eq!(second.dynamic_tools(&binding.tool_names).unwrap().len(), 1);
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mcp_sync_discovers_tools_and_preserves_admin_switches() {
     let _guard = test_lock().lock().await;
     let (service, _store) = test_service().await;
@@ -4366,7 +4148,7 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn tool_boundary_injects_pending_message_into_same_run() {
+async fn tool_boundary_supersedes_run_and_starts_queued_turn() {
     let _guard = test_lock().lock().await;
     let mock_state = Arc::new(MockChatState::default());
     let server_state = Arc::clone(&mock_state);
@@ -4503,7 +4285,12 @@ async fn tool_boundary_injects_pending_message_into_same_run() {
     let requests = mock_state.requests.lock().await;
     assert!(
         requests.len() >= 2,
-        "expected a second LLM request after the tool result"
+        "expected a second LLM request after the tool result; events={:?}; traces={:?}",
+        store
+            .list_events(&session.session_id, 0, 1_000)
+            .await
+            .unwrap(),
+        store.list_run_traces(&session.session_id).await.unwrap()
     );
     let second_messages = requests[1]["messages"]
         .as_array()
@@ -4543,49 +4330,35 @@ async fn tool_boundary_injects_pending_message_into_same_run() {
     assert!(
         events
             .iter()
-            .any(|event| matches!(event.kind, SessionEventKind::UserMessageInjected { .. }))
+            .any(|event| matches!(event.kind, SessionEventKind::TurnSuperseded))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event.kind, SessionEventKind::UserMessageAdded { .. }))
     );
 
-    let injected_message = detail
-        .messages
-        .iter()
-        .find(|message| message.content == "排队指令：请补充风险提示。")
-        .expect("injected user message must be persisted");
-    let injected_run_id = injected_message
-        .run_id
-        .as_deref()
-        .expect("inline message must belong to the active run");
+    assert!(detail.messages.iter().any(|message| {
+        message.content == "排队指令：请补充风险提示。" && message.run_id.is_none()
+    }));
     let traces = store.list_run_traces(&session.session_id).await.unwrap();
-    let trace = traces
+    let superseded = traces
         .iter()
-        .find(|trace| trace.run_id == injected_run_id)
-        .expect("injected run trace");
-    assert_eq!(trace.segments.len(), 3);
-    let Some(RunTraceSegment::Execution { tools, .. }) = trace.segments.first() else {
-        panic!(
-            "tool execution must precede the injected message: {:?}",
-            trace.segments
-        )
-    };
-    assert!(
-        tools
-            .iter()
-            .any(|tool| tool.tool_name == "set_session_title")
-    );
-    let Some(RunTraceSegment::UserMessage {
-        message_id,
-        content,
-        ..
-    }) = trace.segments.get(1)
-    else {
-        panic!("injected user message must follow the tool execution")
-    };
-    assert_eq!(message_id, &injected_message.message_id);
-    assert_eq!(content, "排队指令：请补充风险提示。");
-    let Some(RunTraceSegment::Text { text }) = trace.segments.get(2) else {
-        panic!("the next model round must follow the injected message")
-    };
-    assert_eq!(text, "已完成排队消息。");
+        .find(|trace| trace.status == "superseded")
+        .expect("superseded run trace");
+    assert!(superseded.segments.iter().any(|segment| matches!(
+        segment,
+        RunTraceSegment::Execution { tools, .. }
+            if tools.iter().any(|tool| tool.tool_name == "set_session_title")
+    )));
+    let completed = traces
+        .iter()
+        .find(|trace| trace.status == "completed")
+        .expect("queued turn trace");
+    assert!(completed.segments.iter().any(|segment| matches!(
+        segment,
+        RunTraceSegment::Text { text } if text == "已完成排队消息。"
+    )));
 
     service.delete_session(&session.session_id).await.unwrap();
     service.kb().delete_agent("main").await.unwrap();
@@ -5950,6 +5723,43 @@ async fn interrupt_flushes_residual_deltas_before_a_single_terminal_event() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn postgres_memory_appends_multiple_prompts() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("memory-append"), None)
+        .await
+        .unwrap();
+    let memory = store.memory().await.unwrap();
+    for index in 0..2 {
+        memory
+            .append_prompt(
+                &session.session_id,
+                &SendMessageRequest {
+                    client_msg_id: format!("memory-append-{index}"),
+                    content: format!("content {index}"),
+                    comment_refs: Vec::new(),
+                    attachment_ids: Vec::new(),
+                },
+                index == 0,
+            )
+            .await
+            .unwrap();
+        let conversation = memory.load(&session.session_id).await.unwrap();
+        assert_eq!(conversation.messages().len(), index + 1);
+    }
+    assert_eq!(
+        memory
+            .list_messages(&session.session_id)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
 #[tokio::test]
 async fn concurrent_queue_claims_have_one_winner() {
     let _guard = test_lock().lock().await;
@@ -5979,8 +5789,8 @@ async fn concurrent_queue_claims_have_one_winner() {
     let queue_ids = vec![item.queue_id.clone()];
 
     let (first, second) = tokio::join!(
-        store.claim_pending_batch(&session.session_id, "queue", &request, &queue_ids, false),
-        store.claim_pending_batch(&session.session_id, "queue", &request, &queue_ids, false),
+        store.claim_pending_batch(&session.session_id, &request, &queue_ids),
+        store.claim_pending_batch(&session.session_id, &request, &queue_ids),
     );
     let first = first.unwrap();
     let second = second.unwrap();
@@ -6039,19 +5849,18 @@ async fn unknown_events_are_forwarded_and_skipped_by_projection() {
         "event": "future_event",
         "future_field": 42
     });
-    sqlx::query(
-        r#"INSERT INTO session_events
-           (session_id, seq, run_id, agent_id, parent_run_id, event_type, event, created_at)
-           VALUES ($1, 2, 'run_main', 'main', NULL, 'future_event', $2, NOW())"#,
-    )
-    .bind(&session.session_id)
-    .bind(&payload)
-    .execute(store.pool())
-    .await
-    .unwrap();
-    sqlx::query("UPDATE agent_sessions SET last_event_seq = 2 WHERE session_id = $1")
-        .bind(&session.session_id)
-        .execute(store.pool())
+    let redis = redis::Client::open(service.config().redis_url.clone()).unwrap();
+    let mut connection = redis.get_multiplexed_async_connection().await.unwrap();
+    let allocated: u64 = redis::cmd("INCR")
+        .arg(format!("runtime:session:{}:hot_seq", session.session_id))
+        .query_async(&mut connection)
+        .await
+        .unwrap();
+    assert_eq!(allocated, 2);
+    let _: i64 = redis::cmd("RPUSH")
+        .arg(format!("runtime:session:{}:hot_events", session.session_id))
+        .arg(payload.to_string())
+        .query_async(&mut connection)
         .await
         .unwrap();
 
@@ -6187,21 +5996,22 @@ async fn heartbeat_reconcile_repairs_a_missing_publish() {
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
 
-    // Commit a real event without publishing it to Redis, simulating the lost
-    // terminal publish that previously left clients stuck until reconnect.
-    let mut tx = store.pool().begin().await.unwrap();
-    store
-        .append_event_in(
-            &mut tx,
-            &session.session_id,
-            "run_main",
-            "main",
-            None,
-            SessionEventKind::TurnFinished,
-        )
+    // Commit a hot event without publishing it, simulating a lost terminal publish.
+    let event = SessionEvent::new(2, "run_main", "main", None, SessionEventKind::TurnFinished);
+    let redis = redis::Client::open(service.config().redis_url.clone()).unwrap();
+    let mut connection = redis.get_multiplexed_async_connection().await.unwrap();
+    let allocated: u64 = redis::cmd("INCR")
+        .arg(format!("runtime:session:{}:hot_seq", session.session_id))
+        .query_async(&mut connection)
         .await
         .unwrap();
-    tx.commit().await.unwrap();
+    assert_eq!(allocated, 2);
+    let _: i64 = redis::cmd("RPUSH")
+        .arg(format!("runtime:session:{}:hot_events", session.session_id))
+        .arg(serde_json::to_string(&event).unwrap())
+        .query_async(&mut connection)
+        .await
+        .unwrap();
 
     let repaired = tokio::time::timeout(
         Duration::from_secs(5),

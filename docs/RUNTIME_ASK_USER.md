@@ -4,106 +4,121 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-session-protocol`, `quire-runtime`
-- **Related Notes:** `../notes/runtime_ask_user_suspend_resume.md`
+- **Related Notes:** `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_ask_user_suspend_resume.md`
 
 ## 1. Scope & Non-Goals
 
-This document governs structured `ask_user` questionnaire cards, durable run suspension, answer and
-skip handling, dismissal when a user bypasses a card, and the Session REST/SSE contract. It does not
-govern how the frontend renders freeform text or skip controls, report edits made after resumption,
-or the report protocol itself.
+This document governs one-shot `ask_user` questionnaires, mixed-tool batch policy, durable pending
+cards, structured answer/skip payloads, dismissal and continuation through a new AgentRunner turn.
+It does not use a serialized `AgentRun`, an inline hook wait or same-run `agent.resume`.
 
 ## 2. Canonical Design & Contract
 
-### Protocol
+### 2.1 Protocol and storage
 
-`ActiveRunStatus` adds `awaiting_input`. The session protocol exports:
+The session protocol retains:
 
-- `QuestionOption { id, label, description? }`
-- `QuestionItem { id, title, description?, multiple, required, options }` with no freeform fields
-- `QuestionAnswer { question_id, selected_option_ids, freeform_text?, skipped }`
-- `PendingQuestion { question_id, run_id, tool_call_id?, questions, created_at }`
-- `ResolvedQuestion { question, status, answers }`
-- `SessionDetail.pending_question: Option<PendingQuestion>`, restored from the latest pending row
-- `SessionDetail.resolved_questions: Vec<ResolvedQuestion>`, restored in creation order so history
-  can anchor each card to its originating `ask_user` tool call
+- `QuestionOption`, `QuestionItem`, `QuestionAnswer`, `PendingQuestion` and `ResolvedQuestion`;
+- `SessionDetail.pending_question` and `resolved_questions`;
+- `questionnaire_requested`, `questionnaire_answered` and `questionnaire_dismissed` events;
+- `ActiveRunStatus::AwaitingInput`.
 
-SSE additions:
+`agent_questions` remains the durable card store with pending/answered/skipped/dismissed states,
+optional originating `tool_call_id`, JSON questions/answers and timestamps.
 
-- `questionnaire_requested { question_id, tool_call_id?, questions }`
-- `questionnaire_answered { question_id, answers, skipped_all }`
-- `questionnaire_dismissed { question_id, reason }`
-
-`contracts/session-protocol.schema.json` includes all new types and both session fields.
-
-### Storage
-
-The consolidated `migrations/0001_init.sql` adds `agent_questions`:
-
-- `question_id TEXT PRIMARY KEY`
-- `session_id` FK to `agent_sessions` with cascade delete
-- `run_id`, optional `tool_call_id`, `questions JSONB`, nullable `answers JSONB`
-- `status` constrained to `pending`, `answered`, `skipped`, `dismissed`
-- `created_at`, `resolved_at`
-
-`RuntimeStore` creates pending questions, loads the latest pending card and the resolved question
-history for `SessionDetail`, resolves one pending card, dismisses all pending cards for a session,
-and transitions the suspended run.
-
-### ask_user suspension
-
-`ask_user` is a built-in tool in the model allow-list. Its input is only
-`questions: Vec<QuestionItem>`. When the rig provider sees the call it:
-
-1. emits `ToolCallStarted` for `ask_user`;
-2. emits `QuestionnaireRequested` with the questions and tool-call ID;
-3. emits `ToolCallFinished` with status `awaiting_input`;
-4. ends the model loop without requesting another model turn.
-
-The runtime service creates an `agent_questions` row, emits `questionnaire_requested`, persists any
-pre-question assistant text, stores reported usage, and marks the run + session `awaiting_input`.
-No long-lived connection or task is held. The suspended run keeps an open `finished_at` until it is
-answered or dismissed; startup recovery only rewrites `running` runs. If a crash occurs before the
-transition, the pending card is still available from `SessionDetail.pending_question`.
-
-### Answer, skip and dismissal
-
-`POST /api/sessions/{session_id}/questions/{question_id}/answer` accepts:
+Answers sent to the model use only `AskUserAnswerPayload`:
 
 ```json
-{"answers": [{"question_id": "scope", "selected_option_ids": ["q3"], "freeform_text": null, "skipped": false}], "skipped": false}
+{
+  "kind": "ask_user_response",
+  "question_id": "q_01JXYZ",
+  "tool_call_id": "run_01JABC:call_99",
+  "status": "answered",
+  "skipped_all": false,
+  "answers": [
+    {
+      "question_id": "benchmark_scope",
+      "question_title": "请选择对标高校范围",
+      "selected_option_ids": ["q3"],
+      "selected_option_labels": ["Q3"],
+      "skipped": false
+    }
+  ]
+}
 ```
 
-The service requires the card to be `pending`, validates provided question/option IDs, and stores
-`answered` or `skipped` with the structured answers. It emits `questionnaire_answered`, writes a
-tool-role context message containing the answers or skip notice, finalizes the suspended run, and
-starts a new continuation run. `skipped: true` skips the whole card; per-answer `skipped` supports
-single-question skips.
+`QuestionnaireResolutionStatus` is `answered` or `skipped`; `skipped_all: true` uses an empty answer
+list. Labels and titles are resolved from the stored question definition. The payload is exported in
+`contracts/session-protocol.schema.json`.
 
-`POST /api/sessions/{session_id}/messages` is never blocked by `awaiting_input`. After a new user
-message is inserted, every pending card is marked `dismissed`, `questionnaire_dismissed` is emitted
-with reason `superseded_by_user_message`, the suspended run is finalized, and a new turn starts with
-the user's message.
+### 2.2 One-shot tool and mixed batches
+
+`ask_user` validates non-empty question IDs/titles and options, publishes `AskUserRequestedMeta`
+through `ToolContext::insert_result`, and immediately returns an `awaiting_input` receipt. It never
+waits for a user response inside the tool or hook.
+
+`QuestionHook::on_model_turn_finished` records whether the accepted assistant turn contains
+`ask_user`. If it does, every sibling tool call—before or after the question—is handled before preview
+or execution:
+
+1. emit its `ToolCallStarted`;
+2. emit `ToolCallFinished` with `status = "skipped"` and a structured reason;
+3. return a skipped dispatch action so no side effect occurs.
+
+This policy is position-independent. It avoids both lost prefix results and execution of stale suffix
+writes after an answer. The frontend displays skipped calls as terminal “已跳过”.
+
+For the question itself, the hook emits start, the tool executes once, then the outcome hook creates
+the questionnaire event, emits `ToolCallFinished { status: "awaiting_input" }` and stops the Runner
+with an internal reason. The driver treats that cancellation as a normal suspension, commits the
+canonical cancelled history to rig-memory and does not mark the run failed. Tool validation/execution
+failures without question metadata continue to tool audit and receive a failed finish instead.
+
+### 2.3 Suspension
+
+The service's existing `EventSink` creates the pending question before publishing its request event,
+then the run/session become `awaiting_input`. No model connection or task remains open. Any assistant
+text and accepted tool results are already represented in canonical rig-memory history and the hot
+trace.
+
+Startup recovery rewrites only `running` runs. A durable pending card remains visible after refresh or
+restart even if the final status transition was interrupted.
+
+### 2.4 Answer, skip and dismissal
+
+`POST /api/sessions/{session_id}/questions/{question_id}/answer` validates that the card is pending,
+validates question/option IDs, stores `answered` or `skipped`, emits `questionnaire_answered`, and
+finalizes the suspended run's cold trace.
+
+The answer payload is serialized as JSON and appended to canonical memory as an **internal, invisible
+prompt**. It is the only model input for the continuation turn. There is no
+`The user answered questionnaire...` prose, synthetic tool-role text, or second
+`Continue the task...` user message. The assistant response starts a new run with the standard
+lifecycle and visible assistant projection.
+
+A normal user message may bypass the card. Pending cards become `dismissed` with reason
+`superseded_by_user_message`, their suspended runs are finalized, and the user's standard new turn
+wins. Pending queue contents are not consumed by question suspension.
 
 ## 3. Invariants & Verification
 
-- A pending card is durable and appears in `SessionDetail.pending_question` after refresh/restart.
-- Resolved cards remain available in `SessionDetail.resolved_questions`; `tool_call_id` matches the
-  persisted `ask_user` trace entry so the frontend can render the card under that call.
-- Answering validates pending state; a resolved card cannot be answered again.
-- Skip and dismiss both produce their SSE event and a new or finalized run as appropriate.
-- A new message always wins over a pending card and starts a normal turn.
-- Question payloads contain no freeform capability fields; rendering policy is frontend-owned.
+- A pending card survives refresh/restart and resolved cards remain anchored to the original call.
+- Mixed batches execute no sibling tool and every sibling has terminal skipped audit/UI state.
+- `ask_user` never holds a task while waiting for a person.
+- Answers and whole-card skips use one pure JSON payload with resolved labels and no prose continuation.
+- Continuation uses a new AgentRunner turn, not an unexposed Runner checkpoint or same-run resume.
+- Internal answer prompts remain canonical but do not render as user bubbles.
+- A new user message dismisses the pending card and wins; a resolved card cannot be answered again.
+- Failed question calls do not leave running tool rows.
 
-Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
+Coverage includes:
 
 - `ask_user_suspends_until_answers_resume_the_run`
 - `ask_user_skip_marks_skipped_and_continues`
 - `new_message_dismisses_pending_question_and_starts_a_new_turn`
-
-Unit coverage in `crates/quire-runtime/src/rig_agent/mod.rs`:
-
-- `ask_user_emits_questionnaire_and_pauses_the_run`
+- `ask_user_suspension_keeps_pending_queue_untouched`
+- `HookTestHarness` mixed-batch sibling skipping
+- session-protocol structured payload/label serialization tests
 
 Full gate:
 
@@ -111,4 +126,5 @@ Full gate:
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+just schema
 ```

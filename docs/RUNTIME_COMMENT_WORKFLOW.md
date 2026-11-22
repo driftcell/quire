@@ -91,17 +91,19 @@ reference fields must be non-empty and a message cannot contain duplicate thread
 ```
 
 Runtime migration `0006_session_comment_refs.sql` adds `comment_refs JSONB NOT NULL DEFAULT '[]'`
-to `agent_messages` and `session_pending_queue`. Queue edits replace `content` and `comment_refs`
-together while preserving attachments, source and the queue row's thread ID. Consecutive queued
-comment items still form one user message: their references are flattened in FIFO order, non-empty
-content is joined with blank lines and attachment IDs are deduplicated. Historical XML payloads are
-outside this clean contract and are not parsed or migrated.
+to `session_pending_queue`. Canonical conversation messages keep the same fields in their rig-memory
+message-receipt Asides. Queue edits replace `content` and `comment_refs` together while preserving
+attachments, source and the queue row's thread ID. Consecutive queued comment items still form one
+user message: their references are flattened in FIFO order, non-empty content is joined with blank
+lines and attachment IDs are deduplicated. Historical XML payloads are outside this clean contract
+and are not parsed or migrated.
 
 `quire-runtime/src/comment_refs.rs` is the single model-input projection. Ordinary messages remain
 unchanged. Messages with references or attachments become one JSON object containing `instruction`
 plus the non-empty `comment_refs` and/or `attachment_ids`, serialized with `serde_json`; the same
-projection covers new turns, queued batches, retry, history and compaction. The current turn is
-removed from stored history by `message_id`, not by matching content. Comment-only, attachment-only
+projection covers new turns, queued batches, retry and canonical compaction. A current prompt that
+already ends canonical memory is supplied once without duplicating it in Runner history; automatic
+compaction can exclude a newly appended prompt by its UI `message_id`. Comment-only, attachment-only
 and combined messages therefore remain model-visible even with empty content.
 
 ### Composer and message stream

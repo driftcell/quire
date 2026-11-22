@@ -28,7 +28,7 @@ use crate::{
     comment_refs::render_stored_user_message,
     compaction::{
         COMPACTION_INSTRUCTION, COMPACTION_MODE_MESSAGE, COMPACTION_TIMEOUT_SECS,
-        assemble_context_history, estimate_context_tokens, validate_compaction_summary,
+        estimate_context_tokens,
     },
     config::Config,
     control::{RunRegistry, RunTurnGuard, spawn_interrupt_listener},
@@ -251,6 +251,10 @@ impl PendingQueueCoordinator {
         self.notify.notified().await;
     }
 
+    pub(crate) async fn has_pending(&self, session_id: &str) -> RuntimeResult<bool> {
+        Ok(!self.store.list_pending_queue(session_id).await?.is_empty())
+    }
+
     fn notify_one(&self) {
         self.notify.notify_one();
     }
@@ -259,8 +263,6 @@ impl PendingQueueCoordinator {
     pub(crate) async fn take_pending_batch_locked(
         &self,
         session_id: &str,
-        run_id: &str,
-        inject_into_run: bool,
     ) -> RuntimeResult<Option<PendingBatch>> {
         let items = self.store.list_pending_queue(session_id).await?;
         let Some(first) = items.first() else {
@@ -306,7 +308,7 @@ impl PendingQueueCoordinator {
             .collect::<Vec<_>>();
         let Some(message) = self
             .store
-            .claim_pending_batch(session_id, run_id, &request, &queue_ids, inject_into_run)
+            .claim_pending_batch(session_id, &request, &queue_ids)
             .await?
         else {
             return Ok(None);
@@ -317,18 +319,6 @@ impl PendingQueueCoordinator {
     /// Release the in-memory gate when a session is deleted.
     pub(crate) async fn remove_session_gate(&self, session_id: &str) {
         self.session_gates.lock().await.remove(session_id);
-    }
-
-    /// Acquire the session gate and take one pending batch.
-    pub(crate) async fn take_pending_batch(
-        &self,
-        session_id: &str,
-        run_id: &str,
-    ) -> RuntimeResult<Option<PendingBatch>> {
-        let gate = self.session_gate(session_id).await;
-        let _guard = gate.lock_owned().await;
-        self.take_pending_batch_locked(session_id, run_id, true)
-            .await
     }
 
     async fn emit_queue_update(&self, session_id: &str) -> RuntimeResult<()> {
@@ -824,11 +814,7 @@ impl RuntimeService {
         if self.store.latest_running_run(session_id).await?.is_some() {
             return Ok(None);
         }
-        let Some(batch) = self
-            .queue
-            .take_pending_batch_locked(session_id, "queue", false)
-            .await?
-        else {
+        let Some(batch) = self.queue.take_pending_batch_locked(session_id).await? else {
             return Ok(None);
         };
         let model_input = render_stored_user_message(&batch.message);
@@ -885,35 +871,11 @@ impl RuntimeService {
             },
         )
         .await?;
-        let continuation = if skipped {
-            format!(
-                "The user skipped questionnaire `{}`. Continue the task without those details.",
-                question.question_id
-            )
-        } else {
-            format!(
-                "The user answered questionnaire `{}`:\n{}",
-                question.question_id,
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "questions": question.questions,
-                    "answers": answers,
-                }))?
-            )
-        };
-        self.store
-            .insert_context_message(
-                session_id,
-                MessageRole::Tool,
-                &continuation,
-                &format!("question-context:{}", question.question_id),
-                Some(&question.run_id),
-            )
+        let payload = quire_session_protocol::AskUserAnswerPayload::from_resolution(
+            &question, &answers, skipped,
+        );
+        self.spawn_turn(session_id, serde_json::to_string(&payload)?)
             .await?;
-        self.spawn_turn(
-            session_id,
-            "Continue the task using the questionnaire response.".to_string(),
-        )
-        .await?;
         self.store.get_session_detail(session_id).await
     }
 
@@ -1177,30 +1139,11 @@ impl RuntimeService {
             ));
         }
 
-        let state = self.store.compaction_state(session_id).await?;
-        let messages = self.store.list_messages(session_id).await?;
-        let start = state
-            .up_to_message_id
-            .as_deref()
-            .and_then(|anchor| {
-                messages
-                    .iter()
-                    .position(|message| message.message_id == anchor)
-                    .map(|index| index.saturating_add(1))
-            })
-            .unwrap_or(0);
-        let new_messages: Vec<&SessionMessage> = messages
-            .iter()
-            .skip(start)
-            .filter(|message| {
-                matches!(
-                    message.role,
-                    MessageRole::User | MessageRole::Assistant | MessageRole::Tool
-                ) && Some(message.message_id.as_str()) != exclude_message_id
-            })
-            .collect();
-
-        if new_messages.is_empty() {
+        let memory = self.store.memory().await?;
+        let history = memory
+            .history_for_compaction(session_id, exclude_message_id)
+            .await?;
+        if history.is_empty() {
             let prompt = self
                 .kb
                 .system_prompt_for(session.kb_branch.as_deref())
@@ -1215,82 +1158,55 @@ impl RuntimeService {
             return self.store.get_session_detail(session_id).await;
         }
 
-        let (old_prompt, synced_version) = match self.store.pinned_prompt(session_id).await? {
-            (Some(prompt), version) => (prompt, version),
-            (None, version) => (
-                self.kb
-                    .system_prompt_for(session.kb_branch.as_deref())
-                    .await?
-                    .as_str()
-                    .to_string(),
-                version,
-            ),
+        let old_prompt = match self.store.pinned_prompt(session_id).await? {
+            (Some(prompt), _) => prompt,
+            (None, _) => self
+                .kb
+                .system_prompt_for(session.kb_branch.as_deref())
+                .await?
+                .as_str()
+                .to_string(),
         };
-        let history_messages: Vec<SessionMessage> = messages
-            .iter()
-            .filter(|message| Some(message.message_id.as_str()) != exclude_message_id)
-            .cloned()
-            .collect();
-        let history = assemble_context_history(
-            &history_messages,
-            &state,
-            session.doc_id.as_deref(),
-            synced_version,
-        );
-        let mut history = history;
-        history.push(ContextMessage {
-            role: MessageRole::System,
-            content: COMPACTION_MODE_MESSAGE.to_string(),
-        });
-        let agent = self
+        let agent_definition = self
             .kb
             .get_default_agent_on(session.kb_branch.as_deref())
             .await?;
-        let model_route = agent
+        let model_route = agent_definition
             .as_ref()
             .map(|agent| agent.model.clone())
             .unwrap_or_else(|| self.config.default_model.clone());
-        let request = ModelTurnRequest {
-            session_id: session_id.to_string(),
-            run_id: "compaction".into(),
-            agent_id: "main".into(),
-            system_prompt: old_prompt,
-            user_message: COMPACTION_INSTRUCTION.to_string(),
-            history,
-            doc_id: session.doc_id.clone(),
-            kb_branch: session.kb_branch.clone(),
-            model_route,
-            allowed_tools: Vec::new(),
-            disable_tools: true,
-            cancellation: CancellationToken::new(),
-        };
-        let mut stream = self.model_stream.stream_turn(request).await?;
-        let summary = tokio::time::timeout(Duration::from_secs(COMPACTION_TIMEOUT_SECS), async {
-            let mut summary = String::new();
-            while let Some(item) = stream.next().await {
-                if let ModelStreamEvent::TextDelta(delta) = item? {
-                    summary.push_str(&delta);
-                }
-            }
-            Ok::<String, RuntimeError>(summary.trim().to_string())
-        })
+        let model = self.models.build_rig_model(&model_route).await?;
+        let agent = rig::agent::AgentBuilder::new(model)
+            .preamble(old_prompt)
+            .default_max_turns(1)
+            .build();
+        let documents = vec![
+            rig::completion::Document {
+                id: "quire-compaction-mode".into(),
+                text: COMPACTION_MODE_MESSAGE.into(),
+                additional_props: Default::default(),
+            },
+            rig::completion::Document {
+                id: "quire-report-state".into(),
+                text: format!("doc_id: {}", session.doc_id.as_deref().unwrap_or("none")),
+                additional_props: Default::default(),
+            },
+        ];
+        let response = tokio::time::timeout(
+            Duration::from_secs(COMPACTION_TIMEOUT_SECS),
+            agent
+                .prompt_typed::<crate::compaction::CompactionHandoff>(COMPACTION_INSTRUCTION)
+                .history(history)
+                .documents(documents)
+                .max_turns(1)
+                .retries(1),
+        )
         .await
-        .map_err(|_| RuntimeError::Internal("compaction summary timed out".into()))??;
-        if summary.is_empty() {
-            return Err(RuntimeError::Internal(
-                "compaction summary was empty".into(),
-            ));
-        }
-        if !validate_compaction_summary(&summary) {
-            tracing::warn!(
-                summary_len = summary.len(),
-                session_id,
-                "compaction summary validation failed"
-            );
-            return Err(RuntimeError::Internal(
-                "compaction summary did not match the required structured handoff".into(),
-            ));
-        }
+        .map_err(|_| RuntimeError::Internal("compaction summary timed out".into()))?
+        .map_err(|error| {
+            RuntimeError::Internal(format!("structured compaction failed: {error}"))
+        })?;
+        let summary = response.output.to_markdown();
 
         let latest_prompt = self
             .kb
@@ -1305,16 +1221,11 @@ impl RuntimeService {
             context_used: estimated_tokens,
             context_limit: session.context_usage.context_limit,
         };
-        let up_to_message_id = new_messages
-            .last()
-            .map(|message| message.message_id.clone())
-            .unwrap_or_default();
         self.store
             .apply_compaction(&CompactionWrite {
                 session_id,
                 summary: &summary,
-                up_to_message_id: &up_to_message_id,
-                marker_before_message_id: exclude_message_id,
+                exclude_message_id,
                 pinned_system_prompt: latest_prompt.as_str(),
                 kb_version: latest_version,
                 context_usage: &context_usage,
@@ -1474,10 +1385,14 @@ impl RuntimeService {
         let pinned = self.ensure_pinned_prompt(session_id).await?;
         let current = self.kb.current_version().await?;
         let session = self.store.get_session_summary(session_id).await?;
-        let state = self.store.compaction_state(session_id).await?;
-        let messages = self.store.list_messages(session_id).await?;
-        let history =
-            assemble_context_history(&messages, &state, session.doc_id.as_deref(), pinned.1);
+        let history = vec![ContextMessage {
+            role: MessageRole::System,
+            content: format!(
+                "<report_state>\ndoc_id: {}\nsynced_kb_version: {}\n</report_state>",
+                session.doc_id.as_deref().unwrap_or("none"),
+                pinned.1
+            ),
+        }];
         Ok(build_resume_context(
             &pinned.0,
             &history,
@@ -1548,6 +1463,17 @@ impl RuntimeService {
 
     async fn spawn_turn(&self, session_id: &str, content: String) -> RuntimeResult<String> {
         self.maybe_auto_compact(session_id, None).await;
+        let request = SendMessageRequest {
+            client_msg_id: short_id("internal"),
+            content: content.clone(),
+            comment_refs: Vec::new(),
+            attachment_ids: Vec::new(),
+        };
+        self.store
+            .memory()
+            .await?
+            .append_prompt(session_id, &request, false)
+            .await?;
         let (run_id, token) = self.prepare_turn(session_id).await?;
         self.launch_turn(session_id, &run_id, content, None, token);
         Ok(run_id)
@@ -1674,23 +1600,19 @@ impl RuntimeService {
         session_id: &str,
         run_id: &str,
         content: &str,
-        current_message_id: Option<&str>,
+        _current_message_id: Option<&str>,
         token: &CancellationToken,
     ) -> RuntimeResult<()> {
         let session = self.store.get_session_summary(session_id).await?;
         let (pinned, synced_version) = self.ensure_pinned_prompt(session_id).await?;
         let kb_version = self.kb.current_version().await?;
-        let state = self.store.compaction_state(session_id).await?;
-        let mut messages = self.store.list_messages(session_id).await?;
-        if let Some(message_id) = current_message_id
-            && let Some(index) = messages
-                .iter()
-                .rposition(|message| message.message_id == message_id)
-        {
-            messages.remove(index);
-        }
-        let history =
-            assemble_context_history(&messages, &state, session.doc_id.as_deref(), synced_version);
+        let history = vec![ContextMessage {
+            role: MessageRole::System,
+            content: format!(
+                "<report_state>\ndoc_id: {}\nsynced_kb_version: {synced_version}\n</report_state>",
+                session.doc_id.as_deref().unwrap_or("none")
+            ),
+        }];
         let context = build_resume_context(&pinned, &history, content, kb_version, synced_version);
         if token.is_cancelled() {
             self.finish_cancelled_run(run_id).await?;
@@ -1725,12 +1647,15 @@ impl RuntimeService {
             allowed_tools,
             disable_tools: false,
             cancellation: token.clone(),
+            prompt_recorded: true,
+            persist_history: true,
         };
         let mut stream = self.model_stream.stream_turn(request).await?;
         let mut tick = tokio::time::interval(Duration::from_millis(50));
         let mut response = String::new();
         let mut reported_usage = None;
         let mut suspended_question: Option<PendingQuestion> = None;
+        let mut superseded = false;
         loop {
             tokio::select! {
                 _ = token.cancelled() => {
@@ -1743,6 +1668,9 @@ impl RuntimeService {
                 }
                 item = stream.next() => {
                     match item {
+                        Some(Ok(ModelStreamEvent::Superseded)) => {
+                            superseded = true;
+                        }
                         Some(Ok(event)) => {
                             let action = project(main_scope.clone(), event);
                             if let Some(text) = action.main_text_delta() {
@@ -1784,6 +1712,21 @@ impl RuntimeService {
             }
             self.store.mark_run_awaiting_input(run_id).await?;
             let _ = question;
+            return Ok(());
+        }
+        if superseded {
+            if !response.is_empty() {
+                self.store
+                    .insert_assistant_message(session_id, &response, run_id)
+                    .await?;
+            }
+            if let Some(usage) = reported_usage {
+                self.store.update_context_usage(session_id, &usage).await?;
+            }
+            let _ = self
+                .store
+                .finish_run_with_event(run_id, "superseded", None, SessionEventKind::TurnSuperseded)
+                .await?;
             return Ok(());
         }
         self.store

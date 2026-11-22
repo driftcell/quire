@@ -13,7 +13,6 @@ import {
   appendTextSegment,
   appendThinkingSegment,
   appendToolSegment,
-  appendUserMessageSegment,
   emptyLiveTrace,
   ensureLiveTraceStarted,
   finishThinkingSegment,
@@ -240,19 +239,6 @@ export function reduceSessionEvent(
     case "user_message_added":
       effects.push({ type: "invalidate", target: "session" });
       break;
-    case "user_message_injected":
-      next = {
-        ...next,
-        liveMain: appendUserMessageSegment(
-          finishMainThinking(next, event.run_id, eventTs),
-          event.message_id,
-          event.content,
-          event.created_at,
-        ),
-      };
-      effects.push({ type: "invalidate", target: "session" });
-      effects.push({ type: "invalidate", target: "traces" });
-      break;
     case "turn_started":
       next = {
         ...next,
@@ -378,7 +364,9 @@ export function reduceSessionEvent(
         status:
           event.status === "failed" || event.status === "error"
             ? "failed"
-            : "completed",
+            : event.status === "skipped"
+              ? "skipped"
+              : "completed",
         outputPreview: event.output_preview,
         durationMs: event.duration_ms,
         truncated: event.truncated,
@@ -552,6 +540,16 @@ export function reduceSessionEvent(
         liveRunStatus: "idle",
       };
       effects.push({ type: "refetch-and-clear", runId: event.run_id });
+      effects.push({ type: "invalidate", target: "sessions" });
+      break;
+    case "turn_superseded":
+      next = {
+        ...next,
+        ...finishAllThinking(next, eventTs),
+        liveRunStatus: "idle",
+      };
+      effects.push({ type: "refetch-and-clear", runId: event.run_id });
+      effects.push({ type: "invalidate", target: "traces" });
       effects.push({ type: "invalidate", target: "sessions" });
       break;
     case "turn_failed":

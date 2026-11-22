@@ -17,10 +17,7 @@ use quire_store::{
 };
 use rmcp::{
     ErrorData,
-    handler::server::{
-        tool::Extension,
-        wrapper::{Json, Parameters},
-    },
+    handler::server::wrapper::{Json, Parameters},
     tool, tool_router,
 };
 use serde_json::json;
@@ -69,7 +66,7 @@ impl QuireMcpServer {
     )]
     pub async fn create_report(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<CreateReportParams>,
     ) -> Result<Json<CreateReportReceipt>, ErrorData> {
         let title = request.title.trim();
@@ -89,14 +86,14 @@ impl QuireMcpServer {
                 None,
             ));
         }
-        let context = RequestContext::from_parts(&parts).map_err(|error| {
+        let context = request_context(&context)?;
+        let session_id = context.session_id.ok_or_else(|| {
             invalid_params(
-                error.to_string(),
-                "Use 1-64 letters/digits plus '-' '_' '.' in X-Session-Id and a short X-Actor.",
+                "create_report requires a session identity",
+                "Send X-Session-Id or per-call _meta.quire.session_id.",
                 None,
             )
         })?;
-        let session_id = context.session_id;
         let actor = context.actor;
         let doc_id = match request
             .doc_id
@@ -109,7 +106,7 @@ impl QuireMcpServer {
         };
 
         let mut document = ReportDocument::new(doc_id);
-        document.session_id = session_id;
+        document.session_id = Some(session_id);
         document.cover.enabled = request.enable_cover.unwrap_or(true);
         document.cover.title = title.to_string();
         document.toc.enabled = request.enable_toc.unwrap_or(true);
@@ -342,7 +339,7 @@ impl QuireMcpServer {
     )]
     pub async fn apply_operations(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ApplyOperationsParams>,
     ) -> Result<Json<ApplyOperationsReceipt>, ErrorData> {
         if request.summary.trim().is_empty() {
@@ -352,7 +349,7 @@ impl QuireMcpServer {
                 None,
             ));
         }
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let expected_revision = parse_revision(request.expected_revision)?;
         let source_upserts = inline_source_upserts(request.sources)?;
@@ -410,10 +407,10 @@ impl QuireMcpServer {
     )]
     pub async fn rollback_revision(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<RollbackParams>,
     ) -> Result<Json<RollbackReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let target_revision = parse_revision(request.target_revision)?;
         let result = self
@@ -449,7 +446,7 @@ impl QuireMcpServer {
     )]
     pub async fn upsert_sources(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<UpsertSourcesParams>,
     ) -> Result<Json<UpsertSourcesReceipt>, ErrorData> {
         if request.sources.is_empty() {
@@ -459,7 +456,7 @@ impl QuireMcpServer {
                 None,
             ));
         }
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let upserts: Vec<SourceUpsert> = request
             .sources
@@ -517,10 +514,10 @@ impl QuireMcpServer {
     )]
     pub async fn set_cover(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<SetCoverParams>,
     ) -> Result<Json<SetCoverReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let patch = request.cover_patch;
         let (result, updated) = self
@@ -554,10 +551,10 @@ impl QuireMcpServer {
     )]
     pub async fn configure_toc(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ConfigureTocParams>,
     ) -> Result<Json<ConfigureTocReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         if let Some(depth) = request.max_depth
             && !(1..=3).contains(&depth)
         {
@@ -621,10 +618,10 @@ impl QuireMcpServer {
     )]
     pub async fn configure_references(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ConfigureReferencesParams>,
     ) -> Result<Json<ConfigureReferencesReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let (result, document) = self
             .apply_with_reload(&doc_id, &actor, "configure_references", |document| {
@@ -684,10 +681,10 @@ impl QuireMcpServer {
     )]
     pub async fn configure_page_chrome(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ConfigurePageChromeParams>,
     ) -> Result<Json<ConfigurePageChromeReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         if let Some(expected) = request.base_revision {
             let current = self
@@ -736,10 +733,10 @@ impl QuireMcpServer {
     )]
     pub async fn update_style_and_css(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<UpdateStyleParams>,
     ) -> Result<Json<UpdateStyleReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         for (name, value) in &request.tokens_patch {
             if !is_valid_css_token_name(name) {
                 return Err(invalid_params(
@@ -896,10 +893,10 @@ impl QuireMcpServer {
     )]
     pub async fn add_comment(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<AddCommentParams>,
     ) -> Result<Json<AddCommentReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let block_id = parse_block_id(&request.block_id)?;
         let end_block_id = request
@@ -966,10 +963,10 @@ impl QuireMcpServer {
     )]
     pub async fn reply_comment(
         &self,
-        Extension(parts): Extension<Parts>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ReplyCommentParams>,
     ) -> Result<Json<ReplyCommentReceipt>, ErrorData> {
-        let actor = request_context(&parts)?.actor;
+        let actor = request_context(&context)?.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let addressed_rev = request.addressed_rev.map(parse_revision).transpose()?;
         let thread = self
@@ -1201,11 +1198,22 @@ fn protocol_error(error: ProtocolError) -> ErrorData {
     )
 }
 
-fn request_context(parts: &Parts) -> Result<RequestContext, ErrorData> {
-    RequestContext::from_parts(parts).map_err(|error| {
+// rmcp moves params._meta into RequestContext.meta before tool extraction; it is
+// not guaranteed to remain in the tool's Extensions map.
+fn request_context(
+    context: &rmcp::service::RequestContext<rmcp::RoleServer>,
+) -> Result<RequestContext, ErrorData> {
+    let parts = context.extensions.get::<Parts>().ok_or_else(|| {
         invalid_params(
-            error.to_string(),
-            "Use 1-64 letters/digits plus '-' '_' '.' in X-Session-Id and a short X-Actor.",
+            "MCP request is missing HTTP context",
+            "Use the Quire streamable HTTP transport.",
+            None,
+        )
+    })?;
+    RequestContext::from_mcp(parts, Some(&context.meta)).map_err(|error| {
+        invalid_params(
+            error,
+            "Use matching X-Session-Id/X-Actor headers or _meta.quire.{session_id,run_id,agent_id}.",
             None,
         )
     })

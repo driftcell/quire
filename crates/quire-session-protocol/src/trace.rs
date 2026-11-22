@@ -261,9 +261,9 @@ fn settles_main_thinking(kind: &SessionEventKind) -> bool {
         SessionEventKind::TextDelta { .. }
             | SessionEventKind::ToolCallStarted { .. }
             | SessionEventKind::SubagentStarted { .. }
-            | SessionEventKind::UserMessageInjected { .. }
             | SessionEventKind::QuestionnaireRequested { .. }
             | SessionEventKind::TurnFinished
+            | SessionEventKind::TurnSuperseded
             | SessionEventKind::TurnFailed { .. }
     )
 }
@@ -352,6 +352,10 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
             }
             SessionEventKind::TurnFinished => {
                 trace.summary.status = "completed".to_string();
+                trace.summary.duration_ms = elapsed_ms(trace.started_at, event.timestamp);
+            }
+            SessionEventKind::TurnSuperseded => {
+                trace.summary.status = "superseded".to_string();
                 trace.summary.duration_ms = elapsed_ms(trace.started_at, event.timestamp);
             }
             SessionEventKind::TurnFailed { recoverable, .. } => {
@@ -556,17 +560,6 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                     );
                 }
             }
-            SessionEventKind::UserMessageInjected {
-                message_id,
-                content,
-                created_at,
-            } => {
-                trace.summary.segments.push(RunTraceSegment::UserMessage {
-                    message_id: message_id.clone(),
-                    content: content.clone(),
-                    created_at: *created_at,
-                });
-            }
             SessionEventKind::SyncRequired { .. }
             | SessionEventKind::ContextUsage { .. }
             | SessionEventKind::QuestionnaireRequested { .. }
@@ -611,10 +604,6 @@ mod tests {
             (
                 "subagent_resume",
                 include_str!("../../../contracts/fixtures/session-events/subagent_resume.json"),
-            ),
-            (
-                "inline_user_message",
-                include_str!("../../../contracts/fixtures/session-events/inline_user_message.json"),
             ),
             (
                 "session_control_frames",

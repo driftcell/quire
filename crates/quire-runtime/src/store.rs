@@ -1,12 +1,14 @@
 //! PostgreSQL persistence for sessions, messages, runs, events and tool calls.
 
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use quire_protocol::short_id;
 use quire_session_protocol::{
-    ActiveRunStatus, AttachmentMeta, MessageRole, PendingQuestion, PendingQueueItem,
-    PendingQueueSource, QuestionAnswer, QuestionItem, ResolvedQuestion, RunTraceSegment,
-    RunTraceSubagent, RunTraceSummary, SendMessageRequest, SessionCommentRef, SessionDetail,
-    SessionEvent, SessionEventKind, SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
+    ActiveRunStatus, AttachmentMeta, PendingQuestion, PendingQueueItem, PendingQueueSource,
+    QuestionAnswer, QuestionItem, ResolvedQuestion, RunTraceSegment, RunTraceSubagent,
+    RunTraceSummary, SendMessageRequest, SessionCommentRef, SessionDetail, SessionEvent,
+    SessionEventKind, SessionMessage, SessionStatus, SessionSummary, ToolCallDetail,
     aggregate_run_traces,
 };
 use serde_json::Value;
@@ -16,15 +18,14 @@ use tracing::warn;
 use crate::{
     bus::RedisBus,
     comment_refs::validate_user_payload,
-    compaction::CompactionState,
     error::{RuntimeError, RuntimeResult},
+    memory::ConversationMemory,
 };
 
 pub struct CompactionWrite<'a> {
     pub session_id: &'a str,
     pub summary: &'a str,
-    pub up_to_message_id: &'a str,
-    pub marker_before_message_id: Option<&'a str>,
+    pub exclude_message_id: Option<&'a str>,
     pub pinned_system_prompt: &'a str,
     pub kb_version: u64,
     pub context_usage: &'a quire_session_protocol::ContextUsage,
@@ -100,6 +101,7 @@ pub struct StoredAttachment {
 pub struct RuntimeStore {
     pool: PgPool,
     bus: RedisBus,
+    memory: Arc<tokio::sync::OnceCell<ConversationMemory>>,
 }
 
 impl RuntimeStore {
@@ -112,11 +114,16 @@ impl RuntimeStore {
         Ok(Self {
             pool,
             bus: RedisBus::connect(redis_url)?,
+            memory: Arc::new(tokio::sync::OnceCell::new()),
         })
     }
 
     pub fn from_pool(pool: PgPool, bus: RedisBus) -> Self {
-        Self { pool, bus }
+        Self {
+            pool,
+            bus,
+            memory: Arc::new(tokio::sync::OnceCell::new()),
+        }
     }
 
     pub async fn migrate(&self) -> RuntimeResult<()> {
@@ -141,6 +148,13 @@ impl RuntimeStore {
 
     pub fn bus(&self) -> &RedisBus {
         &self.bus
+    }
+
+    pub async fn memory(&self) -> RuntimeResult<ConversationMemory> {
+        self.memory
+            .get_or_try_init(|| ConversationMemory::open(self.pool.clone()))
+            .await
+            .cloned()
     }
 
     pub async fn create_session(
@@ -187,7 +201,7 @@ impl RuntimeStore {
     pub async fn get_session_summary(&self, session_id: &str) -> RuntimeResult<SessionSummary> {
         let row = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
-                      active_run_status, last_event_seq, context_usage, compaction_started_at,
+                      active_run_status, context_usage, compaction_started_at,
                       compacted_at, pinned_at, created_at, updated_at
                FROM agent_sessions WHERE session_id = $1"#,
         )
@@ -195,7 +209,9 @@ impl RuntimeStore {
         .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
-        row_to_summary(&row)
+        let mut summary = row_to_summary(&row)?;
+        summary.last_event_seq = self.bus.current_event_seq(session_id).await?;
+        Ok(summary)
     }
 
     pub async fn get_session_detail(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
@@ -269,37 +285,25 @@ impl RuntimeStore {
         start_seq: u64,
         end_seq: u64,
     ) -> RuntimeResult<Vec<SessionEventFrame>> {
-        let rows = sqlx::query(
-            r#"SELECT seq, event_type, event FROM session_events
-               WHERE session_id = $1 AND seq >= $2 AND seq <= $3
-               ORDER BY seq ASC"#,
-        )
-        .bind(session_id)
-        .bind(i64::try_from(start_seq).unwrap_or(i64::MAX))
-        .bind(i64::try_from(end_seq).unwrap_or(i64::MAX))
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter().map(row_to_event_frame).collect()
+        Ok(self
+            .bus
+            .hot_events(session_id)
+            .await?
+            .into_iter()
+            .filter(|event| event.seq >= start_seq && event.seq <= end_seq)
+            .map(event_to_frame)
+            .collect())
     }
 
     async fn event_frames_between_in(
         &self,
-        tx: &mut Transaction<'_, Postgres>,
+        _tx: &mut Transaction<'_, Postgres>,
         session_id: &str,
         start_seq: u64,
         end_seq: u64,
     ) -> RuntimeResult<Vec<SessionEventFrame>> {
-        let rows = sqlx::query(
-            r#"SELECT seq, event_type, event FROM session_events
-               WHERE session_id = $1 AND seq >= $2 AND seq <= $3
-               ORDER BY seq ASC"#,
-        )
-        .bind(session_id)
-        .bind(i64::try_from(start_seq).unwrap_or(i64::MAX))
-        .bind(i64::try_from(end_seq).unwrap_or(i64::MAX))
-        .fetch_all(&mut **tx)
-        .await?;
-        rows.iter().map(row_to_event_frame).collect()
+        self.event_frames_between(session_id, start_seq, end_seq)
+            .await
     }
 
     /// Aggregate and store one run's trace inside a lifecycle transaction.
@@ -340,7 +344,7 @@ impl RuntimeStore {
             .ok_or_else(|| RuntimeError::RunNotFound(run_id.to_string()))?;
         let session_id: String = row.try_get("session_id")?;
         let start_seq: Option<i64> = row.try_get("start_seq")?;
-        let end_seq = lock_event_seq(&mut tx, &session_id).await?;
+        let end_seq = self.bus.current_event_seq(&session_id).await?;
         self.materialize_run_trace_in(
             &mut tx,
             &session_id,
@@ -356,7 +360,7 @@ impl RuntimeStore {
     /// Materialize every completed run in a session before pruning raw events.
     pub async fn materialize_completed_run_traces(&self, session_id: &str) -> RuntimeResult<usize> {
         let mut tx = self.pool.begin().await?;
-        let end_seq = lock_event_seq(&mut tx, session_id).await?;
+        let end_seq = self.bus.current_event_seq(session_id).await?;
         let rows = sqlx::query(
             r#"SELECT run_id, start_seq FROM agent_runs
                WHERE session_id = $1 AND parent_run_id IS NULL
@@ -391,17 +395,27 @@ impl RuntimeStore {
         after_seq: u64,
         limit: i64,
     ) -> RuntimeResult<Vec<SessionEventFrame>> {
-        let rows = sqlx::query(
-            r#"SELECT seq, event_type, event FROM session_events
-               WHERE session_id = $1 AND seq > $2
-               ORDER BY seq ASC LIMIT $3"#,
-        )
-        .bind(session_id)
-        .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
-        .bind(limit.clamp(1, 10_000))
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter().map(row_to_event_frame).collect()
+        Ok(self
+            .bus
+            .hot_event_payloads(session_id)
+            .await?
+            .into_iter()
+            .filter_map(|payload| serde_json::from_str::<Value>(&payload).ok())
+            .filter(|event| {
+                event
+                    .get("seq")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|seq| seq > after_seq)
+            })
+            .take(usize::try_from(limit.clamp(1, 10_000)).unwrap_or(10_000))
+            .filter_map(|event| {
+                Some(SessionEventFrame {
+                    seq: event.get("seq")?.as_u64()?,
+                    event_type: event.get("event")?.as_str()?.to_string(),
+                    event,
+                })
+            })
+            .collect())
     }
 
     pub async fn list_sessions(
@@ -411,7 +425,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Vec<SessionSummary>> {
         let rows = sqlx::query(
             r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
-                      active_run_status, last_event_seq, context_usage, compaction_started_at,
+                      active_run_status, context_usage, compaction_started_at,
                       compacted_at, pinned_at, created_at, updated_at
                FROM agent_sessions
                ORDER BY (pinned_at IS NOT NULL) DESC,
@@ -424,7 +438,13 @@ impl RuntimeStore {
         .bind(offset.max(0))
         .fetch_all(&self.pool)
         .await?;
-        rows.iter().map(row_to_summary).collect()
+        let mut sessions = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut summary = row_to_summary(row)?;
+            summary.last_event_seq = self.bus.current_event_seq(&summary.session_id).await?;
+            sessions.push(summary);
+        }
+        Ok(sessions)
     }
 
     pub async fn update_session(
@@ -466,6 +486,14 @@ impl RuntimeStore {
             .await?;
         if deleted.rows_affected() == 0 {
             return Err(RuntimeError::SessionNotFound(session_id.to_string()));
+        }
+        if let Ok(memory) = self.memory().await
+            && let Err(error) = memory.delete_session(session_id).await
+        {
+            warn!(%error, session_id, "failed to delete canonical conversation logs");
+        }
+        if let Err(error) = self.bus.delete_session_hot_state(session_id).await {
+            warn!(%error, session_id, "failed to delete Redis hot session state");
         }
         Ok(())
     }
@@ -564,25 +592,7 @@ impl RuntimeStore {
         Ok(())
     }
 
-    pub async fn compaction_state(&self, session_id: &str) -> RuntimeResult<CompactionState> {
-        let row = sqlx::query(
-            r#"SELECT compaction_summary, compacted_up_to_message_id, compacted_at
-               FROM agent_sessions WHERE session_id = $1"#,
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
-        Ok(CompactionState {
-            summary: row.try_get("compaction_summary")?,
-            up_to_message_id: row.try_get("compacted_up_to_message_id")?,
-            compacted_at: row.try_get("compacted_at")?,
-        })
-    }
-
-    /// Atomically advance the compaction anchor, persist the marker message and
-    /// switch the pinned prompt to the latest KB version. Queue items and
-    /// questions are intentionally untouched.
+    /// Apply canonical rig-memory compaction, then update run-independent session metadata.
     pub async fn apply_compaction(&self, write: &CompactionWrite<'_>) -> RuntimeResult<()> {
         let mut tx = self.pool.begin().await?;
         let status: Option<String> = sqlx::query_scalar(
@@ -599,51 +609,27 @@ impl RuntimeStore {
                 "session has an active run; wait for it to finish before compacting".into(),
             ));
         }
-
+        self.memory()
+            .await?
+            .apply_compaction(write.session_id, write.summary, write.exclude_message_id)
+            .await?;
         let usage = serde_json::to_value(write.context_usage)?;
         sqlx::query(
             r#"UPDATE agent_sessions
-               SET compaction_summary = $2,
-                   compacted_up_to_message_id = $3,
-                   compacted_at = NOW(),
+               SET compacted_at = NOW(),
                    compaction_started_at = NULL,
-                   pinned_system_prompt = $4,
-                   synced_kb_version = $5,
-                   context_usage = $6,
+                   pinned_system_prompt = $2,
+                   synced_kb_version = $3,
+                   context_usage = $4,
                    updated_at = NOW()
                WHERE session_id = $1"#,
         )
         .bind(write.session_id)
-        .bind(write.summary)
-        .bind(write.up_to_message_id)
         .bind(write.pinned_system_prompt)
         .bind(i64::try_from(write.kb_version).unwrap_or(i64::MAX))
         .bind(usage)
         .execute(&mut *tx)
         .await?;
-
-        let message_id = short_id("msg");
-        let client_msg_id = format!("compaction:{message_id}");
-        sqlx::query(
-            r#"INSERT INTO agent_messages
-               (message_id, session_id, client_msg_id, role, content, comment_refs, attachment_ids, run_id, created_at)
-               VALUES (
-                   $1, $2, $3, 'compaction', $4, '[]'::jsonb, '[]'::jsonb, NULL,
-                   COALESCE(
-                       (SELECT created_at - INTERVAL '1 microsecond'
-                        FROM agent_messages WHERE message_id = $5),
-                       NOW()
-                   )
-               )"#,
-        )
-        .bind(&message_id)
-        .bind(write.session_id)
-        .bind(client_msg_id)
-        .bind(write.summary)
-        .bind(write.marker_before_message_id)
-        .execute(&mut *tx)
-        .await?;
-
         tx.commit().await?;
         Ok(())
     }
@@ -685,41 +671,6 @@ impl RuntimeStore {
         session_id: &str,
         request: &SendMessageRequest,
     ) -> RuntimeResult<(SessionMessage, bool)> {
-        self.insert_user_message_with_run(session_id, request, None)
-            .await
-    }
-
-    pub async fn insert_injected_user_message(
-        &self,
-        session_id: &str,
-        run_id: &str,
-        request: &SendMessageRequest,
-    ) -> RuntimeResult<(SessionMessage, bool)> {
-        self.insert_user_message_with_run(session_id, request, Some(run_id))
-            .await
-    }
-
-    async fn insert_user_message_with_run(
-        &self,
-        session_id: &str,
-        request: &SendMessageRequest,
-        run_id: Option<&str>,
-    ) -> RuntimeResult<(SessionMessage, bool)> {
-        let mut tx = self.pool.begin().await?;
-        let message = self
-            .insert_user_message_with_run_in(&mut tx, session_id, request, run_id)
-            .await?;
-        tx.commit().await?;
-        Ok(message)
-    }
-
-    async fn insert_user_message_with_run_in(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        session_id: &str,
-        request: &SendMessageRequest,
-        run_id: Option<&str>,
-    ) -> RuntimeResult<(SessionMessage, bool)> {
         if request.client_msg_id.trim().is_empty() {
             return Err(RuntimeError::InvalidRequest(
                 "client_msg_id must not be empty".into(),
@@ -730,38 +681,12 @@ impl RuntimeStore {
             &request.comment_refs,
             &request.attachment_ids,
         )?;
-        let message_id = short_id("msg");
-        let attachment_ids = serde_json::to_value(&request.attachment_ids)?;
-        let comment_refs = serde_json::to_value(&request.comment_refs)?;
-        let inserted = sqlx::query(
-            r#"INSERT INTO agent_messages
-               (message_id, session_id, client_msg_id, role, content, comment_refs, attachment_ids, run_id)
-               VALUES ($1, $2, $3, 'user', $4, $5, $6, $7)
-               ON CONFLICT (session_id, client_msg_id) DO NOTHING
-               RETURNING message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at"#,
-        )
-        .bind(&message_id)
-        .bind(session_id)
-        .bind(&request.client_msg_id)
-        .bind(&request.content)
-        .bind(comment_refs)
-        .bind(attachment_ids)
-        .bind(run_id)
-        .fetch_optional(&mut **tx)
-        .await?;
-        if let Some(row) = inserted {
-            return Ok((row_to_message(&row)?, true));
-        }
-        let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
-               FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
-        )
-        .bind(session_id)
-        .bind(&request.client_msg_id)
-        .fetch_optional(&mut **tx)
-        .await?
-        .ok_or_else(|| RuntimeError::Internal("idempotent message vanished".into()))?;
-        Ok((row_to_message(&row)?, false))
+        let (message, replayed) = self
+            .memory()
+            .await?
+            .append_prompt(session_id, request, true)
+            .await?;
+        Ok((message, !replayed))
     }
 
     pub async fn find_message_by_client_id(
@@ -769,15 +694,10 @@ impl RuntimeStore {
         session_id: &str,
         client_msg_id: &str,
     ) -> RuntimeResult<Option<SessionMessage>> {
-        let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
-               FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
-        )
-        .bind(session_id)
-        .bind(client_msg_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        row.as_ref().map(row_to_message).transpose()
+        self.memory()
+            .await?
+            .find_by_client_id(session_id, client_msg_id)
+            .await
     }
 
     pub async fn insert_assistant_message(
@@ -786,40 +706,14 @@ impl RuntimeStore {
         content: &str,
         run_id: &str,
     ) -> RuntimeResult<SessionMessage> {
-        let message_id = short_id("msg");
-        let client_msg_id = format!("assistant:{message_id}");
-        sqlx::query(
-            r#"INSERT INTO agent_messages
-               (message_id, session_id, client_msg_id, role, content, run_id)
-               VALUES ($1, $2, $3, 'assistant', $4, $5)"#,
-        )
-        .bind(&message_id)
-        .bind(session_id)
-        .bind(client_msg_id)
-        .bind(content)
-        .bind(run_id)
-        .execute(&self.pool)
-        .await?;
-        let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
-               FROM agent_messages WHERE message_id = $1"#,
-        )
-        .bind(&message_id)
-        .fetch_one(&self.pool)
-        .await?;
-        row_to_message(&row)
+        self.memory()
+            .await?
+            .append_assistant_if_missing(session_id, run_id, content)
+            .await
     }
 
     pub async fn list_messages(&self, session_id: &str) -> RuntimeResult<Vec<SessionMessage>> {
-        let rows = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
-               FROM agent_messages WHERE session_id = $1
-               ORDER BY created_at ASC, message_id ASC"#,
-        )
-        .bind(session_id)
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter().map(row_to_message).collect()
+        self.memory().await?.list_messages(session_id).await
     }
 
     pub async fn list_sessions_with_pending_queue(&self) -> RuntimeResult<Vec<String>> {
@@ -1063,10 +957,8 @@ impl RuntimeStore {
     pub async fn claim_pending_batch(
         &self,
         session_id: &str,
-        run_id: &str,
         request: &SendMessageRequest,
         queue_ids: &[String],
-        inject_into_run: bool,
     ) -> RuntimeResult<Option<SessionMessage>> {
         if queue_ids.is_empty() {
             return Ok(None);
@@ -1092,16 +984,17 @@ impl RuntimeStore {
             tx.commit().await?;
             return Ok(None);
         }
-        let run_id = inject_into_run.then_some(run_id);
-        let (message, _inserted) = self
-            .insert_user_message_with_run_in(&mut tx, session_id, request, run_id)
+        let (message, _replayed) = self
+            .memory()
+            .await?
+            .append_prompt(session_id, request, true)
             .await?;
         self.remove_pending_items_in(&mut tx, session_id, queue_ids)
             .await?;
         let remaining = self.list_pending_queue_in(&mut tx, session_id).await?;
-        let queue_event = self
-            .append_event_in(
-                &mut tx,
+        tx.commit().await?;
+        let _queue_event = self
+            .append_event(
                 session_id,
                 "queue",
                 "system",
@@ -1109,28 +1002,17 @@ impl RuntimeStore {
                 SessionEventKind::PendingQueueUpdated { items: remaining },
             )
             .await?;
-        let added_event = if inject_into_run {
-            None
-        } else {
-            Some(
-                self.append_event_in(
-                    &mut tx,
-                    session_id,
-                    run_id.unwrap_or("queue"),
-                    "queue",
-                    None,
-                    SessionEventKind::UserMessageAdded {
-                        message_id: message.message_id.clone(),
-                    },
-                )
-                .await?,
+        let _added_event = self
+            .append_event(
+                session_id,
+                "queue",
+                "queue",
+                None,
+                SessionEventKind::UserMessageAdded {
+                    message_id: message.message_id.clone(),
+                },
             )
-        };
-        tx.commit().await?;
-        self.publish_event(queue_event, session_id).await;
-        if let Some(event) = added_event {
-            self.publish_event(event, session_id).await;
-        }
+            .await?;
         Ok(Some(message))
     }
 
@@ -1148,45 +1030,6 @@ impl RuntimeStore {
         .execute(&self.pool)
         .await?;
         Ok(deleted.rows_affected())
-    }
-
-    pub async fn insert_context_message(
-        &self,
-        session_id: &str,
-        role: MessageRole,
-        content: &str,
-        client_msg_id: &str,
-        run_id: Option<&str>,
-    ) -> RuntimeResult<SessionMessage> {
-        let message_id = short_id("msg");
-        let inserted = sqlx::query(
-            r#"INSERT INTO agent_messages
-               (message_id, session_id, client_msg_id, role, content, attachment_ids, run_id)
-               VALUES ($1, $2, $3, $4, $5, '[]'::jsonb, $6)
-               ON CONFLICT (session_id, client_msg_id) DO NOTHING
-               RETURNING message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at"#,
-        )
-        .bind(&message_id)
-        .bind(session_id)
-        .bind(client_msg_id)
-        .bind(role.as_str())
-        .bind(content)
-        .bind(run_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        if let Some(row) = inserted {
-            return row_to_message(&row);
-        }
-        let row = sqlx::query(
-            r#"SELECT message_id, session_id, role, content, comment_refs, attachment_ids, run_id, created_at
-               FROM agent_messages WHERE session_id = $1 AND client_msg_id = $2"#,
-        )
-        .bind(session_id)
-        .bind(client_msg_id)
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or_else(|| RuntimeError::Internal("question context message vanished".into()))?;
-        row_to_message(&row)
     }
 
     pub async fn create_question(
@@ -1391,7 +1234,7 @@ impl RuntimeStore {
         .bind(&session_id)
         .execute(&mut *tx)
         .await?;
-        let end_seq = lock_event_seq(&mut tx, &session_id).await?;
+        let end_seq = self.bus.current_event_seq(&session_id).await?;
         self.materialize_run_trace_in(
             &mut tx,
             &session_id,
@@ -1532,27 +1375,24 @@ impl RuntimeStore {
         self.get_run(&run_id).await
     }
 
-    /// Append `turn_started` and record its sequence as the run's hydration
-    /// cursor in the same transaction.
+    /// Append `turn_started` and retain its hot sequence for trace materialization.
     pub async fn start_run_with_event(
         &self,
         run_id: &str,
         kind: SessionEventKind,
     ) -> RuntimeResult<SessionEvent> {
-        let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
             "SELECT session_id, agent_id, parent_run_id FROM agent_runs WHERE run_id = $1",
         )
         .bind(run_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&self.pool)
         .await?
         .ok_or_else(|| RuntimeError::RunNotFound(run_id.to_string()))?;
         let session_id: String = row.try_get("session_id")?;
         let agent_id: String = row.try_get("agent_id")?;
         let parent_run_id: Option<String> = row.try_get("parent_run_id")?;
         let event = self
-            .append_event_in(
-                &mut tx,
+            .append_event(
                 &session_id,
                 run_id,
                 &agent_id,
@@ -1563,10 +1403,8 @@ impl RuntimeStore {
         sqlx::query("UPDATE agent_runs SET start_seq = $2 WHERE run_id = $1 AND start_seq IS NULL")
             .bind(run_id)
             .bind(i64::try_from(event.seq).unwrap_or(i64::MAX))
-            .execute(&mut *tx)
+            .execute(&self.pool)
             .await?;
-        tx.commit().await?;
-        self.publish_event(event.clone(), &session_id).await;
         Ok(event)
     }
 
@@ -1667,25 +1505,6 @@ impl RuntimeStore {
         Ok(())
     }
 
-    /// Append an event inside a caller-owned transaction. The session row lock
-    /// allocates `seq`, so lifecycle status and event rows can commit atomically.
-    pub async fn append_event_in(
-        &self,
-        tx: &mut Transaction<'_, Postgres>,
-        session_id: &str,
-        run_id: &str,
-        agent_id: &str,
-        parent_run_id: Option<&str>,
-        kind: SessionEventKind,
-    ) -> RuntimeResult<SessionEvent> {
-        let last_seq = lock_event_seq(tx, session_id).await?;
-        let seq = last_seq.saturating_add(1);
-        let event =
-            insert_event(tx, session_id, seq, run_id, agent_id, parent_run_id, kind).await?;
-        update_event_seq(tx, session_id, seq).await?;
-        Ok(event)
-    }
-
     pub async fn append_event(
         &self,
         session_id: &str,
@@ -1694,50 +1513,41 @@ impl RuntimeStore {
         parent_run_id: Option<&str>,
         kind: SessionEventKind,
     ) -> RuntimeResult<SessionEvent> {
-        let mut tx = self.pool.begin().await?;
-        let event = self
-            .append_event_in(&mut tx, session_id, run_id, agent_id, parent_run_id, kind)
-            .await?;
-        tx.commit().await?;
-        self.publish_event(event.clone(), session_id).await;
-        Ok(event)
+        self.bus
+            .append_session_event(
+                session_id,
+                run_id,
+                agent_id,
+                parent_run_id.map(str::to_string),
+                kind,
+            )
+            .await
     }
 
-    /// Append a coalesced batch with one sequence lock and one transaction.
+    /// Append a coalesced batch to the ordered Redis hot projection.
     pub async fn append_event_batch(
         &self,
         session_id: &str,
         drafts: Vec<SessionEventDraft>,
     ) -> RuntimeResult<Vec<SessionEvent>> {
-        if drafts.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut tx = self.pool.begin().await?;
-        let mut seq = lock_event_seq(&mut tx, session_id).await?;
         let mut events = Vec::with_capacity(drafts.len());
         for draft in drafts {
-            seq = seq.saturating_add(1);
-            let event = insert_event(
-                &mut tx,
-                session_id,
-                seq,
-                &draft.run_id,
-                &draft.agent_id,
-                draft.parent_run_id.as_deref(),
-                draft.kind,
-            )
-            .await?;
-            events.push(event);
-        }
-        update_event_seq(&mut tx, session_id, seq).await?;
-        tx.commit().await?;
-        for event in &events {
-            self.publish_event(event.clone(), session_id).await;
+            events.push(
+                self.bus
+                    .append_session_event(
+                        session_id,
+                        &draft.run_id,
+                        &draft.agent_id,
+                        draft.parent_run_id,
+                        draft.kind,
+                    )
+                    .await?,
+            );
         }
         Ok(events)
     }
 
-    /// Persist a tool row and its wire event atomically.
+    /// Persist a tool row before publishing its display event.
     pub async fn save_tool_call_with_event(
         &self,
         detail: &ToolCallDetail,
@@ -1747,22 +1557,18 @@ impl RuntimeStore {
     ) -> RuntimeResult<SessionEvent> {
         let mut tx = self.pool.begin().await?;
         self.save_tool_call_in(&mut tx, detail).await?;
-        let event = self
-            .append_event_in(
-                &mut tx,
-                &detail.session_id,
-                &detail.run_id,
-                agent_id,
-                parent_run_id,
-                kind,
-            )
-            .await?;
         tx.commit().await?;
-        self.publish_event(event.clone(), &detail.session_id).await;
-        Ok(event)
+        self.append_event(
+            &detail.session_id,
+            &detail.run_id,
+            agent_id,
+            parent_run_id,
+            kind,
+        )
+        .await
     }
 
-    /// Create an `ask_user` question and emit its request in one transaction.
+    /// Create an `ask_user` question before publishing its request.
     pub async fn create_question_with_event(
         &self,
         session_id: &str,
@@ -1776,22 +1582,20 @@ impl RuntimeStore {
         let question = self
             .create_question_in(&mut tx, session_id, run_id, tool_call_id, questions)
             .await?;
+        tx.commit().await?;
         let kind = SessionEventKind::QuestionnaireRequested {
             question_id: question.question_id.clone(),
             tool_call_id: question.tool_call_id.clone(),
             questions: question.questions.clone(),
         };
         let event = self
-            .append_event_in(&mut tx, session_id, run_id, agent_id, parent_run_id, kind)
+            .append_event(session_id, run_id, agent_id, parent_run_id, kind)
             .await?;
-        tx.commit().await?;
-        self.publish_event(event.clone(), session_id).await;
         Ok((question, event))
     }
 
-    /// Atomically transition a running run to a terminal state and append its
-    /// terminal event. `None` means another writer already terminated the run,
-    /// so no second terminal event may be emitted.
+    /// Transition the run in PostgreSQL, then append its terminal hot event and
+    /// materialize the complete cold trace projection.
     pub async fn finish_run_with_event(
         &self,
         run_id: &str,
@@ -1835,16 +1639,6 @@ impl RuntimeStore {
             "failed" => "failed",
             _ => "idle",
         };
-        let event = self
-            .append_event_in(
-                &mut tx,
-                &session_id,
-                run_id,
-                &agent_id,
-                parent_run_id.as_deref(),
-                kind,
-            )
-            .await?;
         sqlx::query(
             "UPDATE agent_sessions SET active_run_status = $2, updated_at = NOW() WHERE session_id = $1",
         )
@@ -1852,24 +1646,37 @@ impl RuntimeStore {
         .bind(session_status)
         .execute(&mut *tx)
         .await?;
-        self.materialize_run_trace_in(
-            &mut tx,
-            &session_id,
-            run_id,
-            start_seq.map(|seq| u64::try_from(seq).unwrap_or(0)),
-            event.seq,
-        )
-        .await?;
         tx.commit().await?;
-        self.publish_event(event.clone(), &session_id).await;
-        Ok(Some(event))
-    }
 
-    async fn publish_event(&self, event: SessionEvent, session_id: &str) {
-        let seq = event.seq;
-        if let Err(error) = self.bus.publish_event(&event, session_id).await {
-            warn!(%error, %session_id, seq, "failed to publish live session event");
+        let event = self
+            .append_event(
+                &session_id,
+                run_id,
+                &agent_id,
+                parent_run_id.as_deref(),
+                kind,
+            )
+            .await?;
+        let events = self.bus.hot_events(&session_id).await?;
+        let terminal_seq = event.seq;
+        let start = start_seq
+            .and_then(|seq| u64::try_from(seq).ok())
+            .unwrap_or(0);
+        let events: Vec<SessionEvent> = events
+            .into_iter()
+            .filter(|event| event.seq >= start && event.seq <= terminal_seq)
+            .collect();
+        if let Some(trace) = aggregate_run_traces(&events)
+            .into_iter()
+            .find(|trace| trace.run_id == run_id)
+        {
+            sqlx::query("UPDATE agent_runs SET trace_summary = $2 WHERE run_id = $1")
+                .bind(run_id)
+                .bind(serde_json::to_value(trace)?)
+                .execute(&self.pool)
+                .await?;
         }
+        Ok(Some(event))
     }
 
     pub async fn list_events(
@@ -1878,22 +1685,14 @@ impl RuntimeStore {
         after_seq: u64,
         limit: i64,
     ) -> RuntimeResult<Vec<SessionEvent>> {
-        let rows = sqlx::query(
-            r#"SELECT event FROM session_events
-               WHERE session_id = $1 AND seq > $2
-               ORDER BY seq ASC LIMIT $3"#,
-        )
-        .bind(session_id)
-        .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
-        .bind(limit.clamp(1, 10_000))
-        .fetch_all(&self.pool)
-        .await?;
-        rows.iter()
-            .map(|row| {
-                let value: Value = row.try_get("event")?;
-                Ok(serde_json::from_value(value)?)
-            })
-            .collect()
+        Ok(self
+            .bus
+            .hot_events(session_id)
+            .await?
+            .into_iter()
+            .filter(|event| event.seq > after_seq)
+            .take(usize::try_from(limit.clamp(1, 10_000)).unwrap_or(10_000))
+            .collect())
     }
 
     /// Read materialized completed traces and aggregate only the active run.
@@ -1939,25 +1738,11 @@ impl RuntimeStore {
             traces.push(trace);
         }
 
-        // Some historical/test events have no agent_runs row. Keep their
-        // run-scoped projection instead of silently dropping those traces.
-        let orphan_rows = sqlx::query(
-            r#"SELECT DISTINCT run_id FROM session_events
-               WHERE session_id = $1 AND parent_run_id IS NULL
-                 AND run_id NOT IN (SELECT run_id FROM agent_runs WHERE session_id = $1)
-               ORDER BY run_id ASC"#,
-        )
-        .bind(session_id)
-        .fetch_all(&self.pool)
-        .await?;
-        for row in &orphan_rows {
-            let run_id: String = row.try_get("run_id")?;
-            let events = self
-                .events_between(session_id, 0, summary.last_event_seq)
-                .await?;
-            if let Some(trace) = aggregate_run_traces(&events)
-                .into_iter()
-                .find(|trace| trace.run_id == run_id)
+        let hot_events = self.bus.hot_events(session_id).await?;
+        for trace in aggregate_run_traces(&hot_events) {
+            if !traces
+                .iter()
+                .any(|existing| existing.run_id == trace.run_id)
             {
                 traces.push(trace);
             }
@@ -1967,17 +1752,16 @@ impl RuntimeStore {
 
     /// Oldest sequence still available for SSE replay.
     pub async fn min_available_seq(&self, session_id: &str) -> RuntimeResult<u64> {
-        let value: i64 = sqlx::query_scalar(
-            "SELECT min_available_seq FROM agent_sessions WHERE session_id = $1",
-        )
-        .bind(session_id)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(u64::try_from(value).unwrap_or(0))
+        let events = self.list_event_frames(session_id, 0, 100_000).await?;
+        if let Some(first) = events.first() {
+            Ok(first.seq)
+        } else {
+            let last = self.bus.current_event_seq(session_id).await?;
+            Ok(if last > 0 { last.saturating_add(1) } else { 0 })
+        }
     }
 
-    /// Materialize completed traces, then prune old raw events while preserving
-    /// the active run's complete history. Returns `(deleted, min_available_seq)`.
+    /// Materialize completed traces, then trim only the Redis hot projection.
     pub async fn prune_session_events(
         &self,
         session_id: &str,
@@ -1985,72 +1769,44 @@ impl RuntimeStore {
     ) -> RuntimeResult<(u64, u64)> {
         let keep = keep_events.clamp(1, 100_000);
         self.materialize_completed_run_traces(session_id).await?;
-
-        let mut tx = self.pool.begin().await?;
-        let last_seq = lock_event_seq(&mut tx, session_id).await?;
+        let events = self.bus.hot_events(session_id).await?;
+        let last_seq = self.bus.current_event_seq(session_id).await?;
+        let cutoff = if events.len() > keep {
+            events
+                .get(events.len().saturating_sub(keep))
+                .map(|event| event.seq)
+        } else {
+            None
+        };
         let active_start: Option<Option<i64>> = sqlx::query_scalar(
             r#"SELECT start_seq FROM agent_runs
                WHERE session_id = $1 AND status IN ('running', 'awaiting_input')
                ORDER BY started_at DESC LIMIT 1"#,
         )
         .bind(session_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&self.pool)
         .await?;
-        let rows = sqlx::query(
-            r#"SELECT seq FROM session_events
-               WHERE session_id = $1 ORDER BY seq DESC LIMIT $2"#,
-        )
-        .bind(session_id)
-        .bind(i64::try_from(keep).unwrap_or(i64::MAX))
-        .fetch_all(&mut *tx)
-        .await?;
-        let cutoff = if rows.len() == keep {
-            rows.last()
-                .map(|row| row.try_get::<i64, _>("seq"))
-                .transpose()?
-                .map(|seq| u64::try_from(seq).unwrap_or(0))
-        } else {
-            None
-        };
         let mut min_available = cutoff.unwrap_or(last_seq);
         match active_start {
             Some(Some(start)) => {
                 min_available = min_available.min(u64::try_from(start).unwrap_or(0));
             }
-            // A run created before `start_run_with_event` has no start_seq yet.
-            // Protect the high-water mark instead of treating it as no active run.
             Some(None) => {
                 min_available = min_available.min(last_seq);
             }
             None => {}
         }
-
-        let deleted = sqlx::query("DELETE FROM session_events WHERE session_id = $1 AND seq < $2")
-            .bind(session_id)
-            .bind(i64::try_from(min_available).unwrap_or(i64::MAX))
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        sqlx::query(
-            "UPDATE agent_sessions SET min_available_seq = GREATEST(min_available_seq, $2) WHERE session_id = $1",
-        )
-        .bind(session_id)
-        .bind(i64::try_from(min_available).unwrap_or(i64::MAX))
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
+        let deleted = self.bus.trim_hot_events(session_id, min_available).await?;
         Ok((deleted, min_available))
     }
 
     pub async fn count_events_after(&self, session_id: &str, after_seq: u64) -> RuntimeResult<i64> {
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*)::bigint FROM session_events WHERE session_id = $1 AND seq > $2",
+        Ok(i64::try_from(
+            self.list_event_frames(session_id, after_seq, 100_000)
+                .await?
+                .len(),
         )
-        .bind(session_id)
-        .bind(i64::try_from(after_seq).unwrap_or(i64::MAX))
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(count)
+        .unwrap_or(i64::MAX))
     }
 
     pub async fn save_tool_call(&self, detail: &ToolCallDetail) -> RuntimeResult<()> {
@@ -2142,77 +1898,12 @@ impl RuntimeStore {
     }
 }
 
-async fn lock_event_seq(
-    tx: &mut Transaction<'_, Postgres>,
-    session_id: &str,
-) -> RuntimeResult<u64> {
-    let row =
-        sqlx::query("SELECT last_event_seq FROM agent_sessions WHERE session_id = $1 FOR UPDATE")
-            .bind(session_id)
-            .fetch_optional(&mut **tx)
-            .await?
-            .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
-    let last_seq: i64 = row.try_get("last_event_seq")?;
-    Ok(u64::try_from(last_seq).unwrap_or(0))
-}
-
-async fn insert_event(
-    tx: &mut Transaction<'_, Postgres>,
-    session_id: &str,
-    seq: u64,
-    run_id: &str,
-    agent_id: &str,
-    parent_run_id: Option<&str>,
-    kind: SessionEventKind,
-) -> RuntimeResult<SessionEvent> {
-    let event = SessionEvent::new(
-        seq,
-        run_id,
-        agent_id,
-        parent_run_id.map(str::to_string),
-        kind,
-    );
-    let event_value = serde_json::to_value(&event)?;
-    sqlx::query(
-        r#"INSERT INTO session_events
-           (session_id, seq, run_id, agent_id, parent_run_id, event_type, event, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
-    )
-    .bind(session_id)
-    .bind(i64::try_from(seq).unwrap_or(i64::MAX))
-    .bind(run_id)
-    .bind(agent_id)
-    .bind(parent_run_id)
-    .bind(event.event_name())
-    .bind(event_value)
-    .bind(event.timestamp)
-    .execute(&mut **tx)
-    .await?;
-    Ok(event)
-}
-
-async fn update_event_seq(
-    tx: &mut Transaction<'_, Postgres>,
-    session_id: &str,
-    seq: u64,
-) -> RuntimeResult<()> {
-    sqlx::query(
-        "UPDATE agent_sessions SET last_event_seq = $2, updated_at = NOW() WHERE session_id = $1",
-    )
-    .bind(session_id)
-    .bind(i64::try_from(seq).unwrap_or(i64::MAX))
-    .execute(&mut **tx)
-    .await?;
-    Ok(())
-}
-
-fn row_to_event_frame(row: &PgRow) -> RuntimeResult<SessionEventFrame> {
-    let seq: i64 = row.try_get("seq")?;
-    Ok(SessionEventFrame {
-        seq: u64::try_from(seq).unwrap_or(0),
-        event_type: row.try_get("event_type")?,
-        event: row.try_get("event")?,
-    })
+fn event_to_frame(event: SessionEvent) -> SessionEventFrame {
+    SessionEventFrame {
+        seq: event.seq,
+        event_type: event.event_name().to_string(),
+        event: serde_json::to_value(event).unwrap_or(Value::Null),
+    }
 }
 
 /// Projection tolerates event variants written by a newer runtime. Transport
@@ -2261,7 +1952,6 @@ fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
     let status_raw: String = row.try_get("status")?;
     let run_raw: String = row.try_get("active_run_status")?;
     let usage_raw: Value = row.try_get("context_usage")?;
-    let last_seq: i64 = row.try_get("last_event_seq")?;
     Ok(SessionSummary {
         session_id: row.try_get("session_id")?,
         title: row.try_get("title")?,
@@ -2274,7 +1964,7 @@ fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
         active_run_status: ActiveRunStatus::parse(&run_raw).ok_or_else(|| {
             RuntimeError::Internal(format!("invalid active run status `{run_raw}`"))
         })?,
-        last_event_seq: u64::try_from(last_seq).unwrap_or(0),
+        last_event_seq: 0,
         context_usage: serde_json::from_value(usage_raw).unwrap_or_default(),
         compacting: row
             .try_get::<Option<DateTime<Utc>>, _>("compaction_started_at")?
@@ -2285,22 +1975,6 @@ fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
         pinned_at: row.try_get("pinned_at")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
-    })
-}
-
-fn row_to_message(row: &PgRow) -> RuntimeResult<SessionMessage> {
-    let role_raw: String = row.try_get("role")?;
-    let attachment_ids: Value = row.try_get("attachment_ids")?;
-    Ok(SessionMessage {
-        message_id: row.try_get("message_id")?,
-        session_id: row.try_get("session_id")?,
-        role: MessageRole::parse(&role_raw)
-            .ok_or_else(|| RuntimeError::Internal(format!("invalid message role `{role_raw}`")))?,
-        content: row.try_get("content")?,
-        comment_refs: serde_json::from_value(row.try_get("comment_refs")?).unwrap_or_default(),
-        attachment_ids: serde_json::from_value(attachment_ids).unwrap_or_default(),
-        run_id: row.try_get("run_id")?,
-        created_at: row.try_get("created_at")?,
     })
 }
 
@@ -2378,7 +2052,7 @@ fn row_to_run(row: &PgRow) -> RuntimeResult<RunRecord> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quire_session_protocol::RunTraceToolItem;
+    use quire_session_protocol::{MessageRole, RunTraceToolItem};
 
     fn subagent_thinking(subagent: &RunTraceSubagent) -> String {
         subagent

@@ -9,6 +9,7 @@ use axum::{
 };
 use quire_protocol::{ProtocolError, SessionId};
 use secrecy::{ExposeSecret, SecretString};
+use serde::Deserialize;
 use serde_json::json;
 use subtle::ConstantTimeEq;
 
@@ -50,6 +51,70 @@ impl RequestContext {
             .to_string();
         Ok(Self { session_id, actor })
     }
+
+    /// Resolve one MCP call's identity from transport headers and trusted per-call metadata.
+    pub fn from_mcp(
+        parts: &Parts,
+        meta: Option<&rmcp::model::RequestMetaObject>,
+    ) -> Result<Self, String> {
+        let mut context = Self::from_parts(parts).map_err(|error| error.to_string())?;
+        let Some(value) = meta.and_then(|meta| meta.0.0.get("quire")) else {
+            return Ok(context);
+        };
+        let quire: QuireRequestMeta = serde_json::from_value(value.clone())
+            .map_err(|error| format!("invalid _meta.quire identity: {error}"))?;
+        if let Some(session_id) = quire.session_id {
+            let parsed = SessionId::parse(&session_id).map_err(|error| error.to_string())?;
+            if context
+                .session_id
+                .as_ref()
+                .is_some_and(|header| header != &parsed)
+            {
+                return Err("X-Session-Id and _meta.quire.session_id disagree".into());
+            }
+            context.session_id = Some(parsed);
+        }
+        if let Some(agent_id) = quire.agent_id {
+            let agent_id =
+                valid_actor(&agent_id).ok_or_else(|| "invalid _meta.quire.agent_id".to_string())?;
+            if parts.headers.contains_key("x-actor") || parts.headers.contains_key("x-agent-id") {
+                if context.actor != agent_id {
+                    return Err("X-Actor and _meta.quire.agent_id disagree".into());
+                }
+            } else {
+                context.actor = agent_id;
+            }
+        }
+        if let Some(run_id) = quire.run_id {
+            let valid = !run_id.is_empty()
+                && run_id.len() <= 128
+                && run_id.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
+                });
+            if !valid {
+                return Err("invalid _meta.quire.run_id".into());
+            }
+        }
+        Ok(context)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct QuireRequestMeta {
+    session_id: Option<String>,
+    run_id: Option<String>,
+    agent_id: Option<String>,
+}
+
+fn valid_actor(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()
+        && value.len() <= 64
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':' | ' ')
+        }))
+    .then(|| value.to_string())
 }
 
 /// Extractor that requires the read-write token (`QUIRE_RW_TOKEN`).
@@ -258,6 +323,34 @@ mod tests {
         let context = RequestContext::from_parts(&parts).expect("context");
         assert!(context.session_id.is_none());
         assert_eq!(context.actor, "agent");
+    }
+
+    #[test]
+    fn mcp_meta_supplies_shared_connection_identity_and_rejects_mismatch() {
+        let request = axum::http::Request::builder().body(()).expect("request");
+        let (parts, ()) = request.into_parts();
+        let mut meta = rmcp::model::RequestMetaObject::new();
+        meta.insert(
+            "quire".into(),
+            serde_json::json!({
+                "session_id": "sess_01",
+                "run_id": "run_01",
+                "agent_id": "writer"
+            }),
+        );
+        let context = RequestContext::from_mcp(&parts, Some(&meta)).expect("meta context");
+        assert_eq!(
+            context.session_id.as_ref().map(SessionId::as_str),
+            Some("sess_01")
+        );
+        assert_eq!(context.actor, "writer");
+
+        let request = axum::http::Request::builder()
+            .header("x-session-id", "sess_other")
+            .body(())
+            .expect("request");
+        let (parts, ()) = request.into_parts();
+        assert!(RequestContext::from_mcp(&parts, Some(&meta)).is_err());
     }
 
     #[test]

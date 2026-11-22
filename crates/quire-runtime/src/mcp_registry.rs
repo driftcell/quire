@@ -108,6 +108,8 @@ pub struct McpRegistry {
     store: RuntimeStore,
     master_key: Option<SecretString>,
     cache: Cache<String, Arc<McpCatalogSnapshot>>,
+    connections: Cache<String, Arc<RmcpClient>>,
+    connection_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl McpRegistry {
@@ -116,6 +118,8 @@ impl McpRegistry {
             store,
             master_key,
             cache: Cache::new(32),
+            connections: Cache::new(128),
+            connection_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -125,14 +129,18 @@ impl McpRegistry {
 
     pub fn spawn_invalidation_listener(&self) -> tokio::task::JoinHandle<()> {
         let cache = self.cache.clone();
+        let connections = self.connections.clone();
         crate::bus::spawn_resilient_invalidation_listener(
             self.store.bus().clone(),
             crate::bus::RedisBus::mcp_invalidation_subscription,
             Box::new(move || {
                 let cache = cache.clone();
+                let connections = connections.clone();
                 Box::pin(async move {
                     cache.invalidate_all();
                     cache.run_pending_tasks().await;
+                    connections.invalidate_all();
+                    connections.run_pending_tasks().await;
                 })
             }),
         )
@@ -389,6 +397,30 @@ impl McpRegistry {
         row.as_ref().map(row_to_tool).transpose()
     }
 
+    /// Return a live shared MCP connection, reconnecting only after config invalidation or close.
+    pub async fn shared_client(
+        &self,
+        binding: &McpServerBinding,
+    ) -> RuntimeResult<Arc<RmcpClient>> {
+        if let Some(client) = self.connections.get(&binding.server_id).await
+            && !client.is_closed()
+        {
+            return Ok(client);
+        }
+        let _guard = self.connection_lock.lock().await;
+        if let Some(client) = self.connections.get(&binding.server_id).await
+            && !client.is_closed()
+        {
+            return Ok(client);
+        }
+        let client =
+            Arc::new(RmcpClient::connect_shared(&binding.url, binding.auth_token.clone()).await?);
+        self.connections
+            .insert(binding.server_id.clone(), Arc::clone(&client))
+            .await;
+        Ok(client)
+    }
+
     /// Triple intersection: server enabled, tool globally enabled and agent allow-list matched.
     pub async fn tools_for_agent(
         &self,
@@ -479,6 +511,8 @@ impl McpRegistry {
     async fn after_mutation(&self) {
         self.cache.invalidate_all();
         self.cache.run_pending_tasks().await;
+        self.connections.invalidate_all();
+        self.connections.run_pending_tasks().await;
         let version = u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0);
         if let Err(error) = self.store.bus().publish_mcp_invalidation(version).await {
             warn!(%error, version, "failed to publish MCP registry invalidation");

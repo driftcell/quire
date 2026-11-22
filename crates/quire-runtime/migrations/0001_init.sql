@@ -122,7 +122,6 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
     kb_branch TEXT,
     status TEXT NOT NULL DEFAULT 'active',
     active_run_status TEXT NOT NULL DEFAULT 'idle',
-    last_event_seq BIGINT NOT NULL DEFAULT 0,
     pinned_system_prompt TEXT,
     synced_kb_version BIGINT NOT NULL DEFAULT 0,
     context_usage JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -132,18 +131,6 @@ CREATE TABLE IF NOT EXISTS agent_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_branch
     ON agent_sessions (kb_branch);
-
-CREATE TABLE IF NOT EXISTS agent_messages (
-    message_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-    client_msg_id TEXT NOT NULL,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    attachment_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-    run_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE (session_id, client_msg_id)
-);
 
 CREATE TABLE IF NOT EXISTS agent_attachments (
     attachment_id TEXT PRIMARY KEY,
@@ -169,18 +156,6 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status
     ON agent_runs (status, started_at);
-
-CREATE TABLE IF NOT EXISTS session_events (
-    session_id TEXT NOT NULL REFERENCES agent_sessions(session_id) ON DELETE CASCADE,
-    seq BIGINT NOT NULL,
-    run_id TEXT NOT NULL,
-    agent_id TEXT NOT NULL,
-    parent_run_id TEXT,
-    event_type TEXT NOT NULL,
-    event JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (session_id, seq)
-);
 
 CREATE TABLE IF NOT EXISTS agent_tool_calls (
     tool_call_id TEXT PRIMARY KEY,

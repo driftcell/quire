@@ -1,18 +1,18 @@
 //! Subagent scheduling, lifecycle and outcome aggregation.
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::sync::Arc;
 
-use tracing::warn;
-
-use quire_protocol::short_id;
 use rig_core::{
-    completion::Message,
+    message::Message,
     rig_tool,
     tool::{ToolContext, ToolExecutionError},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::task::JoinSet;
+use tracing::warn;
+
+use quire_protocol::short_id;
 
 use crate::{
     error::{RuntimeError, RuntimeResult},
@@ -21,7 +21,7 @@ use crate::{
 
 use super::{
     AgentExecution, EventScope, RigModelCore,
-    builtin_tools::{runtime_tool_scope, tool_other},
+    builtin_tools::{quire_turn_meta, runtime_tool_scope, tool_other},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig_core::schemars::JsonSchema)]
@@ -34,8 +34,7 @@ pub struct SubagentTask {
     pub task: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section_id: Option<String>,
-    /// Resume an existing subagent from an earlier round in the same session by
-    /// passing its `subagent_run_id`. History is kept in memory per runtime process.
+    /// Resume the canonical rig-memory conversation of an earlier child run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_run_id: Option<String>,
 }
@@ -48,72 +47,12 @@ pub struct SubagentOutcome {
     pub subagent_run_id: String,
 }
 
-const SUBAGENT_HISTORY_CAPACITY: usize = 128;
-
 #[derive(Clone)]
-struct SubagentHistoryEntry {
-    agent_name: String,
-    messages: Vec<Message>,
-    updated_at: Instant,
-}
-
-#[derive(Default)]
-pub(super) struct SubagentHistory {
-    entries: HashMap<(String, String), SubagentHistoryEntry>,
-}
-
-struct ResumePlan {
-    run_id: String,
-    messages: Vec<Message>,
-    resumed: bool,
-}
-
-impl SubagentHistory {
-    fn resume_messages(&self, session_id: &str, task: &SubagentTask) -> ResumePlan {
-        if let Some(resume_id) = task.resume_run_id.as_deref()
-            && let Some(entry) = self
-                .entries
-                .get(&(session_id.to_string(), resume_id.to_string()))
-        {
-            if entry.agent_name == task.agent_name {
-                let mut messages = entry.messages.clone();
-                messages.push(Message::user(task.task.clone()));
-                return ResumePlan {
-                    run_id: resume_id.to_string(),
-                    messages,
-                    resumed: true,
-                };
-            }
-            warn!(%resume_id, requested_agent = %task.agent_name, cached_agent = %entry.agent_name, "subagent resume agent mismatch; starting a fresh subagent");
-        } else if task.resume_run_id.is_some() {
-            warn!(session_id, resume_run_id = ?task.resume_run_id, "subagent resume history not found; starting a fresh subagent");
-        }
-        ResumePlan {
-            run_id: short_id("run_sub"),
-            messages: vec![Message::user(task.task.clone())],
-            resumed: false,
-        }
-    }
-
-    fn insert(&mut self, session_id: &str, run_id: &str, agent_name: &str, messages: Vec<Message>) {
-        self.entries.insert(
-            (session_id.to_string(), run_id.to_string()),
-            SubagentHistoryEntry {
-                agent_name: agent_name.to_string(),
-                messages,
-                updated_at: Instant::now(),
-            },
-        );
-        if self.entries.len() > SUBAGENT_HISTORY_CAPACITY
-            && let Some(oldest) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.updated_at)
-                .map(|(key, _)| key.clone())
-        {
-            self.entries.remove(&oldest);
-        }
-    }
+pub(super) struct SubagentParent {
+    session_id: String,
+    kb_branch: Option<String>,
+    doc_id: Option<String>,
+    cancellation: tokio_util::sync::CancellationToken,
 }
 
 #[rig_tool(
@@ -125,14 +64,19 @@ pub(super) async fn run_subagents_tool(
     tasks: Vec<SubagentTask>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    let bound_doc_id = runtime.doc_id.lock().await.clone();
+    let turn = quire_turn_meta(context)?;
+    let parent = SubagentParent {
+        session_id: turn.session_id,
+        kb_branch: turn.kb_branch,
+        doc_id: runtime.doc_id.lock().await.clone(),
+        cancellation: runtime.cancellation.clone(),
+    };
     let mut joinset = JoinSet::new();
     for task in tasks {
         let engine = Arc::clone(&runtime.engine);
         let scope = runtime.event_scope.clone();
-        let mut execution = runtime.execution.clone();
-        execution.doc_id = bound_doc_id.clone();
-        joinset.spawn(async move { engine.run_subagent(scope, execution, task).await });
+        let parent = parent.clone();
+        joinset.spawn(async move { engine.run_subagent(scope, parent, task).await });
     }
     let mut outcomes = Vec::new();
     while let Some(joined) = joinset.join_next().await {
@@ -149,7 +93,7 @@ pub(super) async fn run_subagents_tool(
     serde_json::to_value(outcomes).map_err(tool_other)
 }
 
-/// Run subagent closures concurrently with a bounded JoinSet.
+/// Run subagent closures concurrently with a JoinSet.
 pub async fn spawn_subagents<F, Fut>(
     tasks: Vec<SubagentTask>,
     runner: F,
@@ -158,7 +102,7 @@ where
     F: Fn(SubagentTask) -> Fut + Send + Sync + 'static,
     Fut: std::future::Future<Output = SubagentOutcome> + Send + 'static,
 {
-    let mut joinset = tokio::task::JoinSet::new();
+    let mut joinset = JoinSet::new();
     for task in tasks {
         joinset.spawn(runner(task));
     }
@@ -176,17 +120,32 @@ impl RigModelCore {
     pub(super) async fn run_subagent(
         self: Arc<Self>,
         parent_scope: EventScope,
-        parent: AgentExecution,
+        parent: SubagentParent,
         task: SubagentTask,
     ) -> SubagentOutcome {
-        let plan = self
-            .subagent_history
-            .lock()
-            .await
-            .resume_messages(&parent.session_id, &task);
-        let subagent_run_id = plan.run_id.clone();
-        if plan.resumed {
-            tracing::debug!(%subagent_run_id, "resuming subagent with preserved history");
+        let subagent_run_id = task
+            .resume_run_id
+            .clone()
+            .unwrap_or_else(|| short_id("run_sub"));
+        if task.resume_run_id.is_some() {
+            match self.kb.store().memory().await {
+                Ok(memory) => match memory
+                    .load(&crate::memory::ConversationMemory::subagent_log(
+                        &parent.session_id,
+                        &subagent_run_id,
+                    ))
+                    .await
+                {
+                    Ok(conversation) if conversation.messages().is_empty() => {
+                        warn!(%subagent_run_id, "subagent resume history is empty; starting a fresh canonical conversation");
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        warn!(%error, %subagent_run_id, "failed to inspect subagent resume history")
+                    }
+                },
+                Err(error) => warn!(%error, %subagent_run_id, "failed to open subagent memory"),
+            }
         }
         parent_scope
             .send_raw(ModelStreamEvent::SubagentStarted {
@@ -225,13 +184,17 @@ impl RigModelCore {
                 cancellation: parent.cancellation.clone(),
             };
             let scope = parent_scope.child(subagent_run_id.clone(), task.agent_name.clone());
-            let (outcome, history) = self.clone().run_turn(execution, plan.messages, scope).await?;
-            self.subagent_history.lock().await.insert(
-                &parent.session_id,
-                &subagent_run_id,
-                &task.agent_name,
-                history,
-            );
+            let (outcome, _) = self
+                .clone()
+                .run_turn(
+                    execution,
+                    Message::user(task.task.clone()),
+                    Vec::new(),
+                    scope,
+                    false,
+                    true,
+                )
+                .await?;
             Ok::<String, RuntimeError>(outcome)
         }
         .await;
@@ -294,81 +257,12 @@ mod tests {
             SubagentOutcome {
                 agent_name: task.agent_name.clone(),
                 status: "completed".into(),
-                summary: task.task.clone(),
+                summary: format!("done: {}", task.task),
                 subagent_run_id: format!("run_sub_{}", task.agent_name),
             }
         })
         .await
         .unwrap();
         assert_eq!(outcomes.len(), 2);
-    }
-
-    #[test]
-    fn resume_reuses_the_previous_subagent_history() {
-        let mut history = SubagentHistory::default();
-        history.insert(
-            "sess_1",
-            "run_sub_1",
-            "reviewer",
-            vec![Message::user("first round")],
-        );
-        let task = SubagentTask {
-            agent_name: "reviewer".into(),
-            display_name: None,
-            model: None,
-            task: "second round".into(),
-            section_id: None,
-            resume_run_id: Some("run_sub_1".into()),
-        };
-
-        let plan = history.resume_messages("sess_1", &task);
-        assert!(plan.resumed);
-        assert_eq!(plan.run_id, "run_sub_1");
-        assert_eq!(plan.messages.len(), 2);
-        let rendered = format!("{:?}", plan.messages);
-        assert!(rendered.contains("first round"));
-        assert!(rendered.contains("second round"));
-    }
-
-    #[test]
-    fn missing_resume_history_starts_a_fresh_subagent() {
-        let history = SubagentHistory::default();
-        let task = SubagentTask {
-            agent_name: "reviewer".into(),
-            display_name: None,
-            model: None,
-            task: "second round".into(),
-            section_id: None,
-            resume_run_id: Some("run_sub_missing".into()),
-        };
-
-        let plan = history.resume_messages("sess_1", &task);
-        assert!(!plan.resumed);
-        assert_ne!(plan.run_id, "run_sub_missing");
-        assert_eq!(plan.messages.len(), 1);
-    }
-
-    #[test]
-    fn resume_rejects_a_different_agent_name() {
-        let mut history = SubagentHistory::default();
-        history.insert(
-            "sess_1",
-            "run_sub_1",
-            "analyst",
-            vec![Message::user("first round")],
-        );
-        let task = SubagentTask {
-            agent_name: "reviewer".into(),
-            display_name: None,
-            model: None,
-            task: "second round".into(),
-            section_id: None,
-            resume_run_id: Some("run_sub_1".into()),
-        };
-
-        let plan = history.resume_messages("sess_1", &task);
-        assert!(!plan.resumed);
-        assert_ne!(plan.run_id, "run_sub_1");
-        assert_eq!(plan.messages.len(), 1);
     }
 }

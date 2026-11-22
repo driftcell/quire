@@ -18,12 +18,6 @@ export type LiveTraceSegment =
       tools: ToolCallTraceItem[];
       subagentRunIds: string[];
     }
-  | {
-      kind: "user_message";
-      messageId: string;
-      content: string;
-      createdAt: string;
-    }
   | { kind: "text"; text: string };
 
 export interface LiveAgentTrace {
@@ -61,6 +55,9 @@ function traceToolStatus(status: string): ToolCallTraceItem["status"] {
   }
   if (status === "failed" || status === "error") {
     return "failed";
+  }
+  if (status === "skipped") {
+    return "skipped";
   }
   return "completed";
 }
@@ -105,14 +102,6 @@ function liveSegmentFromTrace(
       return null;
     }
     return { kind: "execution", tools, subagentRunIds };
-  }
-  if (segment.kind === "user_message") {
-    return {
-      kind: "user_message",
-      messageId: segment.message_id,
-      content: segment.content,
-      createdAt: segment.created_at,
-    };
   }
   return { kind: "text", text: segment.text };
 }
@@ -357,29 +346,6 @@ export function finishThinkingSegment(
       ...last,
       durationMs: Math.max(0, atMs - last.startedAtMs),
     }),
-  };
-}
-
-export function appendUserMessageSegment(
-  trace: LiveAgentTrace,
-  messageId: string,
-  content: string,
-  createdAt: string,
-): LiveAgentTrace {
-  if (
-    trace.segments.some(
-      (segment) =>
-        segment.kind === "user_message" && segment.messageId === messageId,
-    )
-  ) {
-    return trace;
-  }
-  return {
-    ...trace,
-    segments: [
-      ...trace.segments,
-      { kind: "user_message", messageId, content, createdAt },
-    ],
   };
 }
 

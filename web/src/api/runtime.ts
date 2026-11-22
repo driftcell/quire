@@ -224,13 +224,6 @@ function isRunTraceSegment(value: unknown): value is RunTraceSegment {
           value.subagents.every(isRunTraceSubagent)))
     );
   }
-  if (value.kind === "user_message") {
-    return (
-      typeof value.message_id === "string" &&
-      typeof value.content === "string" &&
-      typeof value.created_at === "string"
-    );
-  }
   return false;
 }
 

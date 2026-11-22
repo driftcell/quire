@@ -105,7 +105,6 @@ export interface HistoricalMessageItemProps {
   trace?: RunTraceSummary;
   questionSlots?: Map<string, ReactNode>;
   onJumpToSection?: (sectionId: string) => void;
-  messageById: ReadonlyMap<string, SessionMessage>;
 }
 
 export const HistoricalMessageItem = memo(function HistoricalMessageItem({
@@ -115,7 +114,6 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
   trace,
   questionSlots,
   onJumpToSection,
-  messageById,
 }: HistoricalMessageItemProps) {
   const msgAttachmentIds = msg.attachment_ids ?? [];
   const sentAt = formatMsgTime(msg.created_at);
@@ -165,9 +163,6 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
             sessionId={sessionId}
             trace={trace}
             questionSlots={questionSlots}
-            messageById={messageById}
-            attachmentMap={attachmentMap}
-            onJumpToSection={onJumpToSection}
           />
         )}
         {!hasTextSegment && (

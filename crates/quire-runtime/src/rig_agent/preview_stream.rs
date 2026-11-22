@@ -15,10 +15,9 @@ use quire_protocol::{
     BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
     PreviewStatus, short_id,
 };
-use rig_core::{
-    message::{ToolCall, ToolName},
-    streaming::{PartKind, parse_partial_arguments},
-};
+use rig_core::streaming::parse_partial_arguments;
+#[cfg(test)]
+use rig_core::{message::ToolName, streaming::PartKind};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use tracing::warn;
@@ -392,6 +391,7 @@ impl PreviewState {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn on_start(&mut self, part: usize, kind: PartKind, name: Option<&ToolName>) {
         if kind != PartKind::ToolCall {
             return;
@@ -414,7 +414,39 @@ impl PreviewState {
         );
     }
 
+    #[cfg(test)]
     pub(super) async fn on_arguments(&mut self, part: usize, fragment: &str) {
+        self.append_arguments(part, fragment).await;
+    }
+
+    pub(super) fn clear_streams(&mut self) {
+        self.streams.clear();
+        self.previews_by_call.clear();
+    }
+
+    pub(super) async fn on_tool_delta(
+        &mut self,
+        _turn: usize,
+        part: usize,
+        tool_name: &str,
+        fragment: &str,
+    ) {
+        if !PREVIEW_TOOLS.contains(&tool_name) || self.doc_id.is_none() {
+            return;
+        }
+        self.streams
+            .entry(part)
+            .or_insert_with(|| StreamingPreview {
+                invocation_id: short_id("call"),
+                tool_name: tool_name.to_string(),
+                buffer: String::new(),
+                streamers: HashMap::new(),
+                preview_ids: BTreeSet::new(),
+            });
+        self.append_arguments(part, fragment).await;
+    }
+
+    async fn append_arguments(&mut self, part: usize, fragment: &str) {
         let Some(stream) = self.streams.get_mut(&part) else {
             return;
         };
@@ -482,7 +514,25 @@ impl PreviewState {
         }
     }
 
-    pub(super) async fn on_end(&mut self, part: usize, call: &ToolCall) {
+    pub(super) async fn finish_tool_call(
+        &mut self,
+        _turn: usize,
+        call_id: &str,
+        tool_name: &str,
+        arguments: &Value,
+    ) {
+        let part = self
+            .streams
+            .iter()
+            .filter(|(_, stream)| stream.tool_name == tool_name)
+            .map(|(part, _)| *part)
+            .min();
+        if let Some(part) = part {
+            self.finalize_part(part, call_id, arguments).await;
+        }
+    }
+
+    async fn finalize_part(&mut self, part: usize, call_id: &str, arguments: &Value) {
         let Some(mut stream) = self.streams.remove(&part) else {
             return;
         };
@@ -494,7 +544,7 @@ impl PreviewState {
         // the complete arguments arrive, republish every block with its resolved anchor and
         // give the frontend one paint window before the commit clears the previews.
         let mut corrected = false;
-        let final_blocks = extract_preview_blocks(&call.function.arguments_value());
+        let final_blocks = extract_preview_blocks(arguments);
         for (index, candidate) in final_blocks.iter().enumerate() {
             if !candidate.anchor_resolved {
                 continue;
@@ -559,7 +609,7 @@ impl PreviewState {
         }
         if !stream.preview_ids.is_empty() {
             self.previews_by_call.insert(
-                call.id.wire().to_string(),
+                call_id.to_string(),
                 stream.preview_ids.into_iter().collect(),
             );
         }

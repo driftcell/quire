@@ -424,12 +424,18 @@ impl ModelRegistry {
             ProviderProtocol::OpenaiCompatible => {
                 let config = rig_core::providers::openai::OpenAIConfig::new(api_key)
                     .with_base_url(model.base_url);
-                Ok(config.connect(http).completion(model.model_id).erase())
+                let model = config.connect(http).completion(model.model_id);
+                Ok(model
+                    .with_idle_timeout(Some(Duration::from_secs(120)))
+                    .erase())
             }
             ProviderProtocol::Anthropic => {
                 let config = rig_core::providers::anthropic::AnthropicConfig::new(api_key)
                     .with_base_url(model.base_url);
-                Ok(config.connect(http).completion(model.model_id).erase())
+                let model = config.connect(http).completion(model.model_id);
+                Ok(model
+                    .with_idle_timeout(Some(Duration::from_secs(120)))
+                    .erase())
             }
         }
     }

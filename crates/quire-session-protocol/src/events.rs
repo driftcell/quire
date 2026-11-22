@@ -61,6 +61,7 @@ impl SessionEvent {
 pub enum SessionEventKind {
     TurnStarted,
     TurnFinished,
+    TurnSuperseded,
     TurnFailed {
         error: String,
         recoverable: bool,
@@ -141,12 +142,6 @@ pub enum SessionEventKind {
     UserMessageAdded {
         message_id: String,
     },
-    /// A queued user message injected between tool results and the next model round.
-    UserMessageInjected {
-        message_id: String,
-        content: String,
-        created_at: DateTime<Utc>,
-    },
     PendingQueueUpdated {
         items: Vec<PendingQueueItem>,
     },
@@ -161,6 +156,7 @@ impl SessionEventKind {
         match self {
             Self::TurnStarted => "turn_started",
             Self::TurnFinished => "turn_finished",
+            Self::TurnSuperseded => "turn_superseded",
             Self::TurnFailed { .. } => "turn_failed",
             Self::SyncRequired { .. } => "sync_required",
             Self::ThinkingDelta { .. } => "thinking_delta",
@@ -177,7 +173,6 @@ impl SessionEventKind {
             Self::DocLinked { .. } => "doc_linked",
             Self::SessionTitleUpdated { .. } => "session_title_updated",
             Self::UserMessageAdded { .. } => "user_message_added",
-            Self::UserMessageInjected { .. } => "user_message_injected",
             Self::PendingQueueUpdated { .. } => "pending_queue_updated",
             Self::CompactionStarted => "compaction_started",
             Self::CompactionFinished { .. } => "compaction_finished",
@@ -188,6 +183,7 @@ impl SessionEventKind {
         matches!(
             self,
             Self::TurnFinished
+                | Self::TurnSuperseded
                 | Self::TurnFailed { .. }
                 | Self::SyncRequired { .. }
                 | Self::QuestionnaireRequested { .. }
@@ -205,6 +201,7 @@ impl SessionEventKind {
             self,
             Self::TurnStarted
                 | Self::TurnFinished
+                | Self::TurnSuperseded
                 | Self::TurnFailed { .. }
                 | Self::ThinkingDelta { .. }
                 | Self::TextDelta { .. }
@@ -215,7 +212,6 @@ impl SessionEventKind {
                 | Self::SubagentFinished { .. }
                 | Self::ContextUsage { .. }
                 | Self::QuestionnaireRequested { .. }
-                | Self::UserMessageInjected { .. }
         )
     }
 
@@ -225,6 +221,7 @@ impl SessionEventKind {
         vec![
             Self::TurnStarted,
             Self::TurnFinished,
+            Self::TurnSuperseded,
             Self::TurnFailed {
                 error: "error".into(),
                 recoverable: true,
@@ -299,11 +296,6 @@ impl SessionEventKind {
             },
             Self::UserMessageAdded {
                 message_id: "msg_1".into(),
-            },
-            Self::UserMessageInjected {
-                message_id: "msg_1".into(),
-                content: "content".into(),
-                created_at: chrono::Utc::now(),
             },
             Self::PendingQueueUpdated { items: vec![] },
             Self::CompactionStarted,
@@ -431,28 +423,6 @@ mod tests {
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["event"], "questionnaire_requested");
         assert_eq!(json["questions"][0]["id"], "scope");
-        let decoded: SessionEvent = serde_json::from_value(json).unwrap();
-        assert_eq!(decoded, event);
-    }
-
-    #[test]
-    fn user_message_injected_roundtrips_with_message_timestamp() {
-        let created_at = Utc::now();
-        let event = SessionEvent::new(
-            11,
-            "run_main",
-            "main",
-            None,
-            SessionEventKind::UserMessageInjected {
-                message_id: "msg_injected".into(),
-                content: "补充风险提示".into(),
-                created_at,
-            },
-        );
-        let json = serde_json::to_value(&event).unwrap();
-        assert_eq!(json["event"], "user_message_injected");
-        assert_eq!(json["message_id"], "msg_injected");
-        assert_eq!(json["content"], "补充风险提示");
         let decoded: SessionEvent = serde_json::from_value(json).unwrap();
         assert_eq!(decoded, event);
     }

@@ -6,58 +6,16 @@
  */
 
 /**
- * One ordered slice of a run. Text output closes the preceding thinking and
- * execution phase, so later reasoning or tools start a new segment instead of
- * being folded back into an older block.
- */
-export type RunTraceSegment =
-  | {
-      duration_ms?: number | null;
-      kind: "thinking";
-      /**
-       * Server timestamp when this thinking phase started. Retained while the
-       * phase is still streaming so clients can continue the timer after refresh.
-       */
-      started_at?: string | null;
-      text: string;
-      [k: string]: unknown;
-    }
-  | {
-      kind: "execution";
-      subagents?: RunTraceSubagent[];
-      tools?: RunTraceToolItem[];
-      [k: string]: unknown;
-    }
-  | {
-      content: string;
-      created_at: string;
-      kind: "user_message";
-      message_id: string;
-      [k: string]: unknown;
-    }
-  | {
-      kind: "text";
-      text: string;
-      [k: string]: unknown;
-    };
-export type ActiveRunStatus = "idle" | "running" | "interrupted" | "failed" | "awaiting_input";
-export type MessageRole = "user" | "assistant" | "tool" | "system" | "compaction";
-/**
- * Why a message is waiting in the per-session queue.
- */
-export type PendingQueueSource = "user" | "comment";
-export type SessionStatus = "active" | "archived";
-/**
  * Common envelope for every Session-SSE frame.
  */
 export type SessionEvent = {
+  seq: number;
+  run_id: string;
   /**
    * `"main"` or a stable subagent identifier.
    */
   agent_id: string;
   parent_run_id?: string | null;
-  run_id: string;
-  seq: number;
   timestamp: string;
   [k: string]: unknown;
 } & SessionEvent1;
@@ -71,87 +29,91 @@ export type SessionEvent1 =
       [k: string]: unknown;
     }
   | {
-      error: string;
+      event: "turn_superseded";
+      [k: string]: unknown;
+    }
+  | {
       event: "turn_failed";
+      error: string;
       recoverable: boolean;
       [k: string]: unknown;
     }
   | {
-      after_seq: number;
       event: "sync_required";
+      after_seq: number;
       reason: string;
       [k: string]: unknown;
     }
   | {
-      delta: string;
       event: "thinking_delta";
-      [k: string]: unknown;
-    }
-  | {
       delta: string;
-      event: "text_delta";
       [k: string]: unknown;
     }
   | {
-      detail?: string | null;
+      event: "text_delta";
+      delta: string;
+      [k: string]: unknown;
+    }
+  | {
       event: "task_focus";
-      section_id?: string | null;
       title: string;
+      detail?: string | null;
+      section_id?: string | null;
       [k: string]: unknown;
     }
   | {
       event: "tool_call_started";
-      input_preview: string;
       tool_call_id: string;
       tool_name: string;
+      input_preview: string;
       truncated: boolean;
       [k: string]: unknown;
     }
   | {
-      duration_ms: number;
       event: "tool_call_finished";
-      output_preview: string;
-      status: string;
       tool_call_id: string;
+      status: string;
+      output_preview: string;
       truncated: boolean;
+      duration_ms: number;
       [k: string]: unknown;
     }
   | {
+      event: "subagent_started";
+      subagent_run_id: string;
       agent_name: string;
       display_name?: string | null;
-      event: "subagent_started";
-      section_id?: string | null;
-      subagent_run_id: string;
       task: string;
+      section_id?: string | null;
       [k: string]: unknown;
     }
   | {
       event: "subagent_finished";
-      status: string;
       subagent_run_id: string;
+      status: string;
       summary: string;
       [k: string]: unknown;
     }
   | {
-      cached_tokens: number;
-      context_limit: number;
-      context_used: number;
       event: "context_usage";
       input_tokens: number;
       output_tokens: number;
+      cached_tokens: number;
+      context_used: number;
+      context_limit: number;
       [k: string]: unknown;
     }
   | {
       event: "questionnaire_requested";
       question_id: string;
-      questions: QuestionItem[];
       tool_call_id?: string | null;
+      questions: QuestionItem[];
       [k: string]: unknown;
     }
   | {
-      answers: QuestionAnswer[];
       event: "questionnaire_answered";
       question_id: string;
+      answers: QuestionAnswer[];
       skipped_all: boolean;
       [k: string]: unknown;
     }
@@ -162,8 +124,8 @@ export type SessionEvent1 =
       [k: string]: unknown;
     }
   | {
-      doc_id: string;
       event: "doc_linked";
+      doc_id: string;
       title: string;
       [k: string]: unknown;
     }
@@ -174,13 +136,6 @@ export type SessionEvent1 =
     }
   | {
       event: "user_message_added";
-      message_id: string;
-      [k: string]: unknown;
-    }
-  | {
-      content: string;
-      created_at: string;
-      event: "user_message_injected";
       message_id: string;
       [k: string]: unknown;
     }
@@ -198,22 +153,215 @@ export type SessionEvent1 =
       success: boolean;
       [k: string]: unknown;
     };
+/**
+ * Why a message is waiting in the per-session queue.
+ */
+export type PendingQueueSource = "user" | "comment";
+export type SessionStatus = "active" | "archived";
+export type ActiveRunStatus = "idle" | "running" | "interrupted" | "failed" | "awaiting_input";
+export type MessageRole = "user" | "assistant" | "tool" | "system" | "compaction";
+/**
+ * One ordered slice of a run. Text output closes the preceding thinking and
+ * execution phase, so later reasoning or tools start a new segment instead of
+ * being folded back into an older block.
+ */
+export type RunTraceSegment =
+  | {
+      kind: "thinking";
+      text: string;
+      duration_ms?: number | null;
+      /**
+       * Server timestamp when this thinking phase started. Retained while the
+       * phase is still streaming so clients can continue the timer after refresh.
+       */
+      started_at?: string | null;
+      [k: string]: unknown;
+    }
+  | {
+      kind: "execution";
+      tools?: RunTraceToolItem[];
+      subagents?: RunTraceSubagent[];
+      [k: string]: unknown;
+    }
+  | {
+      kind: "text";
+      text: string;
+      [k: string]: unknown;
+    };
+export type QuestionnaireResolutionStatus = "answered" | "skipped";
 
 export interface QuireSessionProtocol {
+  session_event: SessionEvent;
+  session_summary: SessionSummary;
+  session_detail: SessionDetail;
+  session_message: SessionMessage;
   attachment_meta: AttachmentMeta;
   create_session_request: CreateSessionRequest;
-  pending_question: PendingQuestion;
-  question_answer: QuestionAnswer;
-  question_item: QuestionItem;
-  question_option: QuestionOption;
-  run_trace_summary: RunTraceSummary;
   send_message_request: SendMessageRequest;
-  session_detail: SessionDetail;
-  session_event: SessionEvent;
-  session_message: SessionMessage;
-  session_summary: SessionSummary;
-  tool_call_detail: ToolCallDetail;
   update_pending_message_request: UpdatePendingMessageRequest;
+  tool_call_detail: ToolCallDetail;
+  question_option: QuestionOption;
+  question_item: QuestionItem;
+  question_answer: QuestionAnswer;
+  pending_question: PendingQuestion;
+  ask_user_answer_payload: AskUserAnswerPayload;
+  questionnaire_resolution_status: QuestionnaireResolutionStatus;
+  resolved_question_item_answer: ResolvedQuestionItemAnswer;
+  run_trace_summary: RunTraceSummary;
+  [k: string]: unknown;
+}
+export interface QuestionItem {
+  id: string;
+  title: string;
+  description?: string | null;
+  multiple?: boolean;
+  required?: boolean;
+  options?: QuestionOption[];
+}
+export interface QuestionOption {
+  id: string;
+  label: string;
+  description?: string | null;
+  [k: string]: unknown;
+}
+export interface QuestionAnswer {
+  question_id: string;
+  selected_option_ids?: string[];
+  freeform_text?: string | null;
+  skipped?: boolean;
+}
+/**
+ * One message waiting for the session's active run to finish.
+ */
+export interface PendingQueueItem {
+  queue_id: string;
+  session_id: string;
+  content: string;
+  comment_refs?: SessionCommentRef[];
+  source: PendingQueueSource;
+  /**
+   * Comment thread that produced this item, when `source` is `comment`.
+   */
+  thread_id?: string | null;
+  attachment_ids?: string[];
+  created_at: string;
+  [k: string]: unknown;
+}
+/**
+ * Immutable send-time snapshot of a report comment handed to the agent.
+ */
+export interface SessionCommentRef {
+  thread_id: string;
+  block_id: string;
+  end_block_id?: string | null;
+  anchor_blocks?: string[];
+  status: string;
+  quote?: string | null;
+  end_quote?: string | null;
+  anchor_snapshot?: string | null;
+  comment: string;
+}
+export interface SessionSummary {
+  session_id: string;
+  title: string;
+  /**
+   * Quire report bound to this session. `None` until the first run auto-binds.
+   */
+  doc_id?: string | null;
+  /**
+   * Frontend-friendly alias of the bound report ID.
+   */
+  linked_doc_id?: string | null;
+  /**
+   * Knowledge-base branch used by this session. `None` only for sessions created before
+   * branch-scoped knowledge bases existed; those fall back to the current active branch.
+   */
+  kb_branch?: string | null;
+  status: SessionStatus;
+  active_run_status: ActiveRunStatus;
+  last_event_seq: number;
+  context_usage?: ContextUsage;
+  compacting?: boolean;
+  compacted_at?: string | null;
+  pinned_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  [k: string]: unknown;
+}
+export interface ContextUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  context_used: number;
+  context_limit: number;
+  [k: string]: unknown;
+}
+export interface SessionDetail {
+  session_id: string;
+  title: string;
+  /**
+   * Quire report bound to this session. `None` until the first run auto-binds.
+   */
+  doc_id?: string | null;
+  /**
+   * Frontend-friendly alias of the bound report ID.
+   */
+  linked_doc_id?: string | null;
+  /**
+   * Knowledge-base branch used by this session. `None` only for sessions created before
+   * branch-scoped knowledge bases existed; those fall back to the current active branch.
+   */
+  kb_branch?: string | null;
+  status: SessionStatus;
+  active_run_status: ActiveRunStatus;
+  last_event_seq: number;
+  context_usage?: ContextUsage1;
+  compacting?: boolean;
+  compacted_at?: string | null;
+  pinned_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  messages?: SessionMessage[];
+  attachments?: AttachmentMeta[];
+  /**
+   * Latest unresolved question card, restored after refresh or reconnect.
+   */
+  pending_question?: PendingQuestion | null;
+  /**
+   * Answered, skipped and dismissed question cards in creation order.
+   */
+  resolved_questions?: ResolvedQuestion[];
+  /**
+   * Messages waiting for the current run to finish, in FIFO order.
+   */
+  pending_queue?: PendingQueueItem[];
+  /**
+   * Aggregated trace of the active run, captured at `last_event_seq`.
+   */
+  active_run_trace?: RunTraceSummary | null;
+  /**
+   * Subagents embedded in the active run, with their streaming clocks.
+   */
+  active_subagent_traces?: RunTraceSubagent[];
+  [k: string]: unknown;
+}
+export interface ContextUsage1 {
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  context_used: number;
+  context_limit: number;
+  [k: string]: unknown;
+}
+export interface SessionMessage {
+  message_id: string;
+  session_id: string;
+  role: MessageRole;
+  content: string;
+  comment_refs?: SessionCommentRef[];
+  attachment_ids?: string[];
+  run_id?: string | null;
+  created_at: string;
   [k: string]: unknown;
 }
 export interface AttachmentMeta {
@@ -223,7 +371,71 @@ export interface AttachmentMeta {
   size_bytes: number;
   [k: string]: unknown;
 }
+export interface PendingQuestion {
+  question_id: string;
+  run_id: string;
+  /**
+   * The `ask_user` tool call that opened this question, when known.
+   */
+  tool_call_id?: string | null;
+  questions: QuestionItem[];
+  created_at: string;
+  [k: string]: unknown;
+}
+export interface ResolvedQuestion {
+  question: PendingQuestion;
+  status: string;
+  answers?: QuestionAnswer[];
+  [k: string]: unknown;
+}
+export interface RunTraceSummary {
+  run_id: string;
+  status: string;
+  /**
+   * Server timestamp of the run's `turn_started` event.
+   */
+  started_at?: string | null;
+  duration_ms?: number | null;
+  task_focus?: RunTaskFocus | null;
+  segments?: RunTraceSegment[];
+  [k: string]: unknown;
+}
+export interface RunTaskFocus {
+  title: string;
+  detail?: string | null;
+  section_id?: string | null;
+  [k: string]: unknown;
+}
+export interface RunTraceToolItem {
+  tool_call_id: string;
+  tool_name: string;
+  status: string;
+  input_preview: string;
+  output_preview?: string | null;
+  duration_ms?: number | null;
+  truncated?: boolean;
+  [k: string]: unknown;
+}
+export interface RunTraceSubagent {
+  subagent_run_id: string;
+  agent_name: string;
+  display_name?: string | null;
+  task: string;
+  section_id?: string | null;
+  status: string;
+  started_at?: string | null;
+  summary?: string | null;
+  /**
+   * Ordered subagent activity, isomorphic to the main run's segments. Text
+   * closes the preceding thinking/execution phase, so multi-round tool use
+   * keeps the same order in live and hydrated views.
+   */
+  segments?: RunTraceSegment[];
+  task_focus?: RunTaskFocus | null;
+  [k: string]: unknown;
+}
 export interface CreateSessionRequest {
+  title: string;
   /**
    * Optional existing report to bind immediately.
    */
@@ -232,249 +444,52 @@ export interface CreateSessionRequest {
    * Test a draft knowledge-base branch. Omit to use the current active branch.
    */
   kb_branch?: string | null;
-  title: string;
-}
-export interface PendingQuestion {
-  created_at: string;
-  question_id: string;
-  questions: QuestionItem[];
-  run_id: string;
-  /**
-   * The `ask_user` tool call that opened this question, when known.
-   */
-  tool_call_id?: string | null;
-  [k: string]: unknown;
-}
-export interface QuestionItem {
-  description?: string | null;
-  id: string;
-  multiple?: boolean;
-  options?: QuestionOption[];
-  required?: boolean;
-  title: string;
-}
-export interface QuestionOption {
-  description?: string | null;
-  id: string;
-  label: string;
-  [k: string]: unknown;
-}
-export interface QuestionAnswer {
-  freeform_text?: string | null;
-  question_id: string;
-  selected_option_ids?: string[];
-  skipped?: boolean;
-}
-export interface RunTraceSummary {
-  duration_ms?: number | null;
-  run_id: string;
-  segments?: RunTraceSegment[];
-  /**
-   * Server timestamp of the run's `turn_started` event.
-   */
-  started_at?: string | null;
-  status: string;
-  task_focus?: RunTaskFocus | null;
-  [k: string]: unknown;
-}
-export interface RunTraceSubagent {
-  agent_name: string;
-  display_name?: string | null;
-  section_id?: string | null;
-  /**
-   * Ordered subagent activity, isomorphic to the main run's segments. Text
-   * closes the preceding thinking/execution phase, so multi-round tool use
-   * keeps the same order in live and hydrated views.
-   */
-  segments?: RunTraceSegment[];
-  started_at?: string | null;
-  status: string;
-  subagent_run_id: string;
-  summary?: string | null;
-  task: string;
-  task_focus?: RunTaskFocus | null;
-  [k: string]: unknown;
-}
-export interface RunTaskFocus {
-  detail?: string | null;
-  section_id?: string | null;
-  title: string;
-  [k: string]: unknown;
-}
-export interface RunTraceToolItem {
-  duration_ms?: number | null;
-  input_preview: string;
-  output_preview?: string | null;
-  status: string;
-  tool_call_id: string;
-  tool_name: string;
-  truncated?: boolean;
-  [k: string]: unknown;
 }
 export interface SendMessageRequest {
-  attachment_ids?: string[];
   client_msg_id: string;
-  comment_refs?: SessionCommentRef[];
   content: string;
-}
-/**
- * Immutable send-time snapshot of a report comment handed to the agent.
- */
-export interface SessionCommentRef {
-  anchor_blocks?: string[];
-  anchor_snapshot?: string | null;
-  block_id: string;
-  comment: string;
-  end_block_id?: string | null;
-  end_quote?: string | null;
-  quote?: string | null;
-  status: string;
-  thread_id: string;
-}
-export interface SessionDetail {
-  active_run_status: ActiveRunStatus;
-  /**
-   * Aggregated trace of the active run, captured at `last_event_seq`.
-   */
-  active_run_trace?: RunTraceSummary | null;
-  /**
-   * Subagents embedded in the active run, with their streaming clocks.
-   */
-  active_subagent_traces?: RunTraceSubagent[];
-  attachments?: AttachmentMeta[];
-  compacted_at?: string | null;
-  compacting?: boolean;
-  context_usage?: ContextUsage;
-  created_at: string;
-  /**
-   * Quire report bound to this session. `None` until the first run auto-binds.
-   */
-  doc_id?: string | null;
-  /**
-   * Knowledge-base branch used by this session. `None` only for sessions created before
-   * branch-scoped knowledge bases existed; those fall back to the current active branch.
-   */
-  kb_branch?: string | null;
-  last_event_seq: number;
-  /**
-   * Frontend-friendly alias of the bound report ID.
-   */
-  linked_doc_id?: string | null;
-  messages?: SessionMessage[];
-  /**
-   * Latest unresolved question card, restored after refresh or reconnect.
-   */
-  pending_question?: PendingQuestion | null;
-  /**
-   * Messages waiting for the current run to finish, in FIFO order.
-   */
-  pending_queue?: PendingQueueItem[];
-  pinned_at?: string | null;
-  /**
-   * Answered, skipped and dismissed question cards in creation order.
-   */
-  resolved_questions?: ResolvedQuestion[];
-  session_id: string;
-  status: SessionStatus;
-  title: string;
-  updated_at: string;
-  [k: string]: unknown;
-}
-export interface ContextUsage {
-  cached_tokens: number;
-  context_limit: number;
-  context_used: number;
-  input_tokens: number;
-  output_tokens: number;
-  [k: string]: unknown;
-}
-export interface SessionMessage {
+  comment_refs?: SessionCommentRef[];
   attachment_ids?: string[];
-  comment_refs?: SessionCommentRef[];
+}
+export interface UpdatePendingMessageRequest {
   content: string;
-  created_at: string;
-  message_id: string;
-  role: MessageRole;
-  run_id?: string | null;
-  session_id: string;
-  [k: string]: unknown;
-}
-/**
- * One message waiting for the session's active run to finish.
- */
-export interface PendingQueueItem {
-  attachment_ids?: string[];
   comment_refs?: SessionCommentRef[];
-  content: string;
-  created_at: string;
-  queue_id: string;
-  session_id: string;
-  source: PendingQueueSource;
-  /**
-   * Comment thread that produced this item, when `source` is `comment`.
-   */
-  thread_id?: string | null;
-  [k: string]: unknown;
-}
-export interface ResolvedQuestion {
-  answers?: QuestionAnswer[];
-  question: PendingQuestion;
-  status: string;
-  [k: string]: unknown;
-}
-export interface SessionSummary {
-  active_run_status: ActiveRunStatus;
-  compacted_at?: string | null;
-  compacting?: boolean;
-  context_usage?: ContextUsage1;
-  created_at: string;
-  /**
-   * Quire report bound to this session. `None` until the first run auto-binds.
-   */
-  doc_id?: string | null;
-  /**
-   * Knowledge-base branch used by this session. `None` only for sessions created before
-   * branch-scoped knowledge bases existed; those fall back to the current active branch.
-   */
-  kb_branch?: string | null;
-  last_event_seq: number;
-  /**
-   * Frontend-friendly alias of the bound report ID.
-   */
-  linked_doc_id?: string | null;
-  pinned_at?: string | null;
-  session_id: string;
-  status: SessionStatus;
-  title: string;
-  updated_at: string;
-  [k: string]: unknown;
-}
-export interface ContextUsage1 {
-  cached_tokens: number;
-  context_limit: number;
-  context_used: number;
-  input_tokens: number;
-  output_tokens: number;
-  [k: string]: unknown;
 }
 export interface ToolCallDetail {
-  created_at: string;
-  duration_ms: number;
-  error?: string | null;
+  tool_call_id: string;
+  session_id: string;
+  run_id: string;
+  tool_name: string;
+  status: string;
   input?: {
     [k: string]: unknown;
   };
   output?: {
     [k: string]: unknown;
   };
-  run_id: string;
-  session_id: string;
-  status: string;
-  tool_call_id: string;
-  tool_name: string;
+  error?: string | null;
+  duration_ms: number;
+  created_at: string;
   [k: string]: unknown;
 }
-export interface UpdatePendingMessageRequest {
-  comment_refs?: SessionCommentRef[];
-  content: string;
+/**
+ * The only model input produced when an ask_user card is answered or skipped.
+ */
+export interface AskUserAnswerPayload {
+  kind: string;
+  question_id: string;
+  tool_call_id?: string | null;
+  status: QuestionnaireResolutionStatus;
+  skipped_all: boolean;
+  answers: ResolvedQuestionItemAnswer[];
+  [k: string]: unknown;
+}
+export interface ResolvedQuestionItemAnswer {
+  question_id: string;
+  question_title: string;
+  selected_option_ids: string[];
+  selected_option_labels: string[];
+  freeform_text?: string | null;
+  skipped: boolean;
+  [k: string]: unknown;
 }

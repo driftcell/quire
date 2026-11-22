@@ -3,7 +3,6 @@ import { ListTreeIcon } from "lucide-react";
 import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
 import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import { SubagentTrace } from "@/components/chat/SubagentTrace";
-import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
@@ -25,11 +24,7 @@ import {
   TraceLine,
   TraceTitle,
 } from "@/components/ui/trace";
-import type {
-  AttachmentMeta,
-  RunTraceSummary,
-  SessionMessage,
-} from "@/contracts/session-protocol";
+import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveSubagentRun } from "@/lib/liveTrace";
 
 function formatActivityDuration(durationMs?: number): string | null {
@@ -170,9 +165,6 @@ export const RenderSegments = memo(function RenderSegments({
   sessionId,
   segments,
   questionSlots,
-  onJumpToSection,
-  messageById,
-  attachmentMap,
   showActiveDetails = true,
   renderLiveHeader,
   liveStreaming = false,
@@ -180,9 +172,6 @@ export const RenderSegments = memo(function RenderSegments({
   sessionId: string;
   segments: RenderSegment[];
   questionSlots?: Map<string, ReactNode>;
-  onJumpToSection?: (sectionId: string) => void;
-  messageById: ReadonlyMap<string, SessionMessage>;
-  attachmentMap: Map<string, AttachmentMeta>;
   showActiveDetails?: boolean;
   renderLiveHeader?: () => ReactNode;
   liveStreaming?: boolean;
@@ -201,23 +190,6 @@ export const RenderSegments = memo(function RenderSegments({
   return (
     <div className="w-full space-y-1">
       {segments.map((segment, index) => {
-        if (segment.kind === "user") {
-          const message = messageById.get(segment.messageId);
-          return (
-            <Fragment key={segment.key}>
-              {headerIndex === index && renderLiveHeader?.()}
-              <div data-inline-user-message-id={segment.messageId}>
-                <UserMessageBubble
-                  body={message?.content ?? segment.content}
-                  commentRefs={message?.comment_refs ?? []}
-                  attachmentIds={message?.attachment_ids ?? []}
-                  attachmentMap={attachmentMap}
-                  onJumpToSection={onJumpToSection}
-                />
-              </div>
-            </Fragment>
-          );
-        }
         if (segment.kind === "text") {
           return (
             <Fragment key={segment.key}>
@@ -254,16 +226,10 @@ export function HistoricalRunTrace({
   sessionId,
   trace,
   questionSlots,
-  messageById,
-  attachmentMap,
-  onJumpToSection,
 }: {
   sessionId: string;
   trace: RunTraceSummary;
   questionSlots?: Map<string, ReactNode>;
-  messageById: ReadonlyMap<string, SessionMessage>;
-  attachmentMap: Map<string, AttachmentMeta>;
-  onJumpToSection?: (sectionId: string) => void;
 }) {
   const segments = buildHistoricalSegments(trace);
   if (segments.length === 0) {
@@ -274,9 +240,6 @@ export function HistoricalRunTrace({
       sessionId={sessionId}
       segments={segments}
       questionSlots={questionSlots}
-      messageById={messageById}
-      attachmentMap={attachmentMap}
-      onJumpToSection={onJumpToSection}
     />
   );
 }
@@ -322,9 +285,6 @@ export function LiveTraceSegments({
   sessionId,
   segments,
   questionSlots,
-  onJumpToSection,
-  messageById,
-  attachmentMap,
   showActiveDetails = true,
   renderLiveHeader,
   liveStreaming = false,
@@ -332,9 +292,6 @@ export function LiveTraceSegments({
   sessionId: string;
   segments: RenderSegment[];
   questionSlots?: Map<string, ReactNode>;
-  onJumpToSection?: (sectionId: string) => void;
-  messageById: ReadonlyMap<string, SessionMessage>;
-  attachmentMap: Map<string, AttachmentMeta>;
   showActiveDetails?: boolean;
   renderLiveHeader?: () => ReactNode;
   liveStreaming?: boolean;
@@ -344,9 +301,6 @@ export function LiveTraceSegments({
       sessionId={sessionId}
       segments={segments}
       questionSlots={questionSlots}
-      onJumpToSection={onJumpToSection}
-      messageById={messageById}
-      attachmentMap={attachmentMap}
       showActiveDetails={showActiveDetails}
       renderLiveHeader={renderLiveHeader}
       liveStreaming={liveStreaming}

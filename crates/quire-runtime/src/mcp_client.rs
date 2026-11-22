@@ -39,6 +39,18 @@ impl RmcpClient {
         session_id: &str,
         agent_id: &str,
     ) -> RuntimeResult<Self> {
+        Self::connect_inner(url, token, Some((session_id, agent_id))).await
+    }
+
+    pub async fn connect_shared(url: &str, token: Option<SecretString>) -> RuntimeResult<Self> {
+        Self::connect_inner(url, token, None).await
+    }
+
+    async fn connect_inner(
+        url: &str,
+        token: Option<SecretString>,
+        identity: Option<(&str, &str)>,
+    ) -> RuntimeResult<Self> {
         let endpoint = if url.trim_end_matches('/').ends_with("/mcp") {
             url.trim_end_matches('/').to_string()
         } else {
@@ -49,24 +61,25 @@ impl RmcpClient {
             config = config.auth_header(token.expose_secret().to_string());
         }
         let mut headers = HashMap::new();
-        for name in ["x-session-id", "x-agent-id", "x-actor"] {
-            let header = HeaderName::from_static(name);
-            let value = HeaderValue::from_str(if name == "x-session-id" {
-                session_id
-            } else {
-                agent_id
-            })
-            .map_err(|error| {
-                RuntimeError::InvalidRequest(format!("invalid MCP header value: {error}"))
-            })?;
-            headers.insert(header, value);
+        if let Some((session_id, agent_id)) = identity {
+            for name in ["x-session-id", "x-agent-id", "x-actor"] {
+                let header = HeaderName::from_static(name);
+                let value = HeaderValue::from_str(if name == "x-session-id" {
+                    session_id
+                } else {
+                    agent_id
+                })
+                .map_err(|error| {
+                    RuntimeError::InvalidRequest(format!("invalid MCP header value: {error}"))
+                })?;
+                headers.insert(header, value);
+            }
         }
         config.custom_headers = headers;
 
         let http = rig_reqwest::reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(300))
-            .pool_max_idle_per_host(0)
             .build()
             .map_err(|error| {
                 RuntimeError::Internal(format!("MCP HTTP client init failed: {error}"))

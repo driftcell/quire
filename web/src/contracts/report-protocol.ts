@@ -12,62 +12,36 @@ export type DocId = string;
 /**
  * Validated identifier.
  */
-export type BlockId = string;
-/**
- * Who wrote a comment or reply.
- */
-export type CommentAuthorType = "human" | "agent";
-/**
- * Monotonic non-negative report revision.
- */
-export type Revision = number;
-/**
- * Review-thread lifecycle.
- *
- * Agents may move `open` to `addressed`; only the human REST surface may archive or reopen.
- */
-export type CommentStatus = "open" | "addressed" | "archived";
-/**
- * Validated identifier.
- */
-export type SourceId = string;
-/**
- * Automatic figure/table numbering kind.
- */
-export type NumberingKind = "figure" | "table" | "none";
-export type Align = "left" | "center" | "right";
-/**
- * Inferred or explicit data type of a table column.
- */
-export type ColumnDataType = "text" | "number" | "currency" | "percent" | "date" | "badge";
-/**
- * How a leaf column participates in width distribution.
- */
-export type ColumnSizing = "fit" | "grow";
+export type SessionId = string;
 /**
  * A report block with common metadata shared by all variants.
  */
 export type Block = {
-  class_name?: string | null;
   /**
-   * Validated identifier.
+   * Short semantic ID, for example `q3-revenue`. Empty/missing IDs are auto-assigned on insert.
    */
   id?: string;
-  /**
-   * Suppressible lint rules ignored for this block only. Core contract and safety rules
-   * remain active regardless of this list.
-   */
-  lint_ignore?: string[];
+  class_name?: string | null;
+  style?: BlockStyle;
   /**
    * Citation source IDs attached to the whole block.
    */
   source_ids?: SourceId[];
   source_note?: string | null;
-  style?: BlockStyle;
+  /**
+   * Suppressible lint rules ignored for this block only. Core contract and safety rules
+   * remain active regardless of this list.
+   */
+  lint_ignore?: string[];
   [k: string]: unknown;
 } & Block1;
+/**
+ * Validated identifier.
+ */
+export type SourceId = string;
 export type Block1 =
   | {
+      type: "heading";
       /**
        * Heading depth 1..=6.
        */
@@ -76,43 +50,35 @@ export type Block1 =
        * Heading text. Inline Markdown is supported.
        */
       text: string;
-      type: "heading";
       [k: string]: unknown;
     }
   | {
+      type: "paragraph";
       /**
        * Paragraph text. Supports **bold**, *italic*, `code`, links and citations.
        */
       text: string;
-      type: "paragraph";
       [k: string]: unknown;
     }
   | {
+      type: "quote";
       /**
        * Quote text.
        */
       text: string;
-      type: "quote";
       [k: string]: unknown;
     }
   | TableBlock
   | {
+      type: "echarts";
       /**
-       * Mandatory one-sentence numeric summary for reviewers, Markdown projection and non-JS use.
+       * Optional chart title. `caption` is accepted as a legacy alias on input.
        */
-      fallback_summary?: string;
+      title?: string | null;
       /**
        * Canvas height in pixels, recommended 120..=2000.
        */
       height?: number;
-      /**
-       * Explanatory footnote rendered below the chart.
-       */
-      note?: string | null;
-      /**
-       * `figure` by default; use `none` to suppress the `图 N` label.
-       */
-      numbering?: NumberingKind | null;
       /**
        * Complete native ECharts 6.0 option object. Required: no presets or mode switches.
        */
@@ -126,10 +92,17 @@ export type Block1 =
         [k: string]: unknown;
       };
       /**
-       * Optional chart title. `caption` is accepted as a legacy alias on input.
+       * Mandatory one-sentence numeric summary for reviewers, Markdown projection and non-JS use.
        */
-      title?: string | null;
-      type: "echarts";
+      fallback_summary?: string;
+      /**
+       * `figure` by default; use `none` to suppress the `图 N` label.
+       */
+      numbering?: NumberingKind | null;
+      /**
+       * Explanatory footnote rendered below the chart.
+       */
+      note?: string | null;
       [k: string]: unknown;
     }
   | CustomHtmlBlock;
@@ -141,53 +114,49 @@ export type TableBlock = (TableBlockColumns | TableBlockHeaders) & {
   [k: string]: unknown;
 };
 /**
+ * Automatic figure/table numbering kind.
+ */
+export type NumberingKind = "figure" | "table" | "none";
+/**
+ * Inferred or explicit data type of a table column.
+ */
+export type ColumnDataType = "text" | "number" | "currency" | "percent" | "date" | "badge";
+/**
+ * How a leaf column participates in width distribution.
+ */
+export type ColumnSizing = "fit" | "grow";
+export type Align = "left" | "center" | "right";
+/**
  * A table cell value. Untagged so agents can submit plain strings/numbers or rich cells.
  */
 export type CellValue = string | number | boolean | null | RichCell;
 /**
  * Validated identifier.
  */
-export type SessionId = string;
+export type BlockId = string;
 /**
- * One block-level change between two snapshots.
+ * Monotonic non-negative report revision.
  */
-export type BlockDiffEntry =
-  | {
-      block: Block;
-      type: "added";
-      [k: string]: unknown;
-    }
-  | {
-      block: Block;
-      type: "removed";
-      [k: string]: unknown;
-    }
-  | {
-      after: Block;
-      before: Block;
-      block_id: BlockId;
-      type: "modified";
-      [k: string]: unknown;
-    };
+export type Revision = number;
 /**
  * Where an ephemeral preview block sits relative to the committed document.
  */
 export type PreviewAnchor =
   | {
-      section_id: BlockId;
       type: "append_to_section";
+      section_id: BlockId;
     }
   | {
-      block_id: BlockId;
       type: "after_block";
+      block_id: BlockId;
     }
   | {
-      block_id: BlockId;
       type: "before_block";
+      block_id: BlockId;
     }
   | {
-      block_id: BlockId;
       type: "replace_block";
+      block_id: BlockId;
     }
   | {
       type: "append_to_doc";
@@ -196,66 +165,224 @@ export type PreviewAnchor =
  * Lifecycle state of one ephemeral preview stream.
  */
 export type PreviewStatus = "streaming" | "completed" | "aborted";
+/**
+ * Review-thread lifecycle.
+ *
+ * Agents may move `open` to `addressed`; only the human REST surface may archive or reopen.
+ */
+export type CommentStatus = "open" | "addressed" | "archived";
+/**
+ * Who wrote a comment or reply.
+ */
+export type CommentAuthorType = "human" | "agent";
+/**
+ * One block-level change between two snapshots.
+ */
+export type BlockDiffEntry =
+  | {
+      type: "added";
+      block: Block;
+      [k: string]: unknown;
+    }
+  | {
+      type: "removed";
+      block: Block;
+      [k: string]: unknown;
+    }
+  | {
+      type: "modified";
+      block_id: BlockId;
+      before: Block;
+      after: Block;
+      [k: string]: unknown;
+    };
 export type Severity = "error" | "warning" | "info";
 
 export interface QuireReportProtocol {
-  agent_presence: AgentPresenceEvent;
-  chart_data_table: ChartDataTable;
-  comment_message: CommentMessage;
-  comment_thread: CommentThread;
-  comment_updated: CommentUpdatedEvent;
-  computed: ComputedDocumentMeta;
   document: ReportDocument;
-  document_diff: DocumentDiffReport;
-  document_metadata_diff: DocumentMetadataDiff;
+  computed: ComputedDocumentMeta;
+  /**
+   * Declarative patch operation submitted to `apply_operations`.
+   */
+  patch_op:
+    | {
+        type: "insert_after";
+        /**
+         * Validated identifier.
+         */
+        target_id: string;
+        /**
+         * New blocks in display order.
+         */
+        blocks: Block[];
+        [k: string]: unknown;
+      }
+    | {
+        type: "insert_before";
+        /**
+         * Validated identifier.
+         */
+        target_id: string;
+        /**
+         * New blocks in display order.
+         */
+        blocks: Block[];
+        [k: string]: unknown;
+      }
+    | {
+        type: "append";
+        /**
+         * New blocks in display order.
+         */
+        blocks: Block[];
+        [k: string]: unknown;
+      }
+    | {
+        type: "append_to_section";
+        /**
+         * Validated identifier.
+         */
+        section_id: string;
+        /**
+         * New blocks in display order.
+         */
+        blocks: Block[];
+        [k: string]: unknown;
+      }
+    | {
+        type: "patch_block";
+        /**
+         * Validated identifier.
+         */
+        block_id: string;
+        patch: BlockPatch;
+        [k: string]: unknown;
+      }
+    | {
+        type: "replace_range";
+        /**
+         * Validated identifier.
+         */
+        start_id: string;
+        /**
+         * Validated identifier.
+         */
+        end_id: string;
+        /**
+         * Replacement blocks. Empty means delete the range.
+         */
+        blocks: Block[];
+        [k: string]: unknown;
+      }
+    | {
+        type: "delete_blocks";
+        /**
+         * Block IDs to delete. All must exist.
+         */
+        block_ids: BlockId[];
+        [k: string]: unknown;
+      }
+    | {
+        type: "move_block";
+        /**
+         * Validated identifier.
+         */
+        block_id: string;
+        /**
+         * Anchor block; null means the beginning of the report.
+         */
+        after_id?: BlockId | null;
+        [k: string]: unknown;
+      }
+    | {
+        type: "set_cover";
+        cover: CoverConfig1;
+        [k: string]: unknown;
+      }
+    | {
+        type: "set_toc";
+        toc: TocConfig1;
+        [k: string]: unknown;
+      }
+    | {
+        type: "set_references";
+        references: ReferencesConfig1;
+        [k: string]: unknown;
+      }
+    | {
+        type: "set_lint";
+        lint: LintConfig1;
+        [k: string]: unknown;
+      }
+    | {
+        type: "set_theme";
+        theme: ThemeConfig1;
+        [k: string]: unknown;
+      }
+    | {
+        type: "set_sources";
+        /**
+         * Complete replacement source registry keyed by source_id.
+         */
+        sources: {
+          [k: string]: SourceEntry;
+        };
+        [k: string]: unknown;
+      };
+  revision_delta: RevisionDelta;
+  session_delta: SessionDelta;
+  sync_required: SyncRequiredDelta;
+  ephemeral_preview: EphemeralPreviewEvent;
+  agent_presence: AgentPresenceEvent;
   ephemeral_clear: EphemeralClearEvent;
+  comment_updated: CommentUpdatedEvent;
   /**
    * Tagged union accepted by `POST /api/docs/{doc_id}/ephemeral`.
    */
   ephemeral_payload:
     | {
+        kind: "preview";
+        doc_id: DocId;
+        /**
+         * Stable stream identity, normally the Runtime `tool_call_id`.
+         */
+        preview_id: string;
         /**
          * Agent identity that produced the preview.
          */
         actor: string;
         anchor: PreviewAnchor;
-        block: PartialBlockPreview;
-        doc_id: DocId;
-        kind: "preview";
-        /**
-         * Stable stream identity, normally the Runtime `tool_call_id`.
-         */
-        preview_id: string;
-        received_at: string;
+        status: PreviewStatus;
         /**
          * Monotonic sequence number; clients discard frames older than the latest seen value.
          */
         seq?: number | null;
-        status: PreviewStatus;
         /**
          * Client-side cleanup deadline for abandoned streams.
          */
         ttl_ms?: number | null;
+        block: PartialBlockPreview;
+        received_at: string;
         [k: string]: unknown;
       }
     | {
+        kind: "presence";
+        doc_id: DocId;
         /**
          * Agent identity that changed state.
          */
         actor: string;
-        doc_id: DocId;
-        kind: "presence";
-        received_at: string;
-        section_id?: BlockId | null;
         /**
          * Free-form presence state such as `writing` or `idle`.
          */
         status: string;
+        section_id?: BlockId | null;
+        received_at: string;
         [k: string]: unknown;
       }
     | {
-        doc_id: DocId;
         kind: "clear";
+        doc_id: DocId;
         /**
          * Preview IDs to remove from the frontend immediately.
          */
@@ -264,267 +391,331 @@ export interface QuireReportProtocol {
         [k: string]: unknown;
       }
     | {
-        anchor_detached: boolean;
-        doc_id: DocId;
         kind: "comment_updated";
-        status: CommentStatus;
+        doc_id: DocId;
         thread_id: string;
+        status: CommentStatus;
+        anchor_detached: boolean;
         updated_at: string;
         [k: string]: unknown;
       };
-  ephemeral_preview: EphemeralPreviewEvent;
-  lint: LintReport;
-  /**
-   * Declarative patch operation submitted to `apply_operations`.
-   */
-  patch_op:
-    | {
-        /**
-         * New blocks in display order.
-         */
-        blocks: Block[];
-        /**
-         * Validated identifier.
-         */
-        target_id: string;
-        type: "insert_after";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * New blocks in display order.
-         */
-        blocks: Block[];
-        /**
-         * Validated identifier.
-         */
-        target_id: string;
-        type: "insert_before";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * New blocks in display order.
-         */
-        blocks: Block[];
-        type: "append";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * New blocks in display order.
-         */
-        blocks: Block[];
-        /**
-         * Validated identifier.
-         */
-        section_id: string;
-        type: "append_to_section";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * Validated identifier.
-         */
-        block_id: string;
-        patch: BlockPatch;
-        type: "patch_block";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * Replacement blocks. Empty means delete the range.
-         */
-        blocks: Block[];
-        /**
-         * Validated identifier.
-         */
-        end_id: string;
-        /**
-         * Validated identifier.
-         */
-        start_id: string;
-        type: "replace_range";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * Block IDs to delete. All must exist.
-         */
-        block_ids: BlockId[];
-        type: "delete_blocks";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * Anchor block; null means the beginning of the report.
-         */
-        after_id?: BlockId | null;
-        /**
-         * Validated identifier.
-         */
-        block_id: string;
-        type: "move_block";
-        [k: string]: unknown;
-      }
-    | {
-        cover: CoverConfig1;
-        type: "set_cover";
-        [k: string]: unknown;
-      }
-    | {
-        toc: TocConfig1;
-        type: "set_toc";
-        [k: string]: unknown;
-      }
-    | {
-        references: ReferencesConfig1;
-        type: "set_references";
-        [k: string]: unknown;
-      }
-    | {
-        lint: LintConfig1;
-        type: "set_lint";
-        [k: string]: unknown;
-      }
-    | {
-        theme: ThemeConfig1;
-        type: "set_theme";
-        [k: string]: unknown;
-      }
-    | {
-        /**
-         * Complete replacement source registry keyed by source_id.
-         */
-        sources: {
-          [k: string]: SourceEntry;
-        };
-        type: "set_sources";
-        [k: string]: unknown;
-      };
+  comment_thread: CommentThread;
+  comment_message: CommentMessage1;
+  document_diff: DocumentDiffReport;
+  document_metadata_diff: DocumentMetadataDiff;
+  chart_data_table: ChartDataTable1;
   patch_outcome: PatchOutcome;
-  revision_delta: RevisionDelta;
-  session_delta: SessionDelta;
-  sync_required: SyncRequiredDelta;
+  lint: LintReport;
   [k: string]: unknown;
 }
 /**
- * SSE `agent_presence` payload for live agent activity.
+ * Canonical stored/read document returned by `GET /api/docs/{doc_id}`.
  */
-export interface AgentPresenceEvent {
-  /**
-   * Agent identity that changed state.
-   */
-  actor: string;
+export interface ReportDocument {
   doc_id: DocId;
-  received_at: string;
-  section_id?: BlockId | null;
   /**
-   * Free-form presence state such as `writing` or `idle`.
+   * Optional agent session used for frontend session discovery (`X-Session-Id`).
    */
-  status: string;
+  session_id?: SessionId | null;
+  /**
+   * Monotonic non-negative report revision.
+   */
+  revision?: number;
+  cover?: CoverConfig;
+  toc?: TocConfig;
+  theme?: ThemeConfig;
+  sources?: {
+    [k: string]: SourceEntry;
+  };
+  blocks?: Block[];
+  references?: ReferencesConfig;
+  lint?: LintConfig;
   [k: string]: unknown;
 }
 /**
- * Structured ECharts data table projected from a chart block.
+ * Configuration for the generated cover page.
  */
-export interface ChartDataTable {
-  headers: string[];
-  rows: string[][];
+export interface CoverConfig {
+  enabled?: boolean;
+  /**
+   * One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.
+   */
+  variant?: string;
+  title?: string;
+  subtitle?: string | null;
+  authors?: string[];
+  /**
+   * Human-readable publication date. Free-form on purpose (for example "Q3 2026").
+   */
+  date?: string | null;
+  /**
+   * Optional key/value metadata rendered on the cover.
+   */
+  meta?: {
+    [k: string]: string;
+  };
+  /**
+   * Full HTML override for the cover body. When present it replaces the generated cover body.
+   */
+  custom_html?: string | null;
+  [k: string]: unknown;
+}
+/**
+ * Table-of-contents configuration.
+ */
+export interface TocConfig {
+  enabled?: boolean;
+  title?: string;
+  /**
+   * Maximum heading depth to include. Protocol range is 1..=3.
+   */
+  max_depth?: number;
+  /**
+   * One of `standard`, `numbered`, `dotted`; unknown values render as standard.
+   */
+  variant?: string;
+  /**
+   * Start the TOC on a new page after the cover.
+   */
+  page_break_before?: boolean;
+  /**
+   * Start body content on a new page after the TOC.
+   */
+  page_break_after?: boolean;
+  [k: string]: unknown;
+}
+/**
+ * Theme configuration. Tokens are CSS custom properties applied to `.report-root`.
+ */
+export interface ThemeConfig {
+  /**
+   * Built-in preset name. Unknown presets fall back to `default`.
+   */
+  preset?: string;
+  /**
+   * Additional or overriding CSS custom properties, for example `--rpt-primary`.
+   */
+  tokens?: {
+    [k: string]: string;
+  };
+  /**
+   * Arbitrary CSS. It is automatically scoped under `.report-root`.
+   */
+  custom_css?: string;
+  /**
+   * Optional A4 paged header/footer slots with template placeholders.
+   */
+  page_chrome?: PageChromeConfig | null;
+  [k: string]: unknown;
+}
+/**
+ * A4 paged header/footer configuration stored under `theme.page_chrome`.
+ */
+export interface PageChromeConfig {
+  header?: PageChromeSlots;
+  footer?: PageChromeSlots1;
+  hide_header_on_first_page?: boolean;
+  hide_footer_on_first_page?: boolean;
+  /**
+   * Automatic page-break policy for document headings.
+   */
+  heading_page_break?: "none" | "h1" | "h1_and_h2";
+  [k: string]: unknown;
+}
+/**
+ * A three-slot page header or footer row.
+ */
+export interface PageChromeSlots {
+  left?: string;
+  center?: string;
+  right?: string;
+  [k: string]: unknown;
+}
+/**
+ * A three-slot page header or footer row.
+ */
+export interface PageChromeSlots1 {
+  left?: string;
+  center?: string;
+  right?: string;
+  [k: string]: unknown;
+}
+/**
+ * A citation source. Source IDs live in the key of [`ReportDocument::sources`].
+ */
+export interface SourceEntry {
   title: string;
+  url?: string | null;
+  authors?: string[];
+  publisher?: string | null;
+  /**
+   * Publication date, preferably ISO-8601 (`2026-03-01`) but free-form is accepted.
+   */
+  date?: string | null;
+  accessed?: string | null;
+  note?: string | null;
+  /**
+   * Short verbatim evidence excerpt used by reviewers and agents.
+   */
+  excerpt?: string | null;
   [k: string]: unknown;
 }
 /**
- * One review-thread message.
+ * Common style controls available on every block.
  */
-export interface CommentMessage {
-  author: string;
-  author_type: CommentAuthorType;
-  body: string;
-  created_at: string;
-  message_id: string;
-  thread_id: string;
+export interface BlockStyle {
+  /**
+   * Optional renderer hint, for example `callout` or `numbered`.
+   */
+  variant?: string | null;
+  /**
+   * Prevent this block from being split across pages where the renderer supports it.
+   */
+  keep_together?: boolean;
+  page_break_before?: boolean;
+  /**
+   * Per-leaf-column CSS widths, keyed by leaf column key. Accepts `%`, `px`, `rem` or numbers.
+   */
+  column_widths?: {
+    [k: string]: string;
+  } | null;
   [k: string]: unknown;
 }
 /**
- * Side-channel review thread returned by the comments REST API and MCP tools.
+ * Schema-only canonical table shape.
  */
-export interface CommentThread {
-  addressed_rev?: Revision | null;
+export interface TableBlockColumns {
   /**
-   * Every selected block in document order, including intermediate tables, images and charts.
+   * Outer table title (legacy alias `caption` is also accepted on input).
    */
-  anchor_blocks?: BlockId[];
+  title?: string | null;
+  numbering?: NumberingKind | null;
+  note?: string | null;
   /**
-   * True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.
+   * Recursive column tree. Use this shape OR `headers` shorthand, not both.
    */
-  anchor_detached: boolean;
+  columns: ColumnNode[];
   /**
-   * Truncated visible text captured when the thread was created.
+   * Body rows keyed by leaf column key.
    */
-  anchor_snapshot?: string | null;
+  rows?: {
+    [k: string]: CellValue;
+  }[];
   /**
-   * Validated identifier.
+   * Footer rows with the same key shape as `rows`.
    */
-  block_id: string;
-  created_at: string;
-  created_rev: Revision;
-  doc_id: DocId;
-  /**
-   * Ending block for a cross-block selection. `None` for a single-block anchor.
-   */
-  end_block_id?: BlockId | null;
-  /**
-   * End-block text snapshot for cross-block selections.
-   */
-  end_quote?: TextQuoteSelector | null;
-  messages: CommentMessage1[];
-  /**
-   * Start-block text snapshot.
-   */
-  quote?: TextQuoteSelector | null;
-  section_id?: BlockId | null;
-  status: CommentStatus;
-  thread_id: string;
-  updated_at: string;
+  summary_rows?: {
+    [k: string]: CellValue;
+  }[];
   [k: string]: unknown;
 }
 /**
- * Text-selection anchor that avoids brittle character offsets.
+ * A column node in a possibly multi-level table header.
  */
-export interface TextQuoteSelector {
-  exact: string;
-  prefix?: string | null;
-  suffix?: string | null;
-}
-/**
- * One message in a review thread.
- */
-export interface CommentMessage1 {
-  author: string;
-  author_type: CommentAuthorType;
-  body: string;
-  created_at: string;
-  message_id: string;
-  thread_id: string;
+export interface ColumnNode {
+  /**
+   * Stable leaf key. Must be unique among all leaf columns. Groups may omit it.
+   */
+  key?: string | null;
+  /**
+   * Human-readable header label.
+   */
+  label: string;
+  /**
+   * Child columns for a grouped/multi-level header. Empty means this node is a leaf.
+   */
+  children?: ColumnNode[];
+  data_type?: ColumnDataType | null;
+  sizing?: ColumnSizing | null;
+  /**
+   * Relative width weight for `grow` columns (and a multiplier for `fit` columns).
+   */
+  weight?: number | null;
+  /**
+   * Body cell alignment override.
+   */
+  align?: Align | null;
+  /**
+   * Header cell alignment override.
+   */
+  header_align?: Align | null;
   [k: string]: unknown;
 }
 /**
- * SSE `comment_updated` payload for live review-thread changes.
+ * A rich table cell with presentation hints. At least one of `text` or `number` is expected.
  */
-export interface CommentUpdatedEvent {
-  anchor_detached: boolean;
-  doc_id: DocId;
-  status: CommentStatus;
-  thread_id: string;
-  updated_at: string;
+export interface RichCell {
+  text?: string | null;
+  number?: number | null;
+  class_name?: string | null;
+  align?: Align | null;
+  tooltip?: string | null;
+  [k: string]: unknown;
+}
+/**
+ * Schema-only compact table shape.
+ */
+export interface TableBlockHeaders {
+  /**
+   * Outer table title (legacy alias `caption` is also accepted on input).
+   */
+  title?: string | null;
+  numbering?: NumberingKind | null;
+  note?: string | null;
+  /**
+   * Header labels; column keys and data types are inferred.
+   */
+  headers: string[];
+  /**
+   * Two-dimensional body rows aligned with `headers`.
+   */
+  rows?: CellValue[][];
+  /**
+   * Two-dimensional footer rows aligned with `headers`.
+   */
+  summary_rows?: CellValue[][];
+  [k: string]: unknown;
+}
+/**
+ * Trusted raw HTML with mandatory fallback text.
+ */
+export interface CustomHtmlBlock {
+  type: "custom_html";
+  [k: string]: unknown;
+}
+/**
+ * End-of-report bibliography configuration.
+ */
+export interface ReferencesConfig {
+  enabled?: boolean;
+  title?: string;
+  /**
+   * Bibliographic label style.
+   */
+  style?: "numeric" | "author_year";
+  page_break_before?: boolean;
+  [k: string]: unknown;
+}
+/**
+ * Document-level lint policy. Ignore entries accept a rule code (`QR202`), a semantic rule name
+ * (`table-empty-column`) or a category prefix (`QR2`). Non-suppressible rules cannot be ignored.
+ */
+export interface LintConfig {
+  ignore?: string[];
   [k: string]: unknown;
 }
 /**
  * Computed labels, table layouts, TOC tree and citation map for frontends.
  */
 export interface ComputedDocumentMeta {
+  table_layouts: {
+    [k: string]: TableLayout;
+  };
+  citation_map: {
+    [k: string]: CitationMapEntry;
+  };
   bibliography: BibliographyEntry[];
+  toc_tree: TocNode[];
   /**
    * Auto-numbering labels and source attribution for table/figure blocks.
    */
@@ -541,112 +732,15 @@ export interface ComputedDocumentMeta {
    * Structured chart data tables grouped by chart block.
    */
   chart_tables?: {
-    [k: string]: ChartDataTable1[];
+    [k: string]: ChartDataTable[];
   };
-  citation_map: {
-    [k: string]: CitationMapEntry;
-  };
-  table_layouts: {
-    [k: string]: TableLayout;
-  };
-  toc_tree: TocNode[];
-  [k: string]: unknown;
-}
-/**
- * A fully resolved bibliography entry.
- */
-export interface BibliographyEntry {
-  /**
-   * Optional verbatim evidence excerpt supplied with the source.
-   */
-  excerpt?: string | null;
-  /**
-   * Display label, for example `[1]` or `(Smith, 2024)`.
-   */
-  label: string;
-  number: number;
-  /**
-   * Plain-text citation line, useful for LLM digests and non-HTML consumers.
-   */
-  plain_text: string;
-  source: SourceEntry;
-  source_id: SourceId;
-  [k: string]: unknown;
-}
-/**
- * A citation source. Source IDs live in the key of [`ReportDocument::sources`].
- */
-export interface SourceEntry {
-  accessed?: string | null;
-  authors?: string[];
-  /**
-   * Publication date, preferably ISO-8601 (`2026-03-01`) but free-form is accepted.
-   */
-  date?: string | null;
-  /**
-   * Short verbatim evidence excerpt used by reviewers and agents.
-   */
-  excerpt?: string | null;
-  note?: string | null;
-  publisher?: string | null;
-  title: string;
-  url?: string | null;
-  [k: string]: unknown;
-}
-/**
- * Pre-computed outer framing for a numbered visual block.
- */
-export interface BlockFraming {
-  /**
-   * Formatted source attribution/note line, when sources or a note exist.
-   */
-  attribution?: string | null;
-  block_id: BlockId;
-  /**
-   * Exact label shared with Markdown projection, for example `表 1` or `图 2`.
-   */
-  label: string;
-  number: number;
-  numbering: NumberingKind;
-  [k: string]: unknown;
-}
-/**
- * ECharts maps and extension series that the frontend must register before rendering.
- */
-export interface ChartRequirements {
-  /**
-   * Extension series types such as `wordCloud`, `liquidFill` or `bar3D`.
-   */
-  required_extensions?: string[];
-  /**
-   * Map names referenced by `geo.map` or `series[type=map].map`.
-   */
-  required_maps?: string[];
-  [k: string]: unknown;
-}
-/**
- * Renderer-agnostic tabular projection of an ECharts option.
- *
- * The same tables power Markdown review and the frontend `computed.chart_tables` payload.
- */
-export interface ChartDataTable1 {
-  headers: string[];
-  rows: string[][];
-  title: string;
-  [k: string]: unknown;
-}
-export interface CitationMapEntry {
-  label: string;
-  number: number;
-  source_id: SourceId;
-  title: string;
   [k: string]: unknown;
 }
 export interface TableLayout {
-  header_depth: number;
+  table_block_id: BlockId;
   header_rows: LayoutHeaderCell[][];
   leaf_columns: LayoutLeafColumn[];
-  table_block_id: BlockId;
+  header_depth: number;
   /**
    * Always 100.00 when at least one leaf exists.
    */
@@ -657,254 +751,303 @@ export interface TableLayout {
  * A resolved multi-level table header cell.
  */
 export interface LayoutHeaderCell {
-  align: Align;
-  colspan: number;
-  data_type: ColumnDataType;
-  is_group: boolean;
   key: string;
   label: string;
+  colspan: number;
   rowspan: number;
+  data_type: ColumnDataType;
+  align: Align;
+  is_group: boolean;
   [k: string]: unknown;
 }
 /**
  * A layout-ready leaf column with normalized percentage width.
  */
 export interface LayoutLeafColumn {
-  align: Align;
-  data_type: ColumnDataType;
-  header_align: Align;
-  index: number;
   key: string;
   label: string;
   path: string[];
+  data_type: ColumnDataType;
   sizing: ColumnSizing;
   weight: number;
-  width_css: string;
+  align: Align;
+  header_align: Align;
+  index: number;
   /**
    * Normalized percentage. All leaves in a layout sum to 100.00.
    */
   width_pct: number;
+  width_css: string;
+  [k: string]: unknown;
+}
+export interface CitationMapEntry {
+  number: number;
+  label: string;
+  title: string;
+  source_id: SourceId;
+  [k: string]: unknown;
+}
+/**
+ * A fully resolved bibliography entry.
+ */
+export interface BibliographyEntry {
+  source_id: SourceId;
+  number: number;
+  /**
+   * Display label, for example `[1]` or `(Smith, 2024)`.
+   */
+  label: string;
+  source: SourceEntry;
+  /**
+   * Plain-text citation line, useful for LLM digests and non-HTML consumers.
+   */
+  plain_text: string;
+  /**
+   * Optional verbatim evidence excerpt supplied with the source.
+   */
+  excerpt?: string | null;
   [k: string]: unknown;
 }
 export interface TocNode {
   block_id: BlockId;
-  children?: TocNode[];
   level: number;
+  text: string;
   /**
    * Hierarchical number such as `2.1`; frontends may hide it for the standard variant.
    */
   number: string;
-  text: string;
+  children?: TocNode[];
   [k: string]: unknown;
 }
 /**
- * Canonical stored/read document returned by `GET /api/docs/{doc_id}`.
+ * Pre-computed outer framing for a numbered visual block.
  */
-export interface ReportDocument {
-  blocks?: Block[];
-  cover?: CoverConfig;
-  doc_id: DocId;
-  lint?: LintConfig;
-  references?: ReferencesConfig;
+export interface BlockFraming {
+  block_id: BlockId;
+  numbering: NumberingKind;
+  number: number;
   /**
-   * Monotonic non-negative report revision.
+   * Exact label shared with Markdown projection, for example `表 1` or `图 2`.
    */
-  revision?: number;
+  label: string;
   /**
-   * Optional agent session used for frontend session discovery (`X-Session-Id`).
+   * Formatted source attribution/note line, when sources or a note exist.
    */
-  session_id?: SessionId | null;
-  sources?: {
-    [k: string]: SourceEntry;
+  attribution?: string | null;
+  [k: string]: unknown;
+}
+/**
+ * ECharts maps and extension series that the frontend must register before rendering.
+ */
+export interface ChartRequirements {
+  /**
+   * Map names referenced by `geo.map` or `series[type=map].map`.
+   */
+  required_maps?: string[];
+  /**
+   * Extension series types such as `wordCloud`, `liquidFill` or `bar3D`.
+   */
+  required_extensions?: string[];
+  [k: string]: unknown;
+}
+/**
+ * Renderer-agnostic tabular projection of an ECharts option.
+ *
+ * The same tables power Markdown review and the frontend `computed.chart_tables` payload.
+ */
+export interface ChartDataTable {
+  title: string;
+  headers: string[];
+  rows: string[][];
+  [k: string]: unknown;
+}
+/**
+ * Partial patch. Unsupported fields return a self-healing error.
+ */
+export interface BlockPatch {
+  /**
+   * Heading, paragraph or quote text.
+   */
+  text?: string | null;
+  /**
+   * Heading level (1..=6).
+   */
+  level?: number | null;
+  class_name?: string | null;
+  source_ids?: SourceId[] | null;
+  source_note?: string | null;
+  /**
+   * Set the block-level lint ignore list. Empty clears it.
+   */
+  lint_ignore?: string[] | null;
+  style?: BlockStylePatch | null;
+  /**
+   * Replace the ECharts effective option wholesale, clearing any stored `option_patch`.
+   * Supply `option_patch` in the same patch to replace the base and then deep-merge a smaller
+   * overlay.
+   */
+  option?: {
+    [k: string]: unknown;
   };
-  theme?: ThemeConfig;
-  toc?: TocConfig;
-  [k: string]: unknown;
+  /**
+   * Deep-merged into an ECharts block's existing `option_patch`.
+   */
+  option_patch?: {
+    [k: string]: unknown;
+  };
+  /**
+   * Replace the chart canvas height in pixels.
+   */
+  height?: number | null;
+  /**
+   * Replace the ECharts fallback summary.
+   */
+  fallback_summary?: string | null;
+  /**
+   * Replace the outer visual title. Empty string clears it. `caption` is accepted as a legacy
+   * alias.
+   */
+  title?: string | null;
+  /**
+   * Replace automatic figure/table numbering; `null` leaves it unchanged and `"none"` disables.
+   */
+  numbering?: NumberingKind | null;
+  /**
+   * Replace the explanatory footnote. Empty string clears it.
+   */
+  note?: string | null;
+  /**
+   * Replace custom HTML fallback text.
+   */
+  fallback_text?: string | null;
+  /**
+   * Append rows to a table's body.
+   */
+  append_rows?: {
+    [k: string]: CellValue;
+  }[];
+  update_cell?: CellUpdate | null;
 }
 /**
- * Common style controls available on every block.
+ * Partial style update. Omitted fields are preserved; empty string variants clear the field.
  */
-export interface BlockStyle {
+export interface BlockStylePatch {
   /**
-   * Per-leaf-column CSS widths, keyed by leaf column key. Accepts `%`, `px`, `rem` or numbers.
+   * Renderer hint. Empty string clears it.
+   */
+  variant?: string | null;
+  /**
+   * Prevent page splitting where supported.
+   */
+  keep_together?: boolean | null;
+  /**
+   * Force a page break before this block.
+   */
+  page_break_before?: boolean | null;
+  /**
+   * Per-leaf-column CSS widths keyed by column key. Example: `{"region":"24%","q1":"120px"}`.
    */
   column_widths?: {
     [k: string]: string;
   } | null;
-  /**
-   * Prevent this block from being split across pages where the renderer supports it.
-   */
-  keep_together?: boolean;
-  page_break_before?: boolean;
-  /**
-   * Optional renderer hint, for example `callout` or `numbered`.
-   */
-  variant?: string | null;
-  [k: string]: unknown;
 }
 /**
- * Schema-only canonical table shape.
+ * Update one table cell by row index and leaf key.
  */
-export interface TableBlockColumns {
+export interface CellUpdate {
   /**
-   * Recursive column tree. Use this shape OR `headers` shorthand, not both.
+   * Zero-based row index within `rows` (or `summary_rows` when `summary = true`).
    */
-  columns: ColumnNode[];
-  note?: string | null;
-  numbering?: NumberingKind | null;
+  row_index: number;
   /**
-   * Body rows keyed by leaf column key.
+   * Leaf column key whose cell should be replaced.
    */
-  rows?: {
-    [k: string]: CellValue;
-  }[];
+  column_key: string;
   /**
-   * Footer rows with the same key shape as `rows`.
+   * A table cell value. Untagged so agents can submit plain strings/numbers or rich cells.
    */
-  summary_rows?: {
-    [k: string]: CellValue;
-  }[];
+  value: string | number | boolean | null | RichCell;
   /**
-   * Outer table title (legacy alias `caption` is also accepted on input).
+   * Update `summary_rows` instead of body `rows`.
    */
-  title?: string | null;
-  [k: string]: unknown;
+  summary?: boolean;
 }
 /**
- * A column node in a possibly multi-level table header.
+ * Complete replacement cover config.
  */
-export interface ColumnNode {
+export interface CoverConfig1 {
+  enabled?: boolean;
   /**
-   * Body cell alignment override.
+   * One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.
    */
-  align?: Align | null;
-  /**
-   * Child columns for a grouped/multi-level header. Empty means this node is a leaf.
-   */
-  children?: ColumnNode[];
-  data_type?: ColumnDataType | null;
-  /**
-   * Header cell alignment override.
-   */
-  header_align?: Align | null;
-  /**
-   * Stable leaf key. Must be unique among all leaf columns. Groups may omit it.
-   */
-  key?: string | null;
-  /**
-   * Human-readable header label.
-   */
-  label: string;
-  sizing?: ColumnSizing | null;
-  /**
-   * Relative width weight for `grow` columns (and a multiplier for `fit` columns).
-   */
-  weight?: number | null;
-  [k: string]: unknown;
-}
-/**
- * A rich table cell with presentation hints. At least one of `text` or `number` is expected.
- */
-export interface RichCell {
-  align?: Align | null;
-  class_name?: string | null;
-  number?: number | null;
-  text?: string | null;
-  tooltip?: string | null;
-  [k: string]: unknown;
-}
-/**
- * Schema-only compact table shape.
- */
-export interface TableBlockHeaders {
-  /**
-   * Header labels; column keys and data types are inferred.
-   */
-  headers: string[];
-  note?: string | null;
-  numbering?: NumberingKind | null;
-  /**
-   * Two-dimensional body rows aligned with `headers`.
-   */
-  rows?: CellValue[][];
-  /**
-   * Two-dimensional footer rows aligned with `headers`.
-   */
-  summary_rows?: CellValue[][];
-  /**
-   * Outer table title (legacy alias `caption` is also accepted on input).
-   */
-  title?: string | null;
-  [k: string]: unknown;
-}
-/**
- * Trusted raw HTML with mandatory fallback text.
- */
-export interface CustomHtmlBlock {
-  type: "custom_html";
-  [k: string]: unknown;
-}
-/**
- * Configuration for the generated cover page.
- */
-export interface CoverConfig {
+  variant?: string;
+  title?: string;
+  subtitle?: string | null;
   authors?: string[];
-  /**
-   * Full HTML override for the cover body. When present it replaces the generated cover body.
-   */
-  custom_html?: string | null;
   /**
    * Human-readable publication date. Free-form on purpose (for example "Q3 2026").
    */
   date?: string | null;
-  enabled?: boolean;
   /**
    * Optional key/value metadata rendered on the cover.
    */
   meta?: {
     [k: string]: string;
   };
-  subtitle?: string | null;
+  /**
+   * Full HTML override for the cover body. When present it replaces the generated cover body.
+   */
+  custom_html?: string | null;
+  [k: string]: unknown;
+}
+/**
+ * Complete replacement TOC config.
+ */
+export interface TocConfig1 {
+  enabled?: boolean;
   title?: string;
   /**
-   * One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.
+   * Maximum heading depth to include. Protocol range is 1..=3.
+   */
+  max_depth?: number;
+  /**
+   * One of `standard`, `numbered`, `dotted`; unknown values render as standard.
    */
   variant?: string;
-  [k: string]: unknown;
-}
-/**
- * Document-level lint policy. Ignore entries accept a rule code (`QR202`), a semantic rule name
- * (`table-empty-column`) or a category prefix (`QR2`). Non-suppressible rules cannot be ignored.
- */
-export interface LintConfig {
-  ignore?: string[];
-  [k: string]: unknown;
-}
-/**
- * End-of-report bibliography configuration.
- */
-export interface ReferencesConfig {
-  enabled?: boolean;
+  /**
+   * Start the TOC on a new page after the cover.
+   */
   page_break_before?: boolean;
+  /**
+   * Start body content on a new page after the TOC.
+   */
+  page_break_after?: boolean;
+  [k: string]: unknown;
+}
+/**
+ * Complete replacement bibliography config.
+ */
+export interface ReferencesConfig1 {
+  enabled?: boolean;
+  title?: string;
   /**
    * Bibliographic label style.
    */
   style?: "numeric" | "author_year";
-  title?: string;
+  page_break_before?: boolean;
   [k: string]: unknown;
 }
 /**
- * Theme configuration. Tokens are CSS custom properties applied to `.report-root`.
+ * Complete replacement lint config.
  */
-export interface ThemeConfig {
-  /**
-   * Arbitrary CSS. It is automatically scoped under `.report-root`.
-   */
-  custom_css?: string;
-  /**
-   * Optional A4 paged header/footer slots with template placeholders.
-   */
-  page_chrome?: PageChromeConfig | null;
+export interface LintConfig1 {
+  ignore?: string[];
+  [k: string]: unknown;
+}
+/**
+ * Complete replacement theme config.
+ */
+export interface ThemeConfig1 {
   /**
    * Built-in preset name. Unknown presets fall back to `default`.
    */
@@ -915,103 +1058,95 @@ export interface ThemeConfig {
   tokens?: {
     [k: string]: string;
   };
+  /**
+   * Arbitrary CSS. It is automatically scoped under `.report-root`.
+   */
+  custom_css?: string;
+  /**
+   * Optional A4 paged header/footer slots with template placeholders.
+   */
+  page_chrome?: PageChromeConfig | null;
   [k: string]: unknown;
 }
 /**
- * A4 paged header/footer configuration stored under `theme.page_chrome`.
+ * SSE `revision` delta payload.
  */
-export interface PageChromeConfig {
-  footer?: PageChromeSlots;
-  header?: PageChromeSlots1;
-  /**
-   * Automatic page-break policy for document headings.
-   */
-  heading_page_break?: "none" | "h1" | "h1_and_h2";
-  hide_footer_on_first_page?: boolean;
-  hide_header_on_first_page?: boolean;
-  [k: string]: unknown;
-}
-/**
- * A three-slot page header or footer row.
- */
-export interface PageChromeSlots {
-  center?: string;
-  left?: string;
-  right?: string;
-  [k: string]: unknown;
-}
-/**
- * A three-slot page header or footer row.
- */
-export interface PageChromeSlots1 {
-  center?: string;
-  left?: string;
-  right?: string;
-  [k: string]: unknown;
-}
-/**
- * Table-of-contents configuration.
- */
-export interface TocConfig {
-  enabled?: boolean;
-  /**
-   * Maximum heading depth to include. Protocol range is 1..=3.
-   */
-  max_depth?: number;
-  /**
-   * Start body content on a new page after the TOC.
-   */
-  page_break_after?: boolean;
-  /**
-   * Start the TOC on a new page after the cover.
-   */
-  page_break_before?: boolean;
-  title?: string;
-  /**
-   * One of `standard`, `numbered`, `dotted`; unknown values render as standard.
-   */
-  variant?: string;
-  [k: string]: unknown;
-}
-/**
- * Structured block-level diff between two revisions.
- */
-export interface DocumentDiffReport {
-  blocks: BlockDiffEntry[];
-  cover_changed: boolean;
+export interface RevisionDelta {
   doc_id: DocId;
-  from_revision: Revision;
+  revision: Revision;
   /**
-   * True when surviving blocks changed relative order.
+   * Agent or admin identity recorded for the audit trail.
    */
-  order_changed: boolean;
-  references_changed: boolean;
-  sources_changed: boolean;
-  theme_changed: boolean;
-  to_revision: Revision;
-  toc_changed: boolean;
+  actor: string;
+  summary: string;
+  /**
+   * Forward patch operations; metadata-only revisions may carry an empty array.
+   */
+  ops: {
+    [k: string]: unknown;
+  };
+  /**
+   * Ephemeral previews atomically superseded by this revision.
+   *
+   * The frontend removes these previews in the same frame that applies the revision, so the
+   * committed block replaces the streamed placeholder with no visual flicker.
+   */
+  cleared_preview_ids?: string[];
+  created_at: string;
   [k: string]: unknown;
 }
 /**
- * Non-block metadata flags included in a document diff.
+ * SSE `doc_created` session delta payload.
  */
-export interface DocumentMetadataDiff {
-  cover_changed: boolean;
-  references_changed: boolean;
-  sources_changed: boolean;
-  theme_changed: boolean;
-  toc_changed: boolean;
+export interface SessionDelta {
+  /**
+   * Event name, always `doc_created`.
+   */
+  event: string;
+  session_id: SessionId;
+  doc_id: DocId;
+  title: string;
+  revision: Revision;
+  created_at: string;
   [k: string]: unknown;
 }
 /**
- * SSE `ephemeral_clear` payload for immediate placeholder cleanup.
+ * SSE `sync_required` payload emitted when replay detects a gap.
  */
-export interface EphemeralClearEvent {
+export interface SyncRequiredDelta {
   doc_id: DocId;
   /**
-   * Preview IDs to remove from the frontend immediately.
+   * Monotonic non-negative report revision.
    */
-  preview_ids: string[];
+  since_revision: number;
+  reason: string;
+  hint: string;
+  [k: string]: unknown;
+}
+/**
+ * SSE `ephemeral_preview` payload for transient typewriter previews.
+ */
+export interface EphemeralPreviewEvent {
+  doc_id: DocId;
+  /**
+   * Stable stream identity, normally the Runtime `tool_call_id`.
+   */
+  preview_id: string;
+  /**
+   * Agent identity that produced the preview.
+   */
+  actor: string;
+  anchor: PreviewAnchor;
+  status: PreviewStatus;
+  /**
+   * Monotonic sequence number; clients discard frames older than the latest seen value.
+   */
+  seq?: number | null;
+  /**
+   * Client-side cleanup deadline for abandoned streams.
+   */
+  ttl_ms?: number | null;
+  block: PartialBlockPreview;
   received_at: string;
   [k: string]: unknown;
 }
@@ -1028,35 +1163,201 @@ export interface PartialBlockPreview {
    * Canonical block type, for example `paragraph`, `heading`, `table` or `echarts`.
    */
   block_type: string;
+  title?: string | null;
   level?: number | null;
   text?: string | null;
-  title?: string | null;
 }
 /**
- * SSE `ephemeral_preview` payload for transient typewriter previews.
+ * SSE `agent_presence` payload for live agent activity.
  */
-export interface EphemeralPreviewEvent {
-  /**
-   * Agent identity that produced the preview.
-   */
-  actor: string;
-  anchor: PreviewAnchor;
-  block: PartialBlockPreview;
+export interface AgentPresenceEvent {
   doc_id: DocId;
   /**
-   * Stable stream identity, normally the Runtime `tool_call_id`.
+   * Agent identity that changed state.
    */
-  preview_id: string;
+  actor: string;
+  /**
+   * Free-form presence state such as `writing` or `idle`.
+   */
+  status: string;
+  section_id?: BlockId | null;
   received_at: string;
+  [k: string]: unknown;
+}
+/**
+ * SSE `ephemeral_clear` payload for immediate placeholder cleanup.
+ */
+export interface EphemeralClearEvent {
+  doc_id: DocId;
   /**
-   * Monotonic sequence number; clients discard frames older than the latest seen value.
+   * Preview IDs to remove from the frontend immediately.
    */
-  seq?: number | null;
-  status: PreviewStatus;
+  preview_ids: string[];
+  received_at: string;
+  [k: string]: unknown;
+}
+/**
+ * SSE `comment_updated` payload for live review-thread changes.
+ */
+export interface CommentUpdatedEvent {
+  doc_id: DocId;
+  thread_id: string;
+  status: CommentStatus;
+  anchor_detached: boolean;
+  updated_at: string;
+  [k: string]: unknown;
+}
+/**
+ * Side-channel review thread returned by the comments REST API and MCP tools.
+ */
+export interface CommentThread {
+  thread_id: string;
+  doc_id: DocId;
   /**
-   * Client-side cleanup deadline for abandoned streams.
+   * Validated identifier.
    */
-  ttl_ms?: number | null;
+  block_id: string;
+  /**
+   * Ending block for a cross-block selection. `None` for a single-block anchor.
+   */
+  end_block_id?: BlockId | null;
+  /**
+   * Every selected block in document order, including intermediate tables, images and charts.
+   */
+  anchor_blocks?: BlockId[];
+  section_id?: BlockId | null;
+  /**
+   * Truncated visible text captured when the thread was created.
+   */
+  anchor_snapshot?: string | null;
+  /**
+   * Start-block text snapshot.
+   */
+  quote?: TextQuoteSelector | null;
+  /**
+   * End-block text snapshot for cross-block selections.
+   */
+  end_quote?: TextQuoteSelector | null;
+  status: CommentStatus;
+  created_rev: Revision;
+  addressed_rev?: Revision | null;
+  /**
+   * True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.
+   */
+  anchor_detached: boolean;
+  messages: CommentMessage[];
+  created_at: string;
+  updated_at: string;
+  [k: string]: unknown;
+}
+/**
+ * Text-selection anchor that avoids brittle character offsets.
+ */
+export interface TextQuoteSelector {
+  exact: string;
+  prefix?: string | null;
+  suffix?: string | null;
+}
+/**
+ * One message in a review thread.
+ */
+export interface CommentMessage {
+  message_id: string;
+  thread_id: string;
+  author_type: CommentAuthorType;
+  author: string;
+  body: string;
+  created_at: string;
+  [k: string]: unknown;
+}
+/**
+ * One message in a review thread.
+ */
+export interface CommentMessage1 {
+  message_id: string;
+  thread_id: string;
+  author_type: CommentAuthorType;
+  author: string;
+  body: string;
+  created_at: string;
+  [k: string]: unknown;
+}
+/**
+ * Structured block-level diff between two revisions.
+ */
+export interface DocumentDiffReport {
+  doc_id: DocId;
+  from_revision: Revision;
+  to_revision: Revision;
+  blocks: BlockDiffEntry[];
+  cover_changed: boolean;
+  toc_changed: boolean;
+  theme_changed: boolean;
+  references_changed: boolean;
+  sources_changed: boolean;
+  /**
+   * True when surviving blocks changed relative order.
+   */
+  order_changed: boolean;
+  [k: string]: unknown;
+}
+/**
+ * Non-block metadata flags included in a document diff.
+ */
+export interface DocumentMetadataDiff {
+  cover_changed: boolean;
+  toc_changed: boolean;
+  theme_changed: boolean;
+  references_changed: boolean;
+  sources_changed: boolean;
+  [k: string]: unknown;
+}
+/**
+ * Renderer-agnostic tabular projection of an ECharts option.
+ *
+ * The same tables power Markdown review and the frontend `computed.chart_tables` payload.
+ */
+export interface ChartDataTable1 {
+  title: string;
+  headers: string[];
+  rows: string[][];
+  [k: string]: unknown;
+}
+/**
+ * Receipt returned by the in-memory patch engine.
+ */
+export interface PatchOutcome {
+  inserted_block_ids: BlockId[];
+  updated_block_ids: BlockId[];
+  deleted_block_ids: BlockId[];
+  moved_block_ids: BlockId[];
+  affected_block_ids: BlockId[];
+  /**
+   * Map of submitted block IDs to final IDs. Colliding or empty IDs are auto-assigned.
+   */
+  id_mapping: {
+    [k: string]: BlockId;
+  };
+  metadata_changed: boolean;
+  no_op: boolean;
+  /**
+   * Block IDs auto-assigned because the submitted ID was empty or colliding.
+   */
+  assigned_ids: IdAssignment[];
+  [k: string]: unknown;
+}
+/**
+ * Mapping produced when an empty or colliding block ID was auto-assigned.
+ */
+export interface IdAssignment {
+  /**
+   * Original ID, or `None` when the caller omitted/emptied it.
+   */
+  requested?: BlockId | null;
+  /**
+   * Validated identifier.
+   */
+  assigned: string;
   [k: string]: unknown;
 }
 /**
@@ -1068,339 +1369,40 @@ export interface LintReport {
   [k: string]: unknown;
 }
 export interface Diagnostic {
-  block_id?: BlockId | null;
   /**
    * Stable rule code, for example `QR202`.
    */
   code: string;
   /**
-   * Actionable next step, including valid IDs/enums when possible.
-   */
-  hint: string;
-  message: string;
-  /**
-   * JSON-ish path such as `blocks.financials.columns`.
-   */
-  path?: string | null;
-  /**
    * Kebab-case semantic rule name, for example `table-empty-column`.
    */
   rule: string;
   severity: Severity;
+  message: string;
+  /**
+   * Actionable next step, including valid IDs/enums when possible.
+   */
+  hint: string;
   /**
    * Whether callers may suppress this diagnostic through `LintConfig.ignore` or
    * `Block.lint_ignore`. Core contract and safety rules are never suppressible.
    */
   suppressible: boolean;
+  block_id?: BlockId | null;
+  /**
+   * JSON-ish path such as `blocks.financials.columns`.
+   */
+  path?: string | null;
   valid_values?: string[];
   [k: string]: unknown;
 }
 export interface LintSummary {
   errors: number;
+  warnings: number;
   infos: number;
   /**
    * Suppressible diagnostics hidden by document/block/call ignore filters.
    */
   suppressed?: number;
-  warnings: number;
-  [k: string]: unknown;
-}
-/**
- * Partial patch. Unsupported fields return a self-healing error.
- */
-export interface BlockPatch {
-  /**
-   * Append rows to a table's body.
-   */
-  append_rows?: {
-    [k: string]: CellValue;
-  }[];
-  class_name?: string | null;
-  /**
-   * Replace the ECharts fallback summary.
-   */
-  fallback_summary?: string | null;
-  /**
-   * Replace custom HTML fallback text.
-   */
-  fallback_text?: string | null;
-  /**
-   * Replace the chart canvas height in pixels.
-   */
-  height?: number | null;
-  /**
-   * Heading level (1..=6).
-   */
-  level?: number | null;
-  /**
-   * Set the block-level lint ignore list. Empty clears it.
-   */
-  lint_ignore?: string[] | null;
-  /**
-   * Replace the explanatory footnote. Empty string clears it.
-   */
-  note?: string | null;
-  /**
-   * Replace automatic figure/table numbering; `null` leaves it unchanged and `"none"` disables.
-   */
-  numbering?: NumberingKind | null;
-  /**
-   * Replace the ECharts effective option wholesale, clearing any stored `option_patch`.
-   * Supply `option_patch` in the same patch to replace the base and then deep-merge a smaller
-   * overlay.
-   */
-  option?: {
-    [k: string]: unknown;
-  };
-  /**
-   * Deep-merged into an ECharts block's existing `option_patch`.
-   */
-  option_patch?: {
-    [k: string]: unknown;
-  };
-  source_ids?: SourceId[] | null;
-  source_note?: string | null;
-  style?: BlockStylePatch | null;
-  /**
-   * Heading, paragraph or quote text.
-   */
-  text?: string | null;
-  /**
-   * Replace the outer visual title. Empty string clears it. `caption` is accepted as a legacy
-   * alias.
-   */
-  title?: string | null;
-  update_cell?: CellUpdate | null;
-}
-/**
- * Partial style update. Omitted fields are preserved; empty string variants clear the field.
- */
-export interface BlockStylePatch {
-  /**
-   * Per-leaf-column CSS widths keyed by column key. Example: `{"region":"24%","q1":"120px"}`.
-   */
-  column_widths?: {
-    [k: string]: string;
-  } | null;
-  /**
-   * Prevent page splitting where supported.
-   */
-  keep_together?: boolean | null;
-  /**
-   * Force a page break before this block.
-   */
-  page_break_before?: boolean | null;
-  /**
-   * Renderer hint. Empty string clears it.
-   */
-  variant?: string | null;
-}
-/**
- * Update one table cell by row index and leaf key.
- */
-export interface CellUpdate {
-  /**
-   * Leaf column key whose cell should be replaced.
-   */
-  column_key: string;
-  /**
-   * Zero-based row index within `rows` (or `summary_rows` when `summary = true`).
-   */
-  row_index: number;
-  /**
-   * Update `summary_rows` instead of body `rows`.
-   */
-  summary?: boolean;
-  /**
-   * A table cell value. Untagged so agents can submit plain strings/numbers or rich cells.
-   */
-  value: string | number | boolean | null | RichCell;
-}
-/**
- * Complete replacement cover config.
- */
-export interface CoverConfig1 {
-  authors?: string[];
-  /**
-   * Full HTML override for the cover body. When present it replaces the generated cover body.
-   */
-  custom_html?: string | null;
-  /**
-   * Human-readable publication date. Free-form on purpose (for example "Q3 2026").
-   */
-  date?: string | null;
-  enabled?: boolean;
-  /**
-   * Optional key/value metadata rendered on the cover.
-   */
-  meta?: {
-    [k: string]: string;
-  };
-  subtitle?: string | null;
-  title?: string;
-  /**
-   * One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.
-   */
-  variant?: string;
-  [k: string]: unknown;
-}
-/**
- * Complete replacement TOC config.
- */
-export interface TocConfig1 {
-  enabled?: boolean;
-  /**
-   * Maximum heading depth to include. Protocol range is 1..=3.
-   */
-  max_depth?: number;
-  /**
-   * Start body content on a new page after the TOC.
-   */
-  page_break_after?: boolean;
-  /**
-   * Start the TOC on a new page after the cover.
-   */
-  page_break_before?: boolean;
-  title?: string;
-  /**
-   * One of `standard`, `numbered`, `dotted`; unknown values render as standard.
-   */
-  variant?: string;
-  [k: string]: unknown;
-}
-/**
- * Complete replacement bibliography config.
- */
-export interface ReferencesConfig1 {
-  enabled?: boolean;
-  page_break_before?: boolean;
-  /**
-   * Bibliographic label style.
-   */
-  style?: "numeric" | "author_year";
-  title?: string;
-  [k: string]: unknown;
-}
-/**
- * Complete replacement lint config.
- */
-export interface LintConfig1 {
-  ignore?: string[];
-  [k: string]: unknown;
-}
-/**
- * Complete replacement theme config.
- */
-export interface ThemeConfig1 {
-  /**
-   * Arbitrary CSS. It is automatically scoped under `.report-root`.
-   */
-  custom_css?: string;
-  /**
-   * Optional A4 paged header/footer slots with template placeholders.
-   */
-  page_chrome?: PageChromeConfig | null;
-  /**
-   * Built-in preset name. Unknown presets fall back to `default`.
-   */
-  preset?: string;
-  /**
-   * Additional or overriding CSS custom properties, for example `--rpt-primary`.
-   */
-  tokens?: {
-    [k: string]: string;
-  };
-  [k: string]: unknown;
-}
-/**
- * Receipt returned by the in-memory patch engine.
- */
-export interface PatchOutcome {
-  affected_block_ids: BlockId[];
-  /**
-   * Block IDs auto-assigned because the submitted ID was empty or colliding.
-   */
-  assigned_ids: IdAssignment[];
-  deleted_block_ids: BlockId[];
-  /**
-   * Map of submitted block IDs to final IDs. Colliding or empty IDs are auto-assigned.
-   */
-  id_mapping: {
-    [k: string]: BlockId;
-  };
-  inserted_block_ids: BlockId[];
-  metadata_changed: boolean;
-  moved_block_ids: BlockId[];
-  no_op: boolean;
-  updated_block_ids: BlockId[];
-  [k: string]: unknown;
-}
-/**
- * Mapping produced when an empty or colliding block ID was auto-assigned.
- */
-export interface IdAssignment {
-  /**
-   * Validated identifier.
-   */
-  assigned: string;
-  /**
-   * Original ID, or `None` when the caller omitted/emptied it.
-   */
-  requested?: BlockId | null;
-  [k: string]: unknown;
-}
-/**
- * SSE `revision` delta payload.
- */
-export interface RevisionDelta {
-  /**
-   * Agent or admin identity recorded for the audit trail.
-   */
-  actor: string;
-  /**
-   * Ephemeral previews atomically superseded by this revision.
-   *
-   * The frontend removes these previews in the same frame that applies the revision, so the
-   * committed block replaces the streamed placeholder with no visual flicker.
-   */
-  cleared_preview_ids?: string[];
-  created_at: string;
-  doc_id: DocId;
-  /**
-   * Forward patch operations; metadata-only revisions may carry an empty array.
-   */
-  ops: {
-    [k: string]: unknown;
-  };
-  revision: Revision;
-  summary: string;
-  [k: string]: unknown;
-}
-/**
- * SSE `doc_created` session delta payload.
- */
-export interface SessionDelta {
-  created_at: string;
-  doc_id: DocId;
-  /**
-   * Event name, always `doc_created`.
-   */
-  event: string;
-  revision: Revision;
-  session_id: SessionId;
-  title: string;
-  [k: string]: unknown;
-}
-/**
- * SSE `sync_required` payload emitted when replay detects a gap.
- */
-export interface SyncRequiredDelta {
-  doc_id: DocId;
-  hint: string;
-  reason: string;
-  /**
-   * Monotonic non-negative report revision.
-   */
-  since_revision: number;
   [k: string]: unknown;
 }
