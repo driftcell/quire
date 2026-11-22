@@ -109,7 +109,7 @@ pub struct McpRegistry {
     master_key: Option<SecretString>,
     cache: Cache<String, Arc<McpCatalogSnapshot>>,
     connections: Cache<String, Arc<RmcpClient>>,
-    connection_lock: Arc<tokio::sync::Mutex<()>>,
+    connection_locks: Cache<String, Arc<tokio::sync::Mutex<()>>>,
 }
 
 impl McpRegistry {
@@ -119,7 +119,7 @@ impl McpRegistry {
             master_key,
             cache: Cache::new(32),
             connections: Cache::new(128),
-            connection_lock: Arc::new(tokio::sync::Mutex::new(())),
+            connection_locks: Cache::new(128),
         }
     }
 
@@ -407,7 +407,13 @@ impl McpRegistry {
         {
             return Ok(client);
         }
-        let _guard = self.connection_lock.lock().await;
+        let lock = self
+            .connection_locks
+            .get_with(binding.server_id.clone(), async {
+                Arc::new(tokio::sync::Mutex::new(()))
+            })
+            .await;
+        let _guard = lock.lock().await;
         if let Some(client) = self.connections.get(&binding.server_id).await
             && !client.is_closed()
         {
@@ -419,6 +425,33 @@ impl McpRegistry {
             .insert(binding.server_id.clone(), Arc::clone(&client))
             .await;
         Ok(client)
+    }
+
+    /// Resolve an enabled server for a host-authored operational call using the same shared pool.
+    pub async fn shared_client_for_server(
+        &self,
+        server_id: &str,
+    ) -> RuntimeResult<Arc<RmcpClient>> {
+        let server = self.get_server_internal(server_id).await?.ok_or_else(|| {
+            RuntimeError::InvalidRequest(format!("MCP server `{server_id}` is not registered"))
+        })?;
+        if !server.enabled {
+            return Err(RuntimeError::InvalidRequest(format!(
+                "MCP server `{server_id}` is disabled"
+            )));
+        }
+        let auth_token = match server.auth_token_ref.as_deref() {
+            Some(reference) => Some(resolve_api_key_ref(reference, self.master_key.as_ref())?),
+            None => None,
+        };
+        self.shared_client(&McpServerBinding {
+            server_id: server.server_id,
+            name: server.name,
+            url: server.url,
+            auth_token,
+            tool_names: Vec::new(),
+        })
+        .await
     }
 
     /// Triple intersection: server enabled, tool globally enabled and agent allow-list matched.

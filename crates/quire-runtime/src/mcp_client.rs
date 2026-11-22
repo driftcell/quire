@@ -4,9 +4,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use http::{HeaderName, HeaderValue};
-use rig_core::tool::{DynamicTool, ToolContext};
-use rig_rmcp::{
-    McpCallToolResult, McpConnection, McpTool, rmcp,
+use rig::tool::rmcp::{
+    McpCallToolResult, McpConnection, McpMeta, McpTool, rmcp,
     rmcp::{
         ServiceExt,
         transport::streamable_http_client::{
@@ -14,6 +13,7 @@ use rig_rmcp::{
         },
     },
 };
+use rig::tool::{DynamicTool, ToolContext};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value;
 
@@ -77,7 +77,7 @@ impl RmcpClient {
         }
         config.custom_headers = headers;
 
-        let http = rig_reqwest::reqwest::Client::builder()
+        let http = rig::rig_reqwest::reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(15))
             .timeout(Duration::from_secs(300))
             .build()
@@ -132,7 +132,12 @@ impl RmcpClient {
             .collect())
     }
 
-    pub async fn call_tool_raw(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
+    async fn run_tool(
+        &self,
+        name: &str,
+        arguments: Value,
+        meta: Option<McpMeta>,
+    ) -> RuntimeResult<rmcp::model::CallToolResult> {
         let tool = self
             .tools
             .iter()
@@ -144,38 +149,62 @@ impl RmcpClient {
         let dynamic = DynamicTool::try_from(tool)
             .map_err(|error| RuntimeError::Internal(format!("invalid MCP tool: {error}")))?;
         let mut context = ToolContext::new();
-        let output = dynamic
+        if let Some(meta) = meta {
+            context.insert(meta).map_err(|error| {
+                RuntimeError::Internal(format!("MCP request context failed: {error}"))
+            })?;
+        }
+        dynamic
             .run_with(&mut context, arguments)
             .await
             .map_err(|error| {
                 RuntimeError::Internal(format!("MCP tool `{name}` failed: {error}"))
             })?;
-        let raw = context.result::<McpCallToolResult>().map_err(|error| {
-            RuntimeError::Internal(format!("MCP result context failed: {error}"))
-        })?;
-        match raw {
-            Some(raw) => Ok(serde_json::to_value(raw.0)?),
-            None => Ok(output.as_json().cloned().unwrap_or_else(|| {
-                Value::String(output.as_text().unwrap_or_default().to_string())
-            })),
+        context
+            .result::<McpCallToolResult>()
+            .map_err(|error| RuntimeError::Internal(format!("MCP result context failed: {error}")))?
+            .map(|result| result.0)
+            .ok_or_else(|| {
+                RuntimeError::Internal(format!("MCP tool `{name}` returned no raw result"))
+            })
+    }
+
+    pub async fn call_tool_raw(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
+        Ok(serde_json::to_value(
+            self.run_tool(name, arguments, None).await?,
+        )?)
+    }
+
+    fn tool_value(result: rmcp::model::CallToolResult) -> Value {
+        if let Some(structured) = result.structured_content {
+            return structured;
         }
+        if let Some(text) = result
+            .content
+            .first()
+            .and_then(rmcp::model::ContentBlock::as_text)
+            .map(|text| text.text.as_str())
+        {
+            return serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.into()));
+        }
+        Value::Null
     }
 
     pub async fn call_tool(&self, name: &str, arguments: Value) -> RuntimeResult<Value> {
-        let result = self.call_tool_raw(name, arguments).await?;
-        if let Some(structured) = result.get("structuredContent") {
-            return Ok(structured.clone());
-        }
-        if let Some(text) = result
-            .get("content")
-            .and_then(Value::as_array)
-            .and_then(|content| content.first())
-            .and_then(|item| item.get("text"))
-            .and_then(Value::as_str)
-        {
-            return Ok(serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.into())));
-        }
-        Ok(Value::Null)
+        Ok(Self::tool_value(
+            self.run_tool(name, arguments, None).await?,
+        ))
+    }
+
+    pub async fn call_tool_with_meta(
+        &self,
+        name: &str,
+        arguments: Value,
+        meta: McpMeta,
+    ) -> RuntimeResult<Value> {
+        Ok(Self::tool_value(
+            self.run_tool(name, arguments, Some(meta)).await?,
+        ))
     }
 
     pub fn is_closed(&self) -> bool {

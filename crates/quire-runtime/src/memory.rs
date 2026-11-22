@@ -1,16 +1,16 @@
 //! Canonical structured conversation history backed by Rig's official PostgreSQL memory store.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use quire_protocol::short_id;
 use quire_session_protocol::{MessageRole, SendMessageRequest, SessionMessage};
-use rig_core::{
+use rig::memory::{SummaryState, apply_summary, load_async, save_async, summary_state};
+use rig::postgres::PostgresSessionStore;
+use rig::{
     conversation::{Aside, Author, Conversation, MessageId},
     message::{AssistantContent, Message},
 };
-use rig_memory::{SummaryState, apply_summary, load_async, save_async, summary_state};
-use rig_postgres::PostgresSessionStore;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -127,6 +127,34 @@ impl ConversationMemory {
         Ok((message, false))
     }
 
+    pub async fn append_internal_prompt(
+        &self,
+        log: &str,
+        client_msg_id: String,
+        content: String,
+    ) -> RuntimeResult<SessionMessage> {
+        let request = SendMessageRequest {
+            client_msg_id,
+            content,
+            comment_refs: Vec::new(),
+            attachment_ids: Vec::new(),
+        };
+        let (message, _) = self.append_prompt(log, &request, false).await?;
+        Ok(message)
+    }
+
+    /// Remove a failed run's suffix while retaining the selected user prompt as the latest entry.
+    pub async fn rewind_to_user_prompt(
+        &self,
+        log: &str,
+        session_message_id: &str,
+    ) -> RuntimeResult<SessionMessage> {
+        let mut conversation = self.load(log).await?;
+        let message = rewind_conversation_to_prompt(&mut conversation, session_message_id)?;
+        self.save(log, &mut conversation).await?;
+        Ok(message)
+    }
+
     pub async fn find_by_client_id(
         &self,
         log: &str,
@@ -162,6 +190,11 @@ impl ConversationMemory {
         run_id: &str,
         content: &str,
     ) -> RuntimeResult<SessionMessage> {
+        if content.is_empty() {
+            return Err(RuntimeError::InvalidRequest(
+                "an empty assistant response must not be persisted".into(),
+            ));
+        }
         let mut conversation = self.load(log).await?;
         if let Some(message) = receipts(&conversation).into_values().find_map(|receipt| {
             (receipt.visible
@@ -310,7 +343,21 @@ impl ConversationMemory {
                 .iter()
                 .map(|message| message.as_ref())
                 .eq(expected_prefix.iter())
-            || full_history.len() < current.len()
+        {
+            return Err(RuntimeError::Internal(format!(
+                "conversation `{log}` changed while the agent run was in flight"
+            )));
+        }
+        // A completion-hook cancellation may precede Rig's initial prompt commit. The prompt was
+        // already persisted by append_prompt, so this is a valid no-op rather than a torn suffix.
+        if full_history.len().saturating_add(1) == current.len()
+            && full_history
+                .iter()
+                .eq(expected_prefix.iter().take(full_history.len()))
+        {
+            return Ok(());
+        }
+        if full_history.len() < current.len()
             || !full_history
                 .iter()
                 .take(current.len())
@@ -320,55 +367,125 @@ impl ConversationMemory {
                 "conversation `{log}` changed while the agent run was in flight"
             )));
         }
-        let prefix_len = current.len();
-        let suffix: Vec<Message> = full_history.into_iter().skip(prefix_len).collect();
-        for message in suffix {
-            let message_id = conversation.push(message.clone());
-            let Some(run_id) = run_id else {
-                continue;
-            };
-            let Message::Assistant(assistant) = &message else {
-                continue;
-            };
-            let text = assistant
-                .content
-                .iter()
-                .filter_map(|content| match content {
-                    AssistantContent::Text(text) if !text.text.is_empty() => {
-                        Some(text.text.as_str())
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            if text.is_empty() {
-                continue;
-            }
-            let receipt = MessageReceipt {
-                client_msg_id: format!("run:{run_id}:{}", short_id("msg")),
-                visible: true,
-                message: SessionMessage {
-                    message_id: short_id("msg"),
-                    session_id: log.to_string(),
-                    role: MessageRole::Assistant,
-                    content: text,
-                    comment_refs: Vec::new(),
-                    attachment_ids: Vec::new(),
-                    run_id: Some(run_id.to_string()),
-                    created_at: Utc::now(),
-                },
-            };
-            conversation.add_aside(
-                Aside::new(
-                    MESSAGE_RECEIPT,
-                    Author::plugin("quire"),
-                    serde_json::to_value(receipt)?,
-                )
-                .after(Some(message_id)),
-            );
-        }
+        let suffix: Vec<Message> = full_history.into_iter().skip(current.len()).collect();
+        append_run_suffix(&mut conversation, suffix, log, run_id)?;
         self.save(log, &mut conversation).await
     }
+}
+
+fn assistant_text(message: &Message) -> String {
+    let Message::Assistant(assistant) = message else {
+        return String::new();
+    };
+    assistant
+        .content
+        .iter()
+        .filter_map(|content| match content {
+            AssistantContent::Text(text) if !text.text.is_empty() => Some(text.text.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn append_run_suffix(
+    conversation: &mut Conversation,
+    suffix: Vec<Message>,
+    log: &str,
+    run_id: Option<&str>,
+) -> RuntimeResult<()> {
+    let visible_text = suffix
+        .iter()
+        .map(assistant_text)
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let receipt_anchor = (!visible_text.is_empty() && run_id.is_some())
+        .then(|| {
+            suffix
+                .iter()
+                .rposition(|message| !assistant_text(message).is_empty())
+        })
+        .flatten();
+    for (index, message) in suffix.into_iter().enumerate() {
+        let message_id = conversation.push(message);
+        if receipt_anchor != Some(index) {
+            continue;
+        }
+        let Some(run_id) = run_id else {
+            continue;
+        };
+        let receipt = MessageReceipt {
+            client_msg_id: format!("run:{run_id}:{}", short_id("msg")),
+            visible: true,
+            message: SessionMessage {
+                message_id: short_id("msg"),
+                session_id: log.to_string(),
+                role: MessageRole::Assistant,
+                content: visible_text.clone(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+                run_id: Some(run_id.to_string()),
+                created_at: Utc::now(),
+            },
+        };
+        conversation.add_aside(
+            Aside::new(
+                MESSAGE_RECEIPT,
+                Author::plugin("quire"),
+                serde_json::to_value(receipt)?,
+            )
+            .after(Some(message_id)),
+        );
+    }
+    Ok(())
+}
+
+fn rewind_conversation_to_prompt(
+    conversation: &mut Conversation,
+    session_message_id: &str,
+) -> RuntimeResult<SessionMessage> {
+    let (prompt_id, receipt) = receipts(conversation)
+        .into_iter()
+        .find(|(_, receipt)| {
+            receipt.message.message_id == session_message_id
+                && receipt.message.role == MessageRole::User
+        })
+        .ok_or_else(|| {
+            RuntimeError::InvalidRequest(format!(
+                "retry prompt `{session_message_id}` is not in canonical memory"
+            ))
+        })?;
+    let prompt_index = conversation.index_of(prompt_id).ok_or_else(|| {
+        RuntimeError::InvalidRequest(format!(
+            "retry prompt `{session_message_id}` is no longer in canonical memory"
+        ))
+    })?;
+    let removed: HashSet<MessageId> = conversation
+        .entries()
+        .skip(prompt_index.saturating_add(1))
+        .map(|entry| entry.id)
+        .collect();
+    if !removed.is_empty() {
+        let aside_ids = conversation
+            .asides()
+            .filter_map(|(id, aside)| {
+                aside
+                    .after
+                    .filter(|after| removed.contains(after))
+                    .map(|_| id)
+            })
+            .collect::<Vec<_>>();
+        for id in aside_ids {
+            conversation.remove_aside(id);
+        }
+        conversation.splice(
+            prompt_index.saturating_add(1)..,
+            std::iter::empty::<rig::conversation::Entry>(),
+            Author::plugin("quire.retry"),
+        );
+    }
+    Ok(receipt.message)
 }
 
 fn receipts(conversation: &Conversation) -> HashMap<MessageId, MessageReceipt> {
@@ -388,7 +505,96 @@ fn receipts(conversation: &Conversation) -> HashMap<MessageId, MessageReceipt> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_memory::{MemoryStore, load, save};
+    use rig::memory::{MemoryStore, load, save};
+
+    #[test]
+    fn one_run_projects_one_aggregate_nonempty_assistant_receipt() {
+        let mut conversation = Conversation::from_messages([Message::user("prompt")]);
+        append_run_suffix(
+            &mut conversation,
+            vec![
+                Message::assistant("first"),
+                Message::user("tool result"),
+                Message::assistant("second"),
+            ],
+            "session",
+            Some("run_1"),
+        )
+        .unwrap();
+        let projected = receipts(&conversation);
+        assert_eq!(projected.len(), 1);
+        let receipt = projected.into_values().next().unwrap();
+        assert_eq!(receipt.message.content, "first\n\nsecond");
+        assert_eq!(receipt.message.run_id.as_deref(), Some("run_1"));
+
+        let mut empty = Conversation::from_messages([Message::user("prompt")]);
+        append_run_suffix(
+            &mut empty,
+            vec![Message::assistant("")],
+            "session",
+            Some("run_empty"),
+        )
+        .unwrap();
+        assert!(receipts(&empty).is_empty());
+    }
+
+    #[test]
+    fn retry_rewind_removes_the_failed_suffix_and_its_receipts() {
+        let mut conversation = Conversation::new();
+        let prompt_id = conversation.push(Message::user("prompt"));
+        let prompt = SessionMessage {
+            message_id: "msg_prompt".into(),
+            session_id: "session".into(),
+            role: MessageRole::User,
+            content: "prompt".into(),
+            comment_refs: Vec::new(),
+            attachment_ids: Vec::new(),
+            run_id: None,
+            created_at: Utc::now(),
+        };
+        conversation.add_aside(
+            Aside::new(
+                MESSAGE_RECEIPT,
+                Author::plugin("quire"),
+                serde_json::to_value(MessageReceipt {
+                    client_msg_id: "client_prompt".into(),
+                    visible: true,
+                    message: prompt,
+                })
+                .unwrap(),
+            )
+            .after(Some(prompt_id)),
+        );
+        let assistant_id = conversation.push(Message::assistant("failed answer"));
+        conversation.add_aside(
+            Aside::new(
+                MESSAGE_RECEIPT,
+                Author::plugin("quire"),
+                serde_json::to_value(MessageReceipt {
+                    client_msg_id: "run_failed".into(),
+                    visible: true,
+                    message: SessionMessage {
+                        message_id: "msg_failed".into(),
+                        session_id: "session".into(),
+                        role: MessageRole::Assistant,
+                        content: "failed answer".into(),
+                        comment_refs: Vec::new(),
+                        attachment_ids: Vec::new(),
+                        run_id: Some("run_failed".into()),
+                        created_at: Utc::now(),
+                    },
+                })
+                .unwrap(),
+            )
+            .after(Some(assistant_id)),
+        );
+        conversation.push(Message::user("unfinished tool result"));
+
+        let prompt = rewind_conversation_to_prompt(&mut conversation, "msg_prompt").unwrap();
+        assert_eq!(prompt.message_id, "msg_prompt");
+        assert_eq!(conversation.messages(), &[Message::user("prompt").into()]);
+        assert_eq!(receipts(&conversation).len(), 1);
+    }
 
     #[test]
     fn receipt_asides_survive_repeated_appends() {

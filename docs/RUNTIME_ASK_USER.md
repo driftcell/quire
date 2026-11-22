@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-session-protocol`, `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_ask_user_suspend_resume.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_ask_user_suspend_resume.md`
 
 ## 1. Scope & Non-Goals
 
@@ -57,22 +57,22 @@ list. Labels and titles are resolved from the stored question definition. The pa
 through `ToolContext::insert_result`, and immediately returns an `awaiting_input` receipt. It never
 waits for a user response inside the tool or hook.
 
-`QuestionHook::on_model_turn_finished` records whether the accepted assistant turn contains
-`ask_user`. If it does, every sibling tool call—before or after the question—is handled before preview
-or execution:
+`ToolLifecycleHook::on_model_turn_finished` records whether the accepted assistant turn contains
+`ask_user` and clears provisional preview streams. Every
+sibling tool call—before or after the question—is handled before preview or execution:
 
-1. emit its `ToolCallStarted`;
-2. emit `ToolCallFinished` with `status = "skipped"` and a structured reason;
-3. return a skipped dispatch action so no side effect occurs.
+1. `on_dispatch` emits only its `ToolCallStarted` and returns a structured skipped action;
+2. Rig resolves the denied dispatch as a skipped tool result and still presents its outcome;
+3. `on_outcome` emits the sole `ToolCallFinished` with `status = "skipped"`.
 
-This policy is position-independent. It avoids both lost prefix results and execution of stale suffix
-writes after an answer. The frontend displays skipped calls as terminal “已跳过”.
-
-For the question itself, the hook emits start, the tool executes once, then the outcome hook creates
-the questionnaire event, emits `ToolCallFinished { status: "awaiting_input" }` and stops the Runner
-with an internal reason. The driver treats that cancellation as a normal suspension, commits the
-canonical cancelled history to rig-memory and does not mark the run failed. Tool validation/execution
-failures without question metadata continue to tool audit and receive a failed finish instead.
+This policy is position-independent and avoids duplicate finish events. Normal question and sibling
+outcomes proceed rather than stopping in `on_outcome`: Rig's fail-fast would otherwise drop the
+current tool result and never dispatch later siblings. Once the question executes successfully, the
+hook creates the questionnaire event and emits `ToolCallFinished { status: "awaiting_input" }`. Rig
+commits the complete result batch, then `TurnControlHook` stops the following completion call before
+any provider request. The driver treats that cancellation as normal suspension, commits canonical
+history containing every question/skipped result and does not mark the run failed. Tool
+validation/execution failures without question metadata receive a failed finish instead.
 
 ### 2.3 Suspension
 
@@ -97,18 +97,23 @@ prompt**. It is the only model input for the continuation turn. There is no
 lifecycle and visible assistant projection.
 
 A normal user message may bypass the card. Pending cards become `dismissed` with reason
-`superseded_by_user_message`, their suspended runs are finalized, and the user's standard new turn
-wins. Pending queue contents are not consumed by question suspension.
+`superseded_by_user_message`. Before the new visible prompt is appended, canonical memory receives
+an internal invisible `ask_user_response` JSON prompt with `status = "dismissed"`, the question/tool
+IDs and that reason. The model therefore never sees an unexplained dangling `awaiting_input` result.
+The suspended runs are finalized, the user's standard new turn wins, and pending queue contents are
+not consumed by question suspension.
 
 ## 3. Invariants & Verification
 
 - A pending card survives refresh/restart and resolved cards remain anchored to the original call.
-- Mixed batches execute no sibling tool and every sibling has terminal skipped audit/UI state.
+- Mixed batches execute no sibling tool and every sibling has exactly one terminal skipped finish,
+  regardless of whether it appears before or after `ask_user`.
 - `ask_user` never holds a task while waiting for a person.
 - Answers and whole-card skips use one pure JSON payload with resolved labels and no prose continuation.
 - Continuation uses a new AgentRunner turn, not an unexposed Runner checkpoint or same-run resume.
 - Internal answer prompts remain canonical but do not render as user bubbles.
-- A new user message dismisses the pending card and wins; a resolved card cannot be answered again.
+- A new user message appends an invisible canonical dismissal before its visible prompt and wins;
+  the dismissal never becomes a UI bubble, and a resolved card cannot be answered again.
 - Failed question calls do not leave running tool rows.
 
 Coverage includes:
@@ -117,7 +122,7 @@ Coverage includes:
 - `ask_user_skip_marks_skipped_and_continues`
 - `new_message_dismisses_pending_question_and_starts_a_new_turn`
 - `ask_user_suspension_keeps_pending_queue_untouched`
-- `HookTestHarness` mixed-batch sibling skipping
+- `HookTestHarness` mixed-batch sibling skipping in both call orders with exactly-once finishes
 - session-protocol structured payload/label serialization tests
 
 Full gate:

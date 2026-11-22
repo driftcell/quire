@@ -1,16 +1,17 @@
 //! Native Rig agent construction, MCP adaptation and AgentRunner orchestration.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
-use futures::StreamExt;
-use quire_session_protocol::{ContextUsage, MessageRole};
+use futures::{StreamExt, future::join_all};
+use quire_session_protocol::ContextUsage;
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem},
-    completion::{Document, Message, PromptError, Usage},
-    message::ToolChoice,
-    tool::ToolContext,
+    completion::{Message, PromptError, Usage},
+    tool::{
+        ToolContext,
+        rmcp::{McpMeta, rmcp::model::RequestMetaObject},
+    },
 };
-use rig_rmcp::{McpMeta, rmcp::model::RequestMetaObject};
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -38,13 +39,10 @@ mod subagents;
 
 pub use builtin_tools::BUILTIN_TOOLS;
 pub use preview_stream::{PreviewThrottle, ToolPreviewStreamer};
-pub use subagents::{SubagentOutcome, SubagentTask, spawn_subagents};
+pub use subagents::{SubagentOutcome, SubagentTask};
 
 use builtin_tools::{ToolBuildContext, warn_missing_allowed_tools};
-use hooks::{
-    InvalidToolCallHook, PreviewHook, QuestionHook, RunControlHook, RunTermination,
-    StreamEventHook, ToolAuditHook, UsageHook,
-};
+use hooks::{RunTermination, SharedTurnState, ToolLifecycleHook, TurnControlHook, TurnRunState};
 use preview_stream::PreviewState;
 
 #[derive(Clone)]
@@ -78,15 +76,15 @@ impl RigModelStreamProvider {
 impl ModelStreamProvider for RigModelStreamProvider {
     async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream> {
         let core = self.core.clone();
-        let cancellation = request.cancellation.clone();
-        Ok(spawn_producer_stream(
-            cancellation,
-            move |sender| async move {
-                if let Err(error) = core.run_main_turn(request, sender.clone()).await {
-                    let _ = sender.send(Err(error)).await;
-                }
-            },
-        ))
+        Ok(spawn_producer_stream(move |sender| async move {
+            if let Err(error) = core.run_main_turn(request, sender.clone()).await {
+                let _ = sender.send(Err(error)).await;
+            }
+        }))
+    }
+
+    fn commits_canonical_history(&self) -> bool {
+        true
     }
 }
 
@@ -104,13 +102,31 @@ struct AgentExecution {
     agent_id: String,
     model_route: String,
     allowed_tools: Vec<String>,
-    disable_tools: bool,
     system_prompt: String,
     kb_branch: Option<String>,
-    doc_id: Option<String>,
+    doc_id: SharedDocId,
     session_id: String,
     run_id: String,
     cancellation: CancellationToken,
+}
+
+pub(super) type SharedDocId = Arc<RwLock<Option<String>>>;
+
+pub(super) fn new_shared_doc_id(doc_id: Option<String>) -> SharedDocId {
+    Arc::new(RwLock::new(doc_id))
+}
+
+pub(super) fn current_doc_id(doc_id: &SharedDocId) -> Option<String> {
+    doc_id
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+pub(super) fn update_doc_id(doc_id: &SharedDocId, value: Option<String>) {
+    *doc_id
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
 }
 
 #[derive(Clone)]
@@ -120,21 +136,16 @@ struct SubagentScope {
 }
 
 #[derive(Clone)]
-struct EventScope {
+struct StreamEventSender {
     sender: mpsc::Sender<RuntimeResult<ModelStreamEvent>>,
     subagent: Option<SubagentScope>,
-    cancellation: CancellationToken,
 }
 
-impl EventScope {
-    fn top(
-        sender: mpsc::Sender<RuntimeResult<ModelStreamEvent>>,
-        token: CancellationToken,
-    ) -> Self {
+impl StreamEventSender {
+    fn top(sender: mpsc::Sender<RuntimeResult<ModelStreamEvent>>) -> Self {
         Self {
             sender,
             subagent: None,
-            cancellation: token,
         }
     }
 
@@ -145,7 +156,6 @@ impl EventScope {
                 subagent_run_id,
                 agent_name,
             }),
-            cancellation: self.cancellation.clone(),
         }
     }
 
@@ -189,41 +199,27 @@ impl RigModelCore {
         } else {
             request.model_route.clone()
         };
-        let allowed_tools = if request.disable_tools {
-            Vec::new()
-        } else if request.allowed_tools.is_empty() {
+        let allowed_tools = if request.allowed_tools.is_empty() {
             agent.allowed_tools.clone()
         } else {
             request.allowed_tools.clone()
         };
-        let extra_context = request
-            .history
-            .iter()
-            .filter(|message| matches!(message.role, MessageRole::System | MessageRole::Compaction))
-            .enumerate()
-            .map(|(index, message)| Document {
-                id: format!("quire-transient-{index}"),
-                text: message.content.clone(),
-                additional_props: Default::default(),
-            })
-            .collect();
         let execution = AgentExecution {
             agent_id: request.agent_id,
             model_route,
             allowed_tools,
-            disable_tools: request.disable_tools,
             system_prompt: request.system_prompt,
             kb_branch: branch,
-            doc_id: request.doc_id,
+            doc_id: new_shared_doc_id(request.doc_id),
             session_id: request.session_id,
             run_id: request.run_id,
             cancellation: request.cancellation.clone(),
         };
-        let scope = EventScope::top(sender, request.cancellation);
+        let scope = StreamEventSender::top(sender);
         self.run_turn(
             execution,
             Message::user(request.user_message),
-            extra_context,
+            request.kb_update_notice,
             scope,
             request.prompt_recorded,
             request.persist_history,
@@ -236,8 +232,8 @@ impl RigModelCore {
         self: Arc<Self>,
         execution: AgentExecution,
         prompt: Message,
-        extra_context: Vec<Document>,
-        scope: EventScope,
+        kb_update_notice: Option<String>,
+        scope: StreamEventSender,
         prompt_recorded: bool,
         persist_history: bool,
     ) -> RuntimeResult<(String, Vec<Message>)> {
@@ -267,7 +263,6 @@ impl RigModelCore {
                 ))
             })?;
         let supports_vision = resolved.supports_vision;
-        let doc_id_state = Arc::new(Mutex::new(execution.doc_id.clone()));
         let mut sandbox_spec = sandbox_spec_from_config(&self.config.sandbox);
         sandbox_spec
             .metadata
@@ -296,7 +291,13 @@ impl RigModelCore {
                 .iter()
                 .map(|message| message.as_ref().clone())
                 .collect();
-            let initial_history = if prompt_recorded && recorded_history.last() == Some(&prompt) {
+            let initial_history = if prompt_recorded {
+                if recorded_history.last() != Some(&prompt) {
+                    return Err(RuntimeError::Internal(format!(
+                        "canonical prompt for run `{}` is not the latest recorded message",
+                        execution.run_id
+                    )));
+                }
                 let mut history = recorded_history.clone();
                 history.pop();
                 history
@@ -309,21 +310,30 @@ impl RigModelCore {
                 scope: scope.clone(),
                 engine: Arc::clone(&self),
                 sandbox: Arc::clone(&sandbox_lease),
-                doc_id: Arc::clone(&doc_id_state),
             });
-            let mut available_tools = built_in.names;
+            let mut available_tools = built_in.names.clone();
             let mut remote_tools = Vec::new();
-            for binding in self.mcp.tools_for_agent(&execution.allowed_tools).await? {
+            let bindings = self.mcp.tools_for_agent(&execution.allowed_tools).await?;
+            let clients = join_all(bindings.into_iter().map(|binding| async {
                 let allowed: Vec<String> = binding
                     .tool_names
                     .iter()
                     .filter(|name| !BUILTIN_TOOLS.contains(&name.as_str()))
                     .cloned()
                     .collect();
-                if allowed.is_empty() {
+                let client = if allowed.is_empty() {
+                    None
+                } else {
+                    Some(self.mcp.shared_client(&binding).await)
+                };
+                (binding, allowed, client)
+            }))
+            .await;
+            for (binding, allowed, client) in clients {
+                let Some(client) = client else {
                     continue;
-                }
-                match self.mcp.shared_client(&binding).await {
+                };
+                match client {
                     Ok(client) => match client.dynamic_tools(&allowed) {
                         Ok(remote) => {
                             for tool in remote {
@@ -341,12 +351,12 @@ impl RigModelCore {
 
             let agent = AgentBuilder::new(model)
                 .name(execution.agent_id.clone())
-                .preamble(runtime_preamble(&execution))
+                .preamble(static_preamble(&execution))
                 .tool_server_handle(tool_server)
                 .default_max_turns(usize::MAX)
                 .build();
 
-            let mut tool_context = ToolContext::new();
+            let mut tool_context = ToolContext::new().with_scope(built_in.runtime.clone());
             let mut mcp_meta = RequestMetaObject::new();
             mcp_meta.insert(
                 "quire".into(),
@@ -365,15 +375,12 @@ impl RigModelCore {
                     run_id: execution.run_id.clone(),
                     agent_id: execution.agent_id.clone(),
                     kb_branch: execution.kb_branch.clone(),
-                    doc_id: execution.doc_id.clone(),
                     supports_vision,
                 })
                 .map_err(|error| RuntimeError::Internal(error.to_string()))?;
 
             let previews = Arc::new(Mutex::new(PreviewState::new(&execution, &self.config)));
-            let termination = Arc::new(Mutex::new(RunTermination::None));
-            let batch_has_question = Arc::new(std::sync::atomic::AtomicBool::new(false));
-            let last_usage = Arc::new(Mutex::new(None::<Usage>));
+            let state: SharedTurnState = Arc::new(Mutex::new(TurnRunState::default()));
             let mut runner = agent
                 .prompt(prompt.clone())
                 .history(initial_history.clone())
@@ -381,50 +388,32 @@ impl RigModelCore {
                 .max_turns(usize::MAX)
                 .max_invalid_tool_call_retries(3)
                 .max_consecutive_malformed_tool_calls(3)
-                .add_hook(QuestionHook::new(
+                .add_hook(TurnControlHook::new(
                     execution.clone(),
                     scope.clone(),
-                    Arc::clone(&batch_has_question),
-                    Arc::clone(&termination),
-                ))
-                .add_hook(RunControlHook::new(
-                    execution.clone(),
                     self.queue.clone(),
-                    Arc::clone(&doc_id_state),
-                    extra_context,
-                    Arc::clone(&termination),
+                    kb_update_notice,
+                    Arc::clone(&state),
                 ))
-                .add_hook(PreviewHook::new(Arc::clone(&previews)))
-                .add_hook(ToolAuditHook::new(
+                .add_hook(ToolLifecycleHook::new(
                     execution.clone(),
                     scope.clone(),
                     self.kb.clone(),
-                    Arc::clone(&doc_id_state),
-                ))
-                .add_hook(StreamEventHook::new(
-                    execution.clone(),
-                    scope.clone(),
-                    Arc::clone(&termination),
-                ))
-                .add_hook(InvalidToolCallHook)
-                .add_hook(UsageHook::new(Arc::clone(&last_usage)));
+                    Arc::clone(&previews),
+                    Arc::clone(&state),
+                ));
             if let Some(max_tokens) = max_tokens {
                 runner = runner.max_tokens(max_tokens);
-            }
-            if execution.disable_tools {
-                runner = runner.tool_choice(ToolChoice::None).max_turns(1);
             }
 
             let mut stream = runner.stream();
             let mut final_text = String::new();
+            let mut cancellation_observed = false;
             let outcome = loop {
                 tokio::select! {
-                    _ = execution.cancellation.cancelled() => {
-                        *termination.lock().await = RunTermination::Cancelled;
-                        drop(stream);
-                        let mut history = initial_history.clone();
-                        history.push(prompt.clone());
-                        break Ok((final_text, history));
+                    _ = execution.cancellation.cancelled(), if !cancellation_observed => {
+                        cancellation_observed = true;
+                        state.lock().await.termination = RunTermination::Cancelled;
                     }
                     item = stream.next() => {
                         match item {
@@ -460,12 +449,15 @@ impl RigModelCore {
                     .await?;
             }
 
-            let termination = *termination.lock().await;
+            let (termination, last_usage) = {
+                let state = state.lock().await;
+                (state.termination, state.last_usage)
+            };
             if termination == RunTermination::Superseded {
                 scope.send(ModelStreamEvent::Superseded).await;
             }
             if termination != RunTermination::Cancelled
-                && let Some(usage) = last_usage.lock().await.as_ref()
+                && let Some(usage) = last_usage.as_ref()
             {
                 scope
                     .send(ModelStreamEvent::Usage(context_usage(usage, context_limit)))
@@ -482,18 +474,9 @@ impl RigModelCore {
     }
 }
 
-fn runtime_preamble(execution: &AgentExecution) -> String {
+fn static_preamble(execution: &AgentExecution) -> String {
     let mut preamble = execution.system_prompt.clone();
-    preamble.push_str("\n\n<runtime_session>\n");
-    if let Some(doc_id) = execution.doc_id.as_deref() {
-        preamble.push_str(&format!(
-            "Bound Quire report doc_id: `{doc_id}`. Use this doc_id for document tools and do not call create_report for this session.\n"
-        ));
-    } else if !execution.run_id.starts_with("run_sub_") {
-        preamble.push_str(
-            "No Quire report is bound to this session yet. If the user asks to write or generate a report, choose an appropriate formal report title and call `create_report` first; for pure Q&A, reply directly without creating a report.\n",
-        );
-    }
+    preamble.push_str("\n\n<runtime_rules>\n");
     if !execution.run_id.starts_with("run_sub_") {
         preamble.push_str(
             "When the topic of this conversation is clear (especially on the first turn), call `set_session_title` with a concise title.\n",
@@ -507,7 +490,7 @@ fn runtime_preamble(execution: &AgentExecution) -> String {
             "Knowledge-base branch for this session: `{branch}`. Agent and skill lookups use this branch.\n"
         ));
     }
-    preamble.push_str("</runtime_session>\n");
+    preamble.push_str("</runtime_rules>\n");
     preamble
 }
 
@@ -553,6 +536,44 @@ fn prompt_error(error: PromptError) -> RuntimeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn document_binding_changes_extra_context_not_the_frozen_preamble() {
+        let execution = AgentExecution {
+            agent_id: "main".into(),
+            model_route: "test/model".into(),
+            allowed_tools: Vec::new(),
+            system_prompt: "FROZEN PREFIX".into(),
+            kb_branch: None,
+            doc_id: new_shared_doc_id(None),
+            session_id: "sess_test".into(),
+            run_id: "run_test".into(),
+            cancellation: CancellationToken::new(),
+        };
+        let before = static_preamble(&execution);
+        let (sender, _receiver) = mpsc::channel(1);
+        let control = TurnControlHook::for_test(
+            execution.clone(),
+            StreamEventSender::top(sender),
+            SharedTurnState::default(),
+        );
+        let initial_documents = control.session_documents();
+        assert!(
+            initial_documents
+                .first()
+                .is_some_and(|document| { document.text.contains("doc_id: none") })
+        );
+
+        update_doc_id(&execution.doc_id, Some("doc_lazy".into()));
+        assert_eq!(static_preamble(&execution), before);
+        assert!(!before.contains("doc_lazy"));
+        let documents = control.session_documents();
+        assert!(
+            documents
+                .first()
+                .is_some_and(|document| { document.text.contains("doc_id: doc_lazy") })
+        );
+    }
 
     #[test]
     fn usage_carries_real_tokens_and_context_limit() {

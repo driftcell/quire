@@ -6,11 +6,11 @@ use std::time::Duration;
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use moka::future::Cache;
-use rig_core::catalog::Catalog;
-use rig_core::completion::CompletionRequest;
-use rig_core::driver::DynModel;
-use rig_core::operation::Completion;
-use rig_core::providers::registry::ProviderId;
+use rig::catalog::Catalog;
+use rig::completion::CompletionRequest;
+use rig::driver::DynModel;
+use rig::operation::Completion;
+use rig::providers::registry::ProviderId;
 use ring::{
     aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey},
     digest::{SHA256, digest},
@@ -175,17 +175,17 @@ pub struct ModelRegistry {
 /// Public routing facade used by the agent runtime.
 pub type ModelRouter = ModelRegistry;
 
-static MODEL_HTTP_CLIENT: LazyLock<Result<rig_reqwest::ReqwestClient, String>> =
+static MODEL_HTTP_CLIENT: LazyLock<Result<rig::http_client::ReqwestClient, String>> =
     LazyLock::new(|| {
-        let client = rig_reqwest::reqwest::Client::builder()
+        let client = rig::rig_reqwest::reqwest::Client::builder()
             .connect_timeout(crate::http_client::CONNECT_TIMEOUT)
             .timeout(Duration::from_secs(600))
             .build()
             .map_err(|error| format!("model HTTP client init failed: {error}"))?;
-        Ok(rig_reqwest::ReqwestClient::from(client))
+        Ok(rig::http_client::ReqwestClient::from(client))
     });
 
-fn model_http_client() -> RuntimeResult<rig_reqwest::ReqwestClient> {
+fn model_http_client() -> RuntimeResult<rig::http_client::ReqwestClient> {
     match &*MODEL_HTTP_CLIENT {
         Ok(client) => Ok(client.clone()),
         Err(error) => Err(RuntimeError::Internal(error.clone())),
@@ -422,7 +422,7 @@ impl ModelRegistry {
         let http = model_http_client()?;
         match model.protocol {
             ProviderProtocol::OpenaiCompatible => {
-                let config = rig_core::providers::openai::OpenAIConfig::new(api_key)
+                let config = rig::providers::openai::OpenAIConfig::new(api_key)
                     .with_base_url(model.base_url);
                 let model = config.connect(http).completion(model.model_id);
                 Ok(model
@@ -430,7 +430,7 @@ impl ModelRegistry {
                     .erase())
             }
             ProviderProtocol::Anthropic => {
-                let config = rig_core::providers::anthropic::AnthropicConfig::new(api_key)
+                let config = rig::providers::anthropic::AnthropicConfig::new(api_key)
                     .with_base_url(model.base_url);
                 let model = config.connect(http).completion(model.model_id);
                 Ok(model

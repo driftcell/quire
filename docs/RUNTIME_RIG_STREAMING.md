@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`
 
 ## 1. Scope & Non-Goals
 
@@ -20,12 +20,9 @@ driver, serialized per-step checkpoints or a Rig fork.
 
 ### 2.1 Dependencies and module layout
 
-The workspace uses aligned Rig 0.46.0 crates:
-
-- `rig` with `agent`, `derive`, `memory`, `rmcp` and `reqwest` support;
-- `rig-core` for provider/model and message types;
-- `rig-postgres` with `memory` for the official `PostgresSessionStore`;
-- `rig-rmcp` for MCP connections, tools and per-call metadata.
+The workspace aligns Rig 0.46.0 through the `rig` facade with `derive`, `memory`, `postgres`,
+`rmcp` and `reqwest` support. `quire-runtime` imports core, agent, memory, PostgreSQL and MCP types
+through that facade rather than maintaining parallel direct dependencies on the component crates.
 
 `crates/quire-runtime/src/rig_agent/` contains:
 
@@ -40,19 +37,22 @@ The workspace uses aligned Rig 0.46.0 crates:
 
 ### 2.2 Native tools and context
 
-Built-ins are registered as native typed `Tool` values in a `ToolServer`. `RuntimeTool<T>` holds an
-`Arc<RuntimeToolScope>` for shared handles and delegates the concrete argument/output types,
-annotations, footprints and `map_error` to the wrapped tool. There is no per-call `DynamicTool` /
-`ToolAdapter` conversion for built-ins. MCP tools remain dynamic because their names and schemas are
-discovered at runtime.
+Built-ins are registered directly as native typed `Tool` values in a `ToolServer`. One
+`Arc<RuntimeToolScope>` is attached to the runner's `ToolContext::with_scope`; Rig preserves that
+live scope in each dispatch clone. There is no wrapper tool or per-call `DynamicTool` / `ToolAdapter`
+conversion for built-ins. MCP tools remain dynamic because their names and schemas are discovered at
+runtime.
 
 `AgentRunner::tool_context` carries:
 
-- `QuireTurnMeta { session_id, run_id, agent_id, kb_branch, doc_id, supports_vision }`;
+- `QuireTurnMeta { session_id, run_id, agent_id, kb_branch, supports_vision }`;
 - `McpMeta` with `_meta.quire.{session_id,run_id,agent_id}`.
 
-Runtime handles are not serialized into context. `ask_user` publishes `AskUserRequestedMeta` through
-`ToolContext::insert_result`; hooks read that host-only metadata from the outcome.
+Runtime handles are not serialized into context. The current report ID lives in one shared
+`Arc<RwLock<Option<String>>>` used by tools, previews, subagents and per-call request documents;
+`create_report` updates it after the session binding succeeds. `ask_user` publishes
+`AskUserRequestedMeta` through `ToolContext::insert_result`; the lifecycle hook reads that host-only
+metadata from the outcome.
 
 `preview_report` and `preview_echarts` return ordered `ToolOutput::content` blocks containing
 structured diagnostics, an inspection caption and, for vision models, the screenshot. There is no
@@ -65,16 +65,21 @@ migrations do not create `agent_messages`. User-visible message IDs, client idem
 timestamps, run IDs and visibility are saved as `quire.message_receipt` Asides anchored to Rig
 `MessageId`s. Asides persist with the conversation and are never sent to the model.
 
-A normal user prompt is appended before starting the runner. On load, if canonical history ends with
-that exact prompt, the driver removes it from the Runner's input history and supplies it once through
-`.prompt(prompt)`. If it does not match, as when retrying an older message, the prompt is treated as a
-new internal entry. Subagents use `<session_id>:sub:<subagent_run_id>` memory logs and resume through
-`resume_run_id`, not a process-local history cache.
+A normal user prompt is appended before starting the runner. On load, a recorded prompt must be the
+latest canonical entry; the driver removes that entry from the Runner's input history and supplies it
+once through `.prompt(prompt)`. A mismatch fails closed instead of appending a duplicate. Retry first
+finds the visible user receipt's canonical `MessageId`, removes every later entry and asides anchored
+to the removed suffix, saves that splice, and then starts from the retained prompt. Subagents use
+`<session_id>:sub:<subagent_run_id>` memory logs and resume through `resume_run_id`, not a
+process-local history cache.
 
 The driver normalizes both `PromptResponse::messages` and cancelled `chat_history` into full history,
 then commits only the suffix after the exact prefix it loaded. Concurrent prefix changes fail instead
-of silently rewriting another turn. Stub/mock providers use the same canonical store through an
-idempotent assistant fallback in the service.
+of silently rewriting another turn. Cancellation before Rig commits the initial prompt is a no-op
+because `append_prompt` already persisted it. One non-empty visible Assistant receipt aggregates all
+text turns of a main run and is anchored to the last text-bearing Assistant entry; empty output gets
+no receipt and no synthetic empty message. Only providers that do not commit canonical history
+(Stub/Mock) use the service's idempotent non-empty assistant fallback.
 
 ### 2.4 AgentRunner and hook order
 
@@ -87,27 +92,24 @@ tools, and builds an `Agent`. Each run uses:
 - `.tool_concurrency(1)` through the runner default;
 - native model `.with_idle_timeout(Some(120s))`.
 
-Hooks are registered in this explicit order:
+Two hooks are registered in this explicit order:
 
-1. `QuestionHook`: detects an `ask_user` batch, skips every sibling before preview/execution, and
-   turns successful question outcomes into durable suspension;
-2. `RunControlHook`: cancellation, safe-boundary queue supersession and per-turn preamble/context
-   patches;
-3. `PreviewHook`: partial argument previews, final flush/anchor correction and `preview_ids` rewrites;
-4. `ToolAuditHook`: actual tool input/output, timing, failures, skipped results and report binding;
-5. `StreamEventHook`: text/reasoning deltas and cancellation during streaming;
-6. `InvalidToolCallHook`: malformed-JSON feedback separately from unknown/disallowed tool feedback;
-7. `UsageHook`: the last accepted model call's usage, not aggregate multi-call usage.
+1. `TurnControlHook`: cancellation, safe-boundary queue supersession, dynamic extra-context
+   documents, text/reasoning deltas and the last accepted model call's usage;
+2. `ToolLifecycleHook`: partial previews, final `preview_ids` rewrites, mixed `ask_user` batches,
+   every tool start/finish, failures, invalid-call feedback and lazy report binding.
 
-Normal tools have previews applied before audit observes the effective arguments. An `ask_user`
-failure continues to tool audit and receives a failed finish instead of leaving a running row.
-Provisional text/tool deltas travel through the existing bounded 256-frame runtime channel and the
-single `EventSink` projection path; hooks do not write session databases directly.
+The preamble is frozen for the session. `TurnControlHook` reads the shared report ID at every
+completion boundary and sends `quire-session-state` plus an optional `quire-knowledge-update` in
+`RequestPatch::extra_context`; it never patches the preamble. Normal tools finish preview rewriting
+before the same lifecycle hook records the effective arguments and emits start. It is the only hook
+that emits tool finish. Provisional text/tool deltas travel through the bounded 256-frame runtime
+channel and the single `EventSink` projection path; hooks do not write session databases directly.
 
 ### 2.5 Queue steering and terminal states
 
 A queued user message is not inserted into an active Runner's request-only history. At a completion
-boundary after tool results, `RunControlHook` stops the Runner with an internal supersession signal.
+boundary after tool results, `TurnControlHook` stops the Runner with an internal supersession signal.
 The driver commits canonical history and emits `ModelStreamEvent::Superseded`; the service finalizes
 the run as `superseded` with `turn_superseded`, then the queue coordinator starts a standard new turn.
 
@@ -117,29 +119,34 @@ between those steps replays the same client key rather than duplicating the mess
 
 ### 2.6 ask_user outline
 
-`ask_user` is a one-shot main-agent tool. All sibling calls in the same model turn receive skipped
-start/finish records and no execution, independent of position. The question is persisted and the
-run enters `awaiting_input`; answers are pure structured JSON inputs to a new turn. See
-`RUNTIME_ASK_USER.md`.
+`ask_user` is a one-shot main-agent tool. All sibling calls in the same model turn receive exactly
+one skipped start/finish pair and no execution, independent of position. Normal question and sibling
+outcomes proceed so Rig commits the complete tool-result batch, including `awaiting_input`. The
+control hook then stops at the following completion-call boundary before any provider request. The
+question is persisted and the run enters `awaiting_input`; answers are pure structured JSON inputs to
+a new turn. See `RUNTIME_ASK_USER.md`.
 
 ### 2.7 Usage, cancellation and cleanup
 
-`UsageHook` keeps the last accepted completion's counters. `context_used` uses provider context tokens
+`TurnControlHook` keeps the last accepted completion's counters. `context_used` uses provider context tokens
 when available and `context_limit` comes from the resolved model row. Subagent usage remains scoped to
 the child and never overwrites the main session meter.
 
-The outer stream loop listens to the run `CancellationToken`; hooks also stop at delta and dispatch
-boundaries. Dropping `StreamingResult` cancels in-flight model/tool futures and dropping a subagent
-`JoinSet` cancels children. Sandbox cleanup belongs to the outer `run_turn`, not a per-hook settled
-callback, so every normal, error and cancellation exit shares one cleanup owner. Native idle timeout
-applies before the first frame and between frames; long tool execution is not misclassified as model
-stream silence.
+Hooks stop at run-start, completion, delta, model-turn and dispatch boundaries. The driver may observe
+the run `CancellationToken` while waiting for the next stream item, but it only records cancellation
+and keeps driving the Runner to Rig's canonical `PromptError::Cancelled` history; it never replaces
+that history with input-plus-prompt. Neither the service loop nor the producer channel breaks on the
+token. The channel closes only after `run_turn` commits history and awaits sandbox cleanup, and the
+service then performs the cancelled terminal transition. `AbortOnDrop` remains only a last-resort
+guard when the consumer itself is abandoned. Dropping a subagent `JoinSet` cancels children. Native
+idle timeout applies before the first frame and between frames; long tool execution is not
+misclassified as model stream silence.
 
 ### 2.8 Structured compaction
 
 Compaction reads canonical messages from rig-memory and calls
 `prompt_typed::<CompactionHandoff>(COMPACTION_INSTRUCTION).retries(1)` with native structured output.
-The result projects to the stable Markdown handoff, then `rig_memory::apply_summary` splices it into
+The result projects to the stable Markdown handoff, then `rig::memory::apply_summary` splices it into
 the conversation while preserving pairing and undo metadata. Automatic compaction can preserve the
 new user prompt by anchoring `keep_from` to its canonical `MessageId`. The old text-stream heading
 validator and `compacted_up_to_message_id` history are removed.
@@ -149,17 +156,22 @@ validator and `compacted_up_to_message_id` history are removed.
 - Production uses stock `AgentRunner` and native hooks, never the direct `DynModel::stream` loop.
 - Canonical history preserves structured ToolCall/ToolResult pairs and multimodal output.
 - A prompt appears exactly once in the provider request and one committed suffix is appended per run.
+- Retry rewinds by canonical `MessageId`; early cancellation is a no-op, not a prefix error.
+- A main run has at most one visible Assistant receipt, aggregating its non-empty text turns.
+- The preamble is byte-frozen; dynamic report/KB state appears only in tail extra-context documents.
 - Built-ins are native typed tools; per-call metadata is serializable and runtime handles stay live.
-- Mixed `ask_user` batches execute no sibling tool and persist every sibling as skipped.
+- Mixed `ask_user` batches execute no sibling tool and emit exactly one skipped finish per sibling.
 - Pending messages create a `superseded` old run and a standard new run, never inline history patches.
 - Invalid-call retries are bounded while total normal model turns remain effectively unbounded.
 - Last-call usage, native idle timeout, cancellation and sandbox cleanup retain their distinct roles.
 - Main/subagent memory logs are independent and child resume needs no process-local message cache.
 - Compaction is typed, schema-constrained and applied to canonical rig-memory history.
 
-Verification includes runtime unit tests, `HookTestHarness` sibling-skip coverage, repeated memory
-receipt append tests, and integration tests for queue supersession, question answer/skip/dismissal,
-canonical compaction, cancellation, subagent scopes and real model/tool streaming.
+Verification includes both mixed-batch HookStack orders, lazy document preview binding, frozen
+preamble/dynamic context, aggregate/empty receipts, producer cleanup, repeated receipt appends and
+ordered subagent slots. Integration coverage includes canonical retry with a cancelled tool suffix,
+early cancellation commit, queue supersession, question answer/skip/dismissal with canonical
+dismissal context, compaction, cancellation, subagent scopes and real model/tool streaming.
 
 Full gate:
 

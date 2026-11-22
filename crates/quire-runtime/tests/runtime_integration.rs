@@ -26,7 +26,7 @@ use quire_protocol::{
 use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
     ModelStreamProvider, ModelTurnRequest, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
-    RigModelStreamProvider, RuntimeError, RuntimeService, RuntimeStore, ToolCallRecord,
+    RigModelStreamProvider, RuntimeError, RuntimeService, RuntimeStore,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
@@ -1159,8 +1159,8 @@ async fn client_message_id_is_idempotent_and_does_not_duplicate_runs() {
         .post_message(&session.session_id, &request)
         .await
         .unwrap();
-    let (first, run_id) = match first {
-        PostMessageOutcome::Started { message, run_id } => (message, run_id),
+    let first = match first {
+        PostMessageOutcome::Started { message, .. } => message,
         other => panic!("expected started message, got {other:?}"),
     };
     wait_for_idle(&store, &session.session_id).await;
@@ -1181,23 +1181,130 @@ async fn client_message_id_is_idempotent_and_does_not_duplicate_runs() {
         .filter(|message| message.role == quire_session_protocol::MessageRole::User)
         .collect();
     assert_eq!(user_messages.len(), 1);
-    let tool_call = service
-        .record_tool_call(ToolCallRecord {
-            session_id: session.session_id.clone(),
-            run_id,
-            tool_name: "apply_operations".into(),
-            input: serde_json::json!({"ops":[]}),
-            output: serde_json::json!({"committed":true}),
-            status: "completed".into(),
-            duration_ms: 12,
-        })
+    let assistant_messages: Vec<_> = messages
+        .iter()
+        .filter(|message| message.role == MessageRole::Assistant)
+        .collect();
+    assert_eq!(assistant_messages.len(), 1);
+    assert!(!assistant_messages[0].content.is_empty());
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn retry_rewinds_cancelled_tool_suffix_without_duplicating_the_prompt() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let (provider, requests) =
+        RecordingStreamProvider::new(vec![ModelStreamEvent::TextDelta("retry succeeded".into())]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let session = service
+        .create_session(&unique("retry-canonical"), None)
         .await
         .unwrap();
-    let loaded = service
-        .get_tool_call(&session.session_id, &tool_call.tool_call_id)
+    let request = SendMessageRequest {
+        client_msg_id: unique("retry-prompt"),
+        content: "Retry this exact prompt".into(),
+        comment_refs: Vec::new(),
+        attachment_ids: Vec::new(),
+    };
+    store
+        .insert_user_message(&session.session_id, &request)
         .await
         .unwrap();
-    assert_eq!(loaded.output["committed"], true);
+
+    use rig::message::{
+        AssistantContent, AssistantMessage, CallId, Message, ToolCall, ToolFunction, ToolName,
+    };
+    let prompt = Message::user(request.content.clone());
+    let tool_name = ToolName::new("apply_operations").unwrap();
+    let assistant_call =
+        Message::Assistant(AssistantMessage::new(vec![AssistantContent::ToolCall(
+            ToolCall::from_wire(
+                "call_retry",
+                ToolFunction::new(tool_name.clone(), json!({"ops": []})),
+            ),
+        )]));
+    let tool_result = Message::tool_result(
+        CallId::from_wire("call_retry"),
+        tool_name,
+        "cancelled before completion",
+    );
+    let memory = store.memory().await.unwrap();
+    memory
+        .commit(
+            &session.session_id,
+            std::slice::from_ref(&prompt),
+            Vec::new(),
+            Some("run_cancelled_before_prompt_commit"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        memory
+            .load(&session.session_id)
+            .await
+            .unwrap()
+            .messages()
+            .len(),
+        1
+    );
+    memory
+        .commit(
+            &session.session_id,
+            std::slice::from_ref(&prompt),
+            vec![prompt.clone(), assistant_call, tool_result],
+            Some("run_cancelled"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        memory
+            .load(&session.session_id)
+            .await
+            .unwrap()
+            .messages()
+            .len(),
+        3
+    );
+
+    service.retry(&session.session_id).await.unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].user_message, request.content);
+    drop(requests);
+    let conversation = memory.load(&session.session_id).await.unwrap();
+    assert_eq!(conversation.messages().len(), 2);
+    assert_eq!(
+        conversation
+            .messages()
+            .first()
+            .map(|message| message.as_ref()),
+        Some(&prompt)
+    );
+    assert_eq!(
+        conversation
+            .messages()
+            .get(1)
+            .map(|message| message.as_ref()),
+        Some(&Message::assistant("retry succeeded"))
+    );
+    let messages = store.list_messages(&session.session_id).await.unwrap();
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.role == MessageRole::User)
+            .count(),
+        1
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.role == MessageRole::Assistant)
+            .count(),
+        1
+    );
     service.delete_session(&session.session_id).await.unwrap();
 }
 
@@ -1473,17 +1580,32 @@ async fn knowledge_update_keeps_the_pinned_prompt_frozen() {
         .await
         .unwrap();
     assert!(bumped.version >= 1);
-    let context = service
-        .resume_context(&session.session_id, "Next request")
+    let (provider, requests) =
+        RecordingStreamProvider::new(vec![ModelStreamEvent::TextDelta("next response".into())]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("prompt-cache-message"),
+                content: "Next request".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
         .await
         .unwrap();
-    assert_eq!(context.pinned_system_prompt, "FROZEN SYSTEM PREFIX");
+    wait_for_idle(&store, &session.session_id).await;
+    let requests = requests.lock().await;
+    let request = requests.first().expect("captured request");
+    assert_eq!(request.system_prompt, "FROZEN SYSTEM PREFIX");
     assert!(
-        context
-            .messages
-            .iter()
-            .any(|message| message.content.starts_with("<knowledge_update>"))
+        request
+            .kb_update_notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("<knowledge_update>"))
     );
+    drop(requests);
     let (pinned, _) = store.pinned_prompt(&session.session_id).await.unwrap();
     assert_eq!(pinned.as_deref(), Some("FROZEN SYSTEM PREFIX"));
     service.delete_session(&session.session_id).await.unwrap();
@@ -2228,17 +2350,11 @@ async fn knowledge_update_is_injected_once_and_synced_version_advances() {
         .await
         .unwrap();
     let bumped_version = service.kb().current_version().await.unwrap();
-    let first = service
-        .resume_context(&session.session_id, "First resume")
-        .await
-        .unwrap();
-    assert_eq!(first.pinned_system_prompt, "FROZEN PREFIX");
-    assert!(
-        first
-            .messages
-            .iter()
-            .any(|message| message.content.starts_with("<knowledge_update>"))
-    );
+    let (provider, requests) = RecordingStreamProvider::with_turns(vec![
+        vec![ModelStreamEvent::TextDelta("first response".into())],
+        vec![ModelStreamEvent::TextDelta("second response".into())],
+    ]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
 
     let request = SendMessageRequest {
         client_msg_id: unique("kb-msg"),
@@ -2255,17 +2371,32 @@ async fn knowledge_update_is_injected_once_and_synced_version_advances() {
     assert_eq!(pinned.as_deref(), Some("FROZEN PREFIX"));
     assert_eq!(synced, bumped_version);
 
-    let second = service
-        .resume_context(&session.session_id, "Second resume")
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("kb-msg-second"),
+                content: "Run another turn".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
         .await
         .unwrap();
-    assert_eq!(second.pinned_system_prompt, "FROZEN PREFIX");
-    assert!(
-        !second
-            .messages
-            .iter()
-            .any(|message| message.content.starts_with("<knowledge_update>"))
-    );
+    wait_for_idle(&store, &session.session_id).await;
+    let requests = requests.lock().await;
+    assert_eq!(requests.len(), 2);
+    assert!(requests.first().is_some_and(|request| {
+        request.system_prompt == "FROZEN PREFIX"
+            && request
+                .kb_update_notice
+                .as_deref()
+                .is_some_and(|notice| notice.starts_with("<knowledge_update>"))
+    }));
+    assert!(requests.get(1).is_some_and(|request| {
+        request.system_prompt == "FROZEN PREFIX" && request.kb_update_notice.is_none()
+    }));
+    drop(requests);
     service.kb().delete_document(&document_id).await.unwrap();
     service.delete_session(&session.session_id).await.unwrap();
 }
@@ -2338,7 +2469,7 @@ async fn canonical_compaction_preserves_pending_state() {
     );
     let conversation = memory.load(&session.session_id).await.unwrap();
     assert_eq!(
-        rig_memory::summary_state(&conversation).summary,
+        rig::memory::summary_state(&conversation).summary,
         compaction_summary_text()
     );
     service.delete_session(&session.session_id).await.unwrap();
@@ -2636,12 +2767,24 @@ async fn branch_edits_are_isolated_and_sessions_use_the_selected_branch() {
         .as_str()
         .expect("session id")
         .to_string();
-    let context = service
-        .resume_context(&session_id, "Read the selected branch")
+    service
+        .post_message(
+            &session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("branch-session-message"),
+                content: "Read the selected branch".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
         .await
         .unwrap();
+    wait_for_idle(&store, &session_id).await;
+    let (pinned_prompt, _) = store.pinned_prompt(&session_id).await.unwrap();
     assert!(
-        context.pinned_system_prompt.contains("BRANCH ONLY BODY"),
+        pinned_prompt
+            .as_deref()
+            .is_some_and(|prompt| prompt.contains("BRANCH ONLY BODY")),
         "a session bound to the draft must read branch content"
     );
     let active_prompt = service.kb().system_prompt().await.unwrap();
@@ -3250,18 +3393,11 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
     );
     assert!(
         request
-            .history
-            .iter()
-            .any(|message| message.role == MessageRole::System
-                && message.content.starts_with("<knowledge_update>"))
+            .kb_update_notice
+            .as_deref()
+            .is_some_and(|notice| notice.starts_with("<knowledge_update>"))
     );
-    assert_eq!(
-        request
-            .history
-            .last()
-            .map(|message| (message.role, message.content.as_str())),
-        Some((MessageRole::User, "Use the full rig context"))
-    );
+    assert_eq!(request.user_message, "Use the full rig context");
     drop(requests);
 
     let detail = service.session_detail(&session.session_id).await.unwrap();
@@ -3455,10 +3591,7 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
     assert!(requests.get(1).is_some_and(|request| {
-        request
-            .history
-            .iter()
-            .any(|message| message.content.contains("q3"))
+        request.user_message.contains("q3") && request.user_message.contains("ask_user_response")
     }));
     drop(requests);
     service.delete_session(&session.session_id).await.unwrap();
@@ -3550,10 +3683,8 @@ async fn ask_user_skip_marks_skipped_and_continues() {
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
     assert!(requests.get(1).is_some_and(|request| {
-        request
-            .history
-            .iter()
-            .any(|message| message.content.contains("\"status\":\"skipped\""))
+        request.user_message.contains("\"status\":\"skipped\"")
+            && request.user_message.contains("ask_user_response")
     }));
     drop(requests);
     service.delete_session(&session.session_id).await.unwrap();
@@ -3641,13 +3772,39 @@ async fn new_message_dismisses_pending_question_and_starts_a_new_turn() {
     assert_ne!(started_runs.first(), started_runs.get(1));
     let requests = requests.lock().await;
     assert_eq!(requests.len(), 2);
-    assert!(requests.get(1).is_some_and(|request| {
-        request
-            .history
-            .iter()
-            .any(|message| message.content.contains("Ignore the card"))
-    }));
+    assert!(
+        requests
+            .get(1)
+            .is_some_and(|request| { request.user_message.contains("Ignore the card") })
+    );
     drop(requests);
+    let conversation = store
+        .memory()
+        .await
+        .unwrap()
+        .load(&session.session_id)
+        .await
+        .unwrap();
+    let canonical = conversation
+        .messages()
+        .iter()
+        .map(|message| serde_json::to_string(message).unwrap())
+        .collect::<Vec<_>>();
+    let dismissed_at = canonical
+        .iter()
+        .position(|message| message.contains("ask_user_response") && message.contains("dismissed"))
+        .expect("dismissal must be canonical model context");
+    let new_message_at = canonical
+        .iter()
+        .position(|message| message.contains("Ignore the card"))
+        .expect("new user prompt must follow dismissal");
+    assert_eq!(new_message_at, dismissed_at + 1);
+    assert!(
+        !detail
+            .messages
+            .iter()
+            .any(|message| { message.content.contains("superseded_by_user_message") })
+    );
     service.delete_session(&session.session_id).await.unwrap();
 }
 
@@ -4354,7 +4511,7 @@ async fn tool_boundary_supersedes_run_and_starts_queued_turn() {
     let completed = traces
         .iter()
         .find(|trace| trace.status == "completed")
-        .expect("queued turn trace");
+        .unwrap_or_else(|| panic!("queued turn trace missing: {traces:?}"));
     assert!(completed.segments.iter().any(|segment| matches!(
         segment,
         RunTraceSegment::Text { text } if text == "已完成排队消息。"

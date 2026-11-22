@@ -21,16 +21,10 @@ pub mod model_stream;
 pub mod models;
 pub mod oss;
 pub mod preview;
-pub mod prompt;
 pub mod rig_agent;
 pub mod sandbox;
 pub mod service;
 pub mod store;
-
-/// Compatibility module for callers that refer to the runtime's `rig` integration.
-pub mod rig {
-    pub use crate::rig_agent::*;
-}
 
 pub use config::Config;
 pub use delta::{CoalescedDelta, DeltaCoalescer, DeltaKind};
@@ -49,8 +43,5 @@ pub use models::{
     ModelsDevImportRequest, ProviderInput, ProviderProtocol, ProviderRecord, ResolvedModel,
 };
 pub use rig_agent::RigModelStreamProvider;
-pub use service::{
-    HttpQuireControl, QuireControl, RuntimeService, SessionInspection, StaticQuireControl,
-    ToolCallRecord,
-};
+pub use service::{RuntimeService, SessionInspection};
 pub use store::RuntimeStore;

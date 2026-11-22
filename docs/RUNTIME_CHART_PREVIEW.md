@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-runtime`, `web`
-- **Related Notes:** `../notes/runtime_chart_preview_flow.md`, `../notes/quire_lint_registry_split.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_chart_preview_flow.md`, `../notes/quire_lint_registry_split.md`
 
 ## 1. Scope & Non-Goals
 
@@ -102,9 +102,11 @@ Vision-capable models receive the screenshot as a user image with a chart-specif
 
 `commit_chart` accepts only `preview_id`, `doc_id`, `block_id`, an insertion anchor (`after_block_id`,
 `before_block_id`, `section_id` or append) and optional `expected_revision` / `summary`. Its schema
-has no `option` or `option_patch` fields. It loads the stored chart, calls the server's
-`apply_operations` MCP tool, and returns the normal mutation receipt plus `preview_id` and `block_id`.
-An expired preview returns an actionable error that tells the agent to call `preview_echarts` again.
+has no `option` or `option_patch` fields. It loads the stored chart and calls `get_document_digest`
+when needed plus `apply_operations` through the registry's pooled `quire-report` client, forwarding
+the current `_meta.quire` identity on every call. It returns the normal mutation receipt plus
+`preview_id` and `block_id`. An expired preview returns an actionable error that tells the agent to
+call `preview_echarts` again.
 
 ## 3. Invariants & Verification
 
@@ -115,7 +117,8 @@ An expired preview returns an actionable error that tells the agent to call `pre
 - A `preview_id` is valid for exactly 1800 seconds and returns `404` afterwards.
 - Public preview URLs never contain the read-only token.
 - The first `preview_echarts` call contains the full option; later calls contain only a patch.
-- `commit_chart` cannot receive an ECharts option by construction.
+- `commit_chart` cannot receive an ECharts option by construction and reuses the authenticated shared
+  MCP connection with per-call Quire identity metadata.
 - Built-in map GeoJSON loads only through dynamic `import()`; the main and `EchartsCanvas` chunks
   contain none of the China/world feature data.
 - `china.json` retains all 34 province-level features plus the South China Sea line, with Hainan

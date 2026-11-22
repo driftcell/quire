@@ -1,8 +1,8 @@
 //! Subagent scheduling, lifecycle and outcome aggregation.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use rig_core::{
+use rig::{
     message::Message,
     rig_tool,
     tool::{ToolContext, ToolExecutionError},
@@ -14,17 +14,14 @@ use tracing::warn;
 
 use quire_protocol::short_id;
 
-use crate::{
-    error::{RuntimeError, RuntimeResult},
-    model_stream::ModelStreamEvent,
-};
+use crate::{error::RuntimeError, model_stream::ModelStreamEvent};
 
 use super::{
-    AgentExecution, EventScope, RigModelCore,
+    AgentExecution, RigModelCore, SharedDocId, StreamEventSender,
     builtin_tools::{quire_turn_meta, runtime_tool_scope, tool_other},
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig_core::schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig::schemars::JsonSchema)]
 pub struct SubagentTask {
     pub agent_name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -51,7 +48,7 @@ pub struct SubagentOutcome {
 pub(super) struct SubagentParent {
     session_id: String,
     kb_branch: Option<String>,
-    doc_id: Option<String>,
+    doc_id: SharedDocId,
     cancellation: tokio_util::sync::CancellationToken,
 }
 
@@ -68,65 +65,83 @@ pub(super) async fn run_subagents_tool(
     let parent = SubagentParent {
         session_id: turn.session_id,
         kb_branch: turn.kb_branch,
-        doc_id: runtime.doc_id.lock().await.clone(),
+        doc_id: Arc::clone(&runtime.doc_id),
         cancellation: runtime.cancellation.clone(),
     };
+    let task_count = tasks.len();
     let mut joinset = JoinSet::new();
-    for task in tasks {
+    let mut metadata = HashMap::new();
+    let mut assignments = Vec::with_capacity(task_count);
+    let mut slots: Vec<Option<SubagentOutcome>> = Vec::with_capacity(task_count);
+    slots.resize_with(task_count, || None);
+    for (index, task) in tasks.into_iter().enumerate() {
         let engine = Arc::clone(&runtime.engine);
         let scope = runtime.event_scope.clone();
         let parent = parent.clone();
-        joinset.spawn(async move { engine.run_subagent(scope, parent, task).await });
+        let agent_name = task.agent_name.clone();
+        let subagent_run_id = task
+            .resume_run_id
+            .clone()
+            .unwrap_or_else(|| short_id("run_sub"));
+        assignments.push((agent_name.clone(), subagent_run_id.clone()));
+        let child_id = subagent_run_id.clone();
+        let handle =
+            joinset.spawn(async move { engine.run_subagent(scope, parent, task, child_id).await });
+        metadata.insert(handle.id(), (index, agent_name, subagent_run_id));
     }
-    let mut outcomes = Vec::new();
-    while let Some(joined) = joinset.join_next().await {
+    while let Some(joined) = joinset.join_next_with_id().await {
         match joined {
-            Ok(outcome) => outcomes.push(outcome),
-            Err(error) => outcomes.push(SubagentOutcome {
-                agent_name: "unknown".into(),
-                status: "failed".into(),
-                summary: format!("subagent join error: {error}"),
-                subagent_run_id: "unknown".into(),
-            }),
+            Ok((id, outcome)) => {
+                if let Some((index, _, _)) = metadata.remove(&id)
+                    && let Some(slot) = slots.get_mut(index)
+                {
+                    *slot = Some(outcome);
+                }
+            }
+            Err(error) => {
+                if let Some((index, agent_name, subagent_run_id)) = metadata.remove(&error.id())
+                    && let Some(slot) = slots.get_mut(index)
+                {
+                    *slot = Some(SubagentOutcome {
+                        agent_name,
+                        status: "failed".into(),
+                        summary: format!("subagent join error: {error}"),
+                        subagent_run_id,
+                    });
+                }
+            }
         }
     }
+    let outcomes = ordered_outcomes(slots, assignments);
     serde_json::to_value(outcomes).map_err(tool_other)
 }
 
-/// Run subagent closures concurrently with a JoinSet.
-pub async fn spawn_subagents<F, Fut>(
-    tasks: Vec<SubagentTask>,
-    runner: F,
-) -> RuntimeResult<Vec<SubagentOutcome>>
-where
-    F: Fn(SubagentTask) -> Fut + Send + Sync + 'static,
-    Fut: std::future::Future<Output = SubagentOutcome> + Send + 'static,
-{
-    let mut joinset = JoinSet::new();
-    for task in tasks {
-        joinset.spawn(runner(task));
-    }
-    let mut outcomes = Vec::new();
-    while let Some(result) = joinset.join_next().await {
-        outcomes
-            .push(result.map_err(|error| {
-                RuntimeError::Internal(format!("subagent join error: {error}"))
-            })?);
-    }
-    Ok(outcomes)
+fn ordered_outcomes(
+    slots: Vec<Option<SubagentOutcome>>,
+    assignments: Vec<(String, String)>,
+) -> Vec<SubagentOutcome> {
+    slots
+        .into_iter()
+        .zip(assignments)
+        .map(|(outcome, (agent_name, subagent_run_id))| {
+            outcome.unwrap_or(SubagentOutcome {
+                agent_name,
+                status: "failed".into(),
+                summary: "subagent ended without an outcome".into(),
+                subagent_run_id,
+            })
+        })
+        .collect()
 }
 
 impl RigModelCore {
     pub(super) async fn run_subagent(
         self: Arc<Self>,
-        parent_scope: EventScope,
+        parent_scope: StreamEventSender,
         parent: SubagentParent,
         task: SubagentTask,
+        subagent_run_id: String,
     ) -> SubagentOutcome {
-        let subagent_run_id = task
-            .resume_run_id
-            .clone()
-            .unwrap_or_else(|| short_id("run_sub"));
         if task.resume_run_id.is_some() {
             match self.kb.store().memory().await {
                 Ok(memory) => match memory
@@ -175,10 +190,9 @@ impl RigModelCore {
                 agent_id: task.agent_name.clone(),
                 model_route: task.model.clone().unwrap_or(definition.model),
                 allowed_tools: definition.allowed_tools,
-                disable_tools: false,
                 system_prompt: definition.system_prompt,
                 kb_branch: parent.kb_branch.clone(),
-                doc_id: parent.doc_id.clone(),
+                doc_id: Arc::clone(&parent.doc_id),
                 session_id: parent.session_id.clone(),
                 run_id: subagent_run_id.clone(),
                 cancellation: parent.cancellation.clone(),
@@ -189,7 +203,7 @@ impl RigModelCore {
                 .run_turn(
                     execution,
                     Message::user(task.task.clone()),
-                    Vec::new(),
+                    None,
                     scope,
                     false,
                     true,
@@ -199,7 +213,7 @@ impl RigModelCore {
         }
         .await;
         let (status, summary) = match result {
-            Ok(_) if parent_scope.cancellation.is_cancelled() => {
+            Ok(_) if parent.cancellation.is_cancelled() => {
                 ("cancelled".to_string(), "cancelled".to_string())
             }
             Ok(summary) if summary.trim().is_empty() => {
@@ -207,7 +221,7 @@ impl RigModelCore {
             }
             Ok(summary) => ("completed".to_string(), summary),
             Err(RuntimeError::InvalidRequest(message))
-                if parent_scope.cancellation.is_cancelled() || message == "run cancelled" =>
+                if parent.cancellation.is_cancelled() || message == "run cancelled" =>
             {
                 ("cancelled".to_string(), "cancelled".to_string())
             }
@@ -233,36 +247,45 @@ impl RigModelCore {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn subagents_run_concurrently_and_preserve_outcomes() {
-        let tasks = vec![
-            SubagentTask {
-                agent_name: "a".into(),
-                display_name: None,
-                model: None,
-                task: "one".into(),
-                section_id: None,
-                resume_run_id: None,
-            },
-            SubagentTask {
-                agent_name: "b".into(),
-                display_name: None,
-                model: Some("subagent/model-b".into()),
-                task: "two".into(),
-                section_id: Some("ch2".into()),
-                resume_run_id: None,
-            },
+    #[test]
+    fn outcomes_keep_input_order_when_later_tasks_finish_first() {
+        let outcome = |name: &str| SubagentOutcome {
+            agent_name: name.into(),
+            status: "completed".into(),
+            summary: format!("done: {name}"),
+            subagent_run_id: format!("run_sub_{name}"),
+        };
+        let assignments = vec![
+            ("a".into(), "run_sub_a".into()),
+            ("b".into(), "run_sub_b".into()),
         ];
-        let outcomes = spawn_subagents(tasks, |task| async move {
-            SubagentOutcome {
-                agent_name: task.agent_name.clone(),
-                status: "completed".into(),
-                summary: format!("done: {}", task.task),
-                subagent_run_id: format!("run_sub_{}", task.agent_name),
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(outcomes.len(), 2);
+        let ordered = ordered_outcomes(vec![Some(outcome("a")), Some(outcome("b"))], assignments);
+        assert_eq!(
+            ordered
+                .iter()
+                .map(|outcome| outcome.agent_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b"]
+        );
+
+        let missing = ordered_outcomes(
+            vec![None, Some(outcome("b"))],
+            vec![
+                ("a".into(), "run_sub_a".into()),
+                ("b".into(), "run_sub_b".into()),
+            ],
+        );
+        assert_eq!(
+            missing.first().map(|item| item.agent_name.as_str()),
+            Some("a")
+        );
+        assert_eq!(
+            missing.first().map(|item| item.subagent_run_id.as_str()),
+            Some("run_sub_a")
+        );
+        assert_eq!(
+            missing.first().map(|item| item.status.as_str()),
+            Some("failed")
+        );
     }
 }

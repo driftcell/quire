@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use async_trait::async_trait;
 use base64::Engine as _;
 use futures::StreamExt;
 use quire_protocol::{short_id, short_token};
@@ -17,7 +16,7 @@ use quire_session_protocol::{
     SessionCommentRef, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
     SessionStatus, SessionSummary, ToolCallDetail,
 };
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::ExposeSecret;
 use serde::Serialize;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
@@ -35,93 +34,11 @@ use crate::{
     error::{RuntimeError, RuntimeResult},
     events::{EventScope, EventSink, project},
     kb::{KbService, SeedReport},
-    mcp_client::RmcpClient,
     mcp_registry::McpRegistry,
     model_stream::{ModelStreamEvent, ModelStreamProvider, ModelTurnRequest, StubStreamProvider},
     models::ModelRegistry,
-    prompt::{ContextMessage, ResumeContext, build_resume_context},
     store::{AttachmentInsert, CompactionWrite, RunRecord, RuntimeStore, SessionPatch},
 };
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LinkedDoc {
-    pub doc_id: String,
-    pub title: String,
-}
-
-#[async_trait]
-pub trait QuireControl: Send + Sync {
-    async fn create_report(
-        &self,
-        session_id: &str,
-        agent_id: &str,
-        title: &str,
-    ) -> RuntimeResult<LinkedDoc>;
-}
-
-pub struct HttpQuireControl {
-    base_url: String,
-    token: SecretString,
-}
-
-impl HttpQuireControl {
-    pub fn new(base_url: &str, token: SecretString) -> Self {
-        Self {
-            base_url: base_url.to_string(),
-            token,
-        }
-    }
-}
-
-#[async_trait]
-impl QuireControl for HttpQuireControl {
-    async fn create_report(
-        &self,
-        session_id: &str,
-        agent_id: &str,
-        title: &str,
-    ) -> RuntimeResult<LinkedDoc> {
-        let client = RmcpClient::connect(
-            &self.base_url,
-            Some(self.token.clone()),
-            session_id,
-            agent_id,
-        )
-        .await?;
-        let value = client
-            .call_tool(
-                "create_report",
-                serde_json::json!({
-                    "title": title,
-                    "enable_cover": true,
-                    "enable_toc": true,
-                    "idempotency_key": format!("runtime:{}", short_token(16)),
-                }),
-            )
-            .await?;
-        let doc_id = value
-            .get("doc_id")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                RuntimeError::Internal("create_report receipt did not contain doc_id".into())
-            })?;
-        Ok(LinkedDoc {
-            doc_id: doc_id.to_string(),
-            title: title.to_string(),
-        })
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct ToolCallRecord {
-    pub session_id: String,
-    pub run_id: String,
-    pub tool_name: String,
-    pub input: serde_json::Value,
-    pub output: serde_json::Value,
-    pub status: String,
-    pub duration_ms: u64,
-}
 
 /// Admin-facing session observation: full detail plus the latest run regardless of outcome.
 #[derive(Debug, Clone)]
@@ -655,11 +572,30 @@ impl RuntimeService {
             }
             return Ok(PostMessageOutcome::Queued { item });
         }
+        let dismissed = self.store.dismiss_pending_questions(session_id).await?;
+        if !dismissed.is_empty() {
+            let memory = self.store.memory().await?;
+            for question in &dismissed {
+                let payload = serde_json::json!({
+                    "kind": "ask_user_response",
+                    "question_id": question.question_id,
+                    "tool_call_id": question.tool_call_id,
+                    "status": "dismissed",
+                    "reason": "superseded_by_user_message",
+                });
+                memory
+                    .append_internal_prompt(
+                        session_id,
+                        format!("question-dismissal:{}", question.question_id),
+                        payload.to_string(),
+                    )
+                    .await?;
+            }
+        }
         let (message, inserted) = self.store.insert_user_message(session_id, request).await?;
         if !inserted {
             return Ok(PostMessageOutcome::Replayed { message });
         }
-        let dismissed = self.store.dismiss_pending_questions(session_id).await?;
         for question in dismissed {
             let _ = self.store.resolve_suspended_run(&question.run_id).await?;
             self.emit(
@@ -1044,12 +980,19 @@ impl RuntimeService {
             .iter()
             .rev()
             .find(|message| message.role == MessageRole::User)
+            .cloned()
         else {
             return Err(RuntimeError::InvalidRequest(
                 "session has no user message to retry".into(),
             ));
         };
-        let model_input = render_stored_user_message(last_user);
+        let prompt = self
+            .store
+            .memory()
+            .await?
+            .rewind_to_user_prompt(session_id, &last_user.message_id)
+            .await?;
+        let model_input = render_stored_user_message(&prompt);
         let _ = self
             .start_turn_for_stored_message(session_id, &last_user.message_id, model_input)
             .await?;
@@ -1260,148 +1203,6 @@ impl RuntimeService {
         self.store.get_tool_call(session_id, tool_call_id).await
     }
 
-    /// Persist the full tool input/output and emit live start/finish summaries.
-    pub async fn record_tool_call(&self, record: ToolCallRecord) -> RuntimeResult<ToolCallDetail> {
-        let tool_call_id = short_id("tc");
-        let (input_preview, input_truncated) = preview_json(&record.input);
-        let (output_preview, output_truncated) = preview_json(&record.output);
-        self.emit(
-            &record.session_id,
-            &record.run_id,
-            "main",
-            None,
-            SessionEventKind::ToolCallStarted {
-                tool_call_id: tool_call_id.clone(),
-                tool_name: record.tool_name.clone(),
-                input_preview,
-                truncated: input_truncated,
-            },
-        )
-        .await?;
-        let detail = ToolCallDetail {
-            tool_call_id: tool_call_id.clone(),
-            session_id: record.session_id.clone(),
-            run_id: record.run_id.clone(),
-            tool_name: record.tool_name.clone(),
-            status: record.status.clone(),
-            input: record.input,
-            output: record.output,
-            error: None,
-            duration_ms: record.duration_ms,
-            created_at: chrono::Utc::now(),
-        };
-        self.store.save_tool_call(&detail).await?;
-        self.emit(
-            &record.session_id,
-            &record.run_id,
-            "main",
-            None,
-            SessionEventKind::ToolCallFinished {
-                tool_call_id,
-                status: record.status,
-                output_preview,
-                truncated: output_truncated,
-                duration_ms: record.duration_ms,
-            },
-        )
-        .await?;
-        Ok(detail)
-    }
-
-    pub async fn record_task_focus(
-        &self,
-        session_id: &str,
-        run_id: &str,
-        title: &str,
-        detail: Option<&str>,
-        section_id: Option<&str>,
-    ) -> RuntimeResult<SessionEvent> {
-        self.emit(
-            session_id,
-            run_id,
-            "main",
-            None,
-            SessionEventKind::TaskFocus {
-                title: title.to_string(),
-                detail: detail.map(str::to_string),
-                section_id: section_id.map(str::to_string),
-            },
-        )
-        .await
-    }
-
-    pub async fn record_subagent_started(
-        &self,
-        session_id: &str,
-        parent_run_id: &str,
-        subagent_run_id: &str,
-        agent_name: &str,
-        task: &str,
-        section_id: Option<&str>,
-    ) -> RuntimeResult<SessionEvent> {
-        self.emit(
-            session_id,
-            parent_run_id,
-            agent_name,
-            Some(parent_run_id),
-            SessionEventKind::SubagentStarted {
-                subagent_run_id: subagent_run_id.to_string(),
-                agent_name: agent_name.to_string(),
-                display_name: None,
-                task: task.to_string(),
-                section_id: section_id.map(str::to_string),
-            },
-        )
-        .await
-    }
-
-    pub async fn record_subagent_finished(
-        &self,
-        session_id: &str,
-        parent_run_id: &str,
-        subagent_run_id: &str,
-        status: &str,
-        summary: &str,
-    ) -> RuntimeResult<SessionEvent> {
-        self.emit(
-            session_id,
-            parent_run_id,
-            "main",
-            Some(parent_run_id),
-            SessionEventKind::SubagentFinished {
-                subagent_run_id: subagent_run_id.to_string(),
-                status: status.to_string(),
-                summary: summary.to_string(),
-            },
-        )
-        .await
-    }
-
-    pub async fn resume_context(
-        &self,
-        session_id: &str,
-        user_message: &str,
-    ) -> RuntimeResult<ResumeContext> {
-        let pinned = self.ensure_pinned_prompt(session_id).await?;
-        let current = self.kb.current_version().await?;
-        let session = self.store.get_session_summary(session_id).await?;
-        let history = vec![ContextMessage {
-            role: MessageRole::System,
-            content: format!(
-                "<report_state>\ndoc_id: {}\nsynced_kb_version: {}\n</report_state>",
-                session.doc_id.as_deref().unwrap_or("none"),
-                pinned.1
-            ),
-        }];
-        Ok(build_resume_context(
-            &pinned.0,
-            &history,
-            user_message,
-            current,
-            pinned.1,
-        ))
-    }
-
     async fn ensure_pinned_prompt(&self, session_id: &str) -> RuntimeResult<(String, u64)> {
         let (pinned, synced) = self.store.pinned_prompt(session_id).await?;
         if let Some(pinned) = pinned {
@@ -1557,7 +1358,9 @@ impl RuntimeService {
                 // Stop the producer before reporting failure: a persistence or mapping error
                 // must not leave the agent executing tools after the run is marked as failed.
                 token.cancel();
-                if !was_cancelled {
+                if was_cancelled {
+                    self.finish_cancelled_run(run_id).await?;
+                } else {
                     let message = error.to_string();
                     let _ = self
                         .store
@@ -1606,14 +1409,11 @@ impl RuntimeService {
         let session = self.store.get_session_summary(session_id).await?;
         let (pinned, synced_version) = self.ensure_pinned_prompt(session_id).await?;
         let kb_version = self.kb.current_version().await?;
-        let history = vec![ContextMessage {
-            role: MessageRole::System,
-            content: format!(
-                "<report_state>\ndoc_id: {}\nsynced_kb_version: {synced_version}\n</report_state>",
-                session.doc_id.as_deref().unwrap_or("none")
-            ),
-        }];
-        let context = build_resume_context(&pinned, &history, content, kb_version, synced_version);
+        let kb_update_notice = (kb_version > synced_version).then(|| {
+            format!(
+                "<knowledge_update>Knowledge base advanced from version {synced_version} to {kb_version}. Call load_skill or read_skill_resource before relying on skill-specific guidance.</knowledge_update>"
+            )
+        });
         if token.is_cancelled() {
             self.finish_cancelled_run(run_id).await?;
             return Ok(());
@@ -1638,14 +1438,13 @@ impl RuntimeService {
             session_id: session_id.to_string(),
             run_id: run_id.to_string(),
             agent_id: "main".into(),
-            system_prompt: context.pinned_system_prompt.clone(),
+            system_prompt: pinned.clone(),
             user_message: content.to_string(),
-            history: context.messages.clone(),
+            kb_update_notice,
             doc_id: session.doc_id.clone(),
             kb_branch: branch.clone(),
             model_route: model_route.clone(),
             allowed_tools,
-            disable_tools: false,
             cancellation: token.clone(),
             prompt_recorded: true,
             persist_history: true,
@@ -1658,11 +1457,6 @@ impl RuntimeService {
         let mut superseded = false;
         loop {
             tokio::select! {
-                _ = token.cancelled() => {
-                    sink.flush().await?;
-                    self.finish_cancelled_run(run_id).await?;
-                    return Ok(());
-                }
                 _ = tick.tick() => {
                     sink.flush_due(Instant::now()).await?;
                 }
@@ -1701,12 +1495,12 @@ impl RuntimeService {
             self.finish_cancelled_run(run_id).await?;
             return Ok(());
         }
+        if !response.is_empty() && !self.model_stream.commits_canonical_history() {
+            self.store
+                .insert_assistant_message(session_id, &response, run_id)
+                .await?;
+        }
         if let Some(question) = suspended_question {
-            if !response.is_empty() {
-                self.store
-                    .insert_assistant_message(session_id, &response, run_id)
-                    .await?;
-            }
             if let Some(usage) = reported_usage {
                 self.store.update_context_usage(session_id, &usage).await?;
             }
@@ -1715,11 +1509,6 @@ impl RuntimeService {
             return Ok(());
         }
         if superseded {
-            if !response.is_empty() {
-                self.store
-                    .insert_assistant_message(session_id, &response, run_id)
-                    .await?;
-            }
             if let Some(usage) = reported_usage {
                 self.store.update_context_usage(session_id, &usage).await?;
             }
@@ -1729,19 +1518,11 @@ impl RuntimeService {
                 .await?;
             return Ok(());
         }
-        self.store
-            .insert_assistant_message(session_id, &response, run_id)
-            .await?;
         let usage = match reported_usage {
             Some(usage) => usage,
             None => {
                 let usage = self
-                    .fallback_usage(
-                        &model_route,
-                        &context.pinned_system_prompt,
-                        content,
-                        &response,
-                    )
+                    .fallback_usage(&model_route, &pinned, content, &response)
                     .await;
                 sink.emit(
                     main_scope.clone(),
@@ -1820,38 +1601,6 @@ impl RuntimeService {
             .append_event(session_id, run_id, agent_id, parent_run_id, kind)
             .await
     }
-}
-
-/// Test/embedding-friendly Quire control that never creates a remote report.
-pub struct StaticQuireControl;
-
-#[async_trait]
-impl QuireControl for StaticQuireControl {
-    async fn create_report(
-        &self,
-        _session_id: &str,
-        _agent_id: &str,
-        _title: &str,
-    ) -> RuntimeResult<LinkedDoc> {
-        Err(RuntimeError::InvalidRequest(
-            "doc linking requires a configured Quire server".into(),
-        ))
-    }
-}
-
-pub async fn running_record(store: &RuntimeStore, session_id: &str) -> Option<RunRecord> {
-    store.latest_running_run(session_id).await.ok().flatten()
-}
-
-fn preview_json(value: &serde_json::Value) -> (String, bool) {
-    let raw = serde_json::to_string(value).unwrap_or_default();
-    let mut chars = raw.chars();
-    let mut preview: String = chars.by_ref().take(240).collect();
-    let truncated = chars.next().is_some();
-    if truncated {
-        preview.push('…');
-    }
-    (preview, truncated)
 }
 
 fn validate_question_answers(

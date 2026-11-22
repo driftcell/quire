@@ -9,10 +9,7 @@ use serde_json::Value;
 use tokio::{sync::Mutex, sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    error::{RuntimeError, RuntimeResult},
-    prompt::ContextMessage,
-};
+use crate::error::RuntimeResult;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelStreamEvent {
@@ -84,9 +81,9 @@ pub struct ModelTurnRequest {
     pub agent_id: String,
     pub system_prompt: String,
     pub user_message: String,
-    /// Full model context assembled from session history and resume reminders.
-    pub history: Vec<ContextMessage>,
-    /// Bound Quire report, injected into the preamble to avoid duplicate create_report calls.
+    /// Transient KB update notice appended after the frozen system prefix.
+    pub kb_update_notice: Option<String>,
+    /// Initially bound Quire report; later bindings are shared within the run.
     pub doc_id: Option<String>,
     /// Session KB branch used for agent/skill lookup and branch-aware tools.
     pub kb_branch: Option<String>,
@@ -94,8 +91,6 @@ pub struct ModelTurnRequest {
     pub model_route: String,
     /// Tool allow-list from the primary agent definition.
     pub allowed_tools: Vec<String>,
-    /// Run a single completion round with no tools (used by context compaction).
-    pub disable_tools: bool,
     /// Cancels model streaming, tool execution and subagent inference.
     pub cancellation: CancellationToken,
     /// Whether the canonical memory already ends with this request's user prompt.
@@ -110,6 +105,11 @@ pub type ModelEventStream =
 #[async_trait]
 pub trait ModelStreamProvider: Send + Sync {
     async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream>;
+
+    /// Whether the provider commits canonical history and UI receipts itself.
+    fn commits_canonical_history(&self) -> bool {
+        false
+    }
 }
 
 /// Aborts the producer task when the consumer drops the stream.
@@ -130,10 +130,7 @@ impl Drop for AbortOnDrop {
 /// accumulating an unbounded number of deltas and full tool payloads in memory.
 const PRODUCER_CHANNEL_CAPACITY: usize = 256;
 
-pub(crate) fn spawn_producer_stream<F, Fut>(
-    cancellation: CancellationToken,
-    producer: F,
-) -> ModelEventStream
+pub(crate) fn spawn_producer_stream<F, Fut>(producer: F) -> ModelEventStream
 where
     F: FnOnce(mpsc::Sender<RuntimeResult<ModelStreamEvent>>) -> Fut + Send + 'static,
     Fut: Future<Output = ()> + Send + 'static,
@@ -142,16 +139,8 @@ where
     let task = AbortOnDrop(tokio::spawn(producer(sender)));
     let stream = async_stream::stream! {
         let _task = task;
-        loop {
-            tokio::select! {
-                _ = cancellation.cancelled() => break,
-                item = receiver.recv() => {
-                    match item {
-                        Some(item) => yield item,
-                        None => break,
-                    }
-                }
-            }
+        while let Some(item) = receiver.recv().await {
+            yield item;
         }
     };
     Box::pin(stream)
@@ -207,11 +196,6 @@ impl ModelStreamProvider for MockStreamProvider {
             events.into_iter().map(Ok).collect::<Vec<_>>(),
         )))
     }
-}
-
-/// Fail fast if a provider is asked to stream without a model route.
-pub fn missing_provider_error(route: &str) -> RuntimeError {
-    RuntimeError::InvalidRequest(format!("no model stream provider configured for `{route}`"))
 }
 
 /// Every provider event variant, used by projection guardrail tests.
@@ -304,14 +288,13 @@ mod tests {
     async fn dropping_the_stream_aborts_the_producer_task() {
         let aborted = Arc::new(AtomicBool::new(false));
         let producer_flag = Arc::clone(&aborted);
-        let mut stream =
-            spawn_producer_stream(CancellationToken::new(), move |sender| async move {
-                let _flag = DropFlag(producer_flag);
-                let _ = sender
-                    .send(Ok(ModelStreamEvent::TextDelta("first".into())))
-                    .await;
-                tokio::time::sleep(Duration::from_secs(60)).await;
-            });
+        let mut stream = spawn_producer_stream(move |sender| async move {
+            let _flag = DropFlag(producer_flag);
+            let _ = sender
+                .send(Ok(ModelStreamEvent::TextDelta("first".into())))
+                .await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        });
 
         let first = stream.next().await;
         assert!(matches!(first, Some(Ok(ModelStreamEvent::TextDelta(text))) if text == "first"));
@@ -328,7 +311,7 @@ mod tests {
 
     #[tokio::test]
     async fn producer_events_flow_until_the_producer_completes() {
-        let mut stream = spawn_producer_stream(CancellationToken::new(), |sender| async move {
+        let mut stream = spawn_producer_stream(|sender| async move {
             let _ = sender
                 .send(Ok(ModelStreamEvent::ThinkingDelta("plan".into())))
                 .await;
@@ -349,38 +332,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_stops_the_stream() {
+    async fn cancellation_waits_for_producer_cleanup_and_channel_close() {
         let token = CancellationToken::new();
-        let mut stream = spawn_producer_stream(token.clone(), |sender| async move {
+        let producer_token = token.clone();
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let producer_cleaned = Arc::clone(&cleaned);
+        let mut stream = spawn_producer_stream(|sender| async move {
             let _ = sender
                 .send(Ok(ModelStreamEvent::TextDelta("first".into())))
                 .await;
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            producer_token.cancelled().await;
+            let _ = sender
+                .send(Ok(ModelStreamEvent::TextDelta("cleanup".into())))
+                .await;
+            producer_cleaned.store(true, Ordering::SeqCst);
         });
 
         let _ = stream.next().await;
         token.cancel();
+        let cleanup = stream.next().await;
         let end = stream.next().await;
+        assert!(
+            matches!(cleanup, Some(Ok(ModelStreamEvent::TextDelta(text))) if text == "cleanup")
+        );
         assert!(end.is_none());
+        assert!(cleaned.load(Ordering::SeqCst));
     }
 
     #[tokio::test]
     async fn a_slow_consumer_applies_backpressure_to_the_producer() {
         let sent = Arc::new(AtomicUsize::new(0));
         let producer_sent = Arc::clone(&sent);
-        let mut stream =
-            spawn_producer_stream(CancellationToken::new(), move |sender| async move {
-                for index in 0..(PRODUCER_CHANNEL_CAPACITY + 32) {
-                    if sender
-                        .send(Ok(ModelStreamEvent::TextDelta(index.to_string())))
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                    producer_sent.fetch_add(1, Ordering::SeqCst);
+        let mut stream = spawn_producer_stream(move |sender| async move {
+            for index in 0..(PRODUCER_CHANNEL_CAPACITY + 32) {
+                if sender
+                    .send(Ok(ModelStreamEvent::TextDelta(index.to_string())))
+                    .await
+                    .is_err()
+                {
+                    return;
                 }
-            });
+                producer_sent.fetch_add(1, Ordering::SeqCst);
+            }
+        });
 
         for _ in 0..100 {
             if sent.load(Ordering::SeqCst) >= PRODUCER_CHANNEL_CAPACITY {

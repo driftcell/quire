@@ -15,9 +15,9 @@ use quire_protocol::{
     BlockId, EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor,
     PreviewStatus, short_id,
 };
-use rig_core::streaming::parse_partial_arguments;
+use rig::streaming::parse_partial_arguments;
 #[cfg(test)]
-use rig_core::{message::ToolName, streaming::PartKind};
+use rig::{message::ToolName, streaming::PartKind};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::{Value, json};
 use tracing::warn;
@@ -27,7 +27,7 @@ use crate::{
     error::{RuntimeError, RuntimeResult},
 };
 
-use super::AgentExecution;
+use super::{AgentExecution, SharedDocId, current_doc_id};
 
 const PREVIEW_TOOLS: &[&str] = &["apply_operations"];
 const PREVIEW_ANCHOR_SETTLE: Duration = Duration::from_millis(200);
@@ -368,7 +368,7 @@ struct StreamingPreview {
 
 pub(super) struct PreviewState {
     run_id: String,
-    doc_id: Option<String>,
+    doc_id: SharedDocId,
     base_url: String,
     token: SecretString,
     actor: String,
@@ -381,7 +381,7 @@ impl PreviewState {
     pub(super) fn new(execution: &AgentExecution, config: &Config) -> Self {
         Self {
             run_id: execution.run_id.clone(),
-            doc_id: execution.doc_id.clone(),
+            doc_id: Arc::clone(&execution.doc_id),
             base_url: config.quire_base_url.clone(),
             token: config.quire_rw_token.clone(),
             actor: execution.agent_id.clone(),
@@ -399,7 +399,7 @@ impl PreviewState {
         let Some(name) = name else {
             return;
         };
-        if !PREVIEW_TOOLS.contains(&name.as_str()) || self.doc_id.is_none() {
+        if !PREVIEW_TOOLS.contains(&name.as_str()) || current_doc_id(&self.doc_id).is_none() {
             return;
         }
         self.streams.insert(
@@ -431,7 +431,7 @@ impl PreviewState {
         tool_name: &str,
         fragment: &str,
     ) {
-        if !PREVIEW_TOOLS.contains(&tool_name) || self.doc_id.is_none() {
+        if !PREVIEW_TOOLS.contains(&tool_name) || current_doc_id(&self.doc_id).is_none() {
             return;
         }
         self.streams
@@ -451,7 +451,7 @@ impl PreviewState {
             return;
         };
         stream.buffer.push_str(fragment);
-        let Some(doc_id) = self.doc_id.clone() else {
+        let Some(doc_id) = current_doc_id(&self.doc_id) else {
             return;
         };
         let arguments = Value::Object(parse_partial_arguments(&stream.buffer));
@@ -536,7 +536,7 @@ impl PreviewState {
         let Some(mut stream) = self.streams.remove(&part) else {
             return;
         };
-        let Some(doc_id) = self.doc_id.clone() else {
+        let Some(doc_id) = current_doc_id(&self.doc_id) else {
             return;
         };
         // The model may emit `blocks` before `target_id`/`section_id`/`type`. Frames sent
@@ -620,10 +620,10 @@ impl PreviewState {
     }
 
     #[cfg(test)]
-    pub(super) fn for_test(run_id: &str) -> Self {
+    pub(super) fn for_test(run_id: &str, doc_id: SharedDocId) -> Self {
         Self {
             run_id: run_id.to_string(),
-            doc_id: None,
+            doc_id,
             base_url: String::new(),
             token: SecretString::from(String::new()),
             actor: "test".into(),
@@ -925,6 +925,7 @@ pub(super) fn inject_preview_ids(arguments: &mut Value, preview_ids: &[String]) 
 
 #[cfg(test)]
 mod tests {
+    use super::super::{new_shared_doc_id, update_doc_id};
     use super::*;
 
     #[test]
@@ -1177,8 +1178,7 @@ mod tests {
         let suffix = r#","id":"sec1_p"}]}]}"#;
         let complete = r#"{"ops":[{"type":"append_to_section","section_id":"sec1","blocks":[{"type":"paragraph","text":"draft","id":"sec1_p"}]}]}"#;
 
-        let mut first = PreviewState::for_test("run_test");
-        first.doc_id = Some("doc".into());
+        let mut first = PreviewState::for_test("run_test", new_shared_doc_id(Some("doc".into())));
         first.on_start(1, PartKind::ToolCall, Some(&tool));
         first.on_arguments(1, partial).await;
         let first_id = first.streams[&1].streamers[&0].preview_id().to_string();
@@ -1188,12 +1188,27 @@ mod tests {
         assert_eq!(stream.streamers[&0].preview_id(), first_id);
         assert_eq!(stream.streamers[&0].block_id, "sec1_p");
 
-        let mut second = PreviewState::for_test("run_test");
-        second.doc_id = Some("doc".into());
+        let mut second = PreviewState::for_test("run_test", new_shared_doc_id(Some("doc".into())));
         second.on_start(1, PartKind::ToolCall, Some(&tool));
         second.on_arguments(1, complete).await;
         let second_id = second.streams[&1].streamers[&0].preview_id();
         assert_ne!(first_id, second_id);
+    }
+
+    #[tokio::test]
+    async fn lazy_document_binding_enables_subsequent_tool_deltas() {
+        let doc_id = new_shared_doc_id(None);
+        let mut state = PreviewState::for_test("run_test", Arc::clone(&doc_id));
+        state
+            .on_tool_delta(1, 7, "apply_operations", r#"{"ops":[]}"#)
+            .await;
+        assert!(!state.streams.contains_key(&7));
+
+        update_doc_id(&doc_id, Some("doc_lazy".into()));
+        state
+            .on_tool_delta(1, 7, "apply_operations", r#"{"ops":[]}"#)
+            .await;
+        assert!(state.streams.contains_key(&7));
     }
 
     #[test]

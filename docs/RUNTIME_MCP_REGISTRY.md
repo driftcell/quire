@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`, `quire-server`
-- **Related Notes:** `../notes/runtime_mcp_registry.md`, `../notes/runtime_rig_046_native_migration.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_mcp_registry.md`, `../notes/runtime_rig_046_native_migration.md`
 
 ## 1. Scope & Non-Goals
 
@@ -66,10 +66,10 @@ selects a server only when:
 
 Selected names are served from a shared `RmcpClient` cached by `server_id`. The first use performs
 MCP `initialize` and `tools/list`; subsequent main-agent and subagent runs reuse the live
-`McpConnection` and its discovered `McpTool` values. A closed connection is reconnected under the
-registry connection lock. Built-in runtime tools take precedence over remote tools with the same
-name. Missing-tool warnings expand wildcard patterns against the actual assembled native/dynamic
-tool-name set.
+`McpConnection` and its discovered `McpTool` values. A closed connection is reconnected under a
+per-server connection lock, so different servers can be discovered and prewarmed concurrently.
+Built-in runtime tools take precedence over remote tools with the same name. Missing-tool warnings
+expand wildcard patterns against the actual assembled native/dynamic tool-name set.
 
 ### Shared connections and per-call identity
 
@@ -94,6 +94,11 @@ are present; session, actor and run IDs use the same format validation as header
 `create_report` requires a resolved session identity. This allows one authenticated connection pool
 entry to serve many sessions without trusting model-authored identity fields: metadata is inserted
 by the host runtime, not read from model arguments.
+
+`commit_chart` resolves the enabled `quire-report` server through the same shared pool and calls
+`get_document_digest` / `apply_operations` with the current `McpMeta`. It does not initialize a
+per-call connection or add fixed session headers. Typed `CallToolResult` values are projected
+directly instead of serializing and manually extracting a second JSON representation.
 
 Administrative discovery and explicit operational helpers may still create dedicated clients when
 they intentionally use a fixed header identity; the normal model tool loop uses the shared pool.
@@ -135,6 +140,8 @@ raw auth token reference.
 - Auth token refs are encrypted/masked in HTTP and Admin MCP receipts.
 - Server/tool mutations publish cache invalidation and retire pooled connections.
 - Main and subagent runs sharing a server do not repeat `initialize` / `tools/list` per run.
+- Independent servers use independent connection locks and can prewarm concurrently.
+- `commit_chart` uses the pooled `quire-report` client and per-call metadata, never a bare connection.
 - Shared connections carry no fixed session identity; each call forwards host-authored `_meta.quire`.
 - Header/metadata mismatches are rejected and report creation cannot proceed without a session.
 

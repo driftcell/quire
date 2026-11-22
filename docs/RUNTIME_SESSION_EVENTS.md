@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`, `quire-session-protocol`
-- **Related Notes:** `../notes/runtime_rig_046_native_migration.md`, `../notes/session_event_pipeline_consolidation.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/session_event_pipeline_consolidation.md`
 
 ## 1. Scope & Non-Goals
 
@@ -25,13 +25,20 @@ Fresh runtime migrations intentionally do not create `agent_messages`, `session_
 - **Canonical conversation:** `rig_memory_logs`, `rig_memory_log_chunks` and `rig_memory_files`, opened
   through the official `PostgresSessionStore` on the existing PostgreSQL pool.
 - **UI message receipts:** saved `quire.message_receipt` Asides anchored to canonical `MessageId`s.
-  They carry idempotency and presentation metadata and are never sent to a model.
+  They carry idempotency and presentation metadata and are never sent to a model. A main run has at
+  most one visible Assistant receipt whose content aggregates all non-empty text turns of that run;
+  empty output creates neither a receipt nor a synthetic empty Assistant entry.
 - **Hot display events:** an ordered Redis list plus a persistent session sequence key and Pub/Sub
   channel. The list has a 24-hour sliding TTL refreshed by appends.
 - **Cold run trace:** `agent_runs.trace_summary`, materialized from the hot events on terminal
   transition. `agent_runs.start_seq` records the hot sequence of `turn_started`.
 - **Operational records:** `agent_tool_calls`, `agent_questions`, pending queue rows, attachments and
   run/session rows retain their existing domain responsibilities.
+
+Retry locates a visible user receipt's canonical `MessageId`, removes the failed/cancelled suffix and
+all asides anchored to removed entries, then reuses the retained prompt. It never appends a second
+copy based on message equality. Real Rig runs commit their own receipts; the service's non-empty
+assistant fallback is restricted to providers that do not commit canonical history (Stub/Mock).
 
 Deleting a session removes its canonical main/subagent logs and Redis hot keys. Content-addressed
 memory blobs may be shared and are not deleted blindly with one conversation.
@@ -116,6 +123,8 @@ have no visible user bubble. Compaction markers are visible receipts attached to
 
 - Canonical structured history exists only in rig-memory; no parallel text-message fact table exists.
 - Asides never reach the model and visible messages project in canonical entry order.
+- A run never splits into multiple visible Assistant receipts or creates an empty Assistant bubble.
+- Retry removes canonical suffix messages and their receipt asides before reusing the original prompt.
 - Hot append allocates sequence, stores and publishes atomically without changing empty array shapes.
 - Operational side effects precede their display events; structural events follow earlier delta flush.
 - Active hydration uses the active run ID and hot `start_seq`, never the newest trace by recency.

@@ -1,6 +1,6 @@
 //! Built-in tool definitions, schemas and credential/URL redaction helpers.
 
-use std::{collections::BTreeSet, future::Future, sync::Arc};
+use std::{collections::BTreeSet, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use quire_lint::lint_echarts_block;
@@ -9,19 +9,18 @@ use quire_protocol::{
     chart_requirements, merge_chart_option_patch, short_id,
 };
 use quire_session_protocol::QuestionItem;
-use rig::tool::server::ToolServer;
-use rig_core::{
-    completion::ToolAnnotations,
+#[cfg(test)]
+use rig::tool::Tool as _;
+use rig::tool::{rmcp::McpMeta, server::ToolServer};
+use rig::{
     message::{ImageMediaType, ToolResultContent},
     rig_tool,
-    tool::{Tool, ToolContext, ToolExecutionError, ToolOutput, Touches},
+    tool::{ToolContext, ToolExecutionError, ToolOutput},
 };
 use serde_json::{Value, json};
-use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::{
-    mcp_client::RmcpClient,
     mcp_registry::tool_pattern_matches,
     model_stream::ModelStreamEvent,
     sandbox::{SandboxExecRequest, SandboxLease},
@@ -30,7 +29,7 @@ use crate::{
 };
 
 use super::{
-    AgentExecution, EventScope, RigModelCore,
+    AgentExecution, RigModelCore, SharedDocId, StreamEventSender,
     context::{AskUserRequestedMeta, QuireTurnMeta},
     subagents::RunSubagentsTool,
 };
@@ -124,25 +123,25 @@ fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
 
 pub(super) struct ToolBuildContext {
     pub(super) execution: AgentExecution,
-    pub(super) scope: EventScope,
+    pub(super) scope: StreamEventSender,
     pub(super) engine: Arc<RigModelCore>,
     pub(super) sandbox: Arc<SandboxLease>,
-    pub(super) doc_id: Arc<Mutex<Option<String>>>,
 }
 
 pub(super) struct BuiltInTools {
     pub(super) server: ToolServer,
     pub(super) names: BTreeSet<String>,
+    pub(super) runtime: Arc<RuntimeToolScope>,
 }
 
 pub(super) struct RuntimeToolScope {
     pub(super) engine: Arc<RigModelCore>,
-    pub(super) event_scope: EventScope,
+    pub(super) event_scope: StreamEventSender,
     sandbox: Arc<SandboxLease>,
     pub(super) cancellation: tokio_util::sync::CancellationToken,
     /// Latest bound report ID, shared across the turn so subagents spawned
     /// after a lazy `create_report` inherit the new document.
-    pub(super) doc_id: Arc<Mutex<Option<String>>>,
+    pub(super) doc_id: SharedDocId,
 }
 
 pub(super) fn runtime_tool_scope(
@@ -157,57 +156,6 @@ pub(super) fn quire_turn_meta(context: &ToolContext) -> Result<QuireTurnMeta, To
     context
         .require::<QuireTurnMeta>()
         .map_err(|error| ToolExecutionError::other(error.to_string()))
-}
-
-pub(super) struct RuntimeTool<T> {
-    inner: T,
-    runtime: Arc<RuntimeToolScope>,
-}
-
-impl<T> RuntimeTool<T> {
-    fn new(runtime: Arc<RuntimeToolScope>, inner: T) -> Self {
-        Self { inner, runtime }
-    }
-}
-
-impl<T: Tool> Tool for RuntimeTool<T> {
-    const NAME: &'static str = T::NAME;
-    type Args = T::Args;
-    type Output = T::Output;
-    type Error = T::Error;
-
-    fn description(&self) -> String {
-        self.inner.description()
-    }
-
-    fn parameters(&self) -> Value {
-        self.inner.parameters()
-    }
-
-    fn annotations(&self) -> ToolAnnotations {
-        self.inner.annotations()
-    }
-
-    fn footprint(&self, args: &Self::Args) -> Touches {
-        self.inner.footprint(args)
-    }
-
-    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
-        self.inner.map_error(error)
-    }
-
-    fn call(
-        &self,
-        context: &mut ToolContext,
-        args: Self::Args,
-    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send {
-        let mut scoped = context.clone().with_scope(self.runtime.clone());
-        async move {
-            let result = self.inner.call(&mut scoped, args).await;
-            context.accept_dispatch_result(scoped);
-            result
-        }
-    }
 }
 
 pub(super) fn tool_other(error: impl std::fmt::Display) -> ToolExecutionError {
@@ -747,7 +695,9 @@ async fn commit_chart_tool(
     summary: Option<String>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    let turn = quire_turn_meta(context)?;
+    let mcp_meta = context
+        .require::<McpMeta>()
+        .map_err(|error| ToolExecutionError::other(error.to_string()))?;
     let preview_id = preview_id.trim().to_string();
     if preview_id.is_empty() {
         return Err(ToolExecutionError::invalid_args(
@@ -812,15 +762,12 @@ async fn commit_chart_tool(
         }
     };
 
-    let config = runtime.engine.config.as_ref();
-    let client = RmcpClient::connect(
-        &config.quire_base_url,
-        Some(config.quire_rw_token.clone()),
-        &turn.session_id,
-        &turn.agent_id,
-    )
-    .await
-    .map_err(tool_other)?;
+    let client = runtime
+        .engine
+        .mcp
+        .shared_client_for_server("quire-report")
+        .await
+        .map_err(tool_other)?;
     let expected_revision = match expected_revision {
         Some(value) if value >= 0 => value,
         Some(_) => {
@@ -830,7 +777,11 @@ async fn commit_chart_tool(
         }
         None => {
             let digest = client
-                .call_tool("get_document_digest", json!({ "doc_id": doc_id }))
+                .call_tool_with_meta(
+                    "get_document_digest",
+                    json!({ "doc_id": doc_id }),
+                    mcp_meta.clone(),
+                )
                 .await
                 .map_err(tool_other)?;
             digest
@@ -849,7 +800,7 @@ async fn commit_chart_tool(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("commit previewed chart `{target_id}`"));
     let receipt = client
-        .call_tool(
+        .call_tool_with_meta(
             "apply_operations",
             json!({
                 "doc_id": doc_id,
@@ -857,6 +808,7 @@ async fn commit_chart_tool(
                 "summary": summary,
                 "ops": [serde_json::to_value(&op).map_err(tool_other)?],
             }),
+            mcp_meta,
         )
         .await
         .map_err(tool_other)?;
@@ -1070,14 +1022,13 @@ impl RigModelCore {
             scope,
             engine,
             sandbox,
-            doc_id,
         } = context;
         let runtime = Arc::new(RuntimeToolScope {
             engine,
             event_scope: scope,
             sandbox,
             cancellation: execution.cancellation.clone(),
-            doc_id,
+            doc_id: Arc::clone(&execution.doc_id),
         });
         let mut server = ToolServer::new();
         let mut names = BTreeSet::new();
@@ -1085,7 +1036,7 @@ impl RigModelCore {
             ($name:literal, $enabled:expr, $tool:expr) => {
                 if $enabled {
                     names.insert($name.to_string());
-                    server = server.tool(RuntimeTool::new(Arc::clone(&runtime), $tool));
+                    server = server.tool($tool);
                 }
             };
         }
@@ -1165,7 +1116,11 @@ impl RigModelCore {
             allow_list_matches(&execution.allowed_tools, "spawn_subagents"),
             RunSubagentsTool
         );
-        BuiltInTools { server, names }
+        BuiltInTools {
+            server,
+            names,
+            runtime,
+        }
     }
 }
 

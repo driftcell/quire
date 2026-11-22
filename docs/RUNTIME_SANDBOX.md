@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/fc_sandbox_provider.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/fc_sandbox_provider.md`
 
 ## 1. Scope & Non-Goals
 
@@ -54,8 +54,10 @@ other runtime tools:
 The first sandbox call in a run creates the instance; subsequent calls reuse its filesystem and
 installed dependencies. Source execution is process-based, not a Jupyter state contract. Tool text
 output is capped at 64 KiB per stream, with explicit truncation flags. Every run and subagent run
-gets an independent lease. Normal run completion awaits destruction; early return/cancellation uses
-best-effort scheduled cleanup, and the remote TTL is the final backstop. Sandboxes do not persist
+gets an independent lease. Every normal, error and graceful-cancellation exit from `run_turn` awaits
+destruction after canonical history handling. The producer channel does not close on the cancellation
+token, so this cleanup finishes before consumers observe stream end. Abort-on-drop is only an
+abandoned-consumer backstop; the remote TTL is the final backstop. Sandboxes do not persist
 implicitly across user turns.
 
 ### Alibaba Cloud FC adapter
@@ -81,6 +83,7 @@ crates have no dependency on this implementation.
 - rig depends only on the provider port and never names FC/E2B types.
 - One run reuses one sandbox; separate runs do not share mutable sandbox state.
 - Destruction is idempotent and every created remote sandbox has a TTL.
+- Graceful cancellation drains history and awaits lease cleanup before closing the producer stream.
 - API keys and envd access tokens remain secret and are absent from debug/error output.
 - Connect decoding handles arbitrary network chunk boundaries and rejects malformed/oversized data.
 - Mock HTTP coverage proves platform creation, auth headers, process streaming, file I/O and cleanup.
