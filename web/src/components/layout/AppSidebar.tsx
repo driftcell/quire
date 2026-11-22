@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   CheckIcon,
-  KeyRoundIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
   PinIcon,
@@ -16,14 +15,6 @@ import { deleteSession, listSessions, updateSession } from "@/api/runtime";
 import { ProductBrand } from "@/components/layout/ProductBrand";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
@@ -31,12 +22,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -45,7 +33,6 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import type { SessionSummary } from "@/contracts/session-protocol";
-import { getAuthTokens, saveAuthTokens } from "@/lib/auth";
 import { errorMessage } from "@/lib/errors";
 import {
   groupSessionsForSidebar,
@@ -174,9 +161,6 @@ export function AppSidebar() {
     [sessionsQuery.data],
   );
 
-  const [tokenDialogOpen, setTokenDialogOpen] = useState(false);
-  const [tokens, setTokens] = useState(() => getAuthTokens());
-
   return (
     <Sidebar collapsible="offcanvas">
       <SidebarHeader className="gap-2 px-3 pt-3 pb-1">
@@ -210,7 +194,7 @@ export function AppSidebar() {
         </Button>
       </SidebarHeader>
 
-      <SidebarContent className="no-scrollbar overscroll-contain px-1 pt-2">
+      <SidebarContent className="no-scrollbar overscroll-contain px-1 pt-2 pb-3">
         {groups.map((group) => (
           <SidebarGroup key={group.key} className="py-1">
             <SidebarGroupLabel className="px-3 text-[11px] font-medium text-muted-foreground/70">
@@ -370,81 +354,6 @@ export function AppSidebar() {
           </div>
         )}
       </SidebarContent>
-
-      <SidebarFooter className="p-2">
-        <Dialog open={tokenDialogOpen} onOpenChange={setTokenDialogOpen}>
-          <DialogTrigger
-            render={
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                className="w-full justify-start gap-2 text-xs text-muted-foreground"
-              />
-            }
-          >
-            <KeyRoundIcon className="size-3.5" />
-            <span>API Token 设置</span>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>本地开发 Token 配置</DialogTitle>
-              <p className="text-xs text-muted-foreground">
-                统一后端模式下仅需配置 RUNTIME_API_TOKEN 即可通行全站；下方只读/读写 Token 留空时会自动复用 RUNTIME_API_TOKEN。
-              </p>
-            </DialogHeader>
-            <div className="space-y-3 py-2 text-xs">
-              <div className="space-y-1">
-                <Label htmlFor="runtime-token">RUNTIME_API_TOKEN</Label>
-                <Input
-                  id="runtime-token"
-                  type="password"
-                  value={tokens.runtimeToken}
-                  onChange={(e) =>
-                    setTokens((p) => ({ ...p, runtimeToken: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="quire-ro-token">QUIRE_RO_TOKEN</Label>
-                <Input
-                  id="quire-ro-token"
-                  type="password"
-                  value={tokens.quireRoToken}
-                  onChange={(e) =>
-                    setTokens((p) => ({ ...p, quireRoToken: e.target.value }))
-                  }
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="quire-rw-token">QUIRE_RW_TOKEN（批注用）</Label>
-                <Input
-                  id="quire-rw-token"
-                  type="password"
-                  value={tokens.quireRwToken}
-                  onChange={(e) =>
-                    setTokens((p) => ({ ...p, quireRwToken: e.target.value }))
-                  }
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  saveAuthTokens(tokens);
-                  setTokenDialogOpen(false);
-                  void queryClient.invalidateQueries();
-                  toast.success("Token 已保存");
-                }}
-              >
-                保存并刷新
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </SidebarFooter>
     </Sidebar>
   );
 }

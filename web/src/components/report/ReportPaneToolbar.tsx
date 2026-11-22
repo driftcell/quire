@@ -5,7 +5,6 @@ import {
   MessageSquareQuoteIcon,
   PrinterIcon,
   ScrollTextIcon,
-  SparklesIcon,
 } from "lucide-react";
 import { PageChromeDialog } from "@/components/report/PageChromeDialog";
 import { TocOutline } from "@/components/report/TocOutline";
@@ -92,7 +91,6 @@ export function ReportPaneToolbar({
               }
             >
               <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-              <SparklesIcon className="size-3" />
               <span className="tabular-nums">
                 实时撰写中 · {streamingPreviewsCount}
               </span>

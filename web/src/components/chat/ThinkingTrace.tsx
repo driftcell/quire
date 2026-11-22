@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BrainIcon, LoaderCircleIcon } from "lucide-react";
+import { BrainIcon } from "lucide-react";
 import {
   MessageScroller,
   MessageScrollerContent,
@@ -100,11 +100,13 @@ export function ThinkingTrace({
             className="h-6 text-xs leading-5"
           >
             <TraceIcon>
-              {isStreaming ? (
-                <LoaderCircleIcon className="size-3.5 animate-spin" />
-              ) : (
-                <BrainIcon className="size-3.5" />
-              )}
+              <BrainIcon
+                className={
+                  isStreaming
+                    ? "size-3.5 text-primary"
+                    : "size-3.5 text-muted-foreground"
+                }
+              />
             </TraceIcon>
             <TraceTitle>{title}</TraceTitle>
             {hasDuration && (

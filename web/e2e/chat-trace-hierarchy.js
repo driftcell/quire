@@ -748,9 +748,15 @@ async (page) => {
   );
   assert(
     (await page
-      .locator('[data-slot="subagent"] [data-subagent-trigger] .animate-spin')
+      .locator(
+        '[data-slot="subagent"][data-status="running"] [data-slot="subagent-running-dot"]',
+      )
       .count()) === 2,
-    "expected both subagents to show running spinners",
+    "expected both subagents to show restrained running indicators",
+  );
+  assert(
+    (await runningActivity.locator(".animate-spin").count()) === 0,
+    "execution trace tree must not render redundant spinning icons",
   );
 
   const activeActivityTriggerCount = await page

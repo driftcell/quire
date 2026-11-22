@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2Icon } from "lucide-react";
 import { getToolMeta } from "@/components/chat/toolMeta";
 import { getToolCall } from "@/api/runtime";
 import {
@@ -142,23 +141,28 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
         <TraceCollapsibleTrigger showChevron={false}>
           <TraceLine status={lineStatus} className="h-6 text-xs leading-5">
             <TraceIcon>
-              {item.status === "running" ? (
-                <Loader2Icon className="size-3.5 animate-spin" />
-              ) : (
-                <Icon
-                  className={
-                    item.status === "failed"
+              <Icon
+                className={
+                  item.status === "running"
+                    ? "size-3.5 text-primary"
+                    : item.status === "failed"
                       ? "size-3.5 text-destructive"
                       : "size-3.5 text-muted-foreground"
-                  }
-                />
-              )}
+                }
+              />
             </TraceIcon>
             <TraceTitle className="text-xs">{meta.label}</TraceTitle>
             {inlineSummary && (
               <TraceDescription className="max-w-[210px] truncate text-[11px] text-muted-foreground/85">
                 {inlineSummary}
               </TraceDescription>
+            )}
+            {item.status === "running" && (
+              <span
+                data-slot="tool-running-dot"
+                aria-hidden="true"
+                className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary/80"
+              />
             )}
             {item.status === "skipped" && (
               <TraceDescription className="text-[11px]">

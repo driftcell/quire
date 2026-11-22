@@ -51,14 +51,6 @@ export function getAuthTokens(): AuthTokens {
   };
 }
 
-export function saveAuthTokens(tokens: AuthTokens): void {
-  try {
-    window.localStorage.setItem(TOKEN_STORAGE_KEY, JSON.stringify(tokens));
-  } catch {
-    // Ignore storage errors.
-  }
-}
-
 export function bearerHeaders(token: string): Record<string, string> {
   if (!token.trim()) {
     return {};

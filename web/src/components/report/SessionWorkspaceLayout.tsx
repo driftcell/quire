@@ -5,7 +5,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -14,7 +13,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { PanelImperativeHandle } from "react-resizable-panels";
-import type { ActiveRunStatus } from "@/contracts/session-protocol";
 
 export type SessionMobileTab = "report" | "chat" | "comments";
 
@@ -22,7 +20,6 @@ export interface SessionWorkspaceLayoutProps {
   isMobile: boolean;
   hasReportData: boolean;
   sessionTitle: string;
-  runStatus: ActiveRunStatus;
   leftSidebarOpen: boolean;
   toggleSidebar: () => void;
   rightSidebarOpen: boolean;
@@ -42,7 +39,6 @@ export function SessionWorkspaceLayout({
   isMobile,
   hasReportData,
   sessionTitle,
-  runStatus,
   leftSidebarOpen,
   toggleSidebar,
   rightSidebarOpen,
@@ -72,11 +68,6 @@ export function SessionWorkspaceLayout({
               <PanelLeftIcon className="size-4" />
             </Button>
             <span className="truncate text-sm font-medium">{sessionTitle}</span>
-            {runStatus === "running" && (
-              <Badge variant="secondary" className="text-[11px]">
-                生成中
-              </Badge>
-            )}
           </div>
         </header>
       )}
@@ -127,85 +118,65 @@ export function SessionWorkspaceLayout({
                 onMobileTabChange(value);
               }
             }}
-            className="flex h-full flex-col"
+            className="flex h-full min-h-0 flex-col"
           >
-            <div className="border-b bg-background px-3 py-1.5">
+            <div className="shrink-0 border-b bg-background px-3 py-1.5">
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="report">报告</TabsTrigger>
                 <TabsTrigger value="chat">对话</TabsTrigger>
                 <TabsTrigger value="comments">批注</TabsTrigger>
               </TabsList>
             </div>
-            <TabsContent
-              value="report"
-              className="min-h-0 flex-1 overflow-hidden"
-            >
+            <TabsContent value="report" className="min-h-0 flex-1">
               {reportPane}
             </TabsContent>
-            <TabsContent
-              value="chat"
-              className="min-h-0 flex-1 overflow-hidden"
-            >
+            <TabsContent value="chat" className="min-h-0 flex-1">
               {chatPane}
             </TabsContent>
-            <TabsContent
-              value="comments"
-              className="min-h-0 flex-1 overflow-hidden"
-            >
+            <TabsContent value="comments" className="min-h-0 flex-1">
               {commentsPane}
             </TabsContent>
           </Tabs>
         ) : (
           <ResizablePanelGroup
             orientation="horizontal"
-            className={`h-full min-w-0 ${
-              rightPanelAnimating
-                ? "[&_[data-panel]]:transition-[flex-grow] [&_[data-panel]]:duration-300 [&_[data-panel]]:ease-out"
-                : ""
-            }`}
-            onLayoutChanged={(layout, meta) => {
-              if (!meta.isUserInteraction) {
-                return;
-              }
-              const pct = layout["chat-panel"];
-              if (pct !== undefined) {
-                onChatPanelResize(pct);
-              }
-            }}
+            className="h-full min-h-0 min-w-0"
           >
             <ResizablePanel
-              id="report-panel"
-              defaultSize={`${rightSidebarOpen ? 100 - rightPanelPct : 100}%`}
+              id="report-pane"
+              defaultSize={`${100 - (rightSidebarOpen ? rightPanelPct : 0)}%`}
               minSize="35%"
-              className="min-w-0"
+              className="min-h-0 min-w-0"
             >
               {reportPane}
             </ResizablePanel>
             <ResizableHandle
+              withHandle
               disabled={!rightSidebarOpen}
-              className={`bg-transparent after:hidden ${
-                rightPanelAnimating
-                  ? "transition-[width] duration-300 ease-out"
-                  : ""
-              } ${rightSidebarOpen ? "w-1.5" : "w-0"}`}
+              className={
+                rightSidebarOpen
+                  ? "mx-1.5"
+                  : "pointer-events-none mx-0 w-0 opacity-0"
+              }
             />
             <ResizablePanel
-              id="chat-panel"
+              id="chat-pane"
               panelRef={rightPanelRef}
+              defaultSize={`${rightSidebarOpen ? rightPanelPct : 0}%`}
+              minSize="22%"
+              maxSize="60%"
               collapsible
               collapsedSize="0%"
-              defaultSize={rightSidebarOpen ? `${rightPanelPct}%` : "0%"}
-              minSize="22%"
-              maxSize="55%"
-              className="min-w-0 overflow-hidden"
+              onResize={(size) => {
+                onChatPanelResize(size.asPercentage);
+              }}
+              className={`min-h-0 min-w-0 ${
+                rightPanelAnimating
+                  ? "transition-[flex-grow,flex-basis] duration-200 ease-out"
+                  : ""
+              }`}
             >
-              <div
-                className="h-full min-w-0"
-                inert={!rightSidebarOpen}
-                aria-hidden={!rightSidebarOpen}
-              >
-                {rightPane}
-              </div>
+              {rightPane}
             </ResizablePanel>
           </ResizablePanelGroup>
         )}

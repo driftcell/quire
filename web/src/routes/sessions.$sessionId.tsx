@@ -371,7 +371,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const rightPane = (
     <SessionRightPane
       title={sessionQuery.data?.title ?? "加载中..."}
-      runStatus={effectiveRunStatus}
       openCommentsCount={openCommentsCount}
       activeTab={rightTab}
       onTabChange={setRightTab}
@@ -386,7 +385,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         isMobile={isMobile}
         hasReportData={hasReportData}
         sessionTitle={sessionQuery.data?.title ?? "加载中..."}
-        runStatus={effectiveRunStatus}
         leftSidebarOpen={leftSidebarOpen}
         toggleSidebar={toggleSidebar}
         rightSidebarOpen={prefs.rightSidebarOpen}

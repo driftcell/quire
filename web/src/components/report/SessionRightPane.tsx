@@ -1,11 +1,8 @@
 import type { ReactNode } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { ActiveRunStatus } from "@/contracts/session-protocol";
 
 export interface SessionRightPaneProps {
   title: string;
-  runStatus: ActiveRunStatus;
   openCommentsCount: number;
   activeTab: "chat" | "comments";
   onTabChange: (tab: "chat" | "comments") => void;
@@ -15,7 +12,6 @@ export interface SessionRightPaneProps {
 
 export function SessionRightPane({
   title,
-  runStatus,
   openCommentsCount,
   activeTab,
   onTabChange,
@@ -27,11 +23,6 @@ export function SessionRightPane({
       <div className="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm font-medium">{title}</span>
-          {runStatus === "running" && (
-            <Badge variant="secondary" className="shrink-0 text-[11px]">
-              生成中
-            </Badge>
-          )}
         </div>
         <Tabs
           value={activeTab}

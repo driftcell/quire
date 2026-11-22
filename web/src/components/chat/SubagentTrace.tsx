@@ -1,4 +1,4 @@
-import { LoaderCircleIcon, UsersIcon } from "lucide-react";
+import { UsersIcon } from "lucide-react";
 import { SubagentOutput } from "@/components/chat/SubagentOutput";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
@@ -55,7 +55,9 @@ export function SubagentTrace({
       ? `并发执行 ${runningToolCount}/${toolCount}`
       : toolCount > 0
         ? `${toolCount} 次操作`
-        : null;
+        : model.status === "running"
+          ? "运行中"
+          : null;
 
   return (
     <Trace
@@ -67,23 +69,28 @@ export function SubagentTrace({
         <TraceCollapsibleTrigger data-subagent-trigger="true">
           <TraceLine status={lineStatus} className="h-6 text-xs leading-5">
             <TraceIcon>
-              {model.status === "running" ? (
-                <LoaderCircleIcon className="size-3.5 animate-spin" />
-              ) : (
-                <UsersIcon
-                  className={
-                    model.status === "failed"
+              <UsersIcon
+                className={
+                  model.status === "running"
+                    ? "size-3.5 text-primary"
+                    : model.status === "failed"
                       ? "size-3.5 text-destructive"
                       : "size-3.5 text-muted-foreground"
-                  }
-                />
-              )}
+                }
+              />
             </TraceIcon>
             <TraceTitle>{model.title}</TraceTitle>
             {model.focusTitle && (
               <TraceDescription className="truncate text-[11px]">
                 {model.focusTitle}
               </TraceDescription>
+            )}
+            {model.status === "running" && (
+              <span
+                data-slot="subagent-running-dot"
+                aria-hidden="true"
+                className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary/80"
+              />
             )}
             {telemetrySummary && (
               <TraceDescription className="shrink-0 text-[10.5px] tabular-nums text-muted-foreground/75">
