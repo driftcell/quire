@@ -55,8 +55,9 @@ Implement a layered contract:
    facts, pilot one chapter before broad parallel writing, centralize derived metrics and visuals, require
    lead section-by-section reading, and bind approval to a revision.
 4. **Writing and review:** one paragraph has one main job; recommendations use direct language; visuals
-   replace detail rather than duplicate it; reviewers check readability, method comparability, citation
-   support and post-approval cleanliness.
+   replace detail rather than duplicate it; chapter writers never conclude the whole report in parallel,
+   and the lead writes or rewrites that conclusion only after the full read-through. Reviewers check
+   readability, method comparability, citation support and post-approval cleanliness.
 
 The trade-off is one additional MCP read tool and a pilot/review gate that adds latency before parallel
 writing. In return, factual and stylistic defects are caught before they replicate across chapters, and

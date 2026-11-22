@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`, `../notes/runtime_pending_failure_recovery.md`
 
 ## 1. Scope & Non-Goals
 
@@ -74,12 +74,14 @@ to the removed suffix, saves that splice, and then starts from the retained prom
 process-local history cache.
 
 The driver normalizes both `PromptResponse::messages` and cancelled `chat_history` into full history,
-then commits only the suffix after the exact prefix it loaded. Concurrent prefix changes fail instead
-of silently rewriting another turn. Cancellation before Rig commits the initial prompt is a no-op
-because `append_prompt` already persisted it. One non-empty visible Assistant receipt aggregates all
-text turns of a main run and is anchored to the last text-bearing Assistant entry; empty output gets
-no receipt and no synthetic empty message. Only providers that do not commit canonical history
-(Stub/Mock) use the service's idempotent non-empty assistant fallback.
+then commits only the suffix after the exact prefix it loaded. Concurrent prefix changes fail with
+expected/current/full-history lengths and the first mismatch index instead of silently rewriting
+another turn. Cancellation before Rig commits the initial prompt is a no-op because `append_prompt`
+already persisted it. One non-empty visible Assistant receipt aggregates all text turns of a main run
+and is anchored to the last text-bearing Assistant entry; empty output gets no receipt or synthetic
+empty message. Providers that do not commit canonical history (Stub/Mock) use the service's idempotent
+non-empty assistant fallback. The same fallback also preserves a failed run's non-empty response on a
+provider stream error; an existing provider receipt makes this recovery write a no-op.
 
 ### 2.4 AgentRunner and hook order
 
@@ -116,8 +118,10 @@ The driver commits canonical history and emits `ModelStreamEvent::Superseded`; t
 the run as `superseded` with `turn_superseded`, then the queue coordinator starts a standard new turn.
 
 Queue claiming writes the idempotent canonical prompt before deleting revalidated queue rows. A crash
-between those steps replays the same client key rather than duplicating the message. The old
-`user_message_injected` event and `RunTraceSegment::UserMessage` no longer exist.
+between those steps replays the same client key rather than duplicating the message. The drain blocks
+`running` and `awaiting_input` plus any latest running run; failed and interrupted sessions may release
+their queue once no active run remains. The old `user_message_injected` event and
+`RunTraceSegment::UserMessage` no longer exist.
 
 ### 2.6 ask_user outline
 
@@ -172,8 +176,9 @@ validator and `compacted_up_to_message_id` history are removed.
 Verification includes both mixed-batch HookStack orders, lazy document preview binding, frozen
 preamble/dynamic context, aggregate/empty receipts, producer cleanup, repeated receipt appends and
 ordered subagent slots. Integration coverage includes canonical retry with a cancelled tool suffix,
-early cancellation commit, queue supersession, question answer/skip/dismissal with canonical
-dismissal context, compaction, cancellation, subagent scopes and real model/tool streaming.
+early cancellation commit, queue supersession, `failed_turn_preserves_text_and_releases_pending_queue`,
+question answer/skip/dismissal with canonical dismissal context, compaction, cancellation, subagent
+scopes and real model/tool streaming.
 
 Full gate:
 

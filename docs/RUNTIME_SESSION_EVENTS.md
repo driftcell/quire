@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`, `quire-session-protocol`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/session_event_pipeline_consolidation.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/session_event_pipeline_consolidation.md`, `../notes/runtime_pending_failure_recovery.md`
 
 ## 1. Scope & Non-Goals
 
@@ -28,7 +28,9 @@ Fresh runtime migrations intentionally do not create `agent_messages`, `session_
 - **UI message receipts:** saved `quire.message_receipt` Asides anchored to canonical `MessageId`s.
   They carry idempotency and presentation metadata and are never sent to a model. A main run has at
   most one visible Assistant receipt whose content aggregates all non-empty text turns of that run;
-  empty output creates neither a receipt nor a synthetic empty Assistant entry.
+  empty output creates neither a receipt nor a synthetic empty Assistant entry. A provider stream error
+  uses the same idempotent fallback to preserve a failed run's non-empty response when suffix persistence
+  did not complete; an existing provider receipt is never duplicated.
 - **Hot display events:** an ordered Redis list plus a persistent session sequence key and Pub/Sub
   channel. The list has a 24-hour sliding TTL refreshed by appends.
 - **Cold run trace:** `agent_runs.trace_summary`, materialized from the hot events on terminal
@@ -130,6 +132,8 @@ have no visible user bubble. Compaction markers are visible receipts attached to
 - Operational side effects precede their display events; structural events follow earlier delta flush.
 - Active hydration uses the active run ID and hot `start_seq`, never the newest trace by recency.
 - A terminal winner appends one terminal event and materializes one complete cold trace.
+- Failed/interrupted sessions release pending work only after no active run remains; the recovered turn
+  preserves the queued user message and any non-empty failed assistant response without duplication.
 - Raw SSE transport tolerates unknown variants while trace projection skips them.
 - Pruning removes only hot display data and never canonical history or cold materialized traces.
 - Supersession creates separate old/new runs; there is no inline user-message trace segment.
@@ -137,7 +141,8 @@ have no visible user bubble. Compaction markers are visible receipts attached to
 
 Integration coverage includes hot replay/gap repair, unknown-event forwarding, active-run snapshots,
 terminal materialization, pruning and retained cursors, queue supersession, concurrent queue claims,
-question lifecycle and canonical memory append/compaction. Frontend tests cover every fixture split,
+`failed_turn_preserves_text_and_releases_pending_queue`, question lifecycle and canonical memory
+append/compaction. Frontend tests cover every fixture split,
 `turn_superseded`, skipped tools, duplicate replay protection and subagent hydration.
 
 Full gate:

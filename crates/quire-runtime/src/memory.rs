@@ -344,8 +344,15 @@ impl ConversationMemory {
                 .map(|message| message.as_ref())
                 .eq(expected_prefix.iter())
         {
+            let first_mismatch = current
+                .iter()
+                .zip(expected_prefix.iter())
+                .position(|(actual, expected)| actual.as_ref() != expected);
             return Err(RuntimeError::Internal(format!(
-                "conversation `{log}` changed while the agent run was in flight"
+                "conversation `{log}` changed while the agent run was in flight: expected_prefix_len={}, current_len={}, first_mismatch={first_mismatch:?}, full_history_len={}",
+                expected_prefix.len(),
+                current.len(),
+                full_history.len()
             )));
         }
         // A completion-hook cancellation may precede Rig's initial prompt commit. The prompt was
@@ -363,8 +370,15 @@ impl ConversationMemory {
                 .take(current.len())
                 .eq(expected_prefix.iter())
         {
+            let first_mismatch = full_history
+                .iter()
+                .zip(expected_prefix.iter())
+                .position(|(actual, expected)| actual != expected);
             return Err(RuntimeError::Internal(format!(
-                "conversation `{log}` changed while the agent run was in flight"
+                "conversation `{log}` changed while the agent run was in flight: full history does not preserve the loaded prefix: expected_prefix_len={}, current_len={}, full_history_len={}, first_mismatch={first_mismatch:?}",
+                expected_prefix.len(),
+                current.len(),
+                full_history.len()
             )));
         }
         let suffix: Vec<Message> = full_history.into_iter().skip(current.len()).collect();

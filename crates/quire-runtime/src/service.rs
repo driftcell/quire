@@ -767,7 +767,12 @@ impl RuntimeService {
         force: bool,
     ) -> RuntimeResult<Option<String>> {
         let session = self.store.get_session_summary(session_id).await?;
-        if !force && session.active_run_status != ActiveRunStatus::Idle {
+        if !force
+            && matches!(
+                session.active_run_status,
+                ActiveRunStatus::Running | ActiveRunStatus::AwaitingInput
+            )
+        {
             return Ok(None);
         }
         if self.store.latest_running_run(session_id).await?.is_some() {
@@ -1564,6 +1569,14 @@ impl RuntimeService {
                         }
                         Some(Err(error)) => {
                             sink.flush().await?;
+                            if !response.is_empty()
+                                && let Err(persist_error) = self
+                                    .store
+                                    .insert_assistant_message(session_id, &response, run_id)
+                                    .await
+                            {
+                                warn!(%persist_error, %session_id, %run_id, "failed to preserve assistant text after turn failure");
+                            }
                             return Err(error);
                         }
                         None => break,

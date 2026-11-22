@@ -51,10 +51,11 @@ value rather than patching isolated prose numbers.
 3. Have analysts verify high-risk facts, centralize derived data and build question-driven visuals with
    one shared entity palette/style contract.
 4. Complete and calibrate one representative pilot chapter before starting the remaining writers in
-   parallel. Writers own prose and headings only; they request visuals or derived calculations instead
-   of creating them to satisfy lint.
+   parallel. Writers own only their assigned body prose and headings; they never draft the whole-report
+   conclusion early and request visuals or derived calculations instead of creating them to satisfy lint.
 5. The lead reads every chapter through `read_as_markdown(section_heading=...)`, checks requirements,
-   repetition, methods, titles and readability, and asks analysts to consolidate visuals when needed.
+   repetition, methods, titles and readability, asks analysts to consolidate visuals when needed, and
+   personally writes or rewrites the whole-report conclusion after every body chapter is complete.
 6. An independent reviewer checks facts, original citations, derived methods, prose/visual redundancy,
    publication readability and actual A4 rendering, leaving anchored comments.
 7. The lead resolves every comment or records a reason for not accepting it, recomputes downstream data
@@ -71,7 +72,7 @@ value rather than patching isolated prose numbers.
 | --- | --- | --- | --- |
 | `main` | Full native/tool catalog as needed, including `read_as_markdown`, `list_sources`, digest, preview and web evidence tools | Report orchestration, source registration, block patches and comments | Owns requirements, fact states, evidence ownership, full read, global edits and revision-bound delivery |
 | `analyst` | `get_protocol_guide`, digest, `read_as_markdown`, `read_blocks`, `list_sources`, `preview_echarts`, `preview_report`, `deepseek_fetch`, internal data tools | `apply_operations`, `commit_chart`, `upsert_sources` | Sole owner of derived data, tables and charts; must inspect actual table rendering before layout suppression |
-| `writer` | Skill resources, digest, `read_as_markdown`, `read_blocks`, `list_sources`, `lint_document`, assigned internal data tools | `apply_operations` for assigned prose/headings | No source registration, visual creation/moves or invented derived targets; reports evidence and visual gaps |
+| `writer` | Skill resources, digest, `read_as_markdown`, `read_blocks`, `list_sources`, `lint_document`, assigned internal data tools | `apply_operations` for assigned prose/headings | No source registration, visual creation/moves, invented derived targets or premature whole-report conclusion; reports evidence and visual gaps |
 | `reviewer` | `read_as_markdown`, `read_blocks`, `list_sources`, `lint_document`, `preview_report`, `deepseek_search`, `deepseek_fetch` | `add_comment`, `reply_comment` | Independent fact/method/source/readability/layout review; no direct report-content edits |
 | `designer` | Digest, `list_sources`, `lint_document`, `preview_report` | Cover, TOC, references, page chrome and theme tools | Layout and bibliography presentation only; never repairs content by changing citation ownership |
 
@@ -87,6 +88,9 @@ agent prompts do not duplicate the complete lint catalog.
   visuals merely to reset a prose-run diagnostic.
 - Recommendations use direct language; `核实值`, `属推断`, `本报告判断` and `本报告建议` are not used as
   editorial labels. Necessary method assumptions live in concise notes.
+- The whole-report conclusion is written or rewritten by the lead only after every body chapter and the
+  full read-through are complete; chapter writers may close their own section but never conclude the
+  whole report in parallel.
 - Source count, visual count, zero lint warnings and zero page overflow are necessary checks where
   applicable, but none independently proves publication quality.
 - A reviewer cannot approve only the edited regression subset: final approval requires the full current

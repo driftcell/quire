@@ -5556,6 +5556,123 @@ async fn failed_turn_cancels_the_provider_token() {
     assert_eq!(store.get_run(&run_id).await.unwrap().status, "failed");
 }
 
+#[derive(Clone)]
+struct FailOnceGateProvider {
+    released: Arc<AtomicBool>,
+    calls: Arc<AtomicUsize>,
+    notify: Arc<tokio::sync::Notify>,
+}
+
+impl FailOnceGateProvider {
+    fn new() -> Self {
+        Self {
+            released: Arc::new(AtomicBool::new(false)),
+            calls: Arc::new(AtomicUsize::new(0)),
+            notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::SeqCst);
+        self.notify.notify_waiters();
+    }
+}
+
+#[async_trait::async_trait]
+impl ModelStreamProvider for FailOnceGateProvider {
+    async fn stream_turn(
+        &self,
+        _request: ModelTurnRequest,
+    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
+        let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 {
+            while !self.released.load(Ordering::SeqCst) {
+                self.notify.notified().await;
+            }
+            return Ok(Box::pin(futures::stream::iter(vec![
+                Ok(ModelStreamEvent::TextDelta(
+                    "保留这段失败前的助手文本。".into(),
+                )),
+                Err(RuntimeError::Internal("simulated canonical failure".into())),
+            ])));
+        }
+        Ok(Box::pin(futures::stream::iter(vec![Ok(
+            ModelStreamEvent::TextDelta("pending 接管后的完整回复。".into()),
+        )])))
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn failed_turn_preserves_text_and_releases_pending_queue() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let provider = FailOnceGateProvider::new();
+    let service = service.with_model_stream_provider(Arc::new(provider.clone()));
+    service.boot().await.unwrap();
+    let session = service
+        .create_session("failed run queue recovery", None)
+        .await
+        .unwrap();
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("failure-first"),
+                content: "first gated run".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_running(&store, &session.session_id).await;
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("failure-follow-up"),
+                content: "recover after failure".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    provider.release();
+
+    let mut recovered = false;
+    for _ in 0..300 {
+        let detail = service.session_detail(&session.session_id).await.unwrap();
+        let messages = store.list_messages(&session.session_id).await.unwrap();
+        let partial = messages.iter().any(|message| {
+            message.role == MessageRole::Assistant
+                && message.content == "保留这段失败前的助手文本。"
+        });
+        let follow_up = messages.iter().any(|message| {
+            message.role == MessageRole::User && message.content == "recover after failure"
+        });
+        let completed = messages.iter().any(|message| {
+            message.role == MessageRole::Assistant
+                && message.content == "pending 接管后的完整回复。"
+        });
+        if partial
+            && follow_up
+            && completed
+            && detail.pending_queue.is_empty()
+            && detail.summary.active_run_status == ActiveRunStatus::Idle
+        {
+            recovered = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(recovered, "failed run did not release its pending queue");
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    assert_eq!(traces.len(), 2, "unexpected run history: {traces:?}");
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
 #[tokio::test]
 async fn queued_messages_do_not_create_phantom_traces_or_hijack_the_active_run() {
     let _guard = test_lock().lock().await;
