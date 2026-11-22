@@ -25,6 +25,7 @@ import {
   type ReportSelectionDescriptor,
 } from "@/components/report/reportSelection";
 import { SessionRightPane } from "@/components/report/SessionRightPane";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   SessionWorkspaceLayout,
   type SessionMobileTab,
@@ -162,11 +163,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     isRunActive: effectiveRunStatus === "running",
   });
 
-  const blockCount = docQuery.data?.document.blocks.length ?? 0;
-  const hasReportData = useMemo(() => {
-    if (!effectiveDocId) return false;
-    return blockCount > 0 || ephemeralPreviews.size > 0;
-  }, [effectiveDocId, blockCount, ephemeralPreviews.size]);
+  // A linked document is enough to select the report workspace. Session detail
+  // loading uses the same loading frame so the right pane never appears late.
+  const hasReportData = effectiveDocId !== null || sessionQuery.isLoading;
 
   const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);
@@ -355,8 +354,24 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     />
   ) : null;
 
-  const reportPane =
-    docQuery.data && effectiveDocId ? (
+  const reportLoadingPane = (
+    <output
+      data-slot="session-report-loading"
+      aria-label="报告加载中"
+      className="block h-full rounded-xl border bg-background px-5 py-8 shadow-2xs sm:px-10"
+    >
+      <div className="mx-auto max-w-[680px] space-y-4">
+        <Skeleton className="h-9 w-3/5" />
+        <Skeleton className="h-4 w-4/5" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-2/3" />
+      </div>
+    </output>
+  );
+
+  const reportPane = effectiveDocId ? (
+    docQuery.data ? (
       <SessionReportPane
         docId={effectiveDocId}
         document={docQuery.data.document}
@@ -380,7 +395,19 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         activeSelection={activeReportSelection}
         onActiveSelectionChange={setActiveReportSelection}
       />
-    ) : null;
+    ) : docQuery.error ? (
+      <div
+        role="alert"
+        className="flex h-full items-center justify-center rounded-xl border bg-background text-sm text-destructive"
+      >
+        报告加载失败：{docQuery.error.message}
+      </div>
+    ) : (
+      reportLoadingPane
+    )
+  ) : sessionQuery.isLoading ? (
+    reportLoadingPane
+  ) : null;
 
   const rightPane = (
     <SessionRightPane
