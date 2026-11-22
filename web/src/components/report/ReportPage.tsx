@@ -130,7 +130,13 @@ export function ReportPage({
                   isPaged
                   printMode={printMode}
                   showChartTools={showChartTools}
-                  computed={computed}
+                  citationMap={computed.citation_map}
+                  framing={computed.block_framing[item.slice.block.id]}
+                  tableLayout={computed.table_layouts[item.slice.block.id]}
+                  chartTables={computed.chart_tables?.[item.slice.block.id]}
+                  chartRequirements={
+                    computed.chart_requirements?.[item.slice.block.id]
+                  }
                   bibliographyById={bibliographyById}
                   commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
                   commentOutline={commentOutlineIds.has(item.slice.block.id)}

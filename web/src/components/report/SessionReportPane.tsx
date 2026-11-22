@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import { ReportPaneToolbar } from "@/components/report/ReportPaneToolbar";
@@ -39,7 +39,7 @@ export interface SessionReportPaneProps {
   ) => void;
 }
 
-export function SessionReportPane({
+export const SessionReportPane = memo(function SessionReportPane({
   docId,
   document,
   computed,
@@ -166,4 +166,4 @@ export function SessionReportPane({
       </div>
     </div>
   );
-}
+});

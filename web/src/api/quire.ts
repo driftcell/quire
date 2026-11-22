@@ -2,10 +2,12 @@ import type {
   CommentStatus,
   CommentThread,
   DocumentDiffReport,
+  DocumentSyncDelta,
 } from "@/contracts/report-protocol";
 import { bearerHeaders, getAuthTokens } from "@/lib/auth";
 import {
   normalizeDocumentResponse,
+  normalizeDocumentSyncDelta,
   type DocumentResponse,
 } from "@/lib/document";
 import { isRecord } from "@/lib/guards";
@@ -105,6 +107,17 @@ export function getDocument(
     normalizeDocumentResponse,
     {},
     tokenOverride,
+  );
+}
+
+export function getDocumentSync(
+  docId: string,
+  fromRev: number,
+): Promise<DocumentSyncDelta> {
+  return quireFetch(
+    `/api/docs/${encodeURIComponent(docId)}/sync?fromRev=${fromRev}`,
+    "ro",
+    normalizeDocumentSyncDelta,
   );
 }
 

@@ -1500,6 +1500,66 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     assert!(position("ch2_summary").unwrap() > position("ch2_placeholder").unwrap());
     assert!(!block_ids.contains(&"ch1_placeholder".to_string()));
 
+    let sync = http
+        .get(format!("{base}/api/docs/{doc_id}/sync?fromRev=1"))
+        .send()
+        .await?
+        .json::<Value>()
+        .await?;
+    assert_eq!(sync["from_revision"].as_i64(), Some(1));
+    assert_eq!(sync["to_revision"].as_i64(), Some(final_revision));
+    assert_eq!(
+        sync["block_ids"].as_array().unwrap(),
+        &block_ids
+            .iter()
+            .map(|id| Value::String(id.clone()))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(sync["computed"], final_doc["computed"]);
+    for block in sync["upserted_blocks"].as_array().unwrap() {
+        let id = block["id"].as_str().unwrap();
+        let canonical = final_doc["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|candidate| candidate["id"] == id)
+            .ok_or_else(|| anyhow!("sync upserted unknown block {id}"))?;
+        assert_eq!(
+            block, canonical,
+            "sync must return the applied target block"
+        );
+    }
+    for removed in sync["removed_block_ids"].as_array().unwrap() {
+        assert!(
+            !block_ids
+                .iter()
+                .any(|id| Some(id.as_str()) == removed.as_str())
+        );
+    }
+    let up_to_date = http
+        .get(format!(
+            "{base}/api/docs/{doc_id}/sync?fromRev={final_revision}"
+        ))
+        .send()
+        .await?
+        .json::<Value>()
+        .await?;
+    assert_eq!(up_to_date["from_revision"], sync["to_revision"]);
+    assert_eq!(up_to_date["to_revision"], sync["to_revision"]);
+    assert!(
+        up_to_date["upserted_blocks"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
+    assert!(
+        up_to_date["removed_block_ids"]
+            .as_array()
+            .is_none_or(Vec::is_empty)
+    );
+    assert!(up_to_date["cover"].is_null());
+    assert!(up_to_date["theme"].is_null());
+    assert_eq!(up_to_date["computed"], final_doc["computed"]);
+
     let layout = &final_doc["computed"]["table_layouts"]["ch1_financials"];
     assert_eq!(layout["header_depth"], 2);
     assert_eq!(layout["total_width_pct"], 100.0);

@@ -10,7 +10,8 @@
 
 This document is the source of truth for canonical session history, live model-event projection,
 Redis hot traces, Session-SSE replay, cold run traces and the frontend reducer. Rig model-loop details
-live in `RUNTIME_RIG_STREAMING.md`; questionnaire payloads live in `RUNTIME_ASK_USER.md`.
+live in `RUNTIME_RIG_STREAMING.md`; questionnaire payloads live in `RUNTIME_ASK_USER.md`. Document
+revision SSE coordination and snapshot-delta synchronization live in `REPORT_LIVE_SYNC.md`.
 
 Model conversation history has exactly one canonical store: official `rig-postgres` / `rig-memory`.
 Session events and run traces are display projections, never an alternate source of model history.

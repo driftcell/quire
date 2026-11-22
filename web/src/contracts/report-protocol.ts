@@ -401,6 +401,7 @@ export interface QuireReportProtocol {
       };
   comment_thread: CommentThread;
   comment_message: CommentMessage1;
+  document_sync: DocumentSyncDelta;
   document_diff: DocumentDiffReport;
   document_metadata_diff: DocumentMetadataDiff;
   chart_data_table: ChartDataTable1;
@@ -1280,6 +1281,156 @@ export interface CommentMessage1 {
   author: string;
   body: string;
   created_at: string;
+  [k: string]: unknown;
+}
+/**
+ * Applied snapshot delta used for incremental frontend synchronization.
+ */
+export interface DocumentSyncDelta {
+  doc_id: DocId;
+  from_revision: Revision;
+  to_revision: Revision;
+  block_ids: BlockId[];
+  upserted_blocks?: Block[];
+  removed_block_ids?: BlockId[];
+  cover?: CoverConfig2 | null;
+  toc?: TocConfig2 | null;
+  theme?: ThemeConfig2 | null;
+  references?: ReferencesConfig2 | null;
+  lint?: LintConfig2 | null;
+  sources?: {
+    [k: string]: SourceEntry;
+  } | null;
+  computed: ComputedDocumentMeta1;
+  [k: string]: unknown;
+}
+/**
+ * Configuration for the generated cover page.
+ */
+export interface CoverConfig2 {
+  enabled?: boolean;
+  /**
+   * One of `classic`, `modern`, `minimal`, `split`, `custom`; unknown values render as classic.
+   */
+  variant?: string;
+  title?: string;
+  subtitle?: string | null;
+  authors?: string[];
+  /**
+   * Human-readable publication date. Free-form on purpose (for example "Q3 2026").
+   */
+  date?: string | null;
+  /**
+   * Optional key/value metadata rendered on the cover.
+   */
+  meta?: {
+    [k: string]: string;
+  };
+  /**
+   * Full HTML override for the cover body. When present it replaces the generated cover body.
+   */
+  custom_html?: string | null;
+  [k: string]: unknown;
+}
+/**
+ * Table-of-contents configuration.
+ */
+export interface TocConfig2 {
+  enabled?: boolean;
+  title?: string;
+  /**
+   * Maximum heading depth to include. Protocol range is 1..=3.
+   */
+  max_depth?: number;
+  /**
+   * One of `standard`, `numbered`, `dotted`; unknown values render as standard.
+   */
+  variant?: string;
+  /**
+   * Start the TOC on a new page after the cover.
+   */
+  page_break_before?: boolean;
+  /**
+   * Start body content on a new page after the TOC.
+   */
+  page_break_after?: boolean;
+  [k: string]: unknown;
+}
+/**
+ * Theme configuration. Tokens are CSS custom properties applied to `.report-root`.
+ */
+export interface ThemeConfig2 {
+  /**
+   * Built-in preset name. Unknown presets fall back to `default`.
+   */
+  preset?: string;
+  /**
+   * Additional or overriding CSS custom properties, for example `--rpt-primary`.
+   */
+  tokens?: {
+    [k: string]: string;
+  };
+  /**
+   * Arbitrary CSS. It is automatically scoped under `.report-root`.
+   */
+  custom_css?: string;
+  /**
+   * Optional A4 paged header/footer slots with template placeholders.
+   */
+  page_chrome?: PageChromeConfig | null;
+  [k: string]: unknown;
+}
+/**
+ * End-of-report bibliography configuration.
+ */
+export interface ReferencesConfig2 {
+  enabled?: boolean;
+  title?: string;
+  /**
+   * Bibliographic label style.
+   */
+  style?: "numeric" | "author_year";
+  page_break_before?: boolean;
+  [k: string]: unknown;
+}
+/**
+ * Document-level lint policy. Ignore entries accept a rule code (`QR202`), a semantic rule name
+ * (`table-empty-column`) or a category prefix (`QR2`). Non-suppressible rules cannot be ignored.
+ */
+export interface LintConfig2 {
+  ignore?: string[];
+  [k: string]: unknown;
+}
+/**
+ * Everything the external frontend needs beyond the canonical Block AST.
+ */
+export interface ComputedDocumentMeta1 {
+  table_layouts: {
+    [k: string]: TableLayout;
+  };
+  citation_map: {
+    [k: string]: CitationMapEntry;
+  };
+  bibliography: BibliographyEntry[];
+  toc_tree: TocNode[];
+  /**
+   * Auto-numbering labels and source attribution for table/figure blocks.
+   */
+  block_framing: {
+    [k: string]: BlockFraming;
+  };
+  /**
+   * ECharts map/extension dependencies grouped by chart block.
+   */
+  chart_requirements?: {
+    [k: string]: ChartRequirements;
+  };
+  /**
+   * Structured chart data tables grouped by chart block.
+   */
+  chart_tables?: {
+    [k: string]: ChartDataTable[];
+  };
   [k: string]: unknown;
 }
 /**

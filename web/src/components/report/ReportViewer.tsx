@@ -358,11 +358,14 @@ export function ReportViewer({
     return undefined;
   }, [isPaged, onPagesReady, pages.length]);
 
+  const continuousSlices = useMemo<PageSlice[]>(
+    () => (isPaged ? [] : document.blocks.map((block) => ({ block }))),
+    [isPaged, document.blocks],
+  );
   const continuousItems = useMemo(() => {
     if (isPaged) return [];
-    const baseSlices: PageSlice[] = document.blocks.map((block) => ({ block }));
-    return buildMixedItems(baseSlices, visiblePreviews, document.blocks);
-  }, [isPaged, document.blocks, visiblePreviews]);
+    return buildMixedItems(continuousSlices, visiblePreviews, document.blocks);
+  }, [isPaged, continuousSlices, visiblePreviews, document.blocks]);
 
   const handleTocJump = useCallback(
     (blockId: string) => {
@@ -496,7 +499,11 @@ export function ReportViewer({
                 isPaged
                 printMode
                 showChartTools
-                computed={computed}
+                citationMap={computed.citation_map}
+                framing={computed.block_framing[block.id]}
+                tableLayout={computed.table_layouts[block.id]}
+                chartTables={computed.chart_tables?.[block.id]}
+                chartRequirements={computed.chart_requirements?.[block.id]}
                 bibliographyById={bibliographyById}
                 commentCount={0}
                 measurementOnly
@@ -535,7 +542,13 @@ export function ReportViewer({
                   isPaged={false}
                   printMode={suppressChrome}
                   showChartTools={!suppressChrome}
-                  computed={computed}
+                  citationMap={computed.citation_map}
+                  framing={computed.block_framing[item.slice.block.id]}
+                  tableLayout={computed.table_layouts[item.slice.block.id]}
+                  chartTables={computed.chart_tables?.[item.slice.block.id]}
+                  chartRequirements={
+                    computed.chart_requirements?.[item.slice.block.id]
+                  }
                   bibliographyById={bibliographyById}
                   commentCount={openCountByBlock.get(item.slice.block.id) ?? 0}
                   commentOutline={commentOutlineIds.has(item.slice.block.id)}

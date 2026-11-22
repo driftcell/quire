@@ -55,6 +55,10 @@
       "description": "One review-thread message.",
       "$ref": "#/$defs/CommentMessage"
     },
+    "document_sync": {
+      "description": "Applied snapshot delta used for incremental frontend synchronization.",
+      "$ref": "#/$defs/DocumentSyncDelta"
+    },
     "document_diff": {
       "description": "Structured block-level diff between two revisions.",
       "$ref": "#/$defs/DocumentDiffReport"
@@ -90,6 +94,7 @@
     "ephemeral_payload",
     "comment_thread",
     "comment_message",
+    "document_sync",
     "document_diff",
     "document_metadata_diff",
     "chart_data_table",
@@ -2773,6 +2778,108 @@
       "enum": [
         "human",
         "agent"
+      ]
+    },
+    "DocumentSyncDelta": {
+      "description": "Applied document changes between two committed revisions.\n\n`block_ids` is always the complete target order. `upserted_blocks` contains only added or\nmodified blocks; unchanged blocks can be retained by the client. Optional configuration fields\nare present only when their values changed. `computed` is projected from the target snapshot by\nthe canonical Rust implementation.",
+      "type": "object",
+      "properties": {
+        "doc_id": {
+          "$ref": "#/$defs/DocId"
+        },
+        "from_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "to_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "block_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
+        "upserted_blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "removed_block_ids": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlockId"
+          }
+        },
+        "cover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoverConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "toc": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TocConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "theme": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "references": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReferencesConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lint": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LintConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sources": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "$ref": "#/$defs/SourceEntry"
+          }
+        },
+        "computed": {
+          "$ref": "#/$defs/ComputedDocumentMeta"
+        }
+      },
+      "required": [
+        "doc_id",
+        "from_revision",
+        "to_revision",
+        "block_ids",
+        "computed"
       ]
     },
     "DocumentDiffReport": {

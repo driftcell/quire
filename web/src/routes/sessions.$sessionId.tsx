@@ -31,6 +31,7 @@ import {
 } from "@/components/report/SessionWorkspaceLayout";
 import { flashHighlightElement } from "@/components/report/reportDom";
 import { useSidebar } from "@/components/ui/sidebar";
+import type { CommentThread } from "@/contracts/report-protocol";
 import type {
   ActiveRunStatus,
   ContextUsage,
@@ -154,10 +155,16 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     enabled: Boolean(effectiveDocId),
   });
 
+  const commentThreads = useMemo(
+    () => commentsQuery.data ?? [],
+    [commentsQuery.data],
+  );
+
   const { ephemeralPreviews, activeActorsBySection } = useDocumentEventStream({
     docId: effectiveDocId,
     enabled: Boolean(effectiveDocId),
     currentRev: docQuery.data?.current_rev ?? 0,
+    isDocumentReady: docQuery.isSuccess,
     isRunActive: effectiveRunStatus === "running",
   });
 
@@ -202,6 +209,26 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     }
   }, [isMobile, prefs.rightSidebarOpen, updatePrefs]);
 
+  const handleViewModeChange = useCallback(
+    (mode: typeof prefs.reportViewMode) => {
+      updatePrefs({ reportViewMode: mode });
+    },
+    [updatePrefs],
+  );
+  const handleOpenCommentForBlock = useCallback(
+    (anchor: FloatingCommentAnchor) => {
+      setFloatingComment(anchor);
+    },
+    [],
+  );
+  const handleSelectCommentThread = useCallback(
+    (thread: CommentThread) => {
+      setActiveCommentThreadId(thread.thread_id);
+      showComments();
+    },
+    [showComments],
+  );
+
   const { isAnsweringQuestion, handleSend, handleAnswerQuestion } =
     useSessionMessageActions({
       sessionId,
@@ -239,8 +266,9 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   );
 
   // Only open (unresolved) threads count as active report comments.
-  const openCommentsCount =
-    commentsQuery.data?.filter((c) => c.status === "open").length ?? 0;
+  const openCommentsCount = commentThreads.filter(
+    (comment) => comment.status === "open",
+  ).length;
 
   const handleChatPanelResize = useCallback(
     (pct: number) => {
@@ -355,23 +383,18 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         currentRev={docQuery.data.current_rev}
         viewMode={prefs.reportViewMode}
         ephemeralPreviews={ephemeralPreviews}
-        comments={commentsQuery.data ?? []}
+        comments={commentThreads}
         activeThreadId={activeCommentThreadId}
         activeActorsBySection={activeActorsBySection}
         openCommentsCount={openCommentsCount}
         isMobile={isMobile}
         rightSidebarOpen={prefs.rightSidebarOpen}
         onToggleRightSidebar={toggleRightSidebar}
-        onViewModeChange={(mode) => updatePrefs({ reportViewMode: mode })}
+        onViewModeChange={handleViewModeChange}
         onJumpToSection={jumpToSection}
         onShowComments={showComments}
-        onOpenCommentForBlock={(anchor) => {
-          setFloatingComment(anchor);
-        }}
-        onSelectCommentThread={(thread) => {
-          setActiveCommentThreadId(thread.thread_id);
-          showComments();
-        }}
+        onOpenCommentForBlock={handleOpenCommentForBlock}
+        onSelectCommentThread={handleSelectCommentThread}
         onAskAgentWithQuote={handleAskAgentWithQuote}
         activeSelection={activeReportSelection}
         onActiveSelectionChange={setActiveReportSelection}

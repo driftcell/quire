@@ -16,8 +16,8 @@ use chrono::Utc;
 use futures::Stream;
 use quire_protocol::{
     BlockId, CommentAuthorType, CommentStatus, CommentThread, ComputedDocumentMeta,
-    DocumentDiffReport, EphemeralPayload, ReportDocument, TextQuoteSelector, compute_document_meta,
-    diff_documents,
+    DocumentDiffReport, DocumentSyncDelta, EphemeralPayload, ReportDocument, TextQuoteSelector,
+    compute_document_meta, diff_documents, sync_documents,
 };
 use quire_protocol::{DocId, Revision, SessionId};
 use quire_store::{
@@ -66,6 +66,7 @@ pub fn build_document_router(state: AppState) -> Router {
         .route("/api/docs/{doc_id}/revisions", get(list_revisions))
         .route("/api/docs/{doc_id}/comments", get(list_comments))
         .route("/api/docs/{doc_id}/diff", get(document_diff))
+        .route("/api/docs/{doc_id}/sync", get(document_sync))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::ro_auth));
 
     let read_write = Router::new()
@@ -502,6 +503,37 @@ async fn document_diff(
         .document_at_revision(&doc_id, to_revision)
         .await?;
     Ok(Json(diff_documents(&before, &after)))
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncQuery {
+    #[serde(rename = "fromRev", alias = "from_rev")]
+    from_rev: i64,
+}
+
+async fn document_sync(
+    State(state): State<AppState>,
+    Path(doc_id): Path<DocId>,
+    Query(query): Query<SyncQuery>,
+) -> Result<Json<DocumentSyncDelta>, ApiError> {
+    let from_revision = Revision::new(query.from_rev)?;
+    let after = state.store.get_document(&doc_id).await?;
+    if from_revision > after.revision {
+        return Err(ApiError(StoreError::InvalidRequest(format!(
+            "fromRev {} is ahead of current_rev {}",
+            from_revision.get(),
+            after.revision.get()
+        ))));
+    }
+    let before = if from_revision == after.revision {
+        after.clone()
+    } else {
+        state
+            .store
+            .document_at_revision(&doc_id, from_revision)
+            .await?
+    };
+    Ok(Json(sync_documents(&before, &after)))
 }
 
 fn parse_ephemeral_body(doc_id: &DocId, body: &[u8]) -> Result<EphemeralPayload, StoreError> {

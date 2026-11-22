@@ -1,19 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { getDocument, getDocumentSync } from "@/api/quire";
 import { subscribeDocumentEvents } from "@/api/sse";
 import type { EphemeralPreviewEvent } from "@/contracts/report-protocol";
+import { applyDocumentSync, type DocumentResponse } from "@/lib/document";
+import { LatestRevisionSync } from "@/lib/latestRevisionSync";
 
 export interface UseDocumentEventStreamOptions {
   docId: string | null;
   enabled: boolean;
   currentRev: number;
+  /** Historical revisions must not invalidate a document before its snapshot is ready. */
+  isDocumentReady?: boolean;
   isRunActive?: boolean;
 }
+
+const DOCUMENT_SYNC_BATCH_MS = 32;
 
 export function useDocumentEventStream({
   docId,
   enabled,
   currentRev,
+  isDocumentReady = true,
   isRunActive = true,
 }: UseDocumentEventStreamOptions) {
   const queryClient = useQueryClient();
@@ -28,35 +36,52 @@ export function useDocumentEventStream({
   const pendingClearedByRevRef = useRef<Map<number, string[]>>(new Map());
   const currentRevRef = useRef<number>(currentRev);
   const highestSeenRevRef = useRef<number>(currentRev);
+  const previousDocIdRef = useRef<string | null>(docId);
+  const documentReadyRef = useRef(isDocumentReady);
+  const scheduleSyncRef = useRef<
+    ((revision: number, requireFull?: boolean) => void) | null
+  >(null);
 
   useEffect(() => {
+    documentReadyRef.current = isDocumentReady;
+    if (previousDocIdRef.current !== docId) {
+      previousDocIdRef.current = docId;
+      highestSeenRevRef.current = currentRev;
+      pendingClearedByRevRef.current.clear();
+      setEphemeralPreviews(new Map());
+      setActiveActorsBySection(new Map());
+    }
     currentRevRef.current = currentRev;
     if (currentRev > highestSeenRevRef.current) {
       highestSeenRevRef.current = currentRev;
     }
-    if (pendingClearedByRevRef.current.size === 0) return;
-    const toClear: string[] = [];
-    for (const [rev, ids] of pendingClearedByRevRef.current.entries()) {
-      if (rev <= currentRev) {
-        toClear.push(...ids);
-        pendingClearedByRevRef.current.delete(rev);
+    if (pendingClearedByRevRef.current.size > 0) {
+      const toClear: string[] = [];
+      for (const [rev, ids] of pendingClearedByRevRef.current.entries()) {
+        if (rev <= currentRev) {
+          toClear.push(...ids);
+          pendingClearedByRevRef.current.delete(rev);
+        }
+      }
+      if (toClear.length > 0) {
+        setEphemeralPreviews((prev) => {
+          const next = new Map(prev);
+          for (const id of toClear) {
+            next.delete(id);
+            const timer = previewTimersRef.current.get(id);
+            if (timer !== undefined) {
+              window.clearTimeout(timer);
+              previewTimersRef.current.delete(id);
+            }
+          }
+          return next;
+        });
       }
     }
-    if (toClear.length > 0) {
-      setEphemeralPreviews((prev) => {
-        const next = new Map(prev);
-        for (const id of toClear) {
-          next.delete(id);
-          const timer = previewTimersRef.current.get(id);
-          if (timer !== undefined) {
-            window.clearTimeout(timer);
-            previewTimersRef.current.delete(id);
-          }
-        }
-        return next;
-      });
+    if (isDocumentReady && highestSeenRevRef.current > currentRev) {
+      scheduleSyncRef.current?.(highestSeenRevRef.current);
     }
-  }, [currentRev]);
+  }, [currentRev, docId, isDocumentReady]);
 
   // When a session turn finishes, fails, or is interrupted (`isRunActive` becomes false),
   // sweep any orphaned ephemeral previews after a short settle window so ghost cards
@@ -83,6 +108,10 @@ export function useDocumentEventStream({
     if (!docId || !enabled) return undefined;
     const timers = previewTimersRef.current;
     const presenceTimers = presenceTimersRef.current;
+    let cancelled = false;
+    let syncTimer: number | null = null;
+    let fullSyncRequired = false;
+    const queryKey = ["doc", docId];
 
     const clearPreviewIds = (ids: string[]) => {
       if (ids.length === 0) return;
@@ -120,6 +149,66 @@ export function useDocumentEventStream({
       });
     };
 
+    const sync = new LatestRevisionSync(
+      () => currentRevRef.current,
+      async (fromRevision) => {
+        const cached = queryClient.getQueryData<DocumentResponse>(queryKey);
+        if (!cached) {
+          throw new Error("Document snapshot is not ready for synchronization");
+        }
+        let next: DocumentResponse;
+        if (fullSyncRequired || cached.current_rev !== fromRevision) {
+          fullSyncRequired = false;
+          next = await getDocument(docId);
+        } else {
+          try {
+            const delta = await getDocumentSync(docId, fromRevision);
+            next = applyDocumentSync(cached, delta);
+          } catch {
+            // A pruned revision, stale cache or malformed delta must never be
+            // applied partially. The canonical full snapshot is the recovery path.
+            next = await getDocument(docId);
+            fullSyncRequired = false;
+          }
+        }
+        if (cancelled) {
+          throw new Error("Document synchronization was cancelled");
+        }
+        if (next.current_rev < fromRevision) {
+          throw new Error(
+            "Document synchronization returned an older revision",
+          );
+        }
+        currentRevRef.current = next.current_rev;
+        highestSeenRevRef.current = Math.max(
+          highestSeenRevRef.current,
+          next.current_rev,
+        );
+        queryClient.setQueryData(queryKey, next);
+        return next.current_rev;
+      },
+    );
+
+    const scheduleSync = (revision: number, requireFull = false) => {
+      if (cancelled || !documentReadyRef.current) return;
+      highestSeenRevRef.current = Math.max(highestSeenRevRef.current, revision);
+      fullSyncRequired ||= requireFull;
+      if (syncTimer !== null) return;
+      syncTimer = window.setTimeout(() => {
+        syncTimer = null;
+        void sync
+          .request(highestSeenRevRef.current, fullSyncRequired)
+          .catch(() => {
+            if (!cancelled) {
+              // If both incremental and full recovery fail, surface the error
+              // through the existing React Query document state.
+              void queryClient.invalidateQueries({ queryKey });
+            }
+          });
+      }, DOCUMENT_SYNC_BATCH_MS);
+    };
+    scheduleSyncRef.current = scheduleSync;
+
     const unsub = subscribeDocumentEvents(
       docId,
       () => Math.max(currentRevRef.current, highestSeenRevRef.current),
@@ -141,7 +230,7 @@ export function useDocumentEventStream({
                 ...prevList,
                 ...delta.cleared_preview_ids,
               ]);
-              // Safety fallback: if the doc query refetch takes longer than 1.5s,
+              // Safety fallback: if the doc sync takes longer than 1.5s,
               // clear the preview IDs anyway so they don't linger behind committed blocks.
               const fallbackIds = [...delta.cleared_preview_ids];
               window.setTimeout(() => {
@@ -149,9 +238,12 @@ export function useDocumentEventStream({
               }, 1500);
             }
           }
-          void queryClient.invalidateQueries({
-            queryKey: ["doc", docId],
-          });
+          if (
+            documentReadyRef.current &&
+            delta.revision > currentRevRef.current
+          ) {
+            scheduleSync(delta.revision);
+          }
         },
         onEphemeralPreview(preview) {
           setEphemeralPreviews((prev) => {
@@ -222,14 +314,28 @@ export function useDocumentEventStream({
           });
         },
         onSyncRequired() {
-          void queryClient.invalidateQueries({
-            queryKey: ["doc", docId],
-          });
+          if (documentReadyRef.current) {
+            scheduleSync(highestSeenRevRef.current, true);
+          }
         },
       },
     );
 
+    if (
+      documentReadyRef.current &&
+      highestSeenRevRef.current > currentRevRef.current
+    ) {
+      scheduleSync(highestSeenRevRef.current);
+    }
+
     return () => {
+      cancelled = true;
+      if (scheduleSyncRef.current === scheduleSync) {
+        scheduleSyncRef.current = null;
+      }
+      if (syncTimer !== null) {
+        window.clearTimeout(syncTimer);
+      }
       unsub();
       for (const timer of timers.values()) {
         window.clearTimeout(timer);

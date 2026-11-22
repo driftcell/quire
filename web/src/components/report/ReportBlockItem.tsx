@@ -12,7 +12,11 @@ import {
 import { toViewportRect } from "@/components/report/reportDom";
 import type {
   BibliographyEntry,
-  ComputedDocumentMeta,
+  BlockFraming,
+  ChartDataTable,
+  ChartRequirements,
+  CitationMapEntry,
+  TableLayout,
 } from "@/contracts/report-protocol";
 import type { ReportBlock } from "@/lib/document";
 
@@ -89,7 +93,7 @@ function blockNote(block: ReportBlock): string | undefined {
 
 function BlockFooterNotes({
   block,
-  computed,
+  citationMap,
   bibliographyById,
   printMode,
   onCitationClick,
@@ -97,7 +101,7 @@ function BlockFooterNotes({
   framingAttribution,
 }: {
   block: ReportBlock;
-  computed: ComputedDocumentMeta;
+  citationMap: Record<string, CitationMapEntry>;
   bibliographyById: Map<string, BibliographyEntry>;
   printMode: boolean;
   onCitationClick: (sourceId: string) => void;
@@ -158,7 +162,7 @@ function BlockFooterNotes({
           注：
           <InlineMarkdown
             text={note}
-            citationMap={computed.citation_map}
+            citationMap={citationMap}
             bibliographyById={bibliographyById}
             printMode={printMode}
             onCitationClick={onCitationClick}
@@ -170,7 +174,7 @@ function BlockFooterNotes({
           资料来源：
           <InlineMarkdown
             text={sourceText}
-            citationMap={computed.citation_map}
+            citationMap={citationMap}
             bibliographyById={bibliographyById}
             printMode={printMode}
             onCitationClick={onCitationClick}
@@ -186,7 +190,11 @@ export interface ReportBlockItemProps {
   isPaged: boolean;
   printMode: boolean;
   showChartTools?: boolean;
-  computed: ComputedDocumentMeta;
+  citationMap: Record<string, CitationMapEntry>;
+  framing?: BlockFraming;
+  tableLayout?: TableLayout;
+  chartTables?: ChartDataTable[];
+  chartRequirements?: ChartRequirements;
   bibliographyById: Map<string, BibliographyEntry>;
   commentCount: number;
   commentOutline?: boolean;
@@ -200,7 +208,11 @@ export const ReportBlockItem = memo(function ReportBlockItem({
   isPaged,
   printMode,
   showChartTools = true,
-  computed,
+  citationMap,
+  framing,
+  tableLayout,
+  chartTables,
+  chartRequirements,
   bibliographyById,
   commentCount,
   commentOutline = false,
@@ -209,13 +221,12 @@ export const ReportBlockItem = memo(function ReportBlockItem({
   onOpenCommentForBlock,
 }: ReportBlockItemProps) {
   const { block } = slice;
-  const framing = computed.block_framing[block.id];
   const domId = measurementOnly ? undefined : `block-${block.id}`;
 
   const renderInline = (text: string) => (
     <InlineMarkdown
       text={text}
-      citationMap={computed.citation_map}
+      citationMap={citationMap}
       bibliographyById={bibliographyById}
       printMode={printMode}
       onCitationClick={onCitationClick}
@@ -252,7 +263,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
       bodyNode = (
         <BlockFooterNotes
           block={block}
-          computed={computed}
+          citationMap={citationMap}
           bibliographyById={bibliographyById}
           printMode={printMode}
           onCitationClick={onCitationClick}
@@ -280,7 +291,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
           )}
           <TableBlockView
             table={block}
-            layout={computed.table_layouts[block.id]}
+            layout={tableLayout}
             rowStart={slice.rowStart}
             rowEnd={slice.rowEnd}
             includeSummary={slice.includeSummary}
@@ -297,7 +308,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
           {slice.includeNotes !== false && slice.includeSummary !== false && (
             <BlockFooterNotes
               block={block}
-              computed={computed}
+              citationMap={citationMap}
               bibliographyById={bibliographyById}
               printMode={printMode}
               onCitationClick={onCitationClick}
@@ -319,8 +330,8 @@ export const ReportBlockItem = memo(function ReportBlockItem({
         <EchartsCanvas
           blockId={block.id}
           chart={block}
-          chartTables={computed.chart_tables?.[block.id]}
-          requirements={computed.chart_requirements?.[block.id]}
+          chartTables={chartTables}
+          requirements={chartRequirements}
           renderer={isPaged || printMode ? "svg" : "canvas"}
           printSafe={isPaged || printMode}
           showTools={showChartTools}
@@ -332,7 +343,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
         )}
         <BlockFooterNotes
           block={block}
-          computed={computed}
+          citationMap={citationMap}
           bibliographyById={bibliographyById}
           printMode={printMode}
           onCitationClick={onCitationClick}
@@ -357,7 +368,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
         )}
         <BlockFooterNotes
           block={block}
-          computed={computed}
+          citationMap={citationMap}
           bibliographyById={bibliographyById}
           printMode={printMode}
           onCitationClick={onCitationClick}

@@ -12,9 +12,9 @@ use std::{fs, path::Path};
 
 use quire_protocol::{
     AgentPresenceEvent, ChartDataTable, CommentMessage, CommentThread, CommentUpdatedEvent,
-    ComputedDocumentMeta, DocumentDiffReport, DocumentMetadataDiff, EphemeralClearEvent,
-    EphemeralPayload, EphemeralPreviewEvent, LintReport, PatchOp, PatchOutcome, ReportDocument,
-    RevisionDelta, SessionDelta, SyncRequiredDelta,
+    ComputedDocumentMeta, DocumentDiffReport, DocumentMetadataDiff, DocumentSyncDelta,
+    EphemeralClearEvent, EphemeralPayload, EphemeralPreviewEvent, LintReport, PatchOp,
+    PatchOutcome, ReportDocument, RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 use schemars::JsonSchema;
 
@@ -49,6 +49,8 @@ struct ProtocolContract {
     comment_thread: CommentThread,
     /// One review-thread message.
     comment_message: CommentMessage,
+    /// Applied snapshot delta used for incremental frontend synchronization.
+    document_sync: DocumentSyncDelta,
     /// Structured block-level diff between two revisions.
     document_diff: DocumentDiffReport,
     /// Non-block metadata flags included in a document diff.

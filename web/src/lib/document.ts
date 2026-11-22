@@ -4,11 +4,12 @@ import type {
   CoverConfig,
   ReferencesConfig,
   ReportDocument,
+  DocumentSyncDelta,
   SourceEntry,
   ThemeConfig,
   TocConfig,
 } from "@/contracts/report-protocol";
-import { isRecord } from "@/lib/guards";
+import { isRecord, isStringArray } from "@/lib/guards";
 
 /**
  * A block whose `id` is guaranteed to be present after normalization.
@@ -123,6 +124,7 @@ export function normalizeDocumentResponse(raw: unknown): DocumentResponse {
     toc: isTocConfig(raw.toc) ? raw.toc : {},
     theme: isThemeConfig(raw.theme) ? raw.theme : {},
     references: isReferencesConfig(raw.references) ? raw.references : {},
+    lint: isRecord(raw.lint) ? raw.lint : {},
     sources: isSourceMap(raw.sources) ? raw.sources : undefined,
   };
 
@@ -142,4 +144,162 @@ export function normalizeDocumentResponse(raw: unknown): DocumentResponse {
     document,
     computed,
   };
+}
+
+function isDocumentSyncDelta(raw: unknown): raw is DocumentSyncDelta {
+  if (
+    !isRecord(raw) ||
+    typeof raw.doc_id !== "string" ||
+    typeof raw.from_revision !== "number" ||
+    typeof raw.to_revision !== "number" ||
+    !isStringArray(raw.block_ids) ||
+    !isComputedDocumentMeta(raw.computed)
+  ) {
+    return false;
+  }
+  if (
+    [raw.cover, raw.toc, raw.theme, raw.references, raw.lint, raw.sources].some(
+      (value) => value !== undefined && value !== null && !isRecord(value),
+    )
+  ) {
+    return false;
+  }
+  return !(
+    (raw.upserted_blocks !== undefined &&
+      (!Array.isArray(raw.upserted_blocks) ||
+        !raw.upserted_blocks.every(isBlock))) ||
+    (raw.removed_block_ids !== undefined &&
+      !isStringArray(raw.removed_block_ids))
+  );
+}
+
+/** Validate the applied snapshot delta returned by `GET /api/docs/{id}/sync`. */
+export function normalizeDocumentSyncDelta(raw: unknown): DocumentSyncDelta {
+  if (!isDocumentSyncDelta(raw)) {
+    throw new Error("Malformed document sync response");
+  }
+  return raw;
+}
+
+/**
+ * Reuse unchanged JSON branches so React memo boundaries survive a fresh
+ * server projection. Inputs are JSON values and therefore acyclic. Reused
+ * branches are materialized into the fresh `next` wire value; `previous` is
+ * never mutated.
+ */
+function reuseStructural<T>(previous: T, next: T): T {
+  if (Object.is(previous, next)) {
+    return previous;
+  }
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    let unchanged = previous.length === next.length;
+    for (let index = 0; index < next.length; index += 1) {
+      const nextValue = reuseStructural(previous[index], next[index]);
+      next[index] = nextValue;
+      unchanged &&= Object.is(nextValue, previous[index]);
+    }
+    return unchanged ? previous : next;
+  }
+  if (isRecord(previous) && isRecord(next)) {
+    const previousKeys = Object.keys(previous);
+    const nextKeys = Object.keys(next);
+    let unchanged = previousKeys.length === nextKeys.length;
+    for (const [key, value] of Object.entries(next)) {
+      const nextValue = reuseStructural(previous[key], value);
+      Reflect.set(next, key, nextValue);
+      unchanged &&=
+        Object.hasOwn(previous, key) && Object.is(nextValue, previous[key]);
+    }
+    return unchanged ? previous : next;
+  }
+  return next;
+}
+
+function sameBlockIdentity(
+  previous: readonly ReportBlock[],
+  next: readonly ReportBlock[],
+): boolean {
+  return (
+    previous.length === next.length &&
+    previous.every((block, index) => block === next[index])
+  );
+}
+
+/**
+ * Apply a canonical server snapshot delta while preserving every unchanged
+ * block and computed branch. Any local/remote revision mismatch fails closed;
+ * the caller must recover with a full document load instead of applying a
+ * partial patch to the wrong base.
+ */
+export function applyDocumentSync(
+  current: DocumentResponse,
+  delta: DocumentSyncDelta,
+): DocumentResponse {
+  if (delta.doc_id !== current.document.doc_id) {
+    throw new Error("Document sync response belongs to another document");
+  }
+  if (delta.to_revision === current.current_rev) {
+    return current;
+  }
+  if (
+    delta.from_revision !== current.current_rev ||
+    delta.to_revision < delta.from_revision
+  ) {
+    throw new Error("Document sync response has a stale base revision");
+  }
+
+  const upserted = new Map<string, ReportBlock>();
+  for (const [index, block] of (delta.upserted_blocks ?? []).entries()) {
+    const normalized = normalizeBlock(block, index);
+    if (upserted.has(normalized.id)) {
+      throw new Error("Document sync response contains duplicate upserts");
+    }
+    upserted.set(normalized.id, normalized);
+  }
+  const previousById = new Map(
+    current.document.blocks.map((block) => [block.id, block]),
+  );
+  const seen = new Set<string>();
+  const nextBlocks = delta.block_ids.map((id) => {
+    if (seen.has(id)) {
+      throw new Error("Document sync response contains duplicate block IDs");
+    }
+    seen.add(id);
+    const block = upserted.get(id) ?? previousById.get(id);
+    if (!block) {
+      throw new Error(`Document sync response is missing block ${id}`);
+    }
+    upserted.delete(id);
+    return block;
+  });
+  if (upserted.size > 0) {
+    throw new Error("Document sync response contains unreferenced upserts");
+  }
+
+  const blocks = sameBlockIdentity(current.document.blocks, nextBlocks)
+    ? current.document.blocks
+    : nextBlocks;
+  const next: DocumentResponse = {
+    current_rev: delta.to_revision,
+    document: {
+      ...current.document,
+      revision: delta.to_revision,
+      blocks,
+      cover: isCoverConfig(delta.cover) ? delta.cover : current.document.cover,
+      toc: isTocConfig(delta.toc) ? delta.toc : current.document.toc,
+      theme: isThemeConfig(delta.theme) ? delta.theme : current.document.theme,
+      references: isReferencesConfig(delta.references)
+        ? delta.references
+        : current.document.references,
+      lint: isRecord(delta.lint) ? delta.lint : current.document.lint,
+      sources:
+        delta.sources === undefined
+          ? current.document.sources
+          : isSourceMap(delta.sources)
+            ? delta.sources
+            : current.document.sources,
+    },
+    computed: reuseStructural(current.computed, delta.computed),
+  };
+  return next;
 }

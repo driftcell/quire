@@ -351,6 +351,7 @@ COMMENTS (SIDE-CHANNEL REVIEW)
 FRONTEND CONTRACT
 - Frontend is read-only. It consumes GET /api/docs/{doc_id} canonical JSON + computed metadata and SSE revision deltas.
 - GET /api/docs/{doc_id}/diff?fromRev=A&toRev=B returns structured block-level Added/Removed/Modified entries plus metadata flags.
+- GET /api/docs/{doc_id}/sync?fromRev=A returns an applied snapshot delta through the current revision: exact target block order, only added/modified blocks, removed IDs, changed document configuration and canonical computed metadata. Read-only frontends use it for incremental live sync; the full document endpoint remains the initial-load and gap-recovery contract.
 - SourceEntry.excerpt carries verbatim evidence; computed.chart_tables carries renderer-ready ECharts data tables grouped by block ID.
 - SSE events: revision, ephemeral_preview, agent_presence, ephemeral_clear, comment_updated, sync_required, plus heartbeat comments.
 - Do not send cursor/presence edits other than optional ephemeral previews. When a previewed block is committed, pass its preview IDs as preview_ids to apply_operations so revision.cleared_preview_ids clears the placeholder atomically. A no-op commit emits ephemeral_clear immediately instead of creating a revision.

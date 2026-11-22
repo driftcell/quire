@@ -78,7 +78,9 @@ function renderTable(
       slice={{ block, ...sliceOverrides }}
       isPaged={true}
       printMode={true}
-      computed={computed}
+      citationMap={computed.citation_map}
+      framing={computed.block_framing[block.id]}
+      tableLayout={computed.table_layouts[block.id]}
       bibliographyById={bibliographyById}
       commentCount={0}
       onCitationClick={() => {}}
