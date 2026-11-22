@@ -96,7 +96,7 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 - **克制调用 `designer`**：内容批准后再做纯版式调整。用户没有特殊样式、封面或版式要求时，直接使用 `create_report` 默认的庄重学术样式，无需调用样式 skill 或派发 `designer`；最终核对 lint、硬要求和实际渲染，若仍需改内容则回到独立审校。
 - 仅当用户明确提出样式/装帧定制需求时才调用 `designer` 配置封面、目录、页眉页脚与主题 CSS token。
 - **禁止擅自开启章节强制分页**：除非用户明确要求“每章另起一页”，严禁调用 `configure_page_chrome` 将 `heading_page_break` 设为 `"h1"` 或 `"h1_and_h2"`，也严禁在 Heading 块上设置 `page_break_before: true`，避免产生只有几行字的半空页。
-- 定稿前逐项审计 `lint_ignore`：修订后规则已不再触发的陈旧抑制必须清除；仍触发的抑制须保留具体证据理由，不能以“终审通过”代替说明，也不能为追求表面零警告补重复图表。
+- 定稿前按全量块清单逐项审计 `lint_ignore`，不得只抽查本轮改动或近期告警块：修订后规则已不再触发的陈旧抑制必须清除；仍触发的抑制须保留具体证据理由，不能以“终审通过”代替说明，也不能为追求表面零警告补重复图表。
 
 ## 撰稿核心契约（正向规则）
 

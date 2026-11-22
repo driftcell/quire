@@ -93,6 +93,8 @@ agent prompts do not duplicate the complete lint catalog.
   whole report in parallel.
 - Source count, visual count, zero lint warnings and zero page overflow are necessary checks where
   applicable, but none independently proves publication quality.
+- Final suppression review covers the complete block list, not only blocks edited in the latest round.
+  Stale `lint_ignore` entries are removed; active entries require current-revision evidence.
 - A reviewer cannot approve only the edited regression subset: final approval requires the full current
   document and all post-approval content changes to be reviewed again.
 
@@ -107,6 +109,30 @@ agent prompts do not duplicate the complete lint catalog.
   anti-decorative `QR419` repair contract.
 - The authoring workflow is verified through unit tests, `quire-server/tests/e2e_multi_agent_workflow.rs`,
   runtime native-tool tests and fresh same-prompt report generation with document and trace review.
+
+### Same-prompt acceptance evidence
+
+A fresh session (`sess_y416xn07sh76`) used the original user prompt and the original scope answers. One
+pilot writer completed before five remaining writers started in parallel. The final document
+`2021-2025-6h89g98h` is at revision 69 and contains 297 blocks, including 261 paragraphs, seven tables
+and four ECharts charts. All 30 registered sources have evidence excerpts and are cited.
+
+After citation-marker cleanup, the prose contains 51,884 visible characters across 261 paragraphs
+(mean 198.8, maximum 353). There are no `QR417` or `QR426` diagnostics and no editorial meta-labels.
+The lead rewrote the conclusion after all body chapters were complete; it is the final level-1 section,
+followed only by references. Browser checks confirmed all 297 blocks, the original prompt and final
+approval message, polished conclusion wording, and 58 A4 pages with no horizontal overflow or console
+errors.
+
+Final live lint reports zero errors and zero suppressed diagnostics. Eighteen `QR419`, two `QR204`, four
+`QR205` and eleven `QR413` diagnostics remain visible by design: the corresponding prose/visual and A4
+reviews found no repair that would add information rather than duplication. A full block audit removed
+83 stale `QR419` suppressions instead of hiding those diagnostics again. The reviewer returned
+`APPROVED rev=69`, with no content or metadata mutation after approval.
+
+The generation also exercised the pending-failure recovery path: a failed main run released its queued
+message once no active run remained, the queue emptied, canonical user/assistant receipts projected
+successfully, and the final run completed without another prefix error.
 
 Full gate:
 

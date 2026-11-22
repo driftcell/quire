@@ -67,3 +67,10 @@ writing. In return, factual and stylistic defects are caught before they replica
 agents spend fewer turns guessing sources, counts and lint thresholds. Verification includes unit and
 workflow tests plus a fresh same-prompt long-report generation inspected through its final document and
 main/subagent traces.
+
+The final acceptance reached `APPROVED rev=69`: 51,884 visible prose characters in 261 focused
+paragraphs, 30 cited sources with excerpts, seven tables and four charts, zero `QR417`/`QR426`, no stale
+suppressions, and no post-approval mutations. Eighteen `QR419`, two `QR204`, four `QR205` and eleven
+`QR413` diagnostics remain visible after review rather than being hidden with new suppressions or
+duplicate visuals. This is an intentional acceptance of transparent advisories, not a claim that zero
+warnings is always the correct delivery target.
