@@ -709,6 +709,9 @@ pub(super) fn dense_prose_section_exempt(text: &str) -> bool {
     heading_list_contains(OPENING_SECTION_HEADINGS, label, &lowered)
         || heading_list_contains(CLOSING_SECTION_HEADINGS, label, &lowered)
         || heading_list_contains(DENSE_PROSE_EXEMPT_SECTION_HEADINGS, label, &lowered)
+        || ["建议", "举措", "路径"]
+            .iter()
+            .any(|marker| label.contains(marker))
 }
 
 fn section_label(text: &str) -> &str {

@@ -685,6 +685,109 @@ fn table_layout_rules_are_detected() {
 }
 
 #[test]
+fn qr205_allows_explicit_percentage_rows_in_indicator_tables() {
+    let mut document = doc();
+    document.blocks.push(table(
+        "row-oriented-units",
+        None,
+        vec![
+            ColumnNode::leaf("metric", "指标"),
+            ColumnNode::leaf("ours", "我校"),
+            ColumnNode::leaf("peer", "对标校"),
+        ],
+        vec![
+            row(&[
+                ("metric", CellValue::text("立项总数")),
+                ("ours", CellValue::Integer(227)),
+                ("peer", CellValue::Integer(245)),
+            ]),
+            row(&[
+                ("metric", CellValue::text("面上项目")),
+                ("ours", CellValue::Integer(93)),
+                ("peer", CellValue::Integer(136)),
+            ]),
+            row(&[
+                ("metric", CellValue::text("青年项目占比")),
+                ("ours", CellValue::text("54.6%")),
+                ("peer", CellValue::text("38.0%")),
+            ]),
+            row(&[
+                ("metric", CellValue::text("面上项目占比")),
+                ("ours", CellValue::text("41.0%")),
+                ("peer", CellValue::text("55.5%")),
+            ]),
+        ],
+    ));
+    assert!(
+        !has_code(&lint_document(&document), "QR205"),
+        "explicit percentage indicator rows must not make entity columns look unit-inconsistent"
+    );
+}
+
+#[test]
+fn qr206_distinguishes_metric_time_totals_from_summary_rows() {
+    let mut time_window = doc();
+    time_window.blocks.push(table(
+        "metric-time-total",
+        None,
+        vec![
+            ColumnNode::leaf("metric", "指标"),
+            ColumnNode::leaf("ours", "我校"),
+            ColumnNode::leaf("peer", "对标校"),
+        ],
+        vec![
+            row(&[
+                ("metric", CellValue::text("国家自然科学基金（2025年）")),
+                ("ours", CellValue::Integer(93)),
+                ("peer", CellValue::Integer(81)),
+            ]),
+            row(&[
+                ("metric", CellValue::text("国家自然科学基金（2026年）")),
+                ("ours", CellValue::Integer(100)),
+                ("peer", CellValue::Integer(98)),
+            ]),
+            row(&[
+                (
+                    "metric",
+                    CellValue::text("国家科学技术奖（2023、2025年合计）"),
+                ),
+                ("ours", CellValue::Integer(1)),
+                ("peer", CellValue::Integer(2)),
+            ]),
+        ],
+    ));
+    assert!(
+        !has_code(&lint_document(&time_window), "QR206"),
+        "a metric's own time-window total is not a whole-table summary row"
+    );
+
+    let mut entity_total = doc();
+    entity_total.blocks.push(table(
+        "entity-total",
+        None,
+        vec![
+            ColumnNode::leaf("entity", "学校"),
+            ColumnNode::leaf("count", "项目数").with_type(ColumnDataType::Number),
+        ],
+        vec![
+            row(&[
+                ("entity", CellValue::text("甲校")),
+                ("count", CellValue::Integer(1)),
+            ]),
+            row(&[
+                ("entity", CellValue::text("乙校")),
+                ("count", CellValue::Integer(2)),
+            ]),
+            row(&[
+                ("entity", CellValue::text("两校合计")),
+                ("count", CellValue::Integer(3)),
+            ]),
+        ],
+    ));
+    assert!(!has_code(&lint_document(&entity_total), "QR206"));
+}
+
+#[test]
 fn qr201_rejects_explicit_widths_below_readable_floors() {
     let mut document = doc();
     document.blocks.push(
@@ -2697,6 +2800,9 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
         "存在问题与下一步工作",
         "保障措施",
         "落实要求",
+        "建设路径：由规模扩张转向层级跃迁效率",
+        "布局优化路径",
+        "工作举措",
     ] {
         let mut exempt = doc();
         exempt.blocks.push(heading("exempt-h2", 2, title));
@@ -2737,6 +2843,43 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
         .collect();
     assert_eq!(hits.len(), 1, "{:?}", report.diagnostics);
     assert_eq!(hits[0].block_id.as_ref(), Some(&bid("after-table-4")));
+
+    let mut visually_served = doc();
+    visually_served
+        .blocks
+        .push(heading("visual-section", 1, "规模结构"));
+    for (index, id) in ["visual-a", "visual-b"].iter().enumerate() {
+        visually_served.blocks.push(table(
+            id,
+            None,
+            vec![ColumnNode::leaf("value", "值")],
+            vec![row(&[("value", CellValue::Integer(index as i64 + 1))])],
+        ));
+        visually_served.blocks.push(paragraph(
+            &format!("visual-bridge-{index}"),
+            "图表之间的解释。",
+        ));
+    }
+    for index in 1..=4 {
+        visually_served
+            .blocks
+            .push(paragraph(&format!("visual-prose-{index}"), text.as_str()));
+    }
+    assert!(
+        !has_code(&lint_document(&visually_served), "QR419"),
+        "a section already served by two visuals must not be forced to add another"
+    );
+
+    let mut h1_path = doc();
+    h1_path
+        .blocks
+        .push(heading("h1-path", 1, "建设路径：提高层级跃迁效率"));
+    for index in 1..=4 {
+        h1_path
+            .blocks
+            .push(paragraph(&format!("h1-path-{index}"), text.as_str()));
+    }
+    assert!(!has_code(&lint_document(&h1_path), "QR419"));
 
     let medium_text = "数".repeat(300);
     let mut h3 = doc();

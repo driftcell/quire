@@ -242,14 +242,33 @@ fn check_numeric_units(
     shape: &TableShape,
     index: usize,
 ) {
+    let first_key = shape.leaves.first().map(|leaf| leaf.key.as_str());
     for leaf in &shape.leaves {
-        let values: Vec<String> = table
-            .rows
-            .iter()
-            .filter_map(|row| row.get(&leaf.key))
-            .map(|cell| display_cell(cell, leaf.data_type))
-            .filter(|value| !is_placeholder_empty(value))
-            .collect();
+        let mut values = Vec::new();
+        for row in &table.rows {
+            let Some(cell) = row.get(&leaf.key) else {
+                continue;
+            };
+            let value = display_cell(cell, leaf.data_type);
+            if is_placeholder_empty(&value) {
+                continue;
+            }
+            // In row-oriented indicator tables, explicitly labelled percentage
+            // rows may coexist with count rows in the same entity columns.
+            let explicit_percent_row = first_key.is_some_and(|first_key| {
+                first_key != leaf.key
+                    && value.contains('%')
+                    && row.get(first_key).is_some_and(|label| {
+                        let label = label.display_text();
+                        ["占比", "比例", "百分", "增长率", "费率"]
+                            .iter()
+                            .any(|marker| label.contains(marker))
+                    })
+            });
+            if !explicit_percent_row {
+                values.push(value);
+            }
+        }
         if values.len() < 2 {
             continue;
         }
@@ -432,10 +451,25 @@ fn is_total_summary_row(row: &TableRow, first_key: &str) -> bool {
     row.get(first_key).is_some_and(|cell| {
         let text = cell.display_text();
         let text = text.trim();
-        (text.contains("合计") || text.contains("总计"))
-            && !["平均", "均值", "占比", "比例", "率", "排名", "位次"]
-                .iter()
-                .any(|marker| text.contains(marker))
+        if ["平均", "均值", "占比", "比例", "率", "排名", "位次"]
+            .iter()
+            .any(|marker| text.contains(marker))
+        {
+            return false;
+        }
+        if text.starts_with("合计") || text.starts_with("总计") {
+            return true;
+        }
+        // Permit short entity prefixes such as `三校合计`, but do not confuse
+        // a metric's own time-window total with a whole-table summary row.
+        ["合计", "总计"].iter().any(|marker| {
+            text.strip_suffix(marker).is_some_and(|prefix| {
+                let prefix = prefix.trim();
+                !prefix.is_empty()
+                    && prefix.chars().count() <= 6
+                    && !prefix.contains(['(', '（', '[', '【'])
+            })
+        })
     })
 }
 

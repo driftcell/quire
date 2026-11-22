@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-store`, `quire-server`
-- **Related Notes:** `../notes/quire_lint_registry_split.md`, `../notes/quire_lint_incremental_refactor.md`
+- **Related Notes:** `../notes/quire_lint_registry_split.md`, `../notes/quire_lint_incremental_refactor.md`, `../notes/report_prompt_lint_calibration.md`
 
 ## 1. Scope & Non-Goals
 
@@ -82,18 +82,28 @@ marker. Higher-education units include `项`, `篇`, `所`, `名`, `位`, `倍`,
 years, durations, chapter numbers and structural counts such as `3个方面` do not trigger it.
 
 `QR206` verifies `合计`/`总计` rows in canonical `summary_rows`, falling back to a final body summary
-row when no canonical total exists. Body detail rows exclude a trailing total and at least two detail
-rows are required. Non-negative fixed-point decimals and thousands commas are supported;
+row when no canonical total exists. Direct labels and short entity prefixes such as `两校合计` are
+recognized, but a metric's own long-prefix or parenthesized time-window total (for example
+`国家科学技术奖（2023、2025年合计）`) is not treated as a whole-table summary. Body detail rows exclude
+a trailing total and at least two detail rows are required. Non-negative fixed-point decimals and thousands commas are supported;
 empty/`-`/`—` detail cells count as zero. Percentage, rate, rank, position and average columns are
 not additive and are skipped. Comparison allows half a unit at the summary cell's displayed precision;
 a note declaring `四舍五入` retains its existing whole-table exemption. Fixed-width 2-4 part integer
 composites separated by `/`, `／` or `·` remain supported. Each mismatched summary cell reports with a
 path into `rows` or `summary_rows`, and the hint carries the exact expected value.
 
+`QR205` still rejects mixed percentages/plain numbers, currencies and extreme decimal precision inside
+an ordinary numeric column. In row-oriented indicator tables, however, percentage cells whose leading
+metric label explicitly contains `占比`, `比例`, `百分`, `增长率` or `费率` are excluded from that
+column's unit mixture check. Count rows and clearly labelled percentage rows can therefore coexist in
+the same school/entity columns without suppression.
+
 `QR203` compares formatted cell display values across tables with at least three body rows. A non-empty
 column whose values are all identical reports once, regardless of whether the shared value is text or a
 number; the repair moves that invariant into the title/note instead of spending a column on it. Empty or
-placeholder-only columns remain owned by `QR202`.
+placeholder-only columns remain owned by `QR202`. An all-zero entity column still reports, but a local
+suppression is legitimate when the zero record is itself the comparison's key evidence and the note
+explicitly distinguishes verified zeroes from missing data.
 
 `QR201` checks every explicit column width against the single-line header and a readable body floor;
 numeric and summary cells retain their widest-cell requirement, and CJK entity text has a 76px
@@ -186,13 +196,15 @@ data/entities, is exempt.
 For other official-document columns, the repair hint preserves the column label and adds a concrete
 judgment after a colon.
 
-`QR419` detects dense prose sections that should become a visual. It tracks the current H2 section,
+`QR419` detects dense prose sections that should become a visual. It tracks the current H1/H2 section,
 resets on a new H1/H2 and after any Table/ECharts/CustomHtml, and does not let H3-H6 split a prose run.
 Four or more non-visual paragraphs (or non-empty quotes) totaling 1000+ visible characters in a
-non-exempt section report once. Opening, conclusion and abstract sections are exempt, as are
-recommendation, next-step, implementation and safeguard sections. Section matching uses the normalized
-column label before any colon, so variants such as `四、结语` and `对策建议：……` receive the same
-exemption.
+non-exempt section report once. Opening, conclusion and abstract sections are exempt at either level,
+as are recommendation, next-step, implementation and safeguard sections; labels containing `建议`,
+`举措` or `路径` receive the same prose-friendly treatment. A section already containing at least two
+Table/ECharts/CustomHtml blocks is visually served and does not report, regardless of where its prose
+runs occur. Section matching uses the normalized column label before any colon, so variants such as
+`四、结语` and `对策建议：……` receive the same exemption.
 
 `QR420` flags Table and ECharts notes whose trimmed start begins with `注：`, `注:`, `表注：`,
 `表注:`, `图注：`, `图注:` or `Note:`/`note:`. The renderer already prepends `注：`, so keeping the
@@ -307,10 +319,13 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
   same parent/level/family group; `QR416` reports only the third visual in a run; `QR417` checks only
   single-paragraph walls and never
   shares a multi-paragraph diagnostic with `QR419`; `QR418` skips level-1 headings, numbering-only
-  prefixes and positional introduction/conclusion headings; `QR419` reports once per non-exempt H2
-  prose run; `QR420` only inspects Table/ECharts notes.
-- `QR108` matches hosts exactly or as subdomains, so lookalike domains do not report;
-  `QR206` reports at most once per mismatched summary cell and carries the expected sum in its hint.
+  prefixes and positional introduction/conclusion headings; `QR419` reports once per non-exempt H1/H2
+  prose run and never demands a third visual in an already visually served section; `QR420` only inspects
+  Table/ECharts notes.
+- `QR108` matches hosts exactly or as subdomains, so lookalike domains do not report; `QR205` permits
+  explicit percentage indicator rows without permitting mixed units in an ordinary numeric column;
+  `QR206` distinguishes metric time-window totals from table summaries, reports at most once per
+  mismatched summary cell and carries the expected sum in its hint.
 - Hint groups are deterministic, merged by block, capped at five expanded groups, and preserve tier
   order; `apply_operations` never advances past inline warnings without naming the affected blocks.
 - Document and block ignore policies survive reload, revision updates and rollback.

@@ -627,6 +627,33 @@ fn check_wall_of_text(document: &ReportDocument, engine: &mut Engine<'_>) {
 }
 
 fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>) {
+    let mut section_visual_totals = vec![0usize; document.blocks.len()];
+    let mut counted_section = None;
+    let mut visual_total = 0usize;
+    for (index, block) in document.blocks.iter().enumerate() {
+        match &block.body {
+            BlockKind::Heading { level, .. } if *level == 1 || *level == 2 => {
+                if let Some(start) = counted_section.replace(index)
+                    && let Some(total) = section_visual_totals.get_mut(start)
+                {
+                    *total = visual_total;
+                }
+                visual_total = 0;
+            }
+            BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_)
+                if counted_section.is_some() =>
+            {
+                visual_total = visual_total.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+    if let Some(start) = counted_section
+        && let Some(total) = section_visual_totals.get_mut(start)
+    {
+        *total = visual_total;
+    }
+
     let mut exempt = false;
     let mut prose_blocks = 0usize;
     let mut prose_chars = 0usize;
@@ -637,7 +664,8 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 prose_blocks = 0;
                 prose_chars = 0;
                 reported = false;
-                exempt = *level == 2 && dense_prose_section_exempt(text);
+                exempt = dense_prose_section_exempt(text)
+                    || section_visual_totals.get(index).copied().unwrap_or(0) >= 2;
             }
             BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_) => {
                 prose_blocks = 0;
