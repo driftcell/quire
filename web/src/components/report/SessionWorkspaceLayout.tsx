@@ -77,14 +77,14 @@ export function SessionWorkspaceLayout({
                     leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"
                   }
                   onClick={toggleSidebar}
-                  className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+                  className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-2.5 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-3.5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
                 />
               }
             >
               {leftSidebarOpen ? (
-                <ChevronLeftIcon className="size-3.5" />
+                <ChevronLeftIcon className="size-2.5" />
               ) : (
-                <ChevronRightIcon className="size-3.5" />
+                <ChevronRightIcon className="size-2.5" />
               )}
             </TooltipTrigger>
             <TooltipContent>

@@ -135,12 +135,12 @@ export const SessionReportPane = memo(function SessionReportPane({
           title={rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
           aria-label={rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
           onClick={onToggleRightSidebar}
-          className="focus-visible:ring-ring absolute top-1/2 right-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
+          className="focus-visible:ring-ring absolute top-1/2 right-0 z-30 flex h-12 w-2.5 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-3.5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
         >
           {rightSidebarOpen ? (
-            <ChevronRightIcon className="size-3.5" />
+            <ChevronRightIcon className="size-2.5" />
           ) : (
-            <ChevronLeftIcon className="size-3.5" />
+            <ChevronLeftIcon className="size-2.5" />
           )}
         </button>
       )}
