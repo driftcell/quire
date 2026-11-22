@@ -38,10 +38,43 @@ pub(super) enum RunTermination {
     AskUser,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct ModelTurnPricing {
+    pub(super) context_limit: u64,
+    pub(super) cost_input: Option<f64>,
+    pub(super) cost_output: Option<f64>,
+    pub(super) cost_cache_read: Option<f64>,
+}
+
+impl ModelTurnPricing {
+    pub(super) fn calculate_cost_rmb(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cached_tokens: u64,
+    ) -> Option<f64> {
+        if self.cost_input.is_none() && self.cost_output.is_none() && self.cost_cache_read.is_none()
+        {
+            return None;
+        }
+        let uncached_input = input_tokens.saturating_sub(cached_tokens);
+        let input_rate = self.cost_input.unwrap_or(0.0);
+        let output_rate = self.cost_output.unwrap_or(0.0);
+        let cache_rate = self.cost_cache_read.or(self.cost_input).unwrap_or(0.0);
+        Some(
+            ((uncached_input as f64) * input_rate
+                + (cached_tokens as f64) * cache_rate
+                + (output_tokens as f64) * output_rate)
+                / 1_000_000.0,
+        )
+    }
+}
+
 #[derive(Default)]
 pub(super) struct TurnRunState {
     pub(super) termination: RunTermination,
     pub(super) last_usage: Option<Usage>,
+    pub(super) emitted_live_usage: bool,
     turn_has_ask_user: bool,
     started: HashMap<String, Instant>,
 }
@@ -58,6 +91,7 @@ pub(super) struct TurnControlHook {
     scope: StreamEventSender,
     queue: Option<PendingQueueCoordinator>,
     kb_update_notice: Option<String>,
+    pricing: Option<ModelTurnPricing>,
     state: SharedTurnState,
 }
 
@@ -67,6 +101,7 @@ impl TurnControlHook {
         scope: StreamEventSender,
         queue: PendingQueueCoordinator,
         kb_update_notice: Option<String>,
+        pricing: ModelTurnPricing,
         state: SharedTurnState,
     ) -> Self {
         Self {
@@ -74,6 +109,7 @@ impl TurnControlHook {
             scope,
             queue: Some(queue),
             kb_update_notice,
+            pricing: Some(pricing),
             state,
         }
     }
@@ -89,6 +125,7 @@ impl TurnControlHook {
             scope,
             queue: None,
             kb_update_notice: None,
+            pricing: None,
             state,
         }
     }
@@ -164,10 +201,21 @@ impl AgentHook for TurnControlHook {
         self.state.lock().await.last_usage = Some(event.usage);
         if self.execution.cancellation.is_cancelled() {
             terminate(&self.state, RunTermination::Cancelled).await;
-            ModelTurnAction::stop(CANCELLED_REASON)
-        } else {
-            ModelTurnAction::continue_run()
+            return ModelTurnAction::stop(CANCELLED_REASON);
         }
+        if let Some(pricing) = self.pricing {
+            let mut usage = super::context_usage(&event.usage, pricing.context_limit);
+            usage.cost_rmb = pricing.calculate_cost_rmb(
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cached_tokens,
+            );
+            if usage.input_tokens > 0 || usage.output_tokens > 0 || usage.cached_tokens > 0 {
+                self.state.lock().await.emitted_live_usage = true;
+                self.scope.send(ModelStreamEvent::Usage(usage)).await;
+            }
+        }
+        ModelTurnAction::continue_run()
     }
 
     async fn on_text_delta(&self, _ctx: &HookContext, event: TextDelta<'_>) -> ObservationAction {

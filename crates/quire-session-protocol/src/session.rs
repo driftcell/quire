@@ -123,13 +123,16 @@ pub struct SessionCommentRef {
     pub comment: String,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ContextUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cached_tokens: u64,
     pub context_used: u64,
     pub context_limit: u64,
+    /// Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost_rmb: Option<f64>,
 }
 
 /// Why a message is waiting in the per-session queue.

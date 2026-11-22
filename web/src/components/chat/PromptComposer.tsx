@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpIcon,
+  CoinsIcon,
   FileIcon,
   Minimize2Icon,
   PlusIcon,
@@ -41,6 +42,7 @@ import type {
   SessionCommentRef,
 } from "@/contracts/session-protocol";
 import { errorMessage } from "@/lib/errors";
+import { useImeCompositionGuard } from "@/lib/ime";
 import { selectionRangeLabel } from "@/components/report/reportSelection";
 
 export interface PendingAttachment {
@@ -82,6 +84,87 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
   return String(n);
+}
+
+export function formatSessionCostRmb(costRmb: number): string {
+  const safe = Number.isFinite(costRmb) && costRmb > 0 ? costRmb : 0;
+  if (safe === 0) {
+    return "¥0.0000";
+  }
+  if (safe < 0.0001) {
+    return `¥${safe.toFixed(6)}`;
+  }
+  if (safe < 1) {
+    return `¥${safe.toFixed(4)}`;
+  }
+  return `¥${safe.toFixed(3)}`;
+}
+
+/**
+ * Smooth "gas-pump odometer" interpolation hook. When the session's cumulative
+ * cost increases (from main agent or subagent turns), it smoothly rolls the
+ * displayed value at 60fps over ~560ms with cubic ease-out.
+ */
+function useGasPumpCostOdometer(targetCostRmb: number | null | undefined): {
+  displayedCost: number;
+  isRolling: boolean;
+} {
+  const target =
+    typeof targetCostRmb === "number" &&
+    Number.isFinite(targetCostRmb) &&
+    targetCostRmb >= 0
+      ? targetCostRmb
+      : 0;
+  const [displayedCost, setDisplayedCost] = useState(target);
+  const [isRolling, setIsRolling] = useState(false);
+  const currentRef = useRef(target);
+
+  useEffect(() => {
+    const startValue = currentRef.current;
+    const diff = target - startValue;
+    if (Math.abs(diff) < 1e-8) {
+      currentRef.current = target;
+      return undefined;
+    }
+    if (
+      typeof window === "undefined" ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      currentRef.current = target;
+      // oxlint-disable-next-line react/set-state-in-effect -- SSR/non-DOM fallback
+      setDisplayedCost(target);
+      return undefined;
+    }
+
+    const durationMs = 560;
+    const startedAt = window.performance.now();
+    let frameId = 0;
+    setIsRolling(true);
+
+    const step = (now: number) => {
+      const elapsed = Math.max(0, now - startedAt);
+      const progress = Math.min(1, elapsed / durationMs);
+      const eased = 1 - (1 - progress) ** 3;
+      const nextValue = startValue + diff * eased;
+      currentRef.current = nextValue;
+      setDisplayedCost(nextValue);
+      if (progress < 1) {
+        frameId = window.requestAnimationFrame(step);
+      } else {
+        currentRef.current = target;
+        setDisplayedCost(target);
+        setIsRolling(false);
+      }
+    };
+
+    frameId = window.requestAnimationFrame(step);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      setIsRolling(false);
+    };
+  }, [target]);
+
+  return { displayedCost, isRolling };
 }
 
 function ContextRing({ pct }: { pct: number }) {
@@ -144,6 +227,7 @@ export function PromptComposer({
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const ime = useImeCompositionGuard();
 
   useEffect(() => {
     if (prefill) {
@@ -167,6 +251,12 @@ export function PromptComposer({
   const used = contextUsage?.context_used ?? 0;
   const limit = contextUsage?.context_limit ?? 0;
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const rawCostRmb = contextUsage?.cost_rmb;
+  const hasCost =
+    rawCostRmb !== undefined &&
+    rawCostRmb !== null &&
+    Number.isFinite(rawCostRmb);
+  const { displayedCost, isRolling } = useGasPumpCostOdometer(rawCostRmb);
 
   const submit = async () => {
     const trimmed = text.trim();
@@ -328,6 +418,8 @@ export function PromptComposer({
           disabled={disabled || sending}
           className="max-h-40 min-h-12 resize-none px-3.5 pt-3 text-sm"
           onChange={(event) => setText(event.target.value)}
+          onCompositionStart={ime.onCompositionStart}
+          onCompositionEnd={ime.onCompositionEnd}
           onPaste={(event) => {
             const pastedFiles = Array.from(event.clipboardData.files);
             if (pastedFiles.length > 0) {
@@ -335,11 +427,7 @@ export function PromptComposer({
             }
           }}
           onKeyDown={(event) => {
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.nativeEvent.isComposing
-            ) {
+            if (ime.isSubmitEnter(event)) {
               event.preventDefault();
               void submit();
             }
@@ -374,7 +462,7 @@ export function PromptComposer({
               <PlusIcon className="size-4" />
             </InputGroupButton>
 
-            {contextUsage && limit > 0 && (
+            {contextUsage && (limit > 0 || hasCost) && (
               <HoverCard>
                 <HoverCardTrigger
                   render={
@@ -382,14 +470,40 @@ export function PromptComposer({
                       type="button"
                       size="xs"
                       variant="ghost"
+                      data-slot="context-usage-trigger"
                       className="gap-1.5 text-xs text-muted-foreground tabular-nums"
                     />
                   }
                 >
-                  <ContextRing pct={pct} />
-                  <span>{pct}%</span>
+                  {limit > 0 && (
+                    <>
+                      <ContextRing pct={pct} />
+                      <span>{pct}%</span>
+                    </>
+                  )}
+                  {(hasCost || used > 0) && (
+                    <>
+                      {limit > 0 && (
+                        <span className="text-border" aria-hidden="true">
+                          ·
+                        </span>
+                      )}
+                      <span
+                        data-slot="session-cost-odometer"
+                        data-rolling={isRolling ? "true" : "false"}
+                        className={`inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums transition-colors duration-200 ${
+                          isRolling
+                            ? "font-medium text-emerald-600 dark:text-emerald-400"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        <CoinsIcon className="size-3 shrink-0 opacity-75" />
+                        <span>{formatSessionCostRmb(displayedCost)}</span>
+                      </span>
+                    </>
+                  )}
                 </HoverCardTrigger>
-                <HoverCardContent className="w-64 space-y-2.5">
+                <HoverCardContent className="w-68 space-y-2.5">
                   <div className="flex items-center justify-between text-xs font-medium">
                     <span>上下文占用</span>
                     <span className="tabular-nums">
@@ -416,6 +530,15 @@ export function PromptComposer({
                         {formatTokens(contextUsage.cached_tokens)}
                       </div>
                     </div>
+                  </div>
+                  <div className="flex items-center justify-between border-t border-border/60 pt-2 text-xs">
+                    <span className="text-muted-foreground">会话累计费用</span>
+                    <span
+                      data-slot="session-cost-detail"
+                      className="font-mono font-medium text-foreground tabular-nums"
+                    >
+                      {`¥${(rawCostRmb ?? 0).toFixed(6)}`}
+                    </span>
                   </div>
                   {onCompact && (
                     <Tooltip>

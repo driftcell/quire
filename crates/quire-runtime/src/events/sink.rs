@@ -113,6 +113,7 @@ impl<L: SessionEventLog> EventSink<L> {
                     cached_tokens: usage.cached_tokens,
                     context_used: usage.context_used,
                     context_limit: usage.context_limit,
+                    cost_rmb: usage.cost_rmb,
                 };
                 self.emit(scope, kind).await?;
                 Ok(ApplyOutcome {
@@ -317,6 +318,7 @@ mod tests {
             cached_tokens: 10,
             context_used: 120,
             context_limit: 200_000,
+            cost_rmb: None,
         }
     }
 

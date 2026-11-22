@@ -400,6 +400,13 @@
               "type": "integer",
               "format": "uint64",
               "minimum": 0
+            },
+            "cost_rmb": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
             }
           },
           "required": [
@@ -918,6 +925,14 @@
           "type": "integer",
           "format": "uint64",
           "minimum": 0
+        },
+        "cost_rmb": {
+          "description": "Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
         }
       },
       "required": [

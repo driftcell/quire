@@ -116,6 +116,8 @@ pub enum SessionEventKind {
         cached_tokens: u64,
         context_used: u64,
         context_limit: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cost_rmb: Option<f64>,
     },
     QuestionnaireRequested {
         question_id: String,
@@ -272,6 +274,7 @@ impl SessionEventKind {
                 cached_tokens: 0,
                 context_used: 2,
                 context_limit: 100,
+                cost_rmb: None,
             },
             Self::QuestionnaireRequested {
                 question_id: "q_1".into(),
@@ -365,6 +368,7 @@ mod tests {
                 cached_tokens: 60,
                 context_used: 120,
                 context_limit: 200_000,
+                cost_rmb: Some(0.0125),
             },
         );
         let json = serde_json::to_value(&event).unwrap();

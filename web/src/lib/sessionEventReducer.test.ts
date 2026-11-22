@@ -222,13 +222,26 @@ describe("run lifecycle guards", () => {
     expect(
       reduceSessionEvent(emptyLiveSessionState(), usage).state.liveUsage,
     ).toBeNull();
-    const mainUsage = reduceSessionEvent(emptyLiveSessionState(), {
+    const mainState = reduceSessionEvent(emptyLiveSessionState(), {
       ...usage,
       agent_id: "main",
       parent_run_id: null,
       run_id: "run_1",
+      cost_rmb: 0.0025,
+    }).state;
+    expect(mainState.liveUsage?.context_used).toBe(15);
+    expect(mainState.liveUsage?.cost_rmb).toBe(0.0025);
+
+    const afterSubagentCost = reduceSessionEvent(mainState, {
+      ...usage,
+      seq: 3,
+      context_used: 999,
+      context_limit: 5000,
+      cost_rmb: 0.0042,
     }).state.liveUsage;
-    expect(mainUsage?.context_used).toBe(15);
+    expect(afterSubagentCost?.context_used).toBe(15);
+    expect(afterSubagentCost?.context_limit).toBe(100);
+    expect(afterSubagentCost?.cost_rmb).toBe(0.0042);
   });
 });
 

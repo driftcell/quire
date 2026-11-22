@@ -471,6 +471,19 @@ export function reduceSessionEvent(
             cached_tokens: event.cached_tokens,
             context_used: event.context_used,
             context_limit: event.context_limit,
+            cost_rmb: event.cost_rmb ?? next.liveUsage?.cost_rmb ?? undefined,
+          },
+        };
+      } else if (
+        event.cost_rmb !== undefined &&
+        event.cost_rmb !== null &&
+        next.liveUsage
+      ) {
+        next = {
+          ...next,
+          liveUsage: {
+            ...next.liveUsage,
+            cost_rmb: event.cost_rmb,
           },
         };
       }

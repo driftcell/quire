@@ -1,3 +1,4 @@
+import { isNativeImeKeyEvent } from "@/lib/ime";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -380,7 +381,7 @@ export function CommentsPanel({
                             if (
                               event.key === "Enter" &&
                               !event.shiftKey &&
-                              !event.nativeEvent.isComposing
+                              !isNativeImeKeyEvent(event)
                             ) {
                               event.preventDefault();
                               void submitReply(thread.thread_id);

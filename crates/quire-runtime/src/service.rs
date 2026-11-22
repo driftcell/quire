@@ -1179,6 +1179,24 @@ impl RuntimeService {
             .system_prompt_for(session.kb_branch.as_deref())
             .await?;
         let latest_version = self.kb.current_version().await?;
+        let compaction_cost = self
+            .models
+            .resolve(&model_route)
+            .await
+            .ok()
+            .and_then(|resolved| {
+                resolved.calculate_cost_rmb(
+                    response.usage.input_tokens.unwrap_or(0),
+                    response.usage.output_tokens.unwrap_or(0),
+                    response.usage.cached_input_tokens.unwrap_or(0),
+                )
+            });
+        let cost_rmb = match (session.context_usage.cost_rmb, compaction_cost) {
+            (Some(prev), Some(delta)) => Some(prev + delta),
+            (Some(prev), None) => Some(prev),
+            (None, Some(delta)) => Some(delta),
+            (None, None) => None,
+        };
         let estimated_tokens = estimate_context_tokens(&summary);
         let context_usage = ContextUsage {
             input_tokens: estimated_tokens,
@@ -1186,6 +1204,7 @@ impl RuntimeService {
             cached_tokens: 0,
             context_used: estimated_tokens,
             context_limit: session.context_usage.context_limit,
+            cost_rmb,
         };
         self.store
             .apply_compaction(&CompactionWrite {
@@ -1472,10 +1491,13 @@ impl RuntimeService {
             prompt_recorded: true,
             persist_history: true,
         };
+        let main_resolved_model = self.models.resolve(&model_route).await.ok();
+        let mut cumulative_cost_rmb = session.context_usage.cost_rmb;
+        let mut latest_main_usage = session.context_usage.clone();
         let mut stream = self.model_stream.stream_turn(request).await?;
         let mut tick = tokio::time::interval(Duration::from_millis(50));
         let mut response = String::new();
-        let mut reported_usage = None;
+        let mut reported_usage: Option<ContextUsage> = None;
         let mut suspended_question: Option<PendingQuestion> = None;
         let mut superseded = false;
         loop {
@@ -1489,16 +1511,52 @@ impl RuntimeService {
                             superseded = true;
                         }
                         Some(Ok(event)) => {
-                            let action = project(main_scope.clone(), event);
+                            let mut action = project(main_scope.clone(), event);
                             if let Some(text) = action.main_text_delta() {
                                 response.push_str(text);
+                            }
+                            let mut subagent_cost_updated = false;
+                            if let crate::events::EventAction::Usage {
+                                ref scope,
+                                ref mut usage,
+                            } = action
+                            {
+                                if usage.cost_rmb.is_none()
+                                    && let Some(resolved) = main_resolved_model.as_ref()
+                                {
+                                    usage.cost_rmb = resolved.calculate_cost_rmb(
+                                        usage.input_tokens,
+                                        usage.output_tokens,
+                                        usage.cached_tokens,
+                                    );
+                                }
+                                if let Some(call_cost) = usage.cost_rmb {
+                                    cumulative_cost_rmb =
+                                        Some(cumulative_cost_rmb.unwrap_or(0.0) + call_cost);
+                                }
+                                usage.cost_rmb = cumulative_cost_rmb;
+                                if !scope.is_main() && cumulative_cost_rmb.is_some() {
+                                    latest_main_usage.cost_rmb = cumulative_cost_rmb;
+                                    if let Some(rep) = reported_usage.as_mut() {
+                                        rep.cost_rmb = cumulative_cost_rmb;
+                                    }
+                                    subagent_cost_updated = true;
+                                }
                             }
                             let outcome = sink.apply(action).await?;
                             if let Some(reason) = outcome.ignored {
                                 warn!(%session_id, %run_id, reason, "ignoring out-of-scope model event");
                             }
                             if let Some(usage) = outcome.main_usage {
+                                latest_main_usage = usage.clone();
                                 reported_usage = Some(usage);
+                                self.store
+                                    .update_context_usage(session_id, &latest_main_usage)
+                                    .await?;
+                            } else if subagent_cost_updated {
+                                self.store
+                                    .update_context_usage(session_id, &latest_main_usage)
+                                    .await?;
                             }
                             if let Some(question) = outcome.question {
                                 suspended_question = Some(question);
@@ -1542,11 +1600,18 @@ impl RuntimeService {
             return Ok(());
         }
         let usage = match reported_usage {
-            Some(usage) => usage,
+            Some(mut usage) => {
+                usage.cost_rmb = cumulative_cost_rmb;
+                usage
+            }
             None => {
-                let usage = self
+                let mut usage = self
                     .fallback_usage(&model_route, &pinned, content, &response)
                     .await;
+                if let Some(call_cost) = usage.cost_rmb {
+                    cumulative_cost_rmb = Some(cumulative_cost_rmb.unwrap_or(0.0) + call_cost);
+                }
+                usage.cost_rmb = cumulative_cost_rmb;
                 sink.emit(
                     main_scope.clone(),
                     SessionEventKind::ContextUsage {
@@ -1555,6 +1620,7 @@ impl RuntimeService {
                         cached_tokens: usage.cached_tokens,
                         context_used: usage.context_used,
                         context_limit: usage.context_limit,
+                        cost_rmb: usage.cost_rmb,
                     },
                 )
                 .await?;
@@ -1590,17 +1656,27 @@ impl RuntimeService {
         content: &str,
         response: &str,
     ) -> ContextUsage {
-        let context_limit = match self.models.resolve(model_route).await {
-            Ok(model) => u64::try_from(model.context_limit).unwrap_or(0),
-            Err(error) => {
-                warn!(%error, model = model_route, "model route unavailable; using offline context limit");
+        let resolved = self.models.resolve(model_route).await.ok();
+        let context_limit = match resolved.as_ref() {
+            Some(model) => u64::try_from(model.context_limit).unwrap_or(0),
+            None => {
+                warn!(
+                    model = model_route,
+                    "model route unavailable; using offline context limit"
+                );
                 200_000
             }
         };
+        let input_tokens = u64::try_from(content.chars().count() / 4).unwrap_or(0);
+        let output_tokens = u64::try_from(response.chars().count() / 4).unwrap_or(0);
+        let cached_tokens = u64::try_from(system_prompt.chars().count() / 4).unwrap_or(0);
+        let cost_rmb = resolved
+            .as_ref()
+            .and_then(|model| model.calculate_cost_rmb(input_tokens, output_tokens, cached_tokens));
         ContextUsage {
-            input_tokens: u64::try_from(content.chars().count() / 4).unwrap_or(0),
-            output_tokens: u64::try_from(response.chars().count() / 4).unwrap_or(0),
-            cached_tokens: u64::try_from(system_prompt.chars().count() / 4).unwrap_or(0),
+            input_tokens,
+            output_tokens,
+            cached_tokens,
             context_used: u64::try_from(
                 (system_prompt.chars().count()
                     + content.chars().count()
@@ -1609,6 +1685,7 @@ impl RuntimeService {
             )
             .unwrap_or(0),
             context_limit,
+            cost_rmb,
         }
     }
 

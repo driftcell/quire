@@ -101,6 +101,7 @@ export type SessionEvent1 =
       cached_tokens: number;
       context_used: number;
       context_limit: number;
+      cost_rmb?: number | null;
       [k: string]: unknown;
     }
   | {
@@ -294,6 +295,10 @@ export interface ContextUsage {
   cached_tokens: number;
   context_used: number;
   context_limit: number;
+  /**
+   * Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.
+   */
+  cost_rmb?: number | null;
   [k: string]: unknown;
 }
 export interface SessionDetail {
@@ -351,6 +356,10 @@ export interface ContextUsage1 {
   cached_tokens: number;
   context_used: number;
   context_limit: number;
+  /**
+   * Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.
+   */
+  cost_rmb?: number | null;
   [k: string]: unknown;
 }
 export interface SessionMessage {

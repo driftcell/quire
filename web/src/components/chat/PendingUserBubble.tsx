@@ -1,3 +1,4 @@
+import { isNativeImeKeyEvent } from "@/lib/ime";
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpIcon,
@@ -152,7 +153,7 @@ export function PendingUserBubble({
                   if (
                     event.key === "Enter" &&
                     !event.shiftKey &&
-                    !event.nativeEvent.isComposing
+                    !isNativeImeKeyEvent(event)
                   ) {
                     event.preventDefault();
                     void save();

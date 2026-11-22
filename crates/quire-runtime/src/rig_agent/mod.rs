@@ -42,7 +42,10 @@ pub use preview_stream::{PreviewThrottle, ToolPreviewStreamer};
 pub use subagents::{SubagentOutcome, SubagentTask};
 
 use builtin_tools::{ToolBuildContext, warn_missing_allowed_tools};
-use hooks::{RunTermination, SharedTurnState, ToolLifecycleHook, TurnControlHook, TurnRunState};
+use hooks::{
+    ModelTurnPricing, RunTermination, SharedTurnState, ToolLifecycleHook, TurnControlHook,
+    TurnRunState,
+};
 use preview_stream::PreviewState;
 
 /// Maximum concurrent tool executions per model batch. Rig commits answers in
@@ -412,6 +415,12 @@ impl RigModelCore {
                 &self.config,
                 Some(self.kb.store().report_store().clone()),
             )));
+            let turn_pricing = ModelTurnPricing {
+                context_limit,
+                cost_input: resolved.cost_input,
+                cost_output: resolved.cost_output,
+                cost_cache_read: resolved.cost_cache_read,
+            };
             let state: SharedTurnState = Arc::new(Mutex::new(TurnRunState::default()));
             let mut runner = agent
                 .prompt(prompt.clone())
@@ -426,6 +435,7 @@ impl RigModelCore {
                     scope.clone(),
                     self.queue.clone(),
                     kb_update_notice,
+                    turn_pricing,
                     Arc::clone(&state),
                 ))
                 .add_hook(ToolLifecycleHook::new(
@@ -486,19 +496,24 @@ impl RigModelCore {
                     .await?;
             }
 
-            let (termination, last_usage) = {
+            let (termination, last_usage, emitted_live_usage) = {
                 let state = state.lock().await;
-                (state.termination, state.last_usage)
+                (state.termination, state.last_usage, state.emitted_live_usage)
             };
             if termination == RunTermination::Superseded {
                 scope.send(ModelStreamEvent::Superseded).await;
             }
             if termination != RunTermination::Cancelled
+                && !emitted_live_usage
                 && let Some(usage) = last_usage.as_ref()
             {
-                scope
-                    .send(ModelStreamEvent::Usage(context_usage(usage, context_limit)))
-                    .await;
+                let mut mapped = context_usage(usage, context_limit);
+                mapped.cost_rmb = turn_pricing.calculate_cost_rmb(
+                    mapped.input_tokens,
+                    mapped.output_tokens,
+                    mapped.cached_tokens,
+                );
+                scope.send(ModelStreamEvent::Usage(mapped)).await;
             }
             Ok((text, full_history))
         }
@@ -541,7 +556,7 @@ pub(super) fn tool_output_value(output: &rig::tool::ToolOutput) -> Value {
     serde_json::to_value(output).unwrap_or(Value::Null)
 }
 
-fn context_usage(usage: &Usage, context_limit: u64) -> ContextUsage {
+pub(super) fn context_usage(usage: &Usage, context_limit: u64) -> ContextUsage {
     let input_tokens = usage.input_tokens.unwrap_or(0);
     let output_tokens = usage.output_tokens.unwrap_or(0);
     ContextUsage {
@@ -552,6 +567,7 @@ fn context_usage(usage: &Usage, context_limit: u64) -> ContextUsage {
             .context_tokens()
             .unwrap_or_else(|| input_tokens.saturating_add(output_tokens)),
         context_limit,
+        cost_rmb: None,
     }
 }
 

@@ -135,7 +135,36 @@ pub struct ResolvedModel {
     pub supports_reasoning: bool,
     pub supports_tools: bool,
     pub supports_vision: bool,
+    pub cost_input: Option<f64>,
+    pub cost_output: Option<f64>,
+    pub cost_cache_read: Option<f64>,
     pub api_key: SecretString,
+}
+
+impl ResolvedModel {
+    /// Compute the RMB (CNY) cost of a single completion call from its token counts.
+    /// `cost_input`, `cost_output`, and `cost_cache_read` are priced in RMB per 1,000,000 tokens.
+    pub fn calculate_cost_rmb(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cached_tokens: u64,
+    ) -> Option<f64> {
+        if self.cost_input.is_none() && self.cost_output.is_none() && self.cost_cache_read.is_none()
+        {
+            return None;
+        }
+        let uncached_input = input_tokens.saturating_sub(cached_tokens);
+        let input_rate = self.cost_input.unwrap_or(0.0);
+        let output_rate = self.cost_output.unwrap_or(0.0);
+        let cache_rate = self.cost_cache_read.or(self.cost_input).unwrap_or(0.0);
+        Some(
+            ((uncached_input as f64) * input_rate
+                + (cached_tokens as f64) * cache_rate
+                + (output_tokens as f64) * output_rate)
+                / 1_000_000.0,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -376,7 +405,8 @@ impl ModelRegistry {
         let row = sqlx::query(
             r#"SELECT m.id, m.provider_id, m.model_id, m.display_name, m.context_limit,
                       m.max_output_tokens, m.supports_reasoning, m.supports_tools,
-                      m.supports_vision, p.protocol, p.base_url, p.api_key_ref
+                      m.supports_vision, m.cost_input, m.cost_output, m.cost_cache_read,
+                      p.protocol, p.base_url, p.api_key_ref
                FROM llm_models m
                JOIN llm_providers p ON p.provider_id = m.provider_id
                WHERE m.id = $1 AND m.enabled AND p.enabled"#,
@@ -406,6 +436,9 @@ impl ModelRegistry {
             supports_reasoning: row.try_get("supports_reasoning")?,
             supports_tools: row.try_get("supports_tools")?,
             supports_vision: row.try_get("supports_vision")?,
+            cost_input: row.try_get("cost_input")?,
+            cost_output: row.try_get("cost_output")?,
+            cost_cache_read: row.try_get("cost_cache_read")?,
             api_key: resolve_api_key_ref(&api_key_ref, self.master_key.as_ref())?,
         };
         let resolved = Arc::new(resolved);

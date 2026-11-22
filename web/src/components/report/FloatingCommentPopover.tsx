@@ -1,3 +1,4 @@
+import { isNativeImeKeyEvent } from "@/lib/ime";
 import { memo, useMemo, useRef, useState } from "react";
 import { ArrowUpIcon, ArrowUpRightIcon, CheckIcon, XIcon } from "lucide-react";
 import { toast } from "sonner";
@@ -233,7 +234,7 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
                             if (
                               event.key === "Enter" &&
                               !event.shiftKey &&
-                              !event.nativeEvent.isComposing
+                              !isNativeImeKeyEvent(event)
                             ) {
                               event.preventDefault();
                               submitReply(thread.thread_id);
@@ -311,7 +312,7 @@ export const FloatingCommentPopover = memo(function FloatingCommentPopover({
               if (
                 event.key === "Enter" &&
                 !event.shiftKey &&
-                !event.nativeEvent.isComposing
+                !isNativeImeKeyEvent(event)
               ) {
                 event.preventDefault();
                 submit();
