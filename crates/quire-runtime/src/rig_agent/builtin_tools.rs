@@ -69,6 +69,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "apply_operations",
     "rollback_revision",
     "upsert_sources",
+    "list_sources",
     "set_cover",
     "configure_toc",
     "configure_references",
@@ -1178,6 +1179,12 @@ define_contextual_report_tool!(
     quire_server::mcp::UpsertSourcesParams,
     exec_upsert_sources
 );
+define_stateless_report_tool!(
+    ListSourcesTool,
+    "list_sources",
+    quire_server::mcp::ListSourcesParams,
+    list_sources
+);
 define_contextual_report_tool!(
     SetCoverTool,
     "set_cover",
@@ -1380,6 +1387,11 @@ impl RigModelCore {
             "upsert_sources",
             allow_list_matches(&execution.allowed_tools, "upsert_sources"),
             UpsertSourcesTool
+        );
+        register!(
+            "list_sources",
+            allow_list_matches(&execution.allowed_tools, "list_sources"),
+            ListSourcesTool
         );
         register!(
             "set_cover",

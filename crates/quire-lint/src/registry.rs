@@ -63,6 +63,7 @@ pub enum RuleId {
     DenseProseRunNeedsVisual,
     DuplicateNotePrefix,
     DuplicateSourcePrefix,
+    EditorialMetaLabel,
     BlindOrdinalOrAcademicJargon,
     VisualMissingUnitOrScopeNote,
     HigherEdPolicyTermFormat,
@@ -197,6 +198,7 @@ define_rules! {
     HigherEdPolicyTermFormat = "QR423", "higher-ed-policy-term-format", Warning, true;
     InternalIdentifierLeak = "QR424", "internal-identifier-leak", Error, false;
     DuplicateSourcePrefix = "QR425", "duplicate-source-prefix", Warning, true;
+    EditorialMetaLabel = "QR426", "editorial-meta-label", Warning, true;
 
     CssSyntaxError = "QR501", "css-syntax-error", Error, false;
     CustomHtmlExternalResource = "QR502", "custom-html-external-resource", Warning, true;

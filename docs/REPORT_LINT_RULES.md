@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-store`, `quire-server`
-- **Related Notes:** `../notes/quire_lint_registry_split.md`, `../notes/quire_lint_incremental_refactor.md`, `../notes/report_prompt_lint_calibration.md`
+- **Related Notes:** `../notes/quire_lint_registry_split.md`, `../notes/quire_lint_incremental_refactor.md`, `../notes/report_prompt_lint_calibration.md`, `../notes/report_quality_systemic_improvement.md`
 
 ## 1. Scope & Non-Goals
 
@@ -79,7 +79,9 @@ do not flag lookalike domains such as `baike.baidu.com.evil.com`.
 
 `QR103` recognizes numeric claims only when a number carries a quantitative unit or currency
 marker. Higher-education units include `项`, `篇`, `所`, `名`, `位`, `倍`, `‰` and `百分点`; bare
-years, durations, chapter numbers and structural counts such as `3个方面` do not trigger it.
+years, durations, chapter numbers and structural counts such as `3个方面` do not trigger it. Inline
+citations, block `source_ids` and a non-empty block `source_note` all satisfy attribution, so agents
+never need to attach an unrelated source ID merely to clear this info diagnostic.
 
 `QR206` verifies `合计`/`总计` rows in canonical `summary_rows`, falling back to a final body summary
 row when no canonical total exists. Direct labels and short entity prefixes such as `两校合计` are
@@ -181,8 +183,10 @@ streak; a non-empty Paragraph or Quote does. The third visual block in a streak 
 complementary visuals remain allowed.
 
 `QR417` measures prose after replacing Markdown links with their anchor text and removing citations
-and code markers. It only reports a single paragraph of 450+ visible characters without a
-newline-delimited list. Cross-paragraph density is owned exclusively by `QR419`.
+and code markers. Without a newline-delimited list, it reports a single paragraph with 360+ visible
+characters, or 300+ visible characters split across at least six sentences. The combined signal targets
+multi-idea walls rather than relying on one easily gamed character threshold. Cross-paragraph density is
+owned exclusively by `QR419`.
 
 `QR418` only inspects headings at level 2 or deeper. It strips common manual numbering and
 punctuation, then flags exact generic headings (`概述`, `行动建议`, `Overview`, etc.) and counting
@@ -204,7 +208,9 @@ as are recommendation, next-step, implementation and safeguard sections; labels 
 `举措` or `路径` receive the same prose-friendly treatment. A section already containing at least two
 Table/ECharts/CustomHtml blocks is visually served and does not report, regardless of where its prose
 runs occur. Section matching uses the normalized column label before any colon, so variants such as
-`四、结语` and `对策建议：……` receive the same exemption.
+`四、结语` and `对策建议：……` receive the same exemption. Its repair hint is prose-first: remove
+repeated visual data and split multi-idea paragraphs before considering a visual, and never insert a
+duplicate Table/ECharts/CustomHtml block merely to reset the run or suppress the warning.
 
 `QR420` flags Table and ECharts notes whose trimmed start begins with `注：`, `注:`, `表注：`,
 `表注:`, `图注：`, `图注:` or `Note:`/`note:`. The renderer already prepends `注：`, so keeping the
@@ -252,6 +258,14 @@ flagged. English `Source:`, `Sources:`, `Data source:`, `Reference:` and `Refere
 The label must be at most 16 characters before the first colon; ordinary prose, `来源与口径：` and
 colon-bearing URLs are not flagged.
 
+`QR426` is a suppressible Warning for editorial meta-labels exposed to readers. Paragraphs, headings,
+visual titles and table column labels report direct `本报告建议` / `本报告判断`, the process phrases
+`本报告不作逐条引证` / `本报告不将其计入既有事实`, and parenthesized `核实值` / `属推断` (including
+forms such as `（表 1，核实值）`). Quoted proper nouns and inline code are masked, external Quote blocks
+are skipped, and notes/source notes remain available for genuine scenario and method disclosure such as
+`本报告建议值` or `本报告测算`. The repair states the fact, calibrated inference or recommendation
+directly instead of swapping synonyms.
+
 ### Matching and filter layers
 
 `rule_matches_token` accepts:
@@ -293,7 +307,7 @@ verify loop: fix every `error`, review `warning`, and ignore only diagnostics wh
 
 `crates/quire-server/src/mcp/lint_hint.rs` turns diagnostics into one deterministic `_next_hint`.
 Priority tiers are: errors, structural/chart/table/citation warnings, macro layout warnings
-(`QR417`-`QR419`), prose/policy warnings (`QR412`-`QR415`, `QR421`, `QR423`), then info. Diagnostics are grouped by
+(`QR417`-`QR419`), prose/policy warnings (`QR412`-`QR415`, `QR421`, `QR423`, `QR426`), then info. Diagnostics are grouped by
 `block_id` (or `document`), codes are deduplicated and tier-sorted, groups are ordered by tier,
 diagnostic count and block ID, and only the first five groups expand with a `(+N more block(s))`
 tail. A warning rule touching more than three blocks asks for the top five blocks to be fixed in one
@@ -326,13 +340,14 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
   `QR318` checks each eligible numeric axis independently with 2+ non-negative integer values and max
   `1..=15`; `QR404` evaluates numbering relative to the document root and checks only siblings in the
   same parent/level/family group; `QR416` reports only the third visual in a run; `QR417` checks only
-  single-paragraph walls and never
-  shares a multi-paragraph diagnostic with `QR419`; `QR418` skips level-1 headings, numbering-only
+  single-paragraph walls using its length-and-sentence rule and never shares a multi-paragraph
+  diagnostic with `QR419`; `QR418` skips level-1 headings, numbering-only
   prefixes and positional introduction/conclusion headings; `QR419` reports once per non-exempt H1/H2
   prose run and never demands a third visual in an already visually served section; `QR420` only inspects
   Table/ECharts notes, while `QR425` only inspects `source_note` on Table/ECharts/CustomHtml blocks and
   recognizes short `来源`/`出处` labels (including trailing parenthetical variants) plus English
-  `Source`/`Reference` labels.
+  `Source`/`Reference` labels. `QR426` detects editorial meta-labels without banning legitimate
+  method notes, and `QR103` accepts inline citations, block source IDs or a real block source note.
 - `QR108` matches hosts exactly or as subdomains, so lookalike domains do not report; `QR205` permits
   explicit percentage indicator rows without permitting mixed units in an ordinary numeric column;
   `QR206` distinguishes metric time-window totals from table summaries, reports at most once per

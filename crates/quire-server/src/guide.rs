@@ -257,6 +257,8 @@ SOURCES
 - Register with `upsert_sources(doc_id, sources)`:
   [{ "id":"sec10", "title":"Annual filing 10-K", "url":"https://...", "authors":["Jane Smith"], "date":"2025-02-01" }]
 - Dedup key: URL first (normalized), otherwise normalized title. The response's `canonical_id_map` tells you which source_id to cite.
+- Call `list_sources(doc_id)` to inspect every registered source, or `list_sources(doc_id, source_ids=[...])` for exact records and verbatim evidence excerpts. Never guess a source ID from its name.
+- Search-result snippets are leads, not verified evidence. Read the original page and match a specific claim to the source before citing it; never attach a source only to satisfy a source-count target or clear a diagnostic.
 - Citations: inline `[^sec10]`, or block-level `source_ids:["sec10"]`.
 - Inline citations are numbered by first appearance. Bibliography order follows that numbering.
 - `configure_references(doc_id, enabled=true, style="author_year")` switches labels to (Smith, 2025).
@@ -304,6 +306,7 @@ NOTES AND SOURCE ATTRIBUTION
 "##.into(),
         recommended_tools: vec![
             "upsert_sources".into(),
+            "list_sources".into(),
             "configure_references".into(),
             "configure_page_chrome".into(),
             "update_style_and_css".into(),
@@ -319,9 +322,11 @@ fn parallel_workflow() -> GuideReceipt {
         guide: r##"PARALLEL MULTI-AGENT WORKFLOW
 
 OWNERSHIP
-- The Lead creates the report and chapter placeholder headings.
-- Each writing sub-agent owns a disjoint set of block IDs (for example `ch1_*` vs `ch2_*`).
+- The Lead creates the report and chapter placeholder headings, records the user's hard requirements, and freezes verified facts separately from unresolved conflicts and hypotheses.
+- For long multi-chapter reports, complete and review one pilot chapter before starting the remaining writers in parallel.
+- Analysts own derived metrics, tables and charts. Writers own prose and disjoint block IDs, and return visual requests instead of adding duplicate visuals to satisfy lint.
 - Reading is always allowed; mutations must use apply_operations with the latest expected_revision.
+- Before delivery the Lead reads every chapter with read_as_markdown(section_heading=...). A reviewer's APPROVED applies only to the reviewed revision; any later content mutation requires another review.
 
 SMART CAS
 - Pass the revision you read. If another agent committed first, the server inspects intervening revisions.

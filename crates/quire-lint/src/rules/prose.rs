@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeSet, sync::LazyLock};
 
-use quire_protocol::{BlockKind, ReportDocument};
+use quire_protocol::{BlockKind, ColumnNode, ReportDocument};
 use regex::Regex;
 
 use super::{evidence::has_quantitative_evidence, structure::dense_prose_section_exempt};
@@ -270,6 +270,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
     check_contrast_and_hedging(document, engine);
     check_wall_of_text(document, engine);
     check_dense_prose_section(document, engine);
+    check_editorial_meta_labels(document, engine);
 }
 
 fn check_cliche_density(document: &ReportDocument, engine: &mut Engine<'_>) {
@@ -610,16 +611,17 @@ fn check_wall_of_text(document: &ReportDocument, engine: &mut Engine<'_>) {
             continue;
         }
         let char_len = wall_of_text_char_count(text);
-        if char_len < 450 {
+        let sentence_count = wall_of_text_sentence_count(text);
+        if char_len < 360 && (char_len < 300 || sentence_count < 6) {
             continue;
         }
         engine.report(
             RuleId::WallOfTextParagraph,
             format!(
-                "paragraph `{}` is a {char_len}-char wall of text without line breaks or list structure",
+                "paragraph `{}` is a {char_len}-char, {sentence_count}-sentence wall of text without line breaks or list structure",
                 block.id
             ),
-            "In this Paragraph via apply_operations, split it into 2-3 focused paragraphs or convert enumerations to a bullet list/Table; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
+            "In this Paragraph via apply_operations, give each paragraph one main job and split independent findings, hypotheses and recommendations into focused paragraphs or a list; remove repeated visual data before considering a new Table; fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -684,7 +686,7 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                                 "block `{}` completes a {prose_blocks}-block ({prose_chars}-char) prose run with no Table or Echarts chart",
                                 block.id
                             ),
-                            "In this section via apply_operations, extract multi-entity comparisons or per-school recommendations into a Table or Echarts chart (e.g. stacked bar for talent/metrics or summary action table), and trim the prose to analytical takeaways; never delete real facts merely to drop below the char limit.",
+                            "In this section via apply_operations, first remove repeated visual data and split multi-idea prose. If a comparison, trend or structured recommendation still needs a clearer home, extract it into a Table or ECharts chart and trim the prose to new analytical takeaways. Never insert a duplicate Table/ECharts/CustomHtml block merely to reset this prose run or suppress the warning.",
                             Some(block.id.clone()),
                             Some(format!("blocks[{index}].text")),
                         );
@@ -703,7 +705,7 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                                 "block `{}` completes a {prose_blocks}-block ({prose_chars}-char) prose run with no Table or Echarts chart",
                                 block.id
                             ),
-                            "In this section via apply_operations, extract multi-entity comparisons or per-school recommendations into a Table or Echarts chart (e.g. stacked bar for talent/metrics or summary action table), and trim the prose to analytical takeaways; never delete real facts merely to drop below the char limit.",
+                            "In this section via apply_operations, first remove repeated visual data and split multi-idea prose. If a comparison, trend or structured recommendation still needs a clearer home, extract it into a Table or ECharts chart and trim the prose to new analytical takeaways. Never insert a duplicate Table/ECharts/CustomHtml block merely to reset this prose run or suppress the warning.",
                             Some(block.id.clone()),
                             Some(format!("blocks[{index}].text")),
                         );
@@ -713,6 +715,97 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
             BlockKind::Heading { .. } | BlockKind::Quote { .. } => {}
         }
     }
+}
+
+fn check_editorial_meta_labels(document: &ReportDocument, engine: &mut Engine<'_>) {
+    for (index, block) in document.blocks.iter().enumerate() {
+        let mut label = None;
+        let mut path = format!("blocks[{index}].text");
+        match &block.body {
+            BlockKind::Paragraph { text } | BlockKind::Heading { text, .. } => {
+                label = editorial_meta_label(&mask_text(text));
+            }
+            BlockKind::Table(table) => {
+                path = format!("blocks[{index}].title");
+                label = table
+                    .title
+                    .as_deref()
+                    .and_then(|title| editorial_meta_label(&mask_text(title)))
+                    .or_else(|| {
+                        path = format!("blocks[{index}].columns");
+                        column_meta_label(&table.columns)
+                    });
+            }
+            BlockKind::Echarts(chart) => {
+                path = format!("blocks[{index}].title");
+                label = chart
+                    .title
+                    .as_deref()
+                    .and_then(|title| editorial_meta_label(&mask_text(title)));
+            }
+            BlockKind::CustomHtml(html) => {
+                path = format!("blocks[{index}].title");
+                label = html
+                    .title
+                    .as_deref()
+                    .and_then(|title| editorial_meta_label(&mask_text(title)));
+            }
+            BlockKind::Quote { .. } => {}
+        }
+        let Some(label) = label else {
+            continue;
+        };
+        engine.report(
+            RuleId::EditorialMetaLabel,
+            format!(
+                "block `{}` exposes the editorial meta-label `{label}` to report readers",
+                block.id
+            ),
+            "Rewrite the statement in direct publication language: state the verified fact, calibrated inference or recommendation itself instead of attaching `核实值`, `属推断`, `本报告判断` or `本报告建议`. Move genuinely necessary scenario assumptions into a concise visual note; do not merely swap synonyms.",
+            Some(block.id.clone()),
+            Some(path),
+        );
+    }
+}
+
+fn column_meta_label(columns: &[ColumnNode]) -> Option<&'static str> {
+    for column in columns {
+        if let Some(label) = editorial_meta_label(&mask_text(&column.label)) {
+            return Some(label);
+        }
+        if let Some(label) = column_meta_label(&column.children) {
+            return Some(label);
+        }
+    }
+    None
+}
+
+fn editorial_meta_label(text: &str) -> Option<&'static str> {
+    for phrase in [
+        "本报告建议",
+        "本报告判断",
+        "本报告不作逐条引证",
+        "本报告不将其计入既有事实",
+    ] {
+        if text.contains(phrase) {
+            return Some(phrase);
+        }
+    }
+    for (open, close) in [('（', '）'), ('(', ')')] {
+        for span in text.split(open).skip(1) {
+            let Some((inside, _)) = span.split_once(close) else {
+                continue;
+            };
+            if inside.chars().count() <= 60 {
+                for phrase in ["核实值", "属推断"] {
+                    if inside.contains(phrase) {
+                        return Some(phrase);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn has_list_structure(text: &str) -> bool {
@@ -748,6 +841,13 @@ fn wall_of_text_char_count(text: &str) -> usize {
     strip_wall_markup(text)
         .chars()
         .filter(|ch| !ch.is_whitespace() && !is_markdown_symbol(*ch))
+        .count()
+}
+
+fn wall_of_text_sentence_count(text: &str) -> usize {
+    strip_wall_markup(text)
+        .split(['。', '！', '？', '；', '!', '?', ';', '\n'])
+        .filter(|sentence| !sentence.trim().is_empty())
         .count()
 }
 

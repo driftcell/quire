@@ -186,6 +186,18 @@ pub struct DocumentDigest {
     pub block_count: usize,
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub source_count: usize,
+    /// Number of paragraph blocks, excluding headings, quotations and visuals.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub paragraph_count: usize,
+    /// Visible prose characters across paragraph blocks, for requirement checks rather than quotas.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub prose_char_count: usize,
+    /// Combined Table, ECharts and CustomHtml block count.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub visual_block_count: usize,
+    /// Unique registered or dangling source IDs used by inline and block citations.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub cited_source_count: usize,
     pub blocks: Vec<BlockDigest>,
 }
 
@@ -382,6 +394,28 @@ pub struct CoverPatch {
     /// Raw HTML override for the cover body; empty string clears it.
     #[serde(default)]
     pub custom_html: Option<String>,
+}
+
+/// Input for `list_sources`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ListSourcesParams {
+    pub doc_id: String,
+    /// Optional exact source IDs. Unknown IDs return an error instead of being silently omitted.
+    #[serde(default)]
+    pub source_ids: Option<Vec<String>>,
+}
+
+/// Output for `list_sources`, including evidence excerpts needed for claim-level review.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListSourcesReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    #[schemars(with = "BTreeMap<SourceId, SourceEntry>")]
+    pub sources: IndexMap<SourceId, SourceEntry>,
+    pub count: usize,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
 }
 
 /// Output for `set_cover`.

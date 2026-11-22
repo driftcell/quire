@@ -10,7 +10,7 @@ use quire_protocol::{
     Diagnostic, DocId, EphemeralClearEvent, EphemeralPayload, IdAssignment, MarkdownOptions,
     MarkdownProjector, PageChromeConfig, PatchOp, ProtocolError, ReportDocument, Revision,
     Severity, SourceId, TOC_VARIANTS, is_safe_css_token_value, is_valid_css_token_name,
-    short_token,
+    scan_document_citations, short_token,
 };
 use quire_store::{
     ApplyResult, CommitExtras, NewCommentReply, NewCommentThread, SourceUpsert, StoreError,
@@ -116,7 +116,7 @@ impl QuireMcpServer {
     #[tool(
         name = "get_document_digest",
         annotations(read_only_hint = true),
-        description = "Low-token outline: current_rev, theme summary and compact blocks (id/type/level/preview/char_count/source_ids; empty fields omitted). Optional keyword query filters blocks."
+        description = "Low-token outline with current_rev, requirement aggregates (paragraphs, prose chars, visuals, cited sources) and compact blocks (id/type/level/preview/char_count/source_ids). Optional keyword query filters blocks."
     )]
     pub async fn get_document_digest(
         &self,
@@ -295,7 +295,64 @@ impl QuireMcpServer {
         self.exec_upsert_sources(context, request).await
     }
     // ---------------------------------------------------------------------
-    // Tool 10: set cover
+    // Tool 10: list sources
+    // ---------------------------------------------------------------------
+    #[tool(
+        name = "list_sources",
+        annotations(read_only_hint = true),
+        description = "List registered citation metadata and evidence excerpts. Optionally pass exact source_ids for claim-level verification; unknown IDs fail explicitly."
+    )]
+    pub async fn list_sources(
+        &self,
+        Parameters(request): Parameters<ListSourcesParams>,
+    ) -> Result<Json<ListSourcesReceipt>, ErrorData> {
+        let doc_id = parse_doc_id(&request.doc_id)?;
+        let document = self
+            .state
+            .store
+            .get_document(&doc_id)
+            .await
+            .map_err(mcp_error)?;
+        let mut sources = IndexMap::new();
+        let mut missing = Vec::new();
+        if let Some(source_ids) = &request.source_ids {
+            for raw_id in source_ids {
+                let source_id = SourceId::parse(raw_id).map_err(protocol_error)?;
+                match document.sources.get(&source_id) {
+                    Some(source) => {
+                        sources.insert(source_id, source.clone());
+                    }
+                    None => missing.push(source_id.to_string()),
+                }
+            }
+        } else {
+            sources = document.sources.clone();
+        }
+        if !missing.is_empty() {
+            let valid: Vec<&str> = document.sources.keys().map(|id| id.as_str()).collect();
+            return Err(invalid_params(
+                format!("source IDs not found: {}", missing.join(", ")),
+                "Pass only registered IDs from list_sources or a citation receipt.".to_string(),
+                Some(json!({"missing": missing, "valid_source_ids": valid})),
+            ));
+        }
+        let _next_hint = if sources.is_empty() {
+            "No sources are registered. Add only sources actually read and used with upsert_sources."
+                .to_string()
+        } else {
+            "Match each citation to a specific claim and its evidence excerpt; fetch the original page before relying on a search-result snippet.".to_string()
+        };
+        Ok(Json(ListSourcesReceipt {
+            doc_id: document.doc_id.to_string(),
+            revision: document.revision.get(),
+            count: sources.len(),
+            sources,
+            _next_hint,
+        }))
+    }
+
+    // ---------------------------------------------------------------------
+    // Tool 11: set cover
     // ---------------------------------------------------------------------
     #[tool(
         name = "set_cover",
@@ -310,7 +367,7 @@ impl QuireMcpServer {
         self.exec_set_cover(context, request).await
     }
     // ---------------------------------------------------------------------
-    // Tool 11: configure TOC
+    // Tool 12: configure TOC
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_toc",
@@ -325,7 +382,7 @@ impl QuireMcpServer {
         self.exec_configure_toc(context, request).await
     }
     // ---------------------------------------------------------------------
-    // Tool 12: configure references
+    // Tool 13: configure references
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_references",
@@ -340,7 +397,7 @@ impl QuireMcpServer {
         self.exec_configure_references(context, request).await
     }
     // ---------------------------------------------------------------------
-    // Tool 13: configure page chrome
+    // Tool 14: configure page chrome
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_page_chrome",
@@ -355,7 +412,7 @@ impl QuireMcpServer {
         self.exec_configure_page_chrome(context, request).await
     }
     // ---------------------------------------------------------------------
-    // Tool 14: update style and CSS
+    // Tool 15: update style and CSS
     // ---------------------------------------------------------------------
     #[tool(
         name = "update_style_and_css",
@@ -370,7 +427,7 @@ impl QuireMcpServer {
         self.exec_update_style_and_css(context, request).await
     }
     // ---------------------------------------------------------------------
-    // Tool 15: lint
+    // Tool 16: lint
     // ---------------------------------------------------------------------
     #[tool(
         name = "lint_document",
@@ -417,7 +474,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 16: list comments
+    // Tool 17: list comments
     // ---------------------------------------------------------------------
     #[tool(
         name = "list_comments",
@@ -458,7 +515,7 @@ impl QuireMcpServer {
     }
 
     // ---------------------------------------------------------------------
-    // Tool 17: add comment
+    // Tool 18: add comment
     // ---------------------------------------------------------------------
     #[tool(
         name = "add_comment",
@@ -473,7 +530,7 @@ impl QuireMcpServer {
         self.exec_add_comment(context, request).await
     }
     // ---------------------------------------------------------------------
-    // Tool 18: reply comment
+    // Tool 19: reply comment
     // ---------------------------------------------------------------------
     #[tool(
         name = "reply_comment",
@@ -573,6 +630,28 @@ pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> Do
         })
         .map(block_digest)
         .collect::<Vec<_>>();
+    let paragraph_count = document
+        .blocks
+        .iter()
+        .filter(|block| matches!(&block.body, BlockKind::Paragraph { .. }))
+        .count();
+    let prose_char_count = document
+        .blocks
+        .iter()
+        .filter(|block| matches!(&block.body, BlockKind::Paragraph { .. }))
+        .map(|block| block.char_count())
+        .sum();
+    let visual_block_count = document
+        .blocks
+        .iter()
+        .filter(|block| {
+            matches!(
+                &block.body,
+                BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_)
+            )
+        })
+        .count();
+    let cited_source_count = scan_document_citations(document).cited_source_ids.len();
     DocumentDigest {
         title: document.title(),
         current_rev: document.revision.get(),
@@ -580,6 +659,10 @@ pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> Do
         toc: document.toc.clone(),
         block_count: document.blocks.len(),
         source_count: document.sources.len(),
+        paragraph_count,
+        prose_char_count,
+        visual_block_count,
+        cited_source_count,
         blocks,
     }
 }

@@ -28,7 +28,7 @@ fn warning_tier(code: &str) -> u8 {
         .and_then(|digits| digits.parse::<u16>().ok());
     match numeric {
         Some(417..=419) => 2,
-        Some(412..=415) | Some(421 | 423) => 3,
+        Some(412..=415) | Some(421 | 423 | 426) => 3,
         _ => 1,
     }
 }

@@ -8,6 +8,7 @@ allowed_tools:
   - set_cover
   - configure_toc
   - configure_references
+  - list_sources
   - configure_page_chrome
   - update_style_and_css
   - lint_document
@@ -32,5 +33,5 @@ enabled: true
 2. **封面与页眉页脚标准化**：
    - 调用 `set_cover` 设置标题、副标题、眉题（`meta.kicker`，如“高校学科建设专项调研”或“2025年度科研竞争力对标”）、编制单位（`meta.unit`）、作者与日期。
    - 调用 `configure_page_chrome` 配置三槽位 A4 页眉页脚（推荐页眉左 `{kicker}`、右 `{title}`，页脚左 `{authors}`、中或右 `第 {page} 页 / 共 {total} 页`，并开启 `hide_header_on_first_page: true`）。
-   - 调用 `configure_toc` 与 `configure_references` 确保目录层级（1~3 级）与文末参考文献启用。
+   - 调用 `configure_toc` 与 `configure_references` 确保目录层级（1~3 级）与文末参考文献启用；用 `list_sources` 检查参考文献呈现，不改动来源归属或补引用数量。
 3. 样式调整后必须调用 `lint_document` 校验，并调用 `preview_report` 抽检首页与跨页表格的分页视觉效果。

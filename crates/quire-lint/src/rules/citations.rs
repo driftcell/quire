@@ -422,6 +422,10 @@ fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>, scan
         };
         if !has_quantitative_evidence(text)
             || !block.source_ids.is_empty()
+            || block
+                .source_note
+                .as_deref()
+                .is_some_and(|note| !note.trim().is_empty())
             || cited_blocks.contains(block.id.as_str())
         {
             continue;
@@ -429,10 +433,10 @@ fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>, scan
         engine.report(
             RuleId::NumericClaimWithoutCitation,
             format!(
-                "block `{}` states a numeric claim without an inline or block-level citation",
+                "block `{}` states a numeric claim without an inline citation, block source IDs or a source note",
                 block.id
             ),
-            "In this Paragraph or block `sources` via apply_operations, attach a real `[^source_id]` or `source_ids` entry already retrieved by tools when the figure supports a factual claim, or remove the number; never invent a source or figure.",
+            "In this Paragraph via apply_operations, attach a real `[^source_id]` or `source_ids` entry already retrieved by tools, or name the actual institution/database in `source_note`; never attach an unrelated source merely to clear this diagnostic.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );

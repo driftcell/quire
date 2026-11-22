@@ -1,4 +1,4 @@
-//! Quire MCP tool server (18 domain tools) mounted at `/mcp` and callable in-process.
+//! Quire MCP tool server (19 domain tools) mounted at `/mcp` and callable in-process.
 //!
 //! The implementation is split into `schema` (request/response contracts and compact receipts)
 //! and `handlers` (tool methods plus rebase helpers).
@@ -21,7 +21,7 @@ mod schema;
 
 pub use schema::*;
 
-/// Canonical names of the 18 Quire report domain tools.
+/// Canonical names of the 19 Quire report domain tools.
 pub const REPORT_TOOL_NAMES: &[&str] = &[
     "get_protocol_guide",
     "create_report",
@@ -32,6 +32,7 @@ pub const REPORT_TOOL_NAMES: &[&str] = &[
     "apply_operations",
     "rollback_revision",
     "upsert_sources",
+    "list_sources",
     "set_cover",
     "configure_toc",
     "configure_references",
@@ -49,7 +50,7 @@ Workflow state machine: INIT -> SCHEMA -> AUTHOR -> VERIFY.
 
 INIT: send X-Session-Id headers or per-call _meta.quire.{session_id,run_id,agent_id}. Call get_protocol_guide("quickstart"), then create_report or list_reports.
 SCHEMA: call get_document_digest or read_as_markdown before editing. Block IDs are short semantic strings, never UUIDv4. Tables use recursive ColumnNode trees; never compute spans yourself.
-AUTHOR: mutate only via apply_operations(doc_id, expected_revision, summary, ops). Register citations with upsert_sources. Use disjoint block-ID prefixes when writing in parallel; Smart CAS rebases disjoint edits and returns detailed conflicts for overlapping edits.
+AUTHOR: mutate only via apply_operations(doc_id, expected_revision, summary, ops). Register citations with upsert_sources and inspect existing records/evidence with list_sources. Use disjoint block-ID prefixes when writing in parallel; Smart CAS rebases disjoint edits and returns detailed conflicts for overlapping edits.
 REVIEW: list_comments returns side-channel threads with anchor_snapshot and anchor_detached. add_comment and reply_comment are revision-free; mark_addressed moves open to addressed. Only humans may archive or reopen via REST.
 VERIFY: call lint_document until there are zero errors and review warnings. Diagnostics carry `code`, `rule`, `hint` and `suppressible`; ignore only suppressible rules that genuinely do not apply. Then read_as_markdown for a reviewer view. The external frontend is read-only and consumes GET /api/docs/{doc_id} plus SSE revision deltas.
 
@@ -62,7 +63,7 @@ pub struct QuireMcpServer {
 }
 
 impl QuireMcpServer {
-    /// Construct the MCP server and register all 18 domain tools on the router.
+    /// Construct the MCP server and register all 19 domain tools on the router.
     pub fn new(state: AppState) -> Self {
         Self {
             state,
@@ -70,7 +71,7 @@ impl QuireMcpServer {
         }
     }
 
-    /// Return the static description and JSON Schema for one of the 18 report tools.
+    /// Return the static description and JSON Schema for one of the 19 report tools.
     pub fn tool_metadata(name: &str) -> (String, Value) {
         static CACHE: OnceLock<HashMap<String, (String, Value)>> = OnceLock::new();
         let catalog = CACHE.get_or_init(|| {

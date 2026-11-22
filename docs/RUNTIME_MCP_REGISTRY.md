@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`, `quire-server`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_mcp_registry.md`, `../notes/runtime_rig_046_native_migration.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_mcp_registry.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/report_quality_systemic_improvement.md`
 
 ## 1. Scope & Non-Goals
 
@@ -28,8 +28,8 @@ AES-256-GCM `enc:...` values encrypted with `RUNTIME_MASTER_KEY`. Public records
 
 ### Seed & Native Report Tools
 
-All 18 Quire report authoring tools (`REPORT_TOOL_NAMES` in `quire-server`) are compiled directly
-into `quire-runtime` as native `rig::tool::Tool`s in `BUILTIN_TOOLS` (`32` total built-in tools)
+All 19 Quire report authoring tools (`REPORT_TOOL_NAMES` in `quire-server`) are compiled directly
+into `quire-runtime` as native `rig::tool::Tool`s in `BUILTIN_TOOLS` (`33` total built-in tools)
 executing in-process against the shared `PgReportStore`. Consequently, `McpRegistry` is exclusively
 for external third-party MCP servers (such as `subjectcloud_*`).
 
@@ -128,7 +128,7 @@ raw auth token reference.
 
 ## 3. Invariants & Verification
 
-- Seeding retires any legacy `'quire-report'` row from `mcp_servers` idempotently while all 18 report tools are served natively in-process via `BUILTIN_TOOLS`.
+- Seeding retires any legacy `'quire-report'` row from `mcp_servers` idempotently while all 19 report tools are served natively in-process via `BUILTIN_TOOLS`.
 - Sync preserves existing tool enable switches; new tools are enabled.
 - A globally disabled external MCP tool is filtered even when present in `agent_definition.allowed_tools`.
 - Allow-list matching is identical across the registry, MCP client and built-in tool loop; scoped

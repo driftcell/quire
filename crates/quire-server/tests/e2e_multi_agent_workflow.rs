@@ -563,11 +563,12 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
     // 2. Lead agent cold start via MCP.
     let lead = McpClient::connect(http.clone(), &base, &session_id, "lead-orchestrator").await?;
     let tool_names = lead.list_tool_names().await?;
-    assert_eq!(tool_names.len(), 18, "tool names: {tool_names:?}");
+    assert_eq!(tool_names.len(), 19, "tool names: {tool_names:?}");
     for required_tool in [
         "list_comments",
         "add_comment",
         "reply_comment",
+        "list_sources",
         "configure_page_chrome",
     ] {
         assert!(
@@ -1015,6 +1016,24 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .await?;
     let revision_for_a = market_source["revision"].as_i64().unwrap();
     let chapter_base_revision = revision_for_a;
+    let listed_sources = lead
+        .call_tool(
+            "list_sources",
+            json!({"doc_id": &doc_id, "source_ids": ["sec_market"]}),
+        )
+        .await?;
+    assert_eq!(listed_sources["count"].as_u64(), Some(1));
+    assert_eq!(
+        listed_sources["sources"]["sec_market"]["excerpt"].as_str(),
+        Some("Enterprise demand accelerated through Q4.")
+    );
+    let missing_source = lead
+        .call_tool_error(
+            "list_sources",
+            json!({"doc_id": &doc_id, "source_ids": ["sec_missing"]}),
+        )
+        .await?;
+    assert!(missing_source.to_string().contains("sec_missing"));
 
     let a_client = McpClient::connect(http.clone(), &base, &session_id, "sub-agent-a").await?;
     let b_client = McpClient::connect(http.clone(), &base, &session_id, "sub-agent-b").await?;
@@ -1209,6 +1228,13 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
             .iter()
             .all(|block| block["id"].as_str().unwrap().contains("ch2"))
     );
+    assert!(
+        filtered["digest"]["paragraph_count"].as_u64().unwrap() >= 2,
+        "aggregate paragraph count must not be narrowed by the block query"
+    );
+    assert!(filtered["digest"]["prose_char_count"].as_u64().unwrap() > 0);
+    assert!(filtered["digest"]["visual_block_count"].as_u64().unwrap() >= 3);
+    assert!(filtered["digest"]["cited_source_count"].as_u64().unwrap() >= 2);
 
     // 5b. ECharts 6 structural errors are rejected by lint with actionable codes.
     let digest = reviewer

@@ -340,6 +340,21 @@ fn qr103_requires_a_quantitative_unit_and_ignores_temporal_context() {
 }
 
 #[test]
+fn qr103_accepts_a_real_block_source_note_without_forcing_source_id_padding() {
+    let mut document = doc();
+    let mut attributed = paragraph("projects", "国家级项目立项214项。");
+    attributed.source_note = Some("国家自然科学基金委员会年度立项公告。".into());
+    document.blocks.push(attributed);
+    let report = lint_document(&document);
+    assert!(!has_code(&report, "QR103"), "{:?}", report.diagnostics);
+
+    document
+        .blocks
+        .push(paragraph("unattributed", "同期省级项目立项32项。"));
+    assert!(has_code(&lint_document(&document), "QR103"));
+}
+
+#[test]
 fn qr108_flags_low_authority_source_domains() {
     let mut document = doc();
     document.sources.insert(
@@ -2714,6 +2729,30 @@ fn qr417_flags_only_single_paragraph_walls_of_text() {
     let wall = "数".repeat(450);
     let mut single = doc();
     single.blocks.push(paragraph("wall", wall.as_str()));
+    let sentence = format!("{}。", "句".repeat(49));
+    let mut multi_sentence = doc();
+    multi_sentence
+        .blocks
+        .push(paragraph("multi-sentence", sentence.repeat(6).as_str()));
+    let report = lint_document(&multi_sentence);
+    assert!(
+        has_code(&report, "QR417"),
+        "300 visible characters across six sentences form a multi-idea wall: {:?}",
+        report.diagnostics
+    );
+
+    let mut shorter = doc();
+    shorter
+        .blocks
+        .push(paragraph("shorter", sentence.repeat(5).as_str()));
+    assert!(!has_code(&lint_document(&shorter), "QR417"));
+
+    let mut long_single_sentence = doc();
+    long_single_sentence
+        .blocks
+        .push(paragraph("long-single", "数".repeat(360).as_str()));
+    assert!(has_code(&lint_document(&long_single_sentence), "QR417"));
+
     let report = lint_document(&single);
     let diagnostic = finding(&report, "QR417");
     assert_eq!(diagnostic.severity, Severity::Warning);
@@ -2788,7 +2827,8 @@ fn qr419_flags_dense_prose_runs_with_section_exemptions() {
         "{}",
         diagnostic.message
     );
-    assert!(diagnostic.hint.contains("Table or Echarts"));
+    assert!(diagnostic.hint.contains("Table or ECharts"));
+    assert!(diagnostic.hint.contains("Never insert a duplicate"));
 
     for title in [
         "导论",
@@ -3097,6 +3137,79 @@ fn qr425_flags_redundant_source_note_prefixes() {
     let report = lint_document(&ignored_document);
     assert!(!has_code(&report, "QR425"));
     assert!(report.summary.suppressed >= 1);
+}
+
+#[test]
+fn qr426_flags_editorial_meta_labels_without_banning_method_notes() {
+    let mut flagged = doc();
+    for (index, text) in [
+        "专业学位博士点为0个（表 1，核实值）。",
+        "按支撑强度排序投入（本报告建议）。",
+        "据此本报告判断，单点突破更可行。",
+        "这一解释仍需验证（属推断）。",
+        "本报告不作逐条引证。",
+        "本报告不将其计入既有事实。",
+    ]
+    .iter()
+    .enumerate()
+    {
+        flagged
+            .blocks
+            .push(paragraph(&format!("meta-{index}"), text));
+    }
+    flagged.blocks.push(table(
+        "meta-title",
+        Some("三项中间标志（本报告建议）"),
+        vec![ColumnNode::leaf("a", "观察项")],
+        vec![row(&[("a", CellValue::text("团队"))])],
+    ));
+    flagged.blocks.push(table(
+        "meta-column",
+        Some("行动安排"),
+        vec![ColumnNode::leaf("a", "可核验信号（本报告建议）")],
+        vec![row(&[("a", CellValue::text("年度台账"))])],
+    ));
+
+    let report = lint_document(&flagged);
+    let hits: Vec<_> = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "QR426")
+        .collect();
+    assert_eq!(hits.len(), 8, "{:?}", report.diagnostics);
+    assert!(
+        hits.iter()
+            .all(|diagnostic| diagnostic.severity == Severity::Warning && diagnostic.suppressible)
+    );
+
+    let mut clean = doc();
+    clean.blocks.push(paragraph(
+        "scope",
+        "本报告以2021—2025年为统计窗口，建议集中资源建设涉海学科。",
+    ));
+    clean.blocks.push(paragraph(
+        "quoted",
+        "“本报告建议”属于需要清理的内部编辑标签。",
+    ));
+    clean.blocks.push(with_table_note(
+        table(
+            "method-note",
+            Some("阶段目标（本报告测算）"),
+            vec![ColumnNode::leaf("a", "指标")],
+            vec![row(&[("a", CellValue::text("人才"))])],
+        ),
+        "阶段目标为本报告建议值，非官方下达指标。",
+    ));
+    let report = lint_document(&clean);
+    assert!(!has_code(&report, "QR426"), "{:?}", report.diagnostics);
+
+    let mut ignored = paragraph("ignored-meta", "按支撑强度排序（本报告建议）。");
+    ignored.lint_ignore = vec!["QR426".into()];
+    let mut ignored_document = doc();
+    ignored_document.blocks.push(ignored);
+    let report = lint_document(&ignored_document);
+    assert!(!has_code(&report, "QR426"));
+    assert_eq!(report.summary.suppressed, 1);
 }
 
 #[test]
