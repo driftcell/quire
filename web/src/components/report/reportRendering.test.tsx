@@ -224,3 +224,89 @@ describe("TOC page-number alignment", () => {
     },
   );
 });
+
+describe("TOC continuation ranges", () => {
+  const nestedNodes = [
+    {
+      block_id: "chapter-one",
+      level: 1,
+      number: "1",
+      text: "第一章",
+      children: [
+        {
+          block_id: "section-one",
+          level: 2,
+          number: "1.1",
+          text: "第一节",
+          children: [
+            {
+              block_id: "detail-one",
+              level: 3,
+              number: "1.1.1",
+              text: "细目一",
+            },
+          ],
+        },
+        {
+          block_id: "section-two",
+          level: 2,
+          number: "1.2",
+          text: "第二节",
+        },
+      ],
+    },
+    {
+      block_id: "chapter-two",
+      level: 1,
+      number: "2",
+      text: "第二章",
+    },
+  ];
+
+  test("renders only the requested flattened entries with a continuation title", () => {
+    const markup = renderToStaticMarkup(
+      <ReportTocSection
+        config={normalizeTocConfig({ variant: "dotted", max_depth: 3 })}
+        nodes={nestedNodes}
+        isPaged={true}
+        range={{ start: 1, end: 3 }}
+        pageMap={
+          new Map([
+            ["section-one", 8],
+            ["detail-one", 9],
+          ])
+        }
+        printMode={true}
+      />,
+    );
+
+    expect(markup).toContain("目录（续）");
+    expect(markup).toContain('data-toc-range-start="1"');
+    expect(markup).toContain('data-toc-range-end="3"');
+    expect(markup).toContain("第一节");
+    expect(markup).toContain("细目一");
+    expect(markup).not.toContain("第一章");
+    expect(markup).not.toContain("第二节");
+    expect(markup).not.toContain("第二章");
+    expect(markup.match(/data-toc-block-id=/g)).toHaveLength(2);
+    expect(markup).toContain(">8</span>");
+    expect(markup).toContain(">9</span>");
+  });
+
+  test("renders every nested entry exactly once without a range", () => {
+    const markup = renderToStaticMarkup(
+      <ReportTocSection
+        config={normalizeTocConfig({ variant: "dotted", max_depth: 3 })}
+        nodes={nestedNodes}
+        isPaged={false}
+        printMode={true}
+      />,
+    );
+
+    expect(markup).not.toContain("目录（续）");
+    expect(markup.match(/data-toc-block-id=/g)).toHaveLength(5);
+    for (const text of ["第一章", "第一节", "细目一", "第二节", "第二章"]) {
+      expect(markup).toContain(text);
+    }
+  });
+});

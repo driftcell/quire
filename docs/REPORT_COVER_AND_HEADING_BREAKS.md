@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-server`, `web`
-- **Related Notes:** `../notes/cover_and_heading_page_breaks.md`
+- **Related Notes:** `../notes/cover_and_heading_page_breaks.md`, `../notes/toc_pagination.md`
 
 ## 1. Scope & Non-Goals
 
@@ -75,8 +75,10 @@ before sanitization.
 - **Paged or print (`isPaged=true`):** a custom-HTML cover has no bottom margin or separator. When
   `ReportViewer` detects `cover.enabled && cover.custom_html`, it passes `coverFullPage` to the
   paginator and `ReportPage`.
-- **Continuous (`isPaged=false`):** the custom cover keeps its natural height and gains a soft bottom
-  separator (`border-b`, `pb-8`); the TOC and body follow directly.
+- **Continuous (`isPaged=false`):** the custom cover keeps its natural height inside a full-bleed
+  `continuous-custom-cover` wrapper. The wrapper owns negative top spacing, bottom spacing and
+  `overflow-hidden`; `ReportCover` itself adds no border or bottom margin. The TOC and body follow
+  directly.
 
 `ReportPage` treats the first page as a full cover page when `page.includeCover && coverFullPage`:
 
@@ -104,7 +106,20 @@ Without a full-page cover, the cover still shares page 1 with the TOC when it fi
 
 The TOC starts a new page when `tocPageBreakBefore` is true and the current page already has content,
 or when it would overflow the current page. When `tocPageBreakAfter` is true, body content starts on
-the next page after the TOC. With both flags true, the TOC occupies its own page.
+the next page after the TOC. With both flags true, the TOC occupies its own page or pages.
+
+`PageMeasurements` also carries `tocHeaderHeight`, `tocTrailingHeight` and display-order
+`tocEntryHeights`, measured after fonts settle. `ReportTocSection` flattens the already depth-filtered
+TOC while preserving level styling, so nested entries can be sliced without duplicating parents or
+children. `paginateBlocks` packs these entries into contiguous half-open `TocRange` values. Every range
+has a non-empty entry set; even a single entry taller than the available height advances the cursor.
+Later pages render `目录（续）`. A small TOC retains the previous cover/body sharing behavior, and the
+last range can share its page with body content unless `tocPageBreakAfter` is set. Synthetic fixtures
+without per-entry measurements retain the atomic fallback.
+
+`buildBlockPageMap` runs after all TOC and body ranges are known, so displayed TOC page numbers refer
+to the final body pages. Bibliography used-height estimation charges only the actual `tocRange` on its
+page rather than the complete TOC height.
 
 While iterating blocks, a heading starts a new page when its own `style.page_break_before` is true
 or when the document policy matches its level (`h1` for level 1, `h1_and_h2` for levels 1-2). The
@@ -148,13 +163,18 @@ choice.
 
 - A custom-HTML cover page in paged/print mode contains only the cover, never the TOC, body blocks,
   header or footer; TOC/body start on page 2.
-- Continuous custom covers keep natural height with a bottom separator and flow into the TOC.
+- Continuous custom covers keep natural height inside their full-bleed spacing wrapper and flow into
+  the TOC without an additional `ReportCover` border or margin.
 - `HeadingPageBreak` defaults to `none`; all three values round-trip through serde and the generated
   JSON Schema.
 - `TocConfig.page_break_before` and `page_break_after` default to `false`; both round-trip through
   serde and the generated JSON Schema.
-- `tocPageBreakBefore` and `tocPageBreakAfter` are applied independently; enabling both gives the
-  TOC an exclusive page.
+- `tocPageBreakBefore` and `tocPageBreakAfter` are applied independently; enabling both gives every
+  TOC segment an exclusive page, including multi-page TOCs, and starts body content on the following
+  page.
+- Every visible TOC entry appears exactly once across contiguous ranges. Continuation ranges have no
+  empty pages, duplicate parent entries or clipped entries, and their page numbers match the final
+  body pages.
 - Automatic heading breaks never emit a blank page when the heading is already at a page top.
 - `TocConfig.variant` defaults to `dotted`; non-dotted page numbers still align to the right edge.
 - Built-in cover variants never duplicate a subtitle's leading/trailing dashes.
@@ -182,6 +202,7 @@ bun run typecheck
 bun run lint
 bun run build
 playwright-cli run-code --filename=web/e2e/cover-and-heading-breaks.js
+playwright-cli run-code --filename=web/e2e/toc-pagination.js
 ```
 
 The Playwright scenario asserts the continuous-versus-paged cover difference, hidden page-1

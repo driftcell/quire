@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import type { TocRange } from "@/components/report/pagination";
 import type { TocNode } from "@/contracts/report-protocol";
 import {
   filterTocNodes,
@@ -11,6 +12,8 @@ export interface ReportTocSectionProps {
   nodes: TocNode[];
   isPaged: boolean;
   pageMap?: ReadonlyMap<string, number>;
+  /** Half-open display-order range used by paged continuation segments. */
+  range?: TocRange;
   printMode?: boolean;
   onJumpToSection?: (blockId: string) => void;
 }
@@ -23,6 +26,13 @@ function levelClassName(level: number): string {
     return "pl-4 text-[13px] font-normal text-[var(--rpt-ink)]";
   }
   return "pl-8 text-[12.5px] font-normal text-[var(--rpt-muted)]";
+}
+
+function flattenTocNodes(nodes: TocNode[]): TocNode[] {
+  return nodes.flatMap((node) => [
+    node,
+    ...flattenTocNodes(node.children ?? []),
+  ]);
 }
 
 function TocEntry({
@@ -79,7 +89,10 @@ function TocEntry({
   }`;
 
   return (
-    <li className={node.level <= 1 ? "mt-2 first:mt-0" : undefined}>
+    <li
+      data-toc-entry="true"
+      className={node.level <= 1 ? "pt-2 first:pt-0" : undefined}
+    >
       {interactive ? (
         <button
           type="button"
@@ -101,16 +114,6 @@ function TocEntry({
           {content}
         </div>
       )}
-      {node.children && node.children.length > 0 && (
-        <TocEntryList
-          nodes={node.children}
-          config={config}
-          isPaged={isPaged}
-          pageMap={pageMap}
-          printMode={printMode}
-          onJumpToSection={onJumpToSection}
-        />
-      )}
     </li>
   );
 }
@@ -120,6 +123,7 @@ function TocEntryList({
   config,
   isPaged,
   pageMap,
+  range,
   printMode,
   onJumpToSection,
 }: {
@@ -127,12 +131,14 @@ function TocEntryList({
   config: ResolvedTocConfig;
   isPaged: boolean;
   pageMap?: ReadonlyMap<string, number>;
+  range?: TocRange;
   printMode: boolean;
   onJumpToSection?: (blockId: string) => void;
 }) {
+  const visibleNodes = range ? nodes.slice(range.start, range.end) : nodes;
   return (
-    <ul className="space-y-0.5">
-      {nodes.map((node) => (
+    <ul className="flex flex-col gap-0.5">
+      {visibleNodes.map((node) => (
         <TocEntry
           key={node.block_id}
           node={node}
@@ -152,32 +158,46 @@ export function ReportTocSection({
   nodes,
   isPaged,
   pageMap,
+  range,
   printMode = false,
   onJumpToSection,
 }: ReportTocSectionProps) {
   const visibleNodes = useMemo(
-    () => filterTocNodes(nodes, config.max_depth),
+    () => flattenTocNodes(filterTocNodes(nodes, config.max_depth)),
     [nodes, config.max_depth],
   );
 
   if (!config.enabled || visibleNodes.length === 0) {
     return null;
   }
+  if (range && (range.start < 0 || range.end <= range.start)) {
+    return null;
+  }
 
   return (
-    <section className="my-8" data-report-toc="true" aria-label={config.title}>
+    <section
+      className="my-8"
+      data-report-toc="true"
+      data-toc-range-start={range?.start}
+      data-toc-range-end={range?.end}
+      aria-label={config.title}
+    >
       <h2 className="mb-3 flex items-center gap-2 border-b border-[var(--rpt-border)] pb-2 text-[15px] font-semibold tracking-wide text-[var(--rpt-ink)]">
         <span
           aria-hidden="true"
           className="h-3.5 w-1 shrink-0 rounded-full bg-[var(--rpt-accent)]"
         />
-        <span>{config.title}</span>
+        <span>
+          {config.title}
+          {range && range.start > 0 ? "（续）" : ""}
+        </span>
       </h2>
       <TocEntryList
         nodes={visibleNodes}
         config={config}
         isPaged={isPaged}
         pageMap={pageMap}
+        range={range}
         printMode={printMode}
         onJumpToSection={onJumpToSection}
       />

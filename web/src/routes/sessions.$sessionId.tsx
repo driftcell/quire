@@ -57,13 +57,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const isMobile = useIsMobile();
   const { open: leftSidebarOpen, toggleSidebar } = useSidebar();
 
-  const {
-    prefs,
-    updatePrefs,
-    rightPanelAnimating,
-    rightPanelRef,
-    toggleRightSidebar,
-  } = useWorkspacePreferences();
+  const { prefs, updatePrefs, toggleRightSidebar } = useWorkspacePreferences();
 
   const sessionQuery = useQuery({
     queryKey: ["session", sessionId],
@@ -270,19 +264,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     (comment) => comment.status === "open",
   ).length;
 
-  const handleChatPanelResize = useCallback(
-    (pct: number) => {
-      if (pct <= 1 && prefs.rightSidebarOpen) {
-        updatePrefs({ rightSidebarOpen: false });
-        return;
-      }
-      if (prefs.rightSidebarOpen && pct >= 20 && pct <= 60) {
-        updatePrefs({ rightPanelPct: Math.round(pct) });
-      }
-    },
-    [prefs.rightSidebarOpen, updatePrefs],
-  );
-
   const chatPane = (
     <SessionChatPane
       sessionId={sessionId}
@@ -431,9 +412,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
         toggleSidebar={toggleSidebar}
         rightSidebarOpen={prefs.rightSidebarOpen}
         rightPanelPct={prefs.rightPanelPct}
-        rightPanelAnimating={rightPanelAnimating}
-        rightPanelRef={rightPanelRef}
-        onChatPanelResize={handleChatPanelResize}
         reportPane={reportPane}
         chatPane={chatPane}
         rightPane={rightPane}

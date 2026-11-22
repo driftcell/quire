@@ -160,15 +160,22 @@ async (page) => {
     (await page.locator("[data-page-number]").count()) === 0,
     "continuous mode must not render A4 pages",
   );
-  const hasSeparator = await continuousCover.evaluate((element) => {
-    const style = window.getComputedStyle(element);
-    return (
-      style.borderBottomWidth !== "0px" && style.borderBottomStyle !== "none"
-    );
-  });
+  const continuousWrapper = article.locator(
+    '[data-slot="continuous-custom-cover"]',
+  );
+  const hasContinuousWrapperLayout = await continuousWrapper.evaluate(
+    (element) => {
+      const style = window.getComputedStyle(element);
+      return (
+        style.overflow === "hidden" &&
+        Number.parseFloat(style.marginTop) < 0 &&
+        Number.parseFloat(style.marginBottom) > 0
+      );
+    },
+  );
   assert(
-    hasSeparator,
-    "continuous custom cover must keep its bottom separator",
+    hasContinuousWrapperLayout,
+    "continuous custom cover must use its full-bleed spacing wrapper",
   );
   assert(
     await page.evaluate(() => window.coverXssExecuted === undefined),
@@ -304,7 +311,7 @@ async (page) => {
     docId,
     results: {
       continuousCoverHeight: Math.round(continuousHeight),
-      continuousSeparator: hasSeparator,
+      continuousWrapperLayout: hasContinuousWrapperLayout,
       continuousTocFollowsCover: true,
       coverScriptStripped: true,
       page1OnlyCover: true,

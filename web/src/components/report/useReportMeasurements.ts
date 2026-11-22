@@ -17,6 +17,9 @@ export function useReportMeasurements({
     tableMeasurements: {},
     coverHeight: 0,
     tocHeight: 0,
+    tocHeaderHeight: 0,
+    tocTrailingHeight: 0,
+    tocEntryHeights: [],
     bibliographyHeaderHeight: 0,
     bibliographyItemHeights: [],
   });
@@ -90,6 +93,29 @@ export function useReportMeasurements({
       const tocEl = container.querySelector<HTMLElement>(
         '[data-measure-toc="true"]',
       );
+      const tocRoot = tocEl?.querySelector<HTMLElement>(
+        '[data-report-toc="true"]',
+      );
+      const tocHeader = tocRoot?.querySelector<HTMLElement>("h2");
+      let tocHeaderHeight = 0;
+      let tocTrailingHeight = 0;
+      if (tocRoot && tocHeader) {
+        const rootStyle = window.getComputedStyle(tocRoot);
+        const headerStyle = window.getComputedStyle(tocHeader);
+        tocHeaderHeight =
+          tocHeader.getBoundingClientRect().height +
+          (Number.parseFloat(rootStyle.marginTop) || 0) +
+          (Number.parseFloat(headerStyle.marginBottom) || 0);
+        tocTrailingHeight = Number.parseFloat(rootStyle.marginBottom) || 0;
+      }
+      const tocEntries = tocRoot
+        ? Array.from(tocRoot.querySelectorAll<HTMLElement>("[data-toc-entry]"))
+        : [];
+      const tocEntryHeights = tocEntries.map((entry, index) => {
+        const height = entry.getBoundingClientRect().height;
+        return height + (index + 1 < tocEntries.length ? 2 : 0);
+      });
+
       const bibEl = container.querySelector<HTMLElement>(
         '[data-measure-bib="true"]',
       );
@@ -123,6 +149,9 @@ export function useReportMeasurements({
         tableMeasurements,
         coverHeight: coverEl ? coverEl.getBoundingClientRect().height : 0,
         tocHeight: tocEl ? tocEl.getBoundingClientRect().height : 0,
+        tocHeaderHeight,
+        tocTrailingHeight,
+        tocEntryHeights,
         bibliographyHeaderHeight,
         bibliographyItemHeights,
       });

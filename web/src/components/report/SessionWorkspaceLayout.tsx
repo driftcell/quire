@@ -1,10 +1,5 @@
-import type { ReactNode, RefObject } from "react";
+import type { ReactNode } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon } from "lucide-react";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -12,7 +7,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { PanelImperativeHandle } from "react-resizable-panels";
 
 export type SessionMobileTab = "report" | "chat" | "comments";
 
@@ -24,9 +18,6 @@ export interface SessionWorkspaceLayoutProps {
   toggleSidebar: () => void;
   rightSidebarOpen: boolean;
   rightPanelPct: number;
-  rightPanelAnimating: boolean;
-  rightPanelRef: RefObject<PanelImperativeHandle | null>;
-  onChatPanelResize: (pct: number) => void;
   reportPane: ReactNode;
   chatPane: ReactNode;
   rightPane: ReactNode;
@@ -43,9 +34,6 @@ export function SessionWorkspaceLayout({
   toggleSidebar,
   rightSidebarOpen,
   rightPanelPct,
-  rightPanelAnimating,
-  rightPanelRef,
-  onChatPanelResize,
   reportPane,
   chatPane,
   rightPane,
@@ -138,53 +126,22 @@ export function SessionWorkspaceLayout({
             </TabsContent>
           </Tabs>
         ) : (
-          <ResizablePanelGroup
-            orientation="horizontal"
-            className="h-full min-h-0 min-w-0"
-            onLayoutChanged={(layout, meta) => {
-              if (!meta.isUserInteraction) {
-                return;
-              }
-              const pct = (meta.requestedLayout ?? layout)["chat-pane"];
-              if (typeof pct === "number") {
-                onChatPanelResize(pct);
-              }
-            }}
-          >
-            <ResizablePanel
-              id="report-pane"
-              defaultSize={`${100 - (rightSidebarOpen ? rightPanelPct : 0)}%`}
-              minSize="35%"
-              className="min-h-0 min-w-0"
-            >
-              {reportPane}
-            </ResizablePanel>
-            <ResizableHandle
-              withHandle
-              disabled={!rightSidebarOpen}
-              className={
+          <div className="flex h-full min-h-0 min-w-0">
+            <div className="min-h-0 min-w-0 flex-1">{reportPane}</div>
+            <div
+              data-slot="session-right-panel"
+              data-state={rightSidebarOpen ? "expanded" : "collapsed"}
+              aria-hidden={!rightSidebarOpen}
+              className={`h-full min-h-0 min-w-0 shrink-0 overflow-hidden ${
                 rightSidebarOpen
-                  ? "mx-1.5"
-                  : "pointer-events-none mx-0 w-0 opacity-0"
-              }
-            />
-            <ResizablePanel
-              id="chat-pane"
-              panelRef={rightPanelRef}
-              defaultSize={`${rightSidebarOpen ? rightPanelPct : 0}%`}
-              minSize="22%"
-              maxSize="60%"
-              collapsible
-              collapsedSize="0%"
-              className={`min-h-0 min-w-0 ${
-                rightPanelAnimating
-                  ? "transition-[flex-grow,flex-basis] duration-200 ease-out"
-                  : ""
+                  ? "border-l border-border/60"
+                  : "pointer-events-none invisible"
               }`}
+              style={{ width: rightSidebarOpen ? `${rightPanelPct}%` : "0%" }}
             >
               {rightPane}
-            </ResizablePanel>
-          </ResizablePanelGroup>
+            </div>
+          </div>
         )}
       </div>
     </div>

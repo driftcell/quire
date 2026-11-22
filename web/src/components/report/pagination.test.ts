@@ -40,6 +40,9 @@ function measurements(
     tableMeasurements: {},
     coverHeight: 0,
     tocHeight: 0,
+    tocHeaderHeight: 0,
+    tocTrailingHeight: 0,
+    tocEntryHeights: [],
     bibliographyHeaderHeight: 0,
     bibliographyItemHeights: [],
     ...overrides,
@@ -171,6 +174,124 @@ describe("paginateBlocks with an inline TOC", () => {
     });
     expect(pageAt(pages, 2).includeToc).toBe(false);
     expect(pageAt(pages, 2).items[0]?.block.id).toBe("p1");
+  });
+  test("splits an oversized TOC into contiguous ranges and shifts body page numbers", () => {
+    const pages = paginateBlocks(
+      [heading("h1"), paragraph("p1")],
+      measurements({
+        blockHeights: { h1: 40, p1: 100 },
+        tocHeight: 410,
+        tocHeaderHeight: 60,
+        tocTrailingHeight: 20,
+        tocEntryHeights: [100, 80, 90, 60],
+      }),
+      250,
+      { tocPageBreakAfter: true },
+    );
+
+    expect(pages).toHaveLength(4);
+    expect(pageAt(pages, 0).tocRange).toEqual({ start: 0, end: 1 });
+    expect(pageAt(pages, 1).tocRange).toEqual({ start: 1, end: 3 });
+    expect(pageAt(pages, 2).tocRange).toEqual({ start: 3, end: 4 });
+    for (const page of pages.slice(0, 3)) {
+      expect(page.includeToc).toBe(true);
+      expect(page.items).toHaveLength(0);
+    }
+    expect(pageAt(pages, 3).includeToc).toBe(false);
+    expect(pageAt(pages, 3).items.map((slice) => slice.block.id)).toEqual([
+      "h1",
+      "p1",
+    ]);
+    const pageMap = buildBlockPageMap(pages);
+    expect(pageMap.get("h1")).toBe(4);
+    expect(pageMap.get("p1")).toBe(4);
+  });
+
+  test("keeps every oversized TOC page exclusive with both explicit page breaks", () => {
+    const pages = paginateBlocks(
+      [paragraph("p1")],
+      measurements({
+        blockHeights: { p1: 100 },
+        coverHeight: 120,
+        tocHeight: 410,
+        tocHeaderHeight: 60,
+        tocTrailingHeight: 20,
+        tocEntryHeights: [100, 80, 90, 60],
+      }),
+      250,
+      { tocPageBreakBefore: true, tocPageBreakAfter: true },
+    );
+
+    expect(pages).toHaveLength(5);
+    expect(pageAt(pages, 0).includeCover).toBe(true);
+    expect(pageAt(pages, 0).includeToc).toBe(false);
+    for (const [index, expected] of [
+      { start: 0, end: 1 },
+      { start: 1, end: 3 },
+      { start: 3, end: 4 },
+    ].entries()) {
+      const page = pageAt(pages, index + 1);
+      expect(page.tocRange).toEqual(expected);
+      expect(page.items).toHaveLength(0);
+    }
+    expect(pageAt(pages, 4).includeToc).toBe(false);
+    expect(pageAt(pages, 4).items[0]?.block.id).toBe("p1");
+  });
+
+  test("keeps a measured small TOC on the cover page", () => {
+    const pages = paginateBlocks(
+      [paragraph("p1")],
+      measurements({
+        blockHeights: { p1: 100 },
+        coverHeight: 50,
+        tocHeight: 100,
+        tocHeaderHeight: 20,
+        tocTrailingHeight: 10,
+        tocEntryHeights: [30, 40],
+      }),
+      500,
+    );
+
+    expect(pageAt(pages, 0).includeCover).toBe(true);
+    expect(pageAt(pages, 0).tocRange).toEqual({ start: 0, end: 2 });
+    expect(pageAt(pages, 0).items[0]?.block.id).toBe("p1");
+  });
+
+  test("always makes progress when one TOC entry exceeds the available height", () => {
+    const pages = paginateBlocks(
+      [],
+      measurements({
+        tocHeight: 400,
+        tocHeaderHeight: 60,
+        tocTrailingHeight: 20,
+        tocEntryHeights: [300, 50],
+      }),
+      100,
+    );
+
+    expect(pages).toHaveLength(2);
+    expect(pageAt(pages, 0).tocRange).toEqual({ start: 0, end: 1 });
+    expect(pageAt(pages, 1).tocRange).toEqual({ start: 1, end: 2 });
+  });
+
+  test("uses only the actual TOC range when sharing a page with references", () => {
+    const pages = paginateBlocks(
+      [],
+      measurements({
+        tocHeight: 1_000,
+        tocHeaderHeight: 60,
+        tocTrailingHeight: 20,
+        tocEntryHeights: [100, 80, 90, 60],
+        bibliographyHeaderHeight: 20,
+        bibliographyItemHeights: [30],
+      }),
+      250,
+      { referencesPageBreakBefore: false },
+    );
+
+    expect(pages).toHaveLength(3);
+    expect(pageAt(pages, 2).tocRange).toEqual({ start: 3, end: 4 });
+    expect(pageAt(pages, 2).bibliographyRange).toEqual({ start: 0, end: 1 });
   });
 });
 

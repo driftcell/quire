@@ -26,6 +26,7 @@ import {
   paginateBlocks,
   type BibliographyRange,
   type PageSlice,
+  type TocRange,
 } from "@/components/report/pagination";
 import { usePageScale } from "@/components/report/usePageScale";
 import { useReportHighlights } from "@/components/report/useReportHighlights";
@@ -379,12 +380,16 @@ export function ReportViewer({
     [onJumpToSection],
   );
 
-  const renderToc = (pageMap?: ReadonlyMap<string, number>) => (
+  const renderToc = (
+    pageMap?: ReadonlyMap<string, number>,
+    range?: TocRange,
+  ) => (
     <ReportTocSection
       config={resolvedToc}
       nodes={computed.toc_tree}
       isPaged={isPaged}
       pageMap={pageMap}
+      range={range}
       printMode={suppressChrome}
       onJumpToSection={suppressChrome ? undefined : handleTocJump}
     />
@@ -580,7 +585,9 @@ export function ReportViewer({
                   <ReportCover cover={document.cover} isPaged />
                 ) : null
               }
-              toc={page.includeToc ? renderToc(blockPageMap) : null}
+              toc={
+                page.includeToc ? renderToc(blockPageMap, page.tocRange) : null
+              }
               bibliography={
                 page.bibliographyRange
                   ? renderBibliography(false, page.bibliographyRange)

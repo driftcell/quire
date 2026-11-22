@@ -5,8 +5,7 @@ async (page) => {
   const runtime = env.E2E_RUNTIME_URL || "http://127.0.0.1:8081";
   const server = env.E2E_SERVER_URL || "http://127.0.0.1:8082";
   const roToken = env.E2E_QUIRE_RO_TOKEN || "dev-ro-token-change-me";
-  const runtimeToken =
-    env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
+  const runtimeToken = env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
   const auth = (token) => ({ Authorization: `Bearer ${token}` });
   const prefsKey = "quire.ui.preferences.v1";
 
@@ -14,9 +13,7 @@ async (page) => {
     headers: auth(roToken),
   });
   if (!reportListResponse.ok()) {
-    throw new Error(
-      `failed to list reports: ${reportListResponse.status()}`,
-    );
+    throw new Error(`failed to list reports: ${reportListResponse.status()}`);
   }
   const reports = (await reportListResponse.json()).reports ?? [];
   const report = [...reports]
@@ -73,17 +70,14 @@ async (page) => {
     const viewToggle = page.getByRole("button", { name: "分页" });
     await viewToggle.waitFor({ state: "visible", timeout: 20000 });
     await viewToggle.click();
-    await page.waitForFunction(
-      (key) => {
-        const raw = window.localStorage.getItem(key);
-        if (!raw) return false;
-        const parsed = JSON.parse(raw);
-        return (
-          parsed.leftSidebarOpen === false && parsed.reportViewMode === "paged"
-        );
-      },
-      prefsKey,
-    );
+    await page.waitForFunction((key) => {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      return (
+        parsed.leftSidebarOpen === false && parsed.reportViewMode === "paged"
+      );
+    }, prefsKey);
 
     await page.reload();
     await sidebar.waitFor({ state: "attached", timeout: 15000 });
@@ -106,8 +100,7 @@ async (page) => {
       return {
         animating: wrapperElement.getAttribute("data-sidebar-animating"),
         gapWidth: window.getComputedStyle(gap).width,
-        transitionDuration:
-          window.getComputedStyle(gap).transitionDuration,
+        transitionDuration: window.getComputedStyle(gap).transitionDuration,
         containerDuration:
           window.getComputedStyle(container).transitionDuration,
       };
@@ -130,47 +123,7 @@ async (page) => {
       `refresh first paint must not transition the sidebar container, got ${firstPaint.containerDuration}`,
     );
 
-    await page.evaluate(() => {
-      const wrapperElement = document.querySelector(
-        '[data-slot="sidebar-wrapper"]',
-      );
-      const gap = document.querySelector('[data-slot="sidebar-gap"]');
-      const container = document.querySelector(
-        '[data-slot="sidebar-container"]',
-      );
-      window.sidebarAnimationProbe = {
-        seen: false,
-        duration: null,
-        containerDuration: null,
-        containerProperty: null,
-      };
-      if (!wrapperElement || !gap || !container) return;
-      const observer = new MutationObserver(() => {
-        if (
-          wrapperElement.getAttribute("data-sidebar-animating") === "true"
-        ) {
-          window.sidebarAnimationProbe.seen = true;
-          window.sidebarAnimationProbe.duration =
-            window.getComputedStyle(gap).transitionDuration;
-          window.sidebarAnimationProbe.containerDuration =
-            window.getComputedStyle(container).transitionDuration;
-          window.sidebarAnimationProbe.containerProperty =
-            window.getComputedStyle(container).transitionProperty;
-        }
-      });
-      observer.observe(wrapperElement, {
-        attributes: true,
-        attributeFilter: ["data-sidebar-animating"],
-      });
-      window.sidebarAnimationObserver = observer;
-    });
-
     await page.getByRole("button", { name: "展开左侧会话栏" }).click();
-    await page.waitForFunction(
-      () => window.sidebarAnimationProbe?.seen === true,
-      null,
-      { timeout: 3000 },
-    );
     await page.waitForFunction(
       () => {
         const gap = document.querySelector('[data-slot="sidebar-gap"]');
@@ -181,31 +134,26 @@ async (page) => {
     );
     const during = await page.evaluate(() => {
       const gap = document.querySelector('[data-slot="sidebar-gap"]');
+      const container = document.querySelector(
+        '[data-slot="sidebar-container"]',
+      );
       return {
-        duration: window.sidebarAnimationProbe?.duration ?? "",
-        containerDuration:
-          window.sidebarAnimationProbe?.containerDuration ?? "",
-        containerProperty:
-          window.sidebarAnimationProbe?.containerProperty ?? "",
+        duration: gap ? window.getComputedStyle(gap).transitionDuration : "",
+        containerDuration: container
+          ? window.getComputedStyle(container).transitionDuration
+          : "",
         gapWidth: gap ? window.getComputedStyle(gap).width : "",
       };
     });
     assert(
-      during.duration.includes("0.2s"),
-      `manual toggle must enable a 200ms width transition, got ${during.duration}`,
+      during.duration === "0s",
+      `manual toggle must not animate sidebar width, got ${during.duration}`,
     );
     assert(
-      during.containerDuration.includes("0.2s"),
-      `manual toggle must enable a 200ms container transition, got ${during.containerDuration}`,
+      during.containerDuration === "0s",
+      `manual toggle must not animate the sidebar container, got ${during.containerDuration}`,
     );
-    assert(
-      during.containerProperty.includes("width"),
-      `manual toggle must transition container width, got ${during.containerProperty}`,
-    );
-    assert(
-      during.gapWidth !== "0px",
-      "manual expand must animate the gap away from 0px",
-    );
+    assert(during.gapWidth !== "0px", "manual expand must show the sidebar");
 
     await page.waitForFunction(
       () =>
@@ -232,10 +180,9 @@ async (page) => {
         refreshAnimating: firstPaint.animating,
         refreshTransitionDuration: firstPaint.transitionDuration,
         refreshGapWidth: firstPaint.gapWidth,
-        manualAnimationSeen: true,
+        manualAnimationSeen: false,
         manualTransitionDuration: during.duration,
         manualContainerDuration: during.containerDuration,
-        animationReset: true,
       },
     };
   } finally {

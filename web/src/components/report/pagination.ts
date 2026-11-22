@@ -20,11 +20,18 @@ export interface BibliographyRange {
   end: number;
 }
 
+export interface TocRange {
+  /** Zero-based, half-open range into the flattened visible TOC entries. */
+  start: number;
+  end: number;
+}
+
 export interface A4Page {
   pageNumber: number;
   items: PageSlice[];
   includeCover?: boolean;
   includeToc?: boolean;
+  tocRange?: TocRange;
   bibliographyRange?: BibliographyRange;
 }
 
@@ -43,6 +50,12 @@ export interface PageMeasurements {
   tableMeasurements: Record<string, TableMeasurement>;
   coverHeight: number;
   tocHeight: number;
+  /** Full heading plus top spacing for every TOC segment. */
+  tocHeaderHeight: number;
+  /** Bottom spacing reserved after each TOC segment. */
+  tocTrailingHeight: number;
+  /** Display-order entry heights, including inter-entry gaps where applicable. */
+  tocEntryHeights: number[];
   /** Measured first-page bibliography header including its top spacing. */
   bibliographyHeaderHeight: number;
   /** Per-item heights including the 14px `space-y-3.5` gap. */
@@ -140,6 +153,50 @@ function fitTableRows(
  *   (the protocol default) or when its header and first entry do not fit. Entries
  *   are then greedily sliced into contiguous `bibliographyRange` pages.
  */
+function tocRangeHeight(
+  range: TocRange,
+  measurements: PageMeasurements,
+): number {
+  const entries = measurements.tocEntryHeights
+    .slice(range.start, range.end)
+    .reduce((sum, height) => sum + height, 0);
+  return (
+    measurements.tocHeaderHeight + measurements.tocTrailingHeight + entries
+  );
+}
+
+function packTocRanges(
+  measurements: PageMeasurements,
+  pageHeight: number,
+): TocRange[] {
+  const ranges: TocRange[] = [];
+  const heights = measurements.tocEntryHeights;
+  const available = Math.max(
+    1,
+    pageHeight - measurements.tocHeaderHeight - measurements.tocTrailingHeight,
+  );
+  let cursor = 0;
+  while (cursor < heights.length) {
+    let usedHeight = 0;
+    let count = 0;
+    while (cursor + count < heights.length) {
+      const entryHeight = heights[cursor + count] ?? 0;
+      if (count > 0 && usedHeight + entryHeight > available) {
+        break;
+      }
+      usedHeight += entryHeight;
+      count += 1;
+    }
+    // Always include one entry, even when a single wrapped title exceeds the
+    // available height. This guarantees progress and never drops an entry
+    // from the page model.
+    const take = Math.max(1, count);
+    ranges.push({ start: cursor, end: cursor + take });
+    cursor += take;
+  }
+  return ranges;
+}
+
 export function paginateBlocks(
   blocks: ReportBlock[],
   measurements: PageMeasurements,
@@ -157,6 +214,7 @@ export function paginateBlocks(
   const pages: A4Page[] = [];
   let currentItems: PageSlice[] = [];
   let currentIncludeToc = false;
+  let currentTocRange: TocRange | undefined;
   let usedHeight = 0;
 
   if (coverHeight > 0 && fullPageCover) {
@@ -177,9 +235,11 @@ export function paginateBlocks(
         items: currentItems,
         includeCover: pages.length === 0 && coverHeight > 0,
         includeToc: currentIncludeToc,
+        tocRange: currentTocRange,
       });
       currentItems = [];
       currentIncludeToc = false;
+      currentTocRange = undefined;
       usedHeight = 0;
     }
   };
@@ -191,8 +251,24 @@ export function paginateBlocks(
     ) {
       pushPage();
     }
-    currentIncludeToc = true;
-    usedHeight += tocHeight;
+    if (measurements.tocEntryHeights.length > 0) {
+      const ranges = packTocRanges(measurements, pageHeight);
+      for (let index = 0; index < ranges.length; index += 1) {
+        const range = ranges[index];
+        if (!range) continue;
+        currentIncludeToc = true;
+        currentTocRange = range;
+        usedHeight += tocRangeHeight(range, measurements);
+        if (index + 1 < ranges.length) {
+          pushPage();
+        }
+      }
+    } else {
+      // Backward-compatible atomic fallback for synthetic measurements that
+      // predate per-entry TOC metrics.
+      currentIncludeToc = true;
+      usedHeight += tocHeight;
+    }
     if (tocPageBreakAfter) {
       pushPage();
     }
@@ -457,7 +533,11 @@ function estimatedPageUsedHeight(
       return sum + (blockHeights[slice.block.id] ?? 80);
     },
     (page.includeCover ? Math.min(coverHeight, pageHeight * 0.75) : 0) +
-      (page.includeToc ? tocHeight : 0),
+      (page.includeToc
+        ? page.tocRange
+          ? tocRangeHeight(page.tocRange, measurements)
+          : tocHeight
+        : 0),
   );
 }
 
