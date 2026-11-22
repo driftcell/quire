@@ -180,7 +180,8 @@ async fn authorize(
 ) -> Result<(), Box<Response>> {
     let configured_rw = state.config.rw_token.as_ref();
     let configured_ro = state.config.ro_token.as_ref();
-    if configured_rw.is_none() && configured_ro.is_none() {
+    let configured_extra_rw = state.config.extra_rw_token.as_ref();
+    if configured_rw.is_none() && configured_ro.is_none() && configured_extra_rw.is_none() {
         return Err(Box::new(auth_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "auth_not_configured",
@@ -190,12 +191,11 @@ async fn authorize(
     let Some(presented) = presented_token(headers) else {
         return Err(Box::new(missing_token()));
     };
+    let is_rw = configured_rw.is_some_and(|token| token_matches(token, presented))
+        || configured_extra_rw.is_some_and(|token| token_matches(token, presented));
     let allowed = match access {
-        Access::Rw => configured_rw.is_some_and(|token| token_matches(token, presented)),
-        Access::Ro => {
-            configured_ro.is_some_and(|token| token_matches(token, presented))
-                || configured_rw.is_some_and(|token| token_matches(token, presented))
-        }
+        Access::Rw => is_rw,
+        Access::Ro => is_rw || configured_ro.is_some_and(|token| token_matches(token, presented)),
     };
     if allowed {
         Ok(())

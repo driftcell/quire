@@ -25,7 +25,7 @@ use rmcp::transport::streamable_http_server::{
 };
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
@@ -182,18 +182,20 @@ pub fn router(service: RuntimeService) -> Router {
             service.clone(),
             runtime_auth,
         ));
+    let document_router = quire_server::build_document_router(service.report_app_state());
     Router::new()
         .route("/health", get(health))
         .merge(chart_previews)
         .merge(protected)
         .merge(admin_mcp)
+        .with_state(service)
+        .merge(document_router)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        .with_state(service)
 }
 
 async fn runtime_auth(
@@ -546,30 +548,80 @@ fn proxy_runtime_error(error: RuntimeError) -> CommentProxyError {
     }
 }
 
+fn store_comment_error(error: quire_store::StoreError) -> CommentProxyError {
+    let status = match &error {
+        quire_store::StoreError::NotFound { .. }
+        | quire_store::StoreError::CommentThreadNotFound { .. }
+        | quire_store::StoreError::CommentTargetNotFound { .. } => StatusCode::NOT_FOUND,
+        quire_store::StoreError::InvalidDocId { .. }
+        | quire_store::StoreError::InvalidRequest(_)
+        | quire_store::StoreError::Protocol(_) => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+    CommentProxyError {
+        status,
+        code: error.code(),
+        message: error.to_string(),
+        hint: "Inspect the comment payload and the bound report, then retry.",
+    }
+}
+
 async fn create_session_comment(
     State(service): State<RuntimeService>,
     Path(session_id): Path<String>,
     Json(request): Json<SessionCommentCreateRequest>,
 ) -> Result<Json<CommentThread>, CommentProxyError> {
-    let doc_id = session_comment_doc_id(&service, &session_id)
+    let raw_doc_id = session_comment_doc_id(&service, &session_id)
         .await
         .map_err(proxy_runtime_error)?;
-    let thread = forward_comment_request(
-        &service,
-        &session_id,
-        reqwest::Method::POST,
-        &format!("/{}/comments", encode_path_segment(&doc_id)),
-        serde_json::json!({
-            "block_id": request.block_id,
-            "end_block_id": request.end_block_id,
-            "anchor_blocks": request.anchor_blocks,
-            "body": request.body,
-            "quote": request.quote,
-            "end_quote": request.end_quote,
-            "anchor_snapshot": request.anchor_snapshot,
-        }),
-    )
-    .await?;
+    let doc_id = quire_protocol::DocId::parse(raw_doc_id)
+        .map_err(|error| store_comment_error(quire_store::StoreError::Protocol(error)))?;
+    let block_id = quire_protocol::BlockId::parse(request.block_id)
+        .map_err(|error| store_comment_error(quire_store::StoreError::Protocol(error)))?;
+    let end_block_id = request
+        .end_block_id
+        .map(quire_protocol::BlockId::parse)
+        .transpose()
+        .map_err(|error| store_comment_error(quire_store::StoreError::Protocol(error)))?;
+    let anchor_blocks = request
+        .anchor_blocks
+        .into_iter()
+        .map(quire_protocol::BlockId::parse)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| store_comment_error(quire_store::StoreError::Protocol(error)))?;
+    if let Some(quote) = &request.quote {
+        quote.validate().map_err(|reason| {
+            store_comment_error(quire_store::StoreError::InvalidRequest(reason))
+        })?;
+    }
+    if let Some(end_quote) = &request.end_quote {
+        end_quote.validate().map_err(|reason| {
+            store_comment_error(quire_store::StoreError::InvalidRequest(reason))
+        })?;
+    }
+    let thread = service
+        .store()
+        .report_store()
+        .create_comment_thread(
+            &doc_id,
+            quire_store::NewCommentThread {
+                block_id,
+                end_block_id,
+                anchor_blocks,
+                author_type: quire_protocol::CommentAuthorType::Human,
+                author: "reviewer".into(),
+                body: request.body,
+                quote: request.quote,
+                end_quote: request.end_quote,
+                anchor_snapshot: request.anchor_snapshot,
+            },
+        )
+        .await
+        .map_err(store_comment_error)?;
+    service
+        .report_app_state()
+        .publish_comment_updated(&thread)
+        .await;
     let comment_ref = session_comment_ref(&thread);
     if let Err(error) = service.post_comment_message(&session_id, comment_ref).await {
         tracing::warn!(%error, %session_id, thread_id = %thread.thread_id, "failed to auto-trigger comment review");
@@ -582,21 +634,31 @@ async fn reply_session_comment(
     Path((session_id, thread_id)): Path<(String, String)>,
     Json(request): Json<SessionCommentReplyRequest>,
 ) -> Result<Json<CommentThread>, CommentProxyError> {
-    let doc_id = session_comment_doc_id(&service, &session_id)
+    let raw_doc_id = session_comment_doc_id(&service, &session_id)
         .await
         .map_err(proxy_runtime_error)?;
-    let thread = forward_comment_request(
-        &service,
-        &session_id,
-        reqwest::Method::POST,
-        &format!(
-            "/{}/comments/{}/replies",
-            encode_path_segment(&doc_id),
-            encode_path_segment(&thread_id)
-        ),
-        serde_json::json!({ "body": request.body }),
-    )
-    .await?;
+    let doc_id = quire_protocol::DocId::parse(raw_doc_id)
+        .map_err(|error| store_comment_error(quire_store::StoreError::Protocol(error)))?;
+    let thread = service
+        .store()
+        .report_store()
+        .reply_comment_thread(
+            &doc_id,
+            &thread_id,
+            quire_store::NewCommentReply {
+                author_type: quire_protocol::CommentAuthorType::Human,
+                author: "reviewer".into(),
+                body: request.body,
+                mark_addressed: false,
+                addressed_rev: None,
+            },
+        )
+        .await
+        .map_err(store_comment_error)?;
+    service
+        .report_app_state()
+        .publish_comment_updated(&thread)
+        .await;
     if thread.status != CommentStatus::Archived
         && let Some(reply) = thread.messages.last()
     {
@@ -621,21 +683,27 @@ async fn update_session_comment_status(
     Path((session_id, thread_id)): Path<(String, String)>,
     Json(request): Json<SessionCommentStatusRequest>,
 ) -> Result<Json<CommentThread>, CommentProxyError> {
-    let doc_id = session_comment_doc_id(&service, &session_id)
+    let raw_doc_id = session_comment_doc_id(&service, &session_id)
         .await
         .map_err(proxy_runtime_error)?;
-    let thread = forward_comment_request(
-        &service,
-        &session_id,
-        reqwest::Method::PATCH,
-        &format!(
-            "/{}/comments/{}",
-            encode_path_segment(&doc_id),
-            encode_path_segment(&thread_id)
-        ),
-        serde_json::json!({ "status": request.status }),
-    )
-    .await?;
+    let doc_id = quire_protocol::DocId::parse(raw_doc_id)
+        .map_err(|error| store_comment_error(quire_store::StoreError::Protocol(error)))?;
+    let status = CommentStatus::parse(&request.status).ok_or_else(|| {
+        store_comment_error(quire_store::StoreError::InvalidRequest(format!(
+            "unknown comment status `{}`; expected open, addressed or archived",
+            request.status
+        )))
+    })?;
+    let thread = service
+        .store()
+        .report_store()
+        .update_comment_status(&doc_id, &thread_id, status)
+        .await
+        .map_err(store_comment_error)?;
+    service
+        .report_app_state()
+        .publish_comment_updated(&thread)
+        .await;
     Ok(Json(thread))
 }
 
@@ -643,22 +711,27 @@ async fn delete_session_comment(
     State(service): State<RuntimeService>,
     Path((session_id, thread_id)): Path<(String, String)>,
 ) -> RuntimeResult<StatusCode> {
-    let doc_id = session_comment_doc_id(&service, &session_id).await?;
+    let raw_doc_id = session_comment_doc_id(&service, &session_id).await?;
+    let doc_id = quire_protocol::DocId::parse(raw_doc_id)
+        .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?;
     service
         .remove_pending_comment_threads(&session_id, &thread_id)
         .await?;
-    forward_comment_delete(
-        &service,
-        &session_id,
-        &format!(
-            "/{}/comments/{}",
-            encode_path_segment(&doc_id),
-            encode_path_segment(&thread_id)
-        ),
-    )
-    .await
-    .map_err(|error| RuntimeError::Internal(error.message))?;
-    Ok(StatusCode::NO_CONTENT)
+    match service
+        .store()
+        .report_store()
+        .delete_comment_thread(&doc_id, &thread_id)
+        .await
+    {
+        Ok(()) | Err(quire_store::StoreError::CommentThreadNotFound { .. }) => {
+            service
+                .report_app_state()
+                .publish_comment_deleted(&doc_id, &thread_id)
+                .await;
+            Ok(StatusCode::NO_CONTENT)
+        }
+        Err(error) => Err(RuntimeError::Internal(error.to_string())),
+    }
 }
 
 async fn list_session_queue(
@@ -746,155 +819,6 @@ fn session_comment_ref_with_body(thread: &CommentThread, comment: &str) -> Sessi
         anchor_snapshot: thread.anchor_snapshot.clone(),
         comment: comment.to_string(),
     }
-}
-
-async fn forward_comment_delete(
-    service: &RuntimeService,
-    session_id: &str,
-    path: &str,
-) -> Result<(), CommentProxyError> {
-    let config = service.config();
-    let base_url = config.quire_base_url.trim_end_matches('/');
-    let token = config.quire_rw_token.expose_secret().trim();
-    if token.is_empty() {
-        return Err(comment_proxy_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "comment_proxy_not_configured",
-            "quire-runtime has no QUIRE_RW_TOKEN, so it cannot delete comments",
-            "Configure QUIRE_RW_TOKEN on quire-runtime.",
-        ));
-    }
-    let response = crate::http_client::timed_client(Duration::from_secs(30))
-        .delete(format!("{base_url}/api/docs{path}"))
-        .bearer_auth(token)
-        .header("x-session-id", session_id)
-        .header("x-actor", "reviewer")
-        .send()
-        .await
-        .map_err(|error| {
-            comment_proxy_error(
-                StatusCode::BAD_GATEWAY,
-                "comment_proxy_unavailable",
-                &format!("failed to reach quire-server: {error}"),
-                "Verify QUIRE_BASE_URL and that quire-server is running.",
-            )
-        })?;
-    let status = response.status();
-    if status.is_success() || status == reqwest::StatusCode::NOT_FOUND {
-        return Ok(());
-    }
-    let bytes = response.bytes().await.unwrap_or_default();
-    let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-    Err(comment_proxy_error(
-        status,
-        "comment_proxy_rejected",
-        &upstream_error_message(&bytes),
-        "Inspect the comment thread and the bound report, then retry.",
-    ))
-}
-
-async fn forward_comment_request(
-    service: &RuntimeService,
-    session_id: &str,
-    method: reqwest::Method,
-    path: &str,
-    body: Value,
-) -> Result<CommentThread, CommentProxyError> {
-    let config = service.config();
-    let base_url = config.quire_base_url.trim_end_matches('/');
-    let token = config.quire_rw_token.expose_secret().trim();
-    if token.is_empty() {
-        return Err(comment_proxy_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "comment_proxy_not_configured",
-            "quire-runtime has no QUIRE_RW_TOKEN, so it cannot write comments",
-            "Configure QUIRE_RW_TOKEN on quire-runtime.",
-        ));
-    }
-    let response = crate::http_client::timed_client(Duration::from_secs(30))
-        .request(method, format!("{base_url}/api/docs{path}"))
-        .bearer_auth(token)
-        .header("x-session-id", session_id)
-        .header("x-actor", "reviewer")
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| {
-            comment_proxy_error(
-                StatusCode::BAD_GATEWAY,
-                "comment_proxy_unavailable",
-                &format!("failed to reach quire-server: {error}"),
-                "Verify QUIRE_BASE_URL and that quire-server is running.",
-            )
-        })?;
-    let status = response.status();
-    let bytes = response.bytes().await.map_err(|error| {
-        comment_proxy_error(
-            StatusCode::BAD_GATEWAY,
-            "comment_proxy_unavailable",
-            &format!("failed to read quire-server response: {error}"),
-            "Retry the request; if it persists inspect quire-server logs.",
-        )
-    })?;
-    if !status.is_success() {
-        let status = StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
-        return Err(comment_proxy_error(
-            status,
-            "comment_proxy_rejected",
-            &upstream_error_message(&bytes),
-            "Inspect the comment payload and the bound report, then retry.",
-        ));
-    }
-    serde_json::from_slice::<CommentThread>(&bytes).map_err(|error| {
-        comment_proxy_error(
-            StatusCode::BAD_GATEWAY,
-            "comment_proxy_invalid_response",
-            &format!("quire-server returned an invalid comment thread: {error}"),
-            "Inspect quire-server logs and retry.",
-        )
-    })
-}
-
-fn upstream_error_message(bytes: &[u8]) -> String {
-    if let Ok(value) = serde_json::from_slice::<Value>(bytes)
-        && let Some(message) = value
-            .pointer("/error/message")
-            .and_then(Value::as_str)
-            .or_else(|| value.get("message").and_then(Value::as_str))
-    {
-        return message.to_string();
-    }
-    String::from_utf8_lossy(bytes)
-        .chars()
-        .take(300)
-        .collect::<String>()
-}
-
-fn comment_proxy_error(
-    status: StatusCode,
-    code: &'static str,
-    message: &str,
-    hint: &'static str,
-) -> CommentProxyError {
-    CommentProxyError {
-        status,
-        code,
-        message: message.to_string(),
-        hint,
-    }
-}
-
-fn encode_path_segment(input: &str) -> String {
-    use std::fmt::Write as _;
-    let mut out = String::with_capacity(input.len());
-    for byte in input.as_bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
-            out.push(char::from(*byte));
-        } else {
-            let _ = write!(out, "%{byte:02X}");
-        }
-    }
-    out
 }
 
 #[derive(Debug, Deserialize)]

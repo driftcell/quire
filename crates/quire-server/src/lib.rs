@@ -12,5 +12,5 @@ pub mod sse;
 pub mod state;
 
 pub use config::Config;
-pub use routes::build_router;
+pub use routes::{build_document_router, build_router};
 pub use state::AppState;

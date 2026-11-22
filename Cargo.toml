@@ -33,6 +33,7 @@ license = "MIT OR Apache-2.0"
 quire-protocol = { path = "crates/quire-protocol" }
 quire-lint = { path = "crates/quire-lint" }
 quire-store = { path = "crates/quire-store" }
+quire-server = { path = "crates/quire-server" }
 quire-session-protocol = { path = "crates/quire-session-protocol" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["preserve_order", "float_roundtrip"] }

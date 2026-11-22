@@ -42,7 +42,9 @@ use crate::{
     state::AppState,
 };
 
-pub fn build_router(state: AppState) -> Router {
+/// Build the composable document REST/SSE + `/mcp` router so it can be mounted
+/// either inside the unified `quire-runtime` server or standalone in `quire-server`.
+pub fn build_document_router(state: AppState) -> Router {
     let cancellation = CancellationToken::new();
     let mcp_config = StreamableHttpServerConfig::default()
         .with_allowed_hosts(state.config.allowed_hosts.clone())
@@ -64,7 +66,6 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/docs/{doc_id}/revisions", get(list_revisions))
         .route("/api/docs/{doc_id}/comments", get(list_comments))
         .route("/api/docs/{doc_id}/diff", get(document_diff))
-        .route("/api/sessions/{session_id}/events", get(session_events))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::ro_auth));
 
     let read_write = Router::new()
@@ -86,11 +87,23 @@ pub fn build_router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(state.clone(), auth::rw_auth));
 
     Router::new()
-        .route("/health", get(health))
         .merge(read_only)
         .merge(read_write)
         .merge(mcp_router)
+        .with_state(state)
+}
+
+pub fn build_router(state: AppState) -> Router {
+    let legacy_session_sse = Router::new()
+        .route("/api/sessions/{session_id}/events", get(session_events))
+        .route_layer(middleware::from_fn_with_state(state.clone(), auth::ro_auth))
+        .with_state(state.clone());
+
+    Router::new()
+        .route("/health", get(health))
         .with_state(state.clone())
+        .merge(legacy_session_sse)
+        .merge(build_document_router(state.clone()))
         .layer(cors_layer(&state))
         .layer(TraceLayer::new_for_http())
 }

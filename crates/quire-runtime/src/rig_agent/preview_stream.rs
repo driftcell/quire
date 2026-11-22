@@ -67,6 +67,7 @@ impl PreviewThrottle {
 struct PreviewJob {
     id: u64,
     payload: EphemeralPayload,
+    report_store: Option<quire_store::PgReportStore>,
     base_url: String,
     doc_id: String,
     token: SecretString,
@@ -74,7 +75,22 @@ struct PreviewJob {
 }
 
 impl PreviewJob {
-    async fn send(self) -> RuntimeResult<bool> {
+    async fn send(mut self) -> RuntimeResult<bool> {
+        if let Some(store) = self.report_store.as_ref() {
+            let doc_id = DocId::parse(self.doc_id.clone())
+                .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?;
+            self.payload
+                .stamp_server_context(&doc_id, chrono::Utc::now());
+            self.payload
+                .validate()
+                .map_err(RuntimeError::InvalidRequest)?;
+            store
+                .bus()
+                .publish_ephemeral(doc_id.as_str(), &self.payload)
+                .await
+                .map_err(|error| RuntimeError::Internal(error.to_string()))?;
+            return Ok(true);
+        }
         let response = self
             .client
             .post(format!(
@@ -114,6 +130,7 @@ struct PreviewTransport {
     inflight: Arc<AtomicU64>,
     sent_tx: watch::Sender<u64>,
     sent_rx: watch::Receiver<u64>,
+    report_store: Option<quire_store::PgReportStore>,
     base_url: String,
     doc_id: String,
     token: SecretString,
@@ -134,6 +151,7 @@ impl PreviewTransport {
             inflight,
             sent_tx,
             sent_rx,
+            report_store: None,
             base_url,
             doc_id,
             token,
@@ -182,6 +200,7 @@ impl PreviewTransport {
         let job = PreviewJob {
             id,
             payload,
+            report_store: self.report_store.clone(),
             base_url: self.base_url.clone(),
             doc_id: self.doc_id.clone(),
             token: self.token.clone(),
@@ -247,6 +266,14 @@ impl ToolPreviewStreamer {
     /// streamer's block ID; AfterBlock and BeforeBlock targets are preserved.
     pub fn with_anchor(mut self, anchor: PreviewAnchor) -> Self {
         self.anchor = anchor;
+        self
+    }
+
+    pub(super) fn with_report_store(
+        mut self,
+        report_store: Option<quire_store::PgReportStore>,
+    ) -> Self {
+        self.transport.report_store = report_store;
         self
     }
 
@@ -369,6 +396,7 @@ struct StreamingPreview {
 pub(super) struct PreviewState {
     run_id: String,
     doc_id: SharedDocId,
+    report_store: Option<quire_store::PgReportStore>,
     base_url: String,
     token: SecretString,
     actor: String,
@@ -382,10 +410,15 @@ pub(super) struct PreviewState {
 }
 
 impl PreviewState {
-    pub(super) fn new(execution: &AgentExecution, config: &Config) -> Self {
+    pub(super) fn new(
+        execution: &AgentExecution,
+        config: &Config,
+        report_store: Option<quire_store::PgReportStore>,
+    ) -> Self {
         Self {
             run_id: execution.run_id.clone(),
             doc_id: Arc::clone(&execution.doc_id),
+            report_store,
             base_url: config.quire_base_url.clone(),
             token: config.quire_rw_token.clone(),
             actor: execution.agent_id.clone(),
@@ -463,7 +496,7 @@ impl PreviewState {
     }
 
     async fn publish_remote_clear(&self, preview_ids: Vec<String>) {
-        if preview_ids.is_empty() || self.base_url.trim().is_empty() {
+        if preview_ids.is_empty() {
             return;
         }
         let Some(raw_doc_id) = current_doc_id(&self.doc_id) else {
@@ -472,12 +505,27 @@ impl PreviewState {
         let Ok(doc_id) = DocId::parse(raw_doc_id.clone()) else {
             return;
         };
-        let payload = EphemeralPayload::Clear {
-            event: EphemeralClearEvent::new(doc_id, preview_ids),
+        let mut payload = EphemeralPayload::Clear {
+            event: EphemeralClearEvent::new(doc_id.clone(), preview_ids),
         };
+        if let Some(store) = self.report_store.as_ref() {
+            payload.stamp_server_context(&doc_id, chrono::Utc::now());
+            if let Err(error) = store
+                .bus()
+                .publish_ephemeral(doc_id.as_str(), &payload)
+                .await
+            {
+                warn!(%error, "failed to publish ephemeral preview clear");
+            }
+            return;
+        }
+        if self.base_url.trim().is_empty() {
+            return;
+        }
         let job = PreviewJob {
             id: 0,
             payload,
+            report_store: None,
             base_url: self.base_url.trim_end_matches('/').to_string(),
             doc_id: raw_doc_id,
             token: self.token.clone(),
@@ -548,7 +596,8 @@ impl PreviewState {
                         &block_id,
                         self.throttle_ms,
                     )
-                    .with_anchor(candidate.anchor.clone()),
+                    .with_anchor(candidate.anchor.clone())
+                    .with_report_store(self.report_store.clone()),
                 );
             }
             if let Some(streamer) = stream.streamers.get_mut(&index) {
@@ -663,7 +712,8 @@ impl PreviewState {
                         &block_id,
                         self.throttle_ms,
                     )
-                    .with_anchor(candidate.anchor.clone()),
+                    .with_anchor(candidate.anchor.clone())
+                    .with_report_store(self.report_store.clone()),
                 );
                 corrected = true;
             }
@@ -717,6 +767,7 @@ impl PreviewState {
         Self {
             run_id: run_id.to_string(),
             doc_id,
+            report_store: None,
             base_url: String::new(),
             token: SecretString::from(String::new()),
             actor: "test".into(),

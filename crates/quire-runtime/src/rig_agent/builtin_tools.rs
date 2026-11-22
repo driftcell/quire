@@ -11,7 +11,7 @@ use quire_protocol::{
 use quire_session_protocol::QuestionItem;
 #[cfg(test)]
 use rig::tool::Tool as _;
-use rig::tool::{rmcp::McpMeta, server::ToolServer};
+use rig::tool::server::ToolServer;
 use rig::{
     message::{ImageMediaType, ToolResultContent},
     rig_tool,
@@ -60,6 +60,24 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "sandbox_read_file",
     "sandbox_write_file",
     "sandbox_mount_attachment",
+    "get_protocol_guide",
+    "create_report",
+    "list_reports",
+    "get_document_digest",
+    "read_as_markdown",
+    "read_blocks",
+    "apply_operations",
+    "rollback_revision",
+    "upsert_sources",
+    "set_cover",
+    "configure_toc",
+    "configure_references",
+    "configure_page_chrome",
+    "update_style_and_css",
+    "lint_document",
+    "list_comments",
+    "add_comment",
+    "reply_comment",
 ];
 
 /// Return configured patterns that match no assembled tool.
@@ -116,9 +134,15 @@ pub(super) fn warn_missing_allowed_tools(
 }
 
 fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
-    allowed_tools
-        .iter()
-        .any(|pattern| tool_pattern_matches(pattern, tool_name))
+    let is_report_tool = quire_server::mcp::REPORT_TOOL_NAMES.contains(&tool_name);
+    allowed_tools.iter().any(|pattern| {
+        let trimmed = pattern.trim();
+        tool_pattern_matches(trimmed, tool_name)
+            || (is_report_tool
+                && trimmed
+                    .strip_prefix("quire-report:")
+                    .is_some_and(|scoped| tool_pattern_matches(scoped.trim(), tool_name)))
+    })
 }
 
 pub(super) struct ToolBuildContext {
@@ -136,6 +160,7 @@ pub(super) struct BuiltInTools {
 
 pub(super) struct RuntimeToolScope {
     pub(super) engine: Arc<RigModelCore>,
+    pub(super) report_mcp: quire_server::mcp::QuireMcpServer,
     pub(super) event_scope: StreamEventSender,
     sandbox: Arc<SandboxLease>,
     pub(super) cancellation: tokio_util::sync::CancellationToken,
@@ -695,9 +720,7 @@ async fn commit_chart_tool(
     summary: Option<String>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    let mcp_meta = context
-        .require::<McpMeta>()
-        .map_err(|error| ToolExecutionError::other(error.to_string()))?;
+    let req_ctx = in_process_request_context(context)?;
     let preview_id = preview_id.trim().to_string();
     if preview_id.is_empty() {
         return Err(ToolExecutionError::invalid_args(
@@ -762,12 +785,6 @@ async fn commit_chart_tool(
         }
     };
 
-    let client = runtime
-        .engine
-        .mcp
-        .shared_client_for_server("quire-report")
-        .await
-        .map_err(tool_other)?;
     let expected_revision = match expected_revision {
         Some(value) if value >= 0 => value,
         Some(_) => {
@@ -776,43 +793,39 @@ async fn commit_chart_tool(
             ));
         }
         None => {
-            let digest = client
-                .call_tool_with_meta(
-                    "get_document_digest",
-                    json!({ "doc_id": doc_id }),
-                    mcp_meta.clone(),
-                )
+            let rmcp::handler::server::wrapper::Json(digest) = runtime
+                .report_mcp
+                .get_document_digest(rmcp::handler::server::wrapper::Parameters(
+                    quire_server::mcp::DigestParams {
+                        doc_id: doc_id.clone(),
+                        query: None,
+                    },
+                ))
                 .await
-                .map_err(tool_other)?;
-            digest
-                .get("digest")
-                .and_then(|digest| digest.get("current_rev"))
-                .and_then(Value::as_i64)
-                .ok_or_else(|| {
-                    ToolExecutionError::other(
-                        "get_document_digest did not return digest.current_rev",
-                    )
-                })?
+                .map_err(mcp_error_to_tool_error)?;
+            digest.digest.current_rev
         }
     };
     let summary = summary
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("commit previewed chart `{target_id}`"));
-    let receipt = client
-        .call_tool_with_meta(
-            "apply_operations",
-            json!({
-                "doc_id": doc_id,
-                "expected_revision": expected_revision,
-                "summary": summary,
-                "ops": [serde_json::to_value(&op).map_err(tool_other)?],
-            }),
-            mcp_meta,
+    let rmcp::handler::server::wrapper::Json(receipt) = runtime
+        .report_mcp
+        .exec_apply_operations(
+            req_ctx,
+            quire_server::mcp::ApplyOperationsParams {
+                doc_id,
+                expected_revision,
+                summary,
+                ops: vec![op],
+                sources: None,
+                preview_ids: Vec::new(),
+            },
         )
         .await
-        .map_err(tool_other)?;
-    let mut payload = receipt;
+        .map_err(mcp_error_to_tool_error)?;
+    let mut payload = serde_json::to_value(receipt).map_err(tool_other)?;
     if let Some(object) = payload.as_object_mut() {
         object.insert("preview_id".to_string(), json!(preview_id));
         object.insert("block_id".to_string(), json!(target_id.as_str()));
@@ -1015,6 +1028,211 @@ async fn list_subagents_tool(
     Ok(json!({ "subagents": subagents }))
 }
 
+fn in_process_request_context(
+    context: &ToolContext,
+) -> Result<quire_server::auth::RequestContext, ToolExecutionError> {
+    let turn = quire_turn_meta(context)?;
+    let session_id = quire_protocol::SessionId::parse(turn.session_id)
+        .map_err(|error| ToolExecutionError::invalid_args(error.to_string()))?;
+    Ok(quire_server::auth::RequestContext {
+        session_id: Some(session_id),
+        actor: turn.agent_id,
+    })
+}
+
+fn mcp_error_to_tool_error(error: rmcp::ErrorData) -> ToolExecutionError {
+    let formatted = error
+        .data
+        .as_ref()
+        .and_then(|data| serde_json::to_string(data).ok())
+        .unwrap_or_else(|| error.message.to_string());
+    if error.code == rmcp::model::ErrorCode::INVALID_PARAMS {
+        ToolExecutionError::invalid_args(formatted)
+    } else {
+        ToolExecutionError::other(formatted)
+    }
+}
+
+macro_rules! define_stateless_report_tool {
+    ($struct_name:ident, $tool_name:literal, $params_ty:ty, $method:ident) => {
+        pub(super) struct $struct_name;
+
+        impl rig::tool::Tool for $struct_name {
+            const NAME: &'static str = $tool_name;
+            type Error = ToolExecutionError;
+            type Args = $params_ty;
+            type Output = Value;
+
+            fn description(&self) -> String {
+                quire_server::mcp::QuireMcpServer::tool_metadata($tool_name).0
+            }
+
+            fn parameters(&self) -> Value {
+                quire_server::mcp::QuireMcpServer::tool_metadata($tool_name).1
+            }
+
+            async fn call(
+                &self,
+                context: &mut ToolContext,
+                args: Self::Args,
+            ) -> Result<Self::Output, Self::Error> {
+                let runtime = runtime_tool_scope(context)?;
+                let rmcp::handler::server::wrapper::Json(receipt) = runtime
+                    .report_mcp
+                    .$method(rmcp::handler::server::wrapper::Parameters(args))
+                    .await
+                    .map_err(mcp_error_to_tool_error)?;
+                serde_json::to_value(receipt).map_err(tool_other)
+            }
+        }
+    };
+}
+
+macro_rules! define_contextual_report_tool {
+    ($struct_name:ident, $tool_name:literal, $params_ty:ty, $method:ident) => {
+        pub(super) struct $struct_name;
+
+        impl rig::tool::Tool for $struct_name {
+            const NAME: &'static str = $tool_name;
+            type Error = ToolExecutionError;
+            type Args = $params_ty;
+            type Output = Value;
+
+            fn description(&self) -> String {
+                quire_server::mcp::QuireMcpServer::tool_metadata($tool_name).0
+            }
+
+            fn parameters(&self) -> Value {
+                quire_server::mcp::QuireMcpServer::tool_metadata($tool_name).1
+            }
+
+            async fn call(
+                &self,
+                context: &mut ToolContext,
+                args: Self::Args,
+            ) -> Result<Self::Output, Self::Error> {
+                let runtime = runtime_tool_scope(context)?;
+                let req_ctx = in_process_request_context(context)?;
+                let rmcp::handler::server::wrapper::Json(receipt) = runtime
+                    .report_mcp
+                    .$method(req_ctx, args)
+                    .await
+                    .map_err(mcp_error_to_tool_error)?;
+                serde_json::to_value(receipt).map_err(tool_other)
+            }
+        }
+    };
+}
+
+define_stateless_report_tool!(
+    GetProtocolGuideTool,
+    "get_protocol_guide",
+    quire_server::mcp::GuideParams,
+    get_protocol_guide
+);
+define_contextual_report_tool!(
+    CreateReportTool,
+    "create_report",
+    quire_server::mcp::CreateReportParams,
+    exec_create_report
+);
+define_stateless_report_tool!(
+    ListReportsTool,
+    "list_reports",
+    quire_server::mcp::ListReportsParams,
+    list_reports
+);
+define_stateless_report_tool!(
+    GetDocumentDigestTool,
+    "get_document_digest",
+    quire_server::mcp::DigestParams,
+    get_document_digest
+);
+define_stateless_report_tool!(
+    ReadAsMarkdownTool,
+    "read_as_markdown",
+    quire_server::mcp::ReadMarkdownParams,
+    read_as_markdown
+);
+define_stateless_report_tool!(
+    ReadBlocksTool,
+    "read_blocks",
+    quire_server::mcp::ReadBlocksParams,
+    read_blocks
+);
+define_contextual_report_tool!(
+    ApplyOperationsTool,
+    "apply_operations",
+    quire_server::mcp::ApplyOperationsParams,
+    exec_apply_operations
+);
+define_contextual_report_tool!(
+    RollbackRevisionTool,
+    "rollback_revision",
+    quire_server::mcp::RollbackParams,
+    exec_rollback_revision
+);
+define_contextual_report_tool!(
+    UpsertSourcesTool,
+    "upsert_sources",
+    quire_server::mcp::UpsertSourcesParams,
+    exec_upsert_sources
+);
+define_contextual_report_tool!(
+    SetCoverTool,
+    "set_cover",
+    quire_server::mcp::SetCoverParams,
+    exec_set_cover
+);
+define_contextual_report_tool!(
+    ConfigureTocTool,
+    "configure_toc",
+    quire_server::mcp::ConfigureTocParams,
+    exec_configure_toc
+);
+define_contextual_report_tool!(
+    ConfigureReferencesTool,
+    "configure_references",
+    quire_server::mcp::ConfigureReferencesParams,
+    exec_configure_references
+);
+define_contextual_report_tool!(
+    ConfigurePageChromeTool,
+    "configure_page_chrome",
+    quire_server::mcp::ConfigurePageChromeParams,
+    exec_configure_page_chrome
+);
+define_contextual_report_tool!(
+    UpdateStyleAndCssTool,
+    "update_style_and_css",
+    quire_server::mcp::UpdateStyleParams,
+    exec_update_style_and_css
+);
+define_stateless_report_tool!(
+    LintDocumentTool,
+    "lint_document",
+    quire_server::mcp::LintParams,
+    lint_document
+);
+define_stateless_report_tool!(
+    ListCommentsTool,
+    "list_comments",
+    quire_server::mcp::ListCommentsParams,
+    list_comments
+);
+define_contextual_report_tool!(
+    AddCommentTool,
+    "add_comment",
+    quire_server::mcp::AddCommentParams,
+    exec_add_comment
+);
+define_contextual_report_tool!(
+    ReplyCommentTool,
+    "reply_comment",
+    quire_server::mcp::ReplyCommentParams,
+    exec_reply_comment
+);
+
 impl RigModelCore {
     pub(super) fn build_tools(&self, context: ToolBuildContext) -> BuiltInTools {
         let ToolBuildContext {
@@ -1023,8 +1241,10 @@ impl RigModelCore {
             engine,
             sandbox,
         } = context;
+        let report_mcp = self.build_report_mcp();
         let runtime = Arc::new(RuntimeToolScope {
             engine,
+            report_mcp,
             event_scope: scope,
             sandbox,
             cancellation: execution.cancellation.clone(),
@@ -1115,6 +1335,96 @@ impl RigModelCore {
             "spawn_subagents",
             allow_list_matches(&execution.allowed_tools, "spawn_subagents"),
             RunSubagentsTool
+        );
+        register!(
+            "get_protocol_guide",
+            allow_list_matches(&execution.allowed_tools, "get_protocol_guide"),
+            GetProtocolGuideTool
+        );
+        register!(
+            "create_report",
+            allow_list_matches(&execution.allowed_tools, "create_report"),
+            CreateReportTool
+        );
+        register!(
+            "list_reports",
+            allow_list_matches(&execution.allowed_tools, "list_reports"),
+            ListReportsTool
+        );
+        register!(
+            "get_document_digest",
+            allow_list_matches(&execution.allowed_tools, "get_document_digest"),
+            GetDocumentDigestTool
+        );
+        register!(
+            "read_as_markdown",
+            allow_list_matches(&execution.allowed_tools, "read_as_markdown"),
+            ReadAsMarkdownTool
+        );
+        register!(
+            "read_blocks",
+            allow_list_matches(&execution.allowed_tools, "read_blocks"),
+            ReadBlocksTool
+        );
+        register!(
+            "apply_operations",
+            allow_list_matches(&execution.allowed_tools, "apply_operations"),
+            ApplyOperationsTool
+        );
+        register!(
+            "rollback_revision",
+            allow_list_matches(&execution.allowed_tools, "rollback_revision"),
+            RollbackRevisionTool
+        );
+        register!(
+            "upsert_sources",
+            allow_list_matches(&execution.allowed_tools, "upsert_sources"),
+            UpsertSourcesTool
+        );
+        register!(
+            "set_cover",
+            allow_list_matches(&execution.allowed_tools, "set_cover"),
+            SetCoverTool
+        );
+        register!(
+            "configure_toc",
+            allow_list_matches(&execution.allowed_tools, "configure_toc"),
+            ConfigureTocTool
+        );
+        register!(
+            "configure_references",
+            allow_list_matches(&execution.allowed_tools, "configure_references"),
+            ConfigureReferencesTool
+        );
+        register!(
+            "configure_page_chrome",
+            allow_list_matches(&execution.allowed_tools, "configure_page_chrome"),
+            ConfigurePageChromeTool
+        );
+        register!(
+            "update_style_and_css",
+            allow_list_matches(&execution.allowed_tools, "update_style_and_css"),
+            UpdateStyleAndCssTool
+        );
+        register!(
+            "lint_document",
+            allow_list_matches(&execution.allowed_tools, "lint_document"),
+            LintDocumentTool
+        );
+        register!(
+            "list_comments",
+            allow_list_matches(&execution.allowed_tools, "list_comments"),
+            ListCommentsTool
+        );
+        register!(
+            "add_comment",
+            allow_list_matches(&execution.allowed_tools, "add_comment"),
+            AddCommentTool
+        );
+        register!(
+            "reply_comment",
+            allow_list_matches(&execution.allowed_tools, "reply_comment"),
+            ReplyCommentTool
         );
         BuiltInTools {
             server,
@@ -1315,5 +1625,32 @@ mod tests {
         assert!(truncated);
         assert!(text.is_char_boundary(text.len()));
         assert!(text.len() <= MAX_TOOL_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn native_report_tools_expose_non_empty_metadata_and_match_allow_lists() {
+        for name in quire_server::mcp::REPORT_TOOL_NAMES {
+            assert!(
+                BUILTIN_TOOLS.contains(name),
+                "report tool `{name}` must be registered in BUILTIN_TOOLS"
+            );
+            let (description, schema) = quire_server::mcp::QuireMcpServer::tool_metadata(name);
+            assert!(
+                !description.trim().is_empty(),
+                "report tool `{name}` must expose a non-empty description"
+            );
+            assert_eq!(
+                schema.get("type").and_then(Value::as_str),
+                Some("object"),
+                "report tool `{name}` must expose an object JSON Schema"
+            );
+            assert!(allow_list_matches(&[name.to_string()], name));
+            assert!(allow_list_matches(&[format!("quire-report:{name}")], name));
+            assert!(allow_list_matches(&["quire-report:*".to_string()], name));
+        }
+        assert!(!allow_list_matches(
+            &["quire-report:*".to_string()],
+            "ask_user"
+        ));
     }
 }

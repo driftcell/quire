@@ -146,32 +146,14 @@ impl McpRegistry {
         )
     }
 
-    /// Idempotently register the built-in Quire report MCP server. Never overwrites admin state.
-    pub async fn seed_default_quire_report(&self, base_url: &str) -> RuntimeResult<()> {
-        let inserted = sqlx::query(
-            r#"INSERT INTO mcp_servers (server_id, name, url, auth_token_ref, enabled)
-               VALUES ('quire-report', 'Quire Report MCP', $1, 'env:QUIRE_RW_TOKEN', TRUE)
-               ON CONFLICT (server_id) DO NOTHING"#,
-        )
-        .bind(base_url)
-        .execute(self.store.pool())
-        .await?;
-        if inserted.rows_affected() > 0 {
+    /// Retire any legacy `quire-report` HTTP MCP server entry now that all 18 Quire
+    /// report domain tools run natively in-process.
+    pub async fn retire_legacy_quire_report(&self) -> RuntimeResult<()> {
+        let deleted = sqlx::query("DELETE FROM mcp_servers WHERE server_id = 'quire-report'")
+            .execute(self.store.pool())
+            .await?;
+        if deleted.rows_affected() > 0 {
             self.after_mutation().await;
-        }
-
-        let tool_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*)::bigint FROM mcp_tools WHERE server_id = 'quire-report'",
-        )
-        .fetch_one(self.store.pool())
-        .await?;
-        if (inserted.rows_affected() > 0 || tool_count == 0)
-            && let Err(error) = self.sync_server_tools("quire-report").await
-        {
-            warn!(
-                %error,
-                "failed to sync default quire-report MCP tools; retry with POST /api/mcp/servers/quire-report/sync"
-            );
         }
         Ok(())
     }

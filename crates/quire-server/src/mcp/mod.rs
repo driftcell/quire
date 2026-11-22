@@ -1,7 +1,9 @@
-//! Quire MCP tool server (18 domain tools) mounted at `/mcp`.
+//! Quire MCP tool server (18 domain tools) mounted at `/mcp` and callable in-process.
 //!
 //! The implementation is split into `schema` (request/response contracts and compact receipts)
 //! and `handlers` (tool methods plus rebase helpers).
+
+use std::{collections::HashMap, sync::OnceLock};
 
 use rmcp::{
     ServerHandler,
@@ -9,6 +11,7 @@ use rmcp::{
     model::{Implementation, ServerCapabilities, ServerConfig},
     tool_handler,
 };
+use serde_json::{Value, json};
 
 use crate::state::AppState;
 
@@ -17,6 +20,28 @@ mod lint_hint;
 mod schema;
 
 pub use schema::*;
+
+/// Canonical names of the 18 Quire report domain tools.
+pub const REPORT_TOOL_NAMES: &[&str] = &[
+    "get_protocol_guide",
+    "create_report",
+    "list_reports",
+    "get_document_digest",
+    "read_as_markdown",
+    "read_blocks",
+    "apply_operations",
+    "rollback_revision",
+    "upsert_sources",
+    "set_cover",
+    "configure_toc",
+    "configure_references",
+    "configure_page_chrome",
+    "update_style_and_css",
+    "lint_document",
+    "list_comments",
+    "add_comment",
+    "reply_comment",
+];
 
 const SERVER_INSTRUCTIONS: &str = r#"QUIRE MULTI-AGENT REPORT ENGINE
 
@@ -43,6 +68,30 @@ impl QuireMcpServer {
             state,
             tool_router: Self::tool_router(),
         }
+    }
+
+    /// Return the static description and JSON Schema for one of the 18 report tools.
+    pub fn tool_metadata(name: &str) -> (String, Value) {
+        static CACHE: OnceLock<HashMap<String, (String, Value)>> = OnceLock::new();
+        let catalog = CACHE.get_or_init(|| {
+            Self::tool_router()
+                .list_all()
+                .into_iter()
+                .map(|tool| {
+                    let description = tool
+                        .description
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .unwrap_or_default();
+                    let schema = tool.schema_as_json_value();
+                    (tool.name.to_string(), (description, schema))
+                })
+                .collect()
+        });
+        catalog
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| (String::new(), json!({"type": "object"})))
     }
 }
 

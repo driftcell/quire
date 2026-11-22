@@ -26,17 +26,16 @@ The consolidated `migrations/0001_init.sql` adds:
 AES-256-GCM `enc:...` values encrypted with `RUNTIME_MASTER_KEY`. Public records expose
 `auth_token_masked` only.
 
-### Seed
+### Seed & Native Report Tools
 
-`RuntimeService::seed` calls `McpRegistry::seed_default_quire_report` after KB seeding. It inserts:
+All 18 Quire report authoring tools (`REPORT_TOOL_NAMES` in `quire-server`) are compiled directly
+into `quire-runtime` as native `rig::tool::Tool`s in `BUILTIN_TOOLS` (`32` total built-in tools)
+executing in-process against the shared `PgReportStore`. Consequently, `McpRegistry` is exclusively
+for external third-party MCP servers (such as `subjectcloud_*`).
 
-- `server_id = "quire-report"`
-- `url = Config.quire_base_url`
-- `auth_token_ref = "env:QUIRE_RW_TOKEN"`
-- `enabled = true`
-
-The insert is `ON CONFLICT (server_id) DO NOTHING`, so a later administrator-disabled state is never
-overwritten.
+During startup, `RuntimeService::seed` calls `McpRegistry::retire_legacy_quire_report` to remove any
+legacy `server_id = 'quire-report'` entry from `mcp_servers` (`ON DELETE CASCADE` removes its
+`mcp_tools` rows) and publishes cache invalidation.
 
 ### Discovery and switches
 
@@ -95,10 +94,9 @@ are present; session, actor and run IDs use the same format validation as header
 entry to serve many sessions without trusting model-authored identity fields: metadata is inserted
 by the host runtime, not read from model arguments.
 
-`commit_chart` resolves the enabled `quire-report` server through the same shared pool and calls
-`get_document_digest` / `apply_operations` with the current `McpMeta`. It does not initialize a
-per-call connection or add fixed session headers. Typed `CallToolResult` values are projected
-directly instead of serializing and manually extracting a second JSON representation.
+`commit_chart` executes `get_document_digest` and `exec_apply_operations` directly in-process
+against `RuntimeToolScope::report_mcp()` (`QuireMcpServer`) using the current session/run/agent
+`quire_server::auth::RequestContext` without any network or MCP loopback.
 
 Administrative discovery and explicit operational helpers may still create dedicated clients when
 they intentionally use a fixed header identity; the normal model tool loop uses the shared pool.
@@ -130,9 +128,9 @@ raw auth token reference.
 
 ## 3. Invariants & Verification
 
-- Seeding is idempotent and never re-enables an administrator-disabled `quire-report`.
+- Seeding retires any legacy `'quire-report'` row from `mcp_servers` idempotently while all 18 report tools are served natively in-process via `BUILTIN_TOOLS`.
 - Sync preserves existing tool enable switches; new tools are enabled.
-- A globally disabled tool is filtered even when present in `agent_definition.allowed_tools`.
+- A globally disabled external MCP tool is filtered even when present in `agent_definition.allowed_tools`.
 - Allow-list matching is identical across the registry, MCP client and built-in tool loop; scoped
   wildcards never cross server boundaries.
 - Valid wildcard patterns do not produce missing-tool warnings.
@@ -141,7 +139,7 @@ raw auth token reference.
 - Server/tool mutations publish cache invalidation and retire pooled connections.
 - Main and subagent runs sharing a server do not repeat `initialize` / `tools/list` per run.
 - Independent servers use independent connection locks and can prewarm concurrently.
-- `commit_chart` uses the pooled `quire-report` client and per-call metadata, never a bare connection.
+- `commit_chart` calls `QuireMcpServer` directly in-process with the current turn's `RequestContext`.
 - Shared connections carry no fixed session identity; each call forwards host-authored `_meta.quire`.
 - Header/metadata mismatches are rejected and report creation cannot proceed without a session.
 
@@ -154,7 +152,7 @@ Unit coverage in `crates/quire-runtime/src/mcp_registry.rs` and `rig_agent/built
 
 Integration coverage in `crates/quire-runtime/tests/runtime_integration.rs`:
 
-- `seed_registers_quire_report_mcp_without_overwriting_admin_state`
+- `seed_retires_legacy_quire_report_mcp_and_exposes_native_report_tools`
 - `mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache`
 - `mcp_auth_token_is_masked_in_http_and_admin_receipts`
 - `mcp_sync_discovers_tools_and_preserves_admin_switches`

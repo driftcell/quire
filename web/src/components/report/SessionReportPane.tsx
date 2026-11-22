@@ -1,7 +1,9 @@
+import { useCallback, useMemo, useRef } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import { ReportPaneToolbar } from "@/components/report/ReportPaneToolbar";
 import { ReportViewer } from "@/components/report/ReportViewer";
+import { flashHighlightElement } from "@/components/report/reportDom";
 import type { ReportSelectionDescriptor } from "@/components/report/reportSelection";
 import type {
   CommentThread,
@@ -58,6 +60,43 @@ export function SessionReportPane({
   activeSelection,
   onActiveSelectionChange,
 }: SessionReportPaneProps) {
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const streamingPreviews = useMemo(
+    () =>
+      Array.from(ephemeralPreviews.values()).filter(
+        (preview) => preview.status === "streaming",
+      ),
+    [ephemeralPreviews],
+  );
+
+  const handleJumpToStreamingPreview = useCallback(() => {
+    const latest = streamingPreviews[streamingPreviews.length - 1];
+    if (!latest) {
+      return;
+    }
+    const scrollToPreview = () => {
+      const container = scrollContainerRef.current ?? window.document;
+      const previewEl = container.querySelector<HTMLElement>(
+        `[data-preview-id="${latest.preview_id}"]`,
+      );
+      if (previewEl) {
+        previewEl.scrollIntoView({ behavior: "smooth", block: "center" });
+        flashHighlightElement(previewEl);
+        return;
+      }
+      if (latest.block.block_id) {
+        onJumpToSection(latest.block.block_id);
+      }
+    };
+    if (viewMode === "paged") {
+      onViewModeChange("continuous");
+      window.setTimeout(scrollToPreview, 60);
+    } else {
+      scrollToPreview();
+    }
+  }, [onJumpToSection, onViewModeChange, streamingPreviews, viewMode]);
+
   return (
     <div
       className={
@@ -81,6 +120,8 @@ export function SessionReportPane({
           onJumpToSection={onJumpToSection}
           onShowComments={onShowComments}
           openCommentsCount={openCommentsCount}
+          streamingPreviewsCount={streamingPreviews.length}
+          onJumpToStreamingPreview={handleJumpToStreamingPreview}
           themePageChrome={document.theme.page_chrome}
           compactViewToggle
         />
@@ -102,7 +143,10 @@ export function SessionReportPane({
         </button>
       )}
 
-      <div className="no-scrollbar flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+      <div
+        ref={scrollContainerRef}
+        className="no-scrollbar flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+      >
         <ReportViewer
           document={document}
           computed={computed}

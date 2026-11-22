@@ -8,6 +8,14 @@ export interface AuthTokens {
 
 const TOKEN_STORAGE_KEY = "quire.dev.tokens.v1";
 
+function nonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function getAuthTokens(): AuthTokens {
   let stored: Partial<AuthTokens> = {};
   try {
@@ -16,18 +24,9 @@ export function getAuthTokens(): AuthTokens {
       const parsed: unknown = JSON.parse(raw);
       if (isRecord(parsed)) {
         stored = {
-          runtimeToken:
-            typeof parsed.runtimeToken === "string"
-              ? parsed.runtimeToken
-              : undefined,
-          quireRoToken:
-            typeof parsed.quireRoToken === "string"
-              ? parsed.quireRoToken
-              : undefined,
-          quireRwToken:
-            typeof parsed.quireRwToken === "string"
-              ? parsed.quireRwToken
-              : undefined,
+          runtimeToken: nonEmptyString(parsed.runtimeToken),
+          quireRoToken: nonEmptyString(parsed.quireRoToken),
+          quireRwToken: nonEmptyString(parsed.quireRwToken),
         };
       }
     }
@@ -35,14 +34,20 @@ export function getAuthTokens(): AuthTokens {
     // Ignore invalid storage entries.
   }
   const env = import.meta.env as Record<string, string | undefined>;
+  const runtimeToken =
+    stored.runtimeToken ?? nonEmptyString(env.VITE_RUNTIME_API_TOKEN) ?? "";
+  const quireRwToken =
+    stored.quireRwToken ??
+    nonEmptyString(env.VITE_QUIRE_RW_TOKEN) ??
+    runtimeToken;
+  const quireRoToken =
+    stored.quireRoToken ??
+    nonEmptyString(env.VITE_QUIRE_RO_TOKEN) ??
+    quireRwToken;
   return {
-    runtimeToken: stored.runtimeToken ?? env.VITE_RUNTIME_API_TOKEN ?? "",
-    quireRoToken:
-      stored.quireRoToken ??
-      env.VITE_QUIRE_RO_TOKEN ??
-      env.VITE_QUIRE_RW_TOKEN ??
-      "",
-    quireRwToken: stored.quireRwToken ?? env.VITE_QUIRE_RW_TOKEN ?? "",
+    runtimeToken,
+    quireRoToken,
+    quireRwToken,
   };
 }
 

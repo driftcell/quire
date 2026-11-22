@@ -369,9 +369,7 @@ impl RuntimeService {
             .kb
             .seed(&self.config.workspace_dir, &self.config.default_model)
             .await?;
-        self.mcp
-            .seed_default_quire_report(&self.config.quire_base_url)
-            .await?;
+        self.mcp.retire_legacy_quire_report().await?;
         Ok(report)
     }
 
@@ -692,9 +690,41 @@ impl RuntimeService {
         Ok(removed)
     }
 
+    pub fn report_app_state(&self) -> quire_server::AppState {
+        let bind_addr: std::net::SocketAddr = self
+            .config
+            .bind_addr
+            .parse()
+            .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 8081)));
+        let non_empty = |token: &secrecy::SecretString| {
+            (!token.expose_secret().trim().is_empty()).then(|| token.clone())
+        };
+        let rw_token =
+            non_empty(&self.config.quire_rw_token).or_else(|| non_empty(&self.config.api_token));
+        let ro_token = non_empty(&self.config.quire_ro_token).or_else(|| rw_token.clone());
+        let server_config = quire_server::Config {
+            bind_addr,
+            database_url: secrecy::SecretString::from(self.config.database_url.clone()),
+            redis_url: secrecy::SecretString::from(self.config.redis_url.clone()),
+            rw_token,
+            ro_token,
+            extra_rw_token: non_empty(&self.config.api_token),
+            allowed_hosts: self.config.mcp_allowed_hosts(),
+            cors_allowed_origins: Vec::new(),
+            sse_heartbeat: Duration::from_millis(self.config.sse_heartbeat_ms),
+            auto_migrate: false,
+            mcp_json_response: true,
+        };
+        quire_server::AppState::new(self.store.report_store().clone(), server_config)
+    }
+
+    pub fn report_mcp(&self) -> quire_server::mcp::QuireMcpServer {
+        quire_server::mcp::QuireMcpServer::new(self.report_app_state())
+    }
+
     async fn delete_server_comment(&self, session_id: &str, thread_id: &str) -> RuntimeResult<()> {
         let session = self.store.get_session_summary(session_id).await?;
-        let doc_id = session
+        let raw_doc_id = session
             .doc_id
             .filter(|doc_id| !doc_id.trim().is_empty())
             .or_else(|| {
@@ -707,31 +737,24 @@ impl RuntimeService {
                     "session `{session_id}` is not bound to a report"
                 ))
             })?;
-        let token = self.config.quire_rw_token.expose_secret().trim();
-        if token.is_empty() {
-            return Err(RuntimeError::InvalidRequest(
-                "QUIRE_RW_TOKEN is not configured on quire-runtime".into(),
-            ));
+        let doc_id = quire_protocol::DocId::parse(raw_doc_id)
+            .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?;
+        match self
+            .store
+            .report_store()
+            .delete_comment_thread(&doc_id, thread_id)
+            .await
+        {
+            Ok(()) | Err(quire_store::StoreError::CommentThreadNotFound { .. }) => {
+                self.report_app_state()
+                    .publish_comment_deleted(&doc_id, thread_id)
+                    .await;
+                Ok(())
+            }
+            Err(error) => Err(RuntimeError::Internal(format!(
+                "report comment delete failed: {error}"
+            ))),
         }
-        let response = crate::http_client::timed_client(Duration::from_secs(30))
-            .delete(format!(
-                "{}/api/docs/{}/comments/{}",
-                self.config.quire_base_url.trim_end_matches('/'),
-                doc_id,
-                thread_id
-            ))
-            .bearer_auth(token)
-            .header("x-session-id", session_id)
-            .header("x-actor", "reviewer")
-            .send()
-            .await?;
-        if !response.status().is_success() && response.status() != reqwest::StatusCode::NOT_FOUND {
-            return Err(RuntimeError::Internal(format!(
-                "quire-server comment delete failed with {}",
-                response.status()
-            )));
-        }
-        Ok(())
     }
 
     async fn emit_queue_update(&self, session_id: &str) -> RuntimeResult<()> {

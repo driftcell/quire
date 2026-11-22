@@ -181,6 +181,30 @@ impl StreamEventSender {
 }
 
 impl RigModelCore {
+    pub(super) fn build_report_mcp(&self) -> quire_server::mcp::QuireMcpServer {
+        let bind_addr: std::net::SocketAddr = self
+            .config
+            .bind_addr
+            .parse()
+            .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 8081)));
+        let server_config = quire_server::Config {
+            bind_addr,
+            database_url: secrecy::SecretString::from(self.config.database_url.clone()),
+            redis_url: secrecy::SecretString::from(self.config.redis_url.clone()),
+            rw_token: Some(self.config.quire_rw_token.clone()),
+            ro_token: Some(self.config.quire_ro_token.clone()),
+            extra_rw_token: Some(self.config.api_token.clone()),
+            allowed_hosts: self.config.mcp_allowed_hosts(),
+            cors_allowed_origins: Vec::new(),
+            sse_heartbeat: std::time::Duration::from_millis(self.config.sse_heartbeat_ms),
+            auto_migrate: false,
+            mcp_json_response: true,
+        };
+        let state =
+            quire_server::AppState::new(self.kb.store().report_store().clone(), server_config);
+        quire_server::mcp::QuireMcpServer::new(state)
+    }
+
     async fn run_main_turn(
         self: Arc<Self>,
         request: ModelTurnRequest,
@@ -383,7 +407,11 @@ impl RigModelCore {
                 })
                 .map_err(|error| RuntimeError::Internal(error.to_string()))?;
 
-            let previews = Arc::new(Mutex::new(PreviewState::new(&execution, &self.config)));
+            let previews = Arc::new(Mutex::new(PreviewState::new(
+                &execution,
+                &self.config,
+                Some(self.kb.store().report_store().clone()),
+            )));
             let state: SharedTurnState = Arc::new(Mutex::new(TurnRunState::default()));
             let mut runner = agent
                 .prompt(prompt.clone())

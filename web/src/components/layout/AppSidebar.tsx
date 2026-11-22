@@ -389,6 +389,9 @@ export function AppSidebar() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>本地开发 Token 配置</DialogTitle>
+              <p className="text-xs text-muted-foreground">
+                统一后端模式下仅需配置 RUNTIME_API_TOKEN 即可通行全站；下方只读/读写 Token 留空时会自动复用 RUNTIME_API_TOKEN。
+              </p>
             </DialogHeader>
             <div className="space-y-3 py-2 text-xs">
               <div className="space-y-1">

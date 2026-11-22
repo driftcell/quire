@@ -5,6 +5,7 @@ import {
   MessageSquareQuoteIcon,
   PrinterIcon,
   ScrollTextIcon,
+  SparklesIcon,
 } from "lucide-react";
 import { PageChromeDialog } from "@/components/report/PageChromeDialog";
 import { TocOutline } from "@/components/report/TocOutline";
@@ -37,6 +38,8 @@ export interface ReportPaneToolbarProps {
   onJumpToSection: (blockId: string) => void;
   onShowComments: () => void;
   openCommentsCount: number;
+  streamingPreviewsCount?: number;
+  onJumpToStreamingPreview?: () => void;
   themePageChrome?: PageChromeConfig | null;
   compactViewToggle?: boolean;
   className?: string;
@@ -56,6 +59,8 @@ export function ReportPaneToolbar({
   onJumpToSection,
   onShowComments,
   openCommentsCount,
+  streamingPreviewsCount = 0,
+  onJumpToStreamingPreview,
   themePageChrome,
   compactViewToggle = false,
   className = "",
@@ -74,6 +79,31 @@ export function ReportPaneToolbar({
         >
           版本 {revision}
         </Badge>
+        {streamingPreviewsCount > 0 && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={`实时撰写中 ${streamingPreviewsCount} 块`}
+                  onClick={onJumpToStreamingPreview}
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-700 transition-colors hover:bg-emerald-500/20 dark:text-emerald-300"
+                />
+              }
+            >
+              <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+              <SparklesIcon className="size-3" />
+              <span className="tabular-nums">
+                实时撰写中 · {streamingPreviewsCount}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {viewMode === "paged"
+                ? "点击切换至连续视图并定位到正在流式撰写的章节块"
+                : "点击定位到正在流式撰写的章节块"}
+            </TooltipContent>
+          </Tooltip>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-1">

@@ -101,32 +101,53 @@ pub struct StoredAttachment {
 pub struct RuntimeStore {
     pool: PgPool,
     bus: RedisBus,
+    report_store: quire_store::PgReportStore,
     memory: Arc<tokio::sync::OnceCell<ConversationMemory>>,
 }
 
 impl RuntimeStore {
     pub async fn connect(database_url: &str, redis_url: &str) -> RuntimeResult<Self> {
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(16)
+            .max_connections(20)
             .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(database_url)
             .await?;
+        let report_bus = quire_store::RedisStreamBus::connect(redis_url)
+            .await
+            .map_err(|error| {
+                RuntimeError::Internal(format!("report redis connect failed: {error}"))
+            })?;
+        let report_store = quire_store::PgReportStore::from_pool(pool.clone(), report_bus);
         Ok(Self {
             pool,
             bus: RedisBus::connect(redis_url)?,
+            report_store,
             memory: Arc::new(tokio::sync::OnceCell::new()),
         })
     }
 
-    pub fn from_pool(pool: PgPool, bus: RedisBus) -> Self {
+    pub fn from_pool(
+        pool: PgPool,
+        bus: RedisBus,
+        report_store: quire_store::PgReportStore,
+    ) -> Self {
         Self {
             pool,
             bus,
+            report_store,
             memory: Arc::new(tokio::sync::OnceCell::new()),
         }
     }
 
+    pub fn report_store(&self) -> &quire_store::PgReportStore {
+        &self.report_store
+    }
+
     pub async fn migrate(&self) -> RuntimeResult<()> {
+        self.report_store
+            .migrate()
+            .await
+            .map_err(|error| RuntimeError::Internal(format!("report migration failed: {error}")))?;
         let mut migrator = sqlx::migrate!("./migrations");
         migrator.dangerous_set_table_name("_quire_runtime_migrations");
         migrator

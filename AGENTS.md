@@ -12,7 +12,7 @@ knowledge belongs in `docs/`, decision history belongs in `notes/`.
 | `quire-store` | PostgreSQL persistence, Smart CAS revisions, snapshots, Redis Streams/PubSub. No HTTP or MCP concerns. |
 | `quire-server` | Axum REST/SSE and the `rmcp` MCP server. Must not depend on `rig` or agent-runtime internals. |
 | `quire-session-protocol` | Pure synchronous Session REST/SSE contracts and JSON Schema export. Zero I/O. |
-| `quire-runtime` | Independent session backend and agent runtime. Communicates with `quire-server` through HTTP/MCP only. |
+| `quire-runtime` | Unified session backend and agent runtime. Embeds `quire-store` and `quire-server` in-process (native report `rig::tool::Tool`s + mounted `/api/docs/*` & `/mcp` routes). |
 
 Dependency direction is one-way: protocol crates never depend on storage/server/runtime crates, and
 `quire-server` remains independent of `quire-runtime` and `rig`.

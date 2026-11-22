@@ -20,8 +20,8 @@ use std::{
 use base64::Engine as _;
 use futures::StreamExt;
 use quire_protocol::{
-    BlockId, ChartRequirements, CommentAuthorType, CommentMessage, CommentStatus, CommentThread,
-    DocId, EchartsBlock, Revision,
+    Block, BlockId, BlockKind, ChartRequirements, CommentAuthorType, CommentStatus, CommentThread,
+    DocId, EchartsBlock, ReportDocument,
 };
 use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
@@ -30,7 +30,7 @@ use quire_runtime::{
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
-    mcp_registry::{McpServerBinding, McpServerInput, McpServerPatch},
+    mcp_registry::{McpServerBinding, McpServerInput},
     models::ModelInput,
     preview::ChartPreviewRecord,
     sandbox::build_sandbox_provider,
@@ -3809,50 +3809,54 @@ async fn new_message_dismisses_pending_question_and_starts_a_new_turn() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn seed_registers_quire_report_mcp_without_overwriting_admin_state() {
+async fn seed_retires_legacy_quire_report_mcp_and_exposes_native_report_tools() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
-    service.mcp().delete_server("quire-report").await.unwrap();
-    service.seed().await.unwrap();
-    let server = service
-        .mcp()
-        .get_server("quire-report")
-        .await
-        .unwrap()
-        .expect("seeded quire-report server");
-    assert!(server.enabled);
-    assert_eq!(server.url, service.config().quire_base_url);
-    assert_eq!(
-        server.auth_token_masked.as_deref(),
-        Some("env:QUIRE_RW_TOKEN")
-    );
+    let _ = sqlx::query(
+        r#"INSERT INTO mcp_servers (server_id, name, url, auth_token_ref, enabled)
+           VALUES ('quire-report', 'Legacy Quire Report MCP', $1, 'env:QUIRE_RW_TOKEN', TRUE)
+           ON CONFLICT (server_id) DO NOTHING"#,
+    )
+    .bind(&service.config().quire_base_url)
+    .execute(store.pool())
+    .await
+    .unwrap();
 
-    service
-        .mcp()
-        .patch_server(
-            "quire-report",
-            McpServerPatch {
-                enabled: Some(false),
-                ..McpServerPatch::default()
-            },
-        )
-        .await
-        .unwrap();
     service.seed().await.unwrap();
-    let disabled = service
-        .mcp()
-        .get_server("quire-report")
-        .await
-        .unwrap()
-        .expect("seeded quire-report server");
     assert!(
-        !disabled.enabled,
-        "seed must not overwrite an admin-disabled server"
+        service
+            .mcp()
+            .get_server("quire-report")
+            .await
+            .unwrap()
+            .is_none(),
+        "seed must retire the legacy external quire-report MCP entry"
     );
-    service.mcp().delete_server("quire-report").await.unwrap();
-    let _ = sqlx::query("DELETE FROM mcp_servers WHERE server_id = 'quire-report'")
-        .execute(store.pool())
-        .await;
+    for expected in [
+        "get_protocol_guide",
+        "create_report",
+        "list_reports",
+        "get_document_digest",
+        "read_as_markdown",
+        "read_blocks",
+        "apply_operations",
+        "rollback_revision",
+        "upsert_sources",
+        "set_cover",
+        "configure_toc",
+        "configure_references",
+        "configure_page_chrome",
+        "update_style_and_css",
+        "lint_document",
+        "list_comments",
+        "add_comment",
+        "reply_comment",
+    ] {
+        assert!(
+            quire_runtime::rig_agent::BUILTIN_TOOLS.contains(&expected),
+            "report tool `{expected}` must be registered as an in-process built-in tool"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4100,113 +4104,35 @@ async fn mcp_sync_discovers_tools_and_preserves_admin_switches() {
     server.abort();
 }
 
-fn proxy_comment_thread(status: CommentStatus) -> CommentThread {
-    let now = chrono::Utc::now();
-    CommentThread {
-        thread_id: "ct_proxy".into(),
-        doc_id: DocId::parse("report-test").unwrap(),
-        block_id: BlockId::parse("b_proxy").unwrap(),
-        end_block_id: None,
-        anchor_blocks: Vec::new(),
-        section_id: None,
-        anchor_snapshot: Some("Proxy anchor".into()),
-        quote: None,
-        end_quote: None,
-        status,
-        created_rev: Revision::new(1).unwrap(),
-        addressed_rev: (status == CommentStatus::Addressed).then(|| Revision::new(2).unwrap()),
-        anchor_detached: false,
-        messages: vec![CommentMessage {
-            message_id: "cm_proxy".into(),
-            thread_id: "ct_proxy".into(),
-            author_type: CommentAuthorType::Human,
-            author: "reviewer".into(),
-            body: "Please tighten this paragraph.".into(),
-            created_at: now,
-        }],
-        created_at: now,
-        updated_at: now,
-    }
-}
-
-async fn mock_comment_create() -> axum::Json<CommentThread> {
-    axum::Json(proxy_comment_thread(CommentStatus::Open))
-}
-
-async fn mock_comment_reply() -> axum::Json<CommentThread> {
-    axum::Json(proxy_comment_thread(CommentStatus::Addressed))
-}
-
-fn proxy_comment_reply_thread(status: CommentStatus, body: &str) -> CommentThread {
-    let mut thread = proxy_comment_thread(status);
-    let now = chrono::Utc::now();
-    thread.updated_at = now;
-    thread.messages.push(CommentMessage {
-        message_id: "cm_proxy_reply".into(),
-        thread_id: thread.thread_id.clone(),
-        author_type: CommentAuthorType::Human,
-        author: "reviewer".into(),
-        body: body.into(),
-        created_at: now,
-    });
-    thread
-}
-
-async fn mock_comment_reply_addressed() -> axum::Json<CommentThread> {
-    axum::Json(proxy_comment_reply_thread(
-        CommentStatus::Addressed,
-        "Use a different chart",
-    ))
-}
-
-async fn mock_comment_reply_open() -> axum::Json<CommentThread> {
-    axum::Json(proxy_comment_reply_thread(
-        CommentStatus::Open,
-        "More context while the agent is working",
-    ))
-}
-
-async fn mock_comment_patch() -> axum::Json<CommentThread> {
-    axum::Json(proxy_comment_thread(CommentStatus::Archived))
-}
-
-async fn mock_comment_delete(
-    axum::extract::State(deleted): axum::extract::State<Arc<Mutex<Vec<String>>>>,
-    axum::extract::Path((doc_id, thread_id)): axum::extract::Path<(String, String)>,
-) -> axum::http::StatusCode {
-    deleted.lock().await.push(format!("{doc_id}:{thread_id}"));
-    axum::http::StatusCode::NO_CONTENT
+async fn ensure_test_report_with_block(store: &RuntimeStore, raw_doc_id: &str) -> DocId {
+    let doc_id = DocId::parse(unique(raw_doc_id)).unwrap();
+    let mut doc = ReportDocument::new(doc_id.clone());
+    doc.cover.title = "In-Process Test Report".into();
+    doc.blocks.push(Block::new(
+        BlockId::parse("b_proxy").unwrap(),
+        BlockKind::Paragraph {
+            text: "Please tighten this paragraph.".into(),
+        },
+    ));
+    store
+        .report_store()
+        .create_document(&doc, "test", None)
+        .await
+        .unwrap();
+    doc_id
 }
 
 #[tokio::test]
 async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
     let _guard = test_lock().lock().await;
-    let upstream = axum::Router::new()
-        .route(
-            "/api/docs/{doc_id}/comments",
-            axum::routing::post(mock_comment_create),
-        )
-        .route(
-            "/api/docs/{doc_id}/comments/{thread_id}/replies",
-            axum::routing::post(mock_comment_reply),
-        )
-        .route(
-            "/api/docs/{doc_id}/comments/{thread_id}",
-            axum::routing::patch(mock_comment_patch),
-        );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, upstream).await.unwrap();
-    });
-
-    let (service, _store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let (service, store) = test_service().await;
+    let doc_id = ensure_test_report_with_block(&store, "report-test").await;
     let session = service
-        .create_session(&unique("comment-proxy"), Some("report-test"))
+        .create_session(&unique("comment-in-process"), Some(doc_id.as_str()))
         .await
         .unwrap();
     let unbound = service
-        .create_session(&unique("comment-proxy-unbound"), None)
+        .create_session(&unique("comment-in-process-unbound"), None)
         .await
         .unwrap();
     let app = quire_runtime::http::router(service);
@@ -4239,8 +4165,8 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri(format!(
-                    "/api/sessions/{}/comments/ct_proxy/replies",
-                    session.session_id
+                    "/api/sessions/{}/comments/{}/replies",
+                    session.session_id, thread.thread_id
                 ))
                 .header("authorization", "Bearer runtime-test-token")
                 .header("content-type", "application/json")
@@ -4253,8 +4179,8 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
     let body = axum::body::to_bytes(replied.into_body(), 1024 * 1024)
         .await
         .unwrap();
-    let thread: CommentThread = serde_json::from_slice(&body).unwrap();
-    assert_eq!(thread.status, CommentStatus::Addressed);
+    let replied_thread: CommentThread = serde_json::from_slice(&body).unwrap();
+    assert_eq!(replied_thread.messages.len(), 2);
 
     let archived = app
         .clone()
@@ -4262,8 +4188,8 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
             axum::http::Request::builder()
                 .method("PATCH")
                 .uri(format!(
-                    "/api/sessions/{}/comments/ct_proxy",
-                    session.session_id
+                    "/api/sessions/{}/comments/{}",
+                    session.session_id, thread.thread_id
                 ))
                 .header("authorization", "Bearer runtime-test-token")
                 .header("content-type", "application/json")
@@ -4275,6 +4201,24 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
         .await
         .unwrap();
     assert_eq!(archived.status(), axum::http::StatusCode::OK);
+
+    let doc_get = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("GET")
+                .uri(format!("/api/docs/{}", doc_id.as_str()))
+                .header("authorization", "Bearer runtime-test-token")
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        doc_get.status(),
+        axum::http::StatusCode::OK,
+        "unified runtime router must directly serve /api/docs/*"
+    );
 
     let unbound_response = app
         .oneshot(
@@ -4301,7 +4245,6 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
         String::from_utf8_lossy(&body).contains("not bound to a report"),
         "unbound session error must explain the missing report binding"
     );
-    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -4805,19 +4748,10 @@ async fn running_session_queues_messages_and_drains_after_turn() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn comment_creation_auto_triggers_a_turn() {
     let _guard = test_lock().lock().await;
-    let upstream = axum::Router::new().route(
-        "/api/docs/{doc_id}/comments",
-        axum::routing::post(mock_comment_create),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, upstream).await.unwrap();
-    });
-
-    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let (service, store) = test_service().await;
+    let doc_id = ensure_test_report_with_block(&store, "report-test").await;
     let session = service
-        .create_session(&unique("comment-trigger"), Some("report-test"))
+        .create_session(&unique("comment-trigger"), Some(doc_id.as_str()))
         .await
         .unwrap();
     let app = quire_runtime::http::router(service);
@@ -4829,13 +4763,18 @@ async fn comment_creation_auto_triggers_a_turn() {
                 .header("authorization", "Bearer runtime-test-token")
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
-                    json!({"block_id": "b_proxy", "body": "Tighten this paragraph"}).to_string(),
+                    json!({"block_id": "b_proxy", "body": "Please tighten this paragraph."})
+                        .to_string(),
                 ))
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(created.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(created.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let thread: CommentThread = serde_json::from_slice(&body).unwrap();
     wait_for_idle(&store, &session.session_id).await;
     let messages = store.list_messages(&session.session_id).await.unwrap();
     assert!(
@@ -4843,31 +4782,55 @@ async fn comment_creation_auto_triggers_a_turn() {
             message.role == MessageRole::User
                 && message.content.is_empty()
                 && message.comment_refs.iter().any(|comment_ref| {
-                    comment_ref.thread_id == "ct_proxy"
+                    comment_ref.thread_id == thread.thread_id
                         && comment_ref.comment == "Please tighten this paragraph."
                 })
         }),
         "comment creation must auto-submit a structured comment reference"
     );
-    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn addressed_comment_reply_auto_triggers_agent() {
     let _guard = test_lock().lock().await;
-    let upstream = axum::Router::new().route(
-        "/api/docs/{doc_id}/comments/{thread_id}/replies",
-        axum::routing::post(mock_comment_reply_addressed),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, upstream).await.unwrap();
-    });
+    let (service, store) = test_service().await;
+    let doc_id = ensure_test_report_with_block(&store, "report-test").await;
+    let created_thread = store
+        .report_store()
+        .create_comment_thread(
+            &doc_id,
+            quire_store::NewCommentThread {
+                block_id: BlockId::parse("b_proxy").unwrap(),
+                end_block_id: None,
+                anchor_blocks: Vec::new(),
+                author_type: CommentAuthorType::Human,
+                author: "reviewer".into(),
+                body: "Initial comment".into(),
+                quote: None,
+                end_quote: None,
+                anchor_snapshot: None,
+            },
+        )
+        .await
+        .unwrap();
+    store
+        .report_store()
+        .reply_comment_thread(
+            &doc_id,
+            &created_thread.thread_id,
+            quire_store::NewCommentReply {
+                author_type: CommentAuthorType::Agent,
+                author: "writer".into(),
+                body: "Addressed in the latest revision.".into(),
+                mark_addressed: true,
+                addressed_rev: None,
+            },
+        )
+        .await
+        .unwrap();
 
-    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
     let session = service
-        .create_session(&unique("comment-follow-up"), Some("report-test"))
+        .create_session(&unique("comment-follow-up"), Some(doc_id.as_str()))
         .await
         .unwrap();
     let app = quire_runtime::http::router(service.clone());
@@ -4876,8 +4839,8 @@ async fn addressed_comment_reply_auto_triggers_agent() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri(format!(
-                    "/api/sessions/{}/comments/ct_proxy/replies",
-                    session.session_id
+                    "/api/sessions/{}/comments/{}/replies",
+                    session.session_id, created_thread.thread_id
                 ))
                 .header("authorization", "Bearer runtime-test-token")
                 .header("content-type", "application/json")
@@ -4897,32 +4860,41 @@ async fn addressed_comment_reply_auto_triggers_agent() {
             message.role == MessageRole::User
                 && message.content.is_empty()
                 && message.comment_refs.iter().any(|comment_ref| {
-                    comment_ref.thread_id == "ct_proxy"
+                    comment_ref.thread_id == created_thread.thread_id
                         && comment_ref.comment == "Use a different chart"
                 })
         }),
         "replying to an addressed comment must re-submit it to the agent"
     );
     service.delete_session(&session.session_id).await.unwrap();
-    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn open_comment_reply_also_triggers_agent() {
     let _guard = test_lock().lock().await;
-    let upstream = axum::Router::new().route(
-        "/api/docs/{doc_id}/comments/{thread_id}/replies",
-        axum::routing::post(mock_comment_reply_open),
-    );
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, upstream).await.unwrap();
-    });
+    let (service, store) = test_service().await;
+    let doc_id = ensure_test_report_with_block(&store, "report-test").await;
+    let created_thread = store
+        .report_store()
+        .create_comment_thread(
+            &doc_id,
+            quire_store::NewCommentThread {
+                block_id: BlockId::parse("b_proxy").unwrap(),
+                end_block_id: None,
+                anchor_blocks: Vec::new(),
+                author_type: CommentAuthorType::Human,
+                author: "reviewer".into(),
+                body: "Initial open comment".into(),
+                quote: None,
+                end_quote: None,
+                anchor_snapshot: None,
+            },
+        )
+        .await
+        .unwrap();
 
-    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
     let session = service
-        .create_session(&unique("comment-open-reply"), Some("report-test"))
+        .create_session(&unique("comment-open-reply"), Some(doc_id.as_str()))
         .await
         .unwrap();
     let app = quire_runtime::http::router(service.clone());
@@ -4931,8 +4903,8 @@ async fn open_comment_reply_also_triggers_agent() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri(format!(
-                    "/api/sessions/{}/comments/ct_proxy/replies",
-                    session.session_id
+                    "/api/sessions/{}/comments/{}/replies",
+                    session.session_id, created_thread.thread_id
                 ))
                 .header("authorization", "Bearer runtime-test-token")
                 .header("content-type", "application/json")
@@ -4952,41 +4924,24 @@ async fn open_comment_reply_also_triggers_agent() {
             message.role == MessageRole::User
                 && message.content.is_empty()
                 && message.comment_refs.iter().any(|comment_ref| {
-                    comment_ref.thread_id == "ct_proxy"
+                    comment_ref.thread_id == created_thread.thread_id
                         && comment_ref.comment == "More context while the agent is working"
                 })
         }),
         "follow-up replies on open threads must also reach the agent"
     );
     service.delete_session(&session.session_id).await.unwrap();
-    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn running_session_queues_comment_and_queue_delete_removes_thread() {
     let _guard = test_lock().lock().await;
-    let deleted = Arc::new(Mutex::new(Vec::<String>::new()));
-    let upstream = axum::Router::new()
-        .route(
-            "/api/docs/{doc_id}/comments",
-            axum::routing::post(mock_comment_create),
-        )
-        .route(
-            "/api/docs/{doc_id}/comments/{thread_id}",
-            axum::routing::delete(mock_comment_delete),
-        )
-        .with_state(deleted.clone());
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = listener.local_addr().unwrap();
-    let server = tokio::spawn(async move {
-        axum::serve(listener, upstream).await.unwrap();
-    });
-
     let gate = GateStreamProvider::new();
-    let (service, store) = test_service_with_quire_base(&format!("http://{address}")).await;
+    let (service, store) = test_service().await;
+    let doc_id = ensure_test_report_with_block(&store, "report-test").await;
     let service = service.with_model_stream_provider(Arc::new(gate.clone()));
     let session = service
-        .create_session(&unique("comment-queue"), Some("report-test"))
+        .create_session(&unique("comment-queue"), Some(doc_id.as_str()))
         .await
         .unwrap();
     let started = service
@@ -5021,6 +4976,10 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
         .await
         .unwrap();
     assert_eq!(created.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(created.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let thread: CommentThread = serde_json::from_slice(&body).unwrap();
 
     let queue = service
         .list_pending_queue(&session.session_id)
@@ -5028,7 +4987,10 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
         .unwrap();
     assert_eq!(queue.len(), 1);
     assert_eq!(queue[0].source, PendingQueueSource::Comment);
-    assert_eq!(queue[0].thread_id.as_deref(), Some("ct_proxy"));
+    assert_eq!(
+        queue[0].thread_id.as_deref(),
+        Some(thread.thread_id.as_str())
+    );
     let queue_id = queue[0].queue_id.clone();
 
     let removed = app
@@ -5047,9 +5009,16 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
         .await
         .unwrap();
     assert_eq!(removed.status(), axum::http::StatusCode::NO_CONTENT);
-    assert_eq!(
-        deleted.lock().await.as_slice(),
-        ["report-test:ct_proxy".to_string()]
+    let remaining_threads = store
+        .report_store()
+        .list_comment_threads(&doc_id, None, None)
+        .await
+        .unwrap();
+    assert!(
+        remaining_threads
+            .iter()
+            .all(|item| item.thread_id != thread.thread_id),
+        "deleting a queued comment must delete its underlying report comment thread"
     );
     assert!(
         service
@@ -5069,7 +5038,6 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
         "deleting a queued comment must not leave an agent trigger behind"
     );
     service.delete_session(&session.session_id).await.unwrap();
-    server.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -14,6 +14,8 @@ pub struct Config {
     pub rw_token: Option<SecretString>,
     /// Token allowed to call read-only frontend routes. RW tokens are also accepted.
     pub ro_token: Option<SecretString>,
+    /// Optional unified runtime API token accepted when mounted inside `quire-runtime`.
+    pub extra_rw_token: Option<SecretString>,
     /// Allowed Host headers for the MCP Streamable HTTP endpoint.
     pub allowed_hosts: Vec<String>,
     /// Browser origins allowed to call the read-only API. Empty means permissive (dev default).
@@ -90,6 +92,7 @@ impl Config {
             redis_url,
             rw_token,
             ro_token,
+            extra_rw_token: None,
             allowed_hosts,
             cors_allowed_origins,
             sse_heartbeat,

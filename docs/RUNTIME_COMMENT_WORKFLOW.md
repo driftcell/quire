@@ -28,16 +28,18 @@ The protected session router exposes:
 
 Each handler resolves the session and requires a bound `doc_id` (or `linked_doc_id`). An unbound
 session returns `400 INVALID_REQUEST` with a message explaining that a report must be linked first.
-The handler then forwards to `quire-server`:
+The handler then executes directly in-process against the embedded `PgReportStore` (`quire-store`)
+with `actor = "reviewer"`:
 
-- `/api/docs/{doc_id}/comments`
-- `/api/docs/{doc_id}/comments/{thread_id}/replies`
-- `/api/docs/{doc_id}/comments/{thread_id}`
+- `report_store.create_comment_thread(&doc_id, ...)`
+- `report_store.reply_comment_thread(&doc_id, &thread_id, ...)`
+- `report_store.update_comment_status(&doc_id, &thread_id, status)`
+- `report_store.delete_comment_thread(&doc_id, &thread_id)`
 
-The runtime uses `QUIRE_RW_TOKEN` from its own configuration and sends `x-session-id` plus
-`x-actor: reviewer`. Upstream `CommentThread` JSON is returned unchanged. Upstream 4xx statuses are
-preserved; network/5xx failures become `502` proxy errors. Tokens never appear in URLs, logs, error
-messages or response bodies.
+The resulting `CommentThread` JSON is returned directly and `CommentUpdatedEvent` is broadcast
+through the shared `RedisStreamBus`. In addition, `quire_runtime::http::router` mounts
+`quire_server::build_document_router` directly, so `/api/docs/{doc_id}/*` and `/mcp` are served by
+the same backend process; `/api/sessions/*` remains runtime-owned.
 
 The browser API is split by capability:
 
