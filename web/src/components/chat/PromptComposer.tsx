@@ -531,15 +531,6 @@ export function PromptComposer({
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between border-t border-border/60 pt-2 text-xs">
-                    <span className="text-muted-foreground">会话累计费用</span>
-                    <span
-                      data-slot="session-cost-detail"
-                      className="font-mono font-medium text-foreground tabular-nums"
-                    >
-                      {`¥${(rawCostRmb ?? 0).toFixed(6)}`}
-                    </span>
-                  </div>
                   {onCompact && (
                     <Tooltip>
                       <TooltipTrigger

@@ -512,7 +512,18 @@ export function ReportViewer({
 
       {!isPaged ? (
         <article className="mx-auto w-full max-w-[760px] bg-white px-5 py-8 text-[var(--rpt-ink)] shadow-sm ring-1 ring-black/5 sm:px-10">
-          <ReportCover cover={document.cover} isPaged={false} />
+          {isCustomFullPageCover ? (
+            <div
+              data-slot="continuous-custom-cover"
+              className="-mx-5 -mt-8 mb-10 overflow-hidden sm:-mx-10"
+            >
+              <div className="px-5 pt-8 sm:px-10">
+                <ReportCover cover={document.cover} isPaged={false} />
+              </div>
+            </div>
+          ) : (
+            <ReportCover cover={document.cover} isPaged={false} />
+          )}
           {renderToc(blockPageMap)}
           {continuousItems.map((item: MixedRenderItem) => (
             <div key={item.key}>

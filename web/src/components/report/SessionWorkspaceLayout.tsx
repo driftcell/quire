@@ -141,6 +141,15 @@ export function SessionWorkspaceLayout({
           <ResizablePanelGroup
             orientation="horizontal"
             className="h-full min-h-0 min-w-0"
+            onLayoutChanged={(layout, meta) => {
+              if (!meta.isUserInteraction) {
+                return;
+              }
+              const pct = (meta.requestedLayout ?? layout)["chat-pane"];
+              if (typeof pct === "number") {
+                onChatPanelResize(pct);
+              }
+            }}
           >
             <ResizablePanel
               id="report-pane"
@@ -167,9 +176,6 @@ export function SessionWorkspaceLayout({
               maxSize="60%"
               collapsible
               collapsedSize="0%"
-              onResize={(size) => {
-                onChatPanelResize(size.asPercentage);
-              }}
               className={`min-h-0 min-w-0 ${
                 rightPanelAnimating
                   ? "transition-[flex-grow,flex-basis] duration-200 ease-out"

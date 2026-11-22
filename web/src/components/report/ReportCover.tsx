@@ -88,9 +88,7 @@ export function ReportCover({
       <div
         data-report-cover="custom"
         className={
-          isPaged
-            ? "report-cover-custom w-full"
-            : "report-cover-custom mb-10 border-b border-[var(--rpt-border)] pb-8"
+          isPaged ? "report-cover-custom w-full" : "report-cover-custom"
         }
       >
         <CoverCustomHtml html={html} />
