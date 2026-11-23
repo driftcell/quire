@@ -1,1 +1,3 @@
-Promote a draft branch with Smart CAS: fast-forward, disjoint auto-merge, or a structured conflict error.
+Promote a `"draft"` branch (`name`) into the `"active"` branch using three-way Smart CAS (fast-forward or disjoint auto-merge).
+- Lifecycle finality: Upon successful promotion, the draft branch permanently transitions to `"archived"` (read-only) and invalidates live runtime caches.
+- Conflict recovery: If the same item was modified differently in active and draft, promotion fails with a conflict report and marks the current draft `head_version`. To resolve, apply a new `kb_upsert_*` or `kb_delete_item` on the draft branch to advance its `head_version`, then call `kb_promote_branch` again to rebase and merge.

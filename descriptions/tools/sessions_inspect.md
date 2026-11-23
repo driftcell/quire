@@ -1,1 +1,1 @@
-Inspect a session: full detail, latest run status and context usage.
+Inspect full session state for `session_id`: message transcript, compaction summary, pending user messages/questions, attachments, `context_usage`, and `latest_run` status (including run-level `error`). Does not include tool execution traces—call `sessions_traces` to inspect tool calls and subagent runs.

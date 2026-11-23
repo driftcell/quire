@@ -1,1 +1,1 @@
-Create or update a skill definition and its resources inside a branch.
+Create or update a skill definition (`name`, `description`, `body`, `enabled`) and its bundled `resources` (`[{ path, content }]`) inside `branch` (prefer a `"draft"` branch). WARNING: `resources` performs a full replacement (`DELETE` then `INSERT`)—omitting `resources` or passing `[]` when updating an existing skill will delete all of its bundled resource files. Always call `kb_read_item` first to preserve existing `resources`.

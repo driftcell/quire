@@ -1,1 +1,1 @@
-Write a UTF-8 text file in this run's sandbox, creating missing parent directories when the provider supports it. The content limit is 256 KiB.
+Write a UTF-8 text file (`content` up to 256 KiB) to `path` in this run's sandbox, automatically creating missing parent directories. For files exceeding 256 KiB or binary outputs, generate them via `sandbox_execute`.

@@ -1,1 +1,3 @@
-Emit a one-shot structured questionnaire and end the current turn. Any sibling tool calls in the same model turn are skipped without execution.
+Present a one-shot structured questionnaire (`questions`) to the user and immediately suspend the current turn (any sibling tool calls in the same turn are skipped). Available only to the lead agent.
+- When to use: Reserve this for ambiguous requirements or scope choices that cannot be resolved from the prompt, existing workspace data, or sensible defaults.
+- Schema requirement: Every item in `questions` must provide a non-empty `id`, `title`, and a non-empty `options` array (`[{ id, label, description? }]` with at least 1 option; put your recommended choice first). Set `multiple: true` for multi-select questions.

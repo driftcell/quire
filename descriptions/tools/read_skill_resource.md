@@ -1,1 +1,1 @@
-Read one resource file bundled with a skill on the session branch.
+Read one bundled resource file (`path`, e.g. `"references/examples.md"` or `"references/review-rubric.md"`) belonging to `skill` on the session's knowledge-base branch. Load only the resource files relevant to your active role and task stage.

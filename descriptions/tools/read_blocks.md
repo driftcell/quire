@@ -1,1 +1,1 @@
-Fetch full canonical protocol JSON for targeted blocks.
+Fetch full canonical protocol JSON AST for specific `block_ids` in `doc_id`. Use this only when you need exact structural fields before an in-place `patch_block` edit (such as Table `columns`, `rows`, `summary_rows`, `style.column_widths`, ECharts `option`, or `lint_ignore`). For reading chapter prose, checking citations, or auditing chart numbers, prefer `read_as_markdown` to save context tokens. Unknown `block_ids` fail with the list of `valid_block_ids`.

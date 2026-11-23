@@ -1,1 +1,1 @@
-List agent sessions newest first, including status, active run status and KB branch.
+List agent sessions ordered by `pinned DESC, pinned_at DESC, updated_at DESC` (pinned sessions first, then most recently updated), with pagination `limit` (1..=200, default 50) and `offset` (default 0). Returns session status, `active_run_status`, and bound `kb_branch`.

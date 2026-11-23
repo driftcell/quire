@@ -1,1 +1,1 @@
-Enable/disable the auto-generated TOC and set title, max_depth (1..=3), variant (standard|numbered|dotted) and page breaks before/after the TOC.
+Configure the auto-generated Table of Contents for `doc_id`: `enabled` (required bool), `title` (defaults to `"目录"` for CJK reports), `max_depth` (`1..=3`), `variant` (`"standard" | "numbered" | "dotted"`), `page_break_before`, and `page_break_after`. The TOC is rendered automatically from document Heading blocks—never insert manual TOC paragraphs or tables into the report body.

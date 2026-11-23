@@ -1,1 +1,1 @@
-List side-channel review threads. Archived threads are omitted unless status=archived is supplied. Includes anchor_snapshot and live anchor_detached flags.
+List side-channel review comment threads for `doc_id`, optionally filtered by `status` (`"open" | "addressed" | "archived"`; defaults to all non-archived threads) and `block_id`. Pass `status: "open"` during revision passes to fetch unresolved findings. Each thread includes `anchor_snapshot` and a live `anchor_detached` flag indicating whether the target block was deleted or replaced.

@@ -1,1 +1,1 @@
-Create or update an LLM provider. Raw API keys are encrypted and never returned.
+Create or update an LLM provider (`provider_id`, `name`, `protocol`: `"openai_compatible" | "anthropic"`, `base_url`, `api_key_ref`, `enabled`). `api_key_ref` accepts `env:VAR_NAME`, `enc:...`, or a raw API key (encrypted with `RUNTIME_MASTER_KEY`). Create the provider before registering or importing its model routes via `models_upsert` or `models_import_models_dev`.

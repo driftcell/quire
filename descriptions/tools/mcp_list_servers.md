@@ -1,1 +1,1 @@
-List registered MCP servers. Auth token references are always masked.
+List registered external MCP servers with connection URLs, enable status, and masked auth token references (`env:VAR` or `enc:***`). Built-in Quire report tools are native to the runtime and not listed here.

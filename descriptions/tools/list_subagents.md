@@ -1,1 +1,1 @@
-List available subagent names and descriptions on this branch.
+List enabled subagent definitions available on the current session's KB branch, returning each subagent's `name`, `description`, default `model`, and `allowed_tools` patterns. Excludes the default lead agent and the calling agent itself.

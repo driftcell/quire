@@ -1,1 +1,1 @@
-Roll the active branch back to an immutable snapshot. Omit version for the latest earlier snapshot.
+Roll the `"active"` branch back to an earlier immutable snapshot `version` (strictly less than the active branch's current `head_version`, chosen from `kb_list_branches.recent_snapshots`; omit `version` to use the latest earlier snapshot). Creates a new monotonic active version and a `"rollback"` snapshot without erasing history.

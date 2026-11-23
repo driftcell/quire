@@ -1,1 +1,1 @@
-Report the current work stage to the user interface. Use it when you want the user to see what you are working on, especially during longer multi-step tasks.
+Report the current work stage to the user interface header without cluttering the tool trace. Use it at major phase transitions during multi-step tasks: pass a concise user-facing `title` (<=16 Chinese characters, no internal tool names or raw IDs), optional `detail`, and optional `section_id` (Heading `block_id` to highlight the active chapter in the UI).

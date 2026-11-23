@@ -1,1 +1,1 @@
-Create an isolated draft branch by copying the active branch at its current version.
+Create an isolated `"draft"` branch (`name`: 1..=64 chars matching `[A-Za-z0-9._-]`) by copying the currently `"active"` branch (`from` must be omitted or match the active branch; branching from a draft or archived branch will fail) and freezing a `branch_base` snapshot. Always create a draft branch before editing KB documents, agents, or skills.

@@ -1,1 +1,1 @@
-Discover a server's tools and sync descriptions/schemas while preserving admin enable switches.
+Connect to registered MCP server `server_id`, discover its live `tools/list`, and sync tool descriptions and JSON schemas into the database while preserving existing per-tool `enabled` switches (newly discovered tools default to `enabled: true`). Call this immediately after `mcp_upsert_server` or whenever an external MCP server updates its tool schemas.

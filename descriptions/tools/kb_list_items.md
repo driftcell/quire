@@ -1,1 +1,1 @@
-List documents, agents and skills in a branch, optionally filtered by item kind.
+List summary metadata (without full body content) for documents, agents, and skills in `branch`, optionally filtered by `item_kind` (`"doc" | "agent" | "skill"`). Call `kb_read_item` to fetch the full content of a specific item before editing.

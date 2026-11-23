@@ -1,1 +1,1 @@
-Revert document state by replaying stored inverse_ops in reverse order. Creates a new monotonic revision; history is never rewritten.
+Revert `doc_id` to an earlier `target_revision` (`1..current_revision-1`) by replaying stored `inverse_ops` in reverse order, creating a new monotonic revision without erasing history. Use only for whole-document recovery when no other subagents are writing concurrently; for targeted block fixes or during parallel multi-agent authoring, use `apply_operations` (`patch_block` or `delete_blocks`) so you do not overwrite sibling chapter commits.
