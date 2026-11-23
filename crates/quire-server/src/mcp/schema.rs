@@ -65,6 +65,18 @@ pub struct CreateReportParams {
     /// Optional caller-supplied doc_id; otherwise generated from the title.
     #[serde(default)]
     pub doc_id: Option<String>,
+    /// Optional cover subtitle initialized at report creation.
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    /// Optional cover author lines initialized at report creation.
+    #[serde(default)]
+    pub authors: Option<Vec<String>>,
+    /// Optional publication date initialized at report creation.
+    #[serde(default)]
+    pub date: Option<String>,
+    /// Optional cover key/value metadata initialized at report creation.
+    #[serde(default)]
+    pub cover_meta: Option<BTreeMap<String, String>>,
 }
 
 /// Output for `create_report`.

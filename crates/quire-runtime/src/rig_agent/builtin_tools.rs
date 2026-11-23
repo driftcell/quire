@@ -541,7 +541,7 @@ async fn preview_report_tool(
 #[allow(clippy::too_many_arguments)]
 #[rig_tool(
     name = "preview_echarts",
-    description = "Validate and render one ECharts chart before writing it. First call: send the complete native ECharts 6.0 `option`. Refinement calls: send `based_on_preview_id` plus a small `option_patch`; never resend the full option. Returns preview_id, lint_issues and preview_url. Vision models also receive a screenshot. Commit with commit_chart."
+    description = "Validate and render one ECharts chart before writing it. First call: send the complete native ECharts 6.0 `option`. Refinement calls: send `based_on_preview_id` plus a small `option_patch`; never resend the full option. Optionally supply `source_ids` and `source_note` so commit_chart binds source attribution atomically. Returns preview_id, lint_issues and preview_url. Vision models also receive a screenshot. Commit with commit_chart."
 )]
 async fn preview_echarts_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -552,6 +552,8 @@ async fn preview_echarts_tool(
     title: Option<String>,
     note: Option<String>,
     fallback_summary: Option<String>,
+    source_ids: Option<Vec<String>>,
+    source_note: Option<String>,
 ) -> Result<ToolOutput, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
@@ -563,6 +565,14 @@ async fn preview_echarts_tool(
         .filter(|value| !value.is_empty());
 
     let mut based_on_id = None;
+    let mut effective_source_ids: Vec<String> = source_ids
+        .clone()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut effective_source_note = normalize_optional_text(source_note.clone());
     let chart = if let Some(base_id) = based_on {
         if option.is_some() {
             return Err(ToolExecutionError::invalid_args(
@@ -606,6 +616,16 @@ async fn preview_echarts_tool(
             chart.fallback_summary = summary;
             changed = true;
         }
+        if source_ids.is_some() {
+            changed = true;
+        } else {
+            effective_source_ids = existing.source_ids;
+        }
+        if source_note.is_some() {
+            changed = true;
+        } else {
+            effective_source_note = existing.source_note;
+        }
         if !changed {
             return Err(ToolExecutionError::invalid_args(
                 "iterative preview requires `option_patch` or at least one top-level override",
@@ -643,7 +663,18 @@ async fn preview_echarts_tool(
 
     let preview_id = short_id("chart");
     let preview_block_id = BlockId::parse("chart_preview").map_err(tool_other)?;
-    let lint = lint_echarts_block(preview_block_id, &chart);
+    let mut lint = lint_echarts_block(preview_block_id, &chart);
+    let has_preview_source = !effective_source_ids.is_empty()
+        || effective_source_note.is_some()
+        || chart.note.as_deref().is_some_and(|n| n.contains("[^"));
+    if has_preview_source {
+        lint.diagnostics.retain(|d| d.code != "QR422");
+        lint.summary.warnings = lint
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == quire_protocol::Severity::Warning)
+            .count();
+    }
     let requirements = chart_requirements(&chart);
     let tables = chart_data_tables_for_block(&chart);
     let record = crate::preview::ChartPreviewRecord {
@@ -654,6 +685,8 @@ async fn preview_echarts_tool(
         requirements,
         tables,
         based_on_preview_id: based_on_id,
+        source_ids: effective_source_ids,
+        source_note: effective_source_note,
     };
     bus.store_chart_preview(&record).await.map_err(tool_other)?;
 
@@ -707,7 +740,7 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 #[allow(clippy::too_many_arguments)]
 #[rig_tool(
     name = "commit_chart",
-    description = "Commit a chart that already passed preview_echarts into the report. Accepts only preview_id, doc_id, block_id and an insertion anchor; never send the ECharts option again. Omit expected_revision to read the current revision first. Use after visual and lint review passes."
+    description = "Commit a chart that already passed preview_echarts into the report. Accepts preview_id, doc_id, block_id, an optional insertion anchor, and optional source_ids/source_note; never send the ECharts option again. When block_id already exists in the document as an ECharts block, updates it in place instead of inserting a duplicate. Omit expected_revision to read the current revision first."
 )]
 async fn commit_chart_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -719,6 +752,8 @@ async fn commit_chart_tool(
     section_id: Option<String>,
     expected_revision: Option<i64>,
     summary: Option<String>,
+    source_ids: Option<Vec<String>>,
+    source_note: Option<String>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let req_ctx = in_process_request_context(context)?;
@@ -764,27 +799,31 @@ async fn commit_chart_tool(
     }
 
     let target_id = BlockId::parse(block_id.trim()).map_err(tool_other)?;
-    let block = Block::new(target_id.clone(), BlockKind::Echarts(preview.chart));
-    let op = if let Some(anchor) = after_block_id {
-        PatchOp::InsertAfter {
-            target_id: BlockId::parse(anchor.trim()).map_err(tool_other)?,
-            blocks: vec![block],
+    let raw_source_ids = source_ids.unwrap_or(preview.source_ids);
+    let mut parsed_source_ids = Vec::with_capacity(raw_source_ids.len());
+    for raw_id in raw_source_ids {
+        let trimmed = raw_id.trim();
+        if !trimmed.is_empty() {
+            parsed_source_ids.push(quire_protocol::SourceId::parse(trimmed).map_err(tool_other)?);
         }
-    } else if let Some(anchor) = before_block_id {
-        PatchOp::InsertBefore {
-            target_id: BlockId::parse(anchor.trim()).map_err(tool_other)?,
-            blocks: vec![block],
-        }
-    } else if let Some(section) = section_id {
-        PatchOp::AppendToSection {
-            section_id: BlockId::parse(section.trim()).map_err(tool_other)?,
-            blocks: vec![block],
-        }
-    } else {
-        PatchOp::Append {
-            blocks: vec![block],
-        }
-    };
+    }
+    let effective_source_note = normalize_optional_text(source_note).or(preview.source_note);
+
+    let rmcp::handler::server::wrapper::Json(digest_receipt) = runtime
+        .report_mcp
+        .get_document_digest(rmcp::handler::server::wrapper::Parameters(
+            quire_server::mcp::DigestParams {
+                doc_id: doc_id.clone(),
+                query: None,
+            },
+        ))
+        .await
+        .map_err(mcp_error_to_tool_error)?;
+    let existing_echarts = digest_receipt
+        .digest
+        .blocks
+        .iter()
+        .any(|b| b.id == target_id.as_str() && b.block_type == "echarts");
 
     let expected_revision = match expected_revision {
         Some(value) if value >= 0 => value,
@@ -793,20 +832,96 @@ async fn commit_chart_tool(
                 "`expected_revision` must be non-negative",
             ));
         }
-        None => {
-            let rmcp::handler::server::wrapper::Json(digest) = runtime
-                .report_mcp
-                .get_document_digest(rmcp::handler::server::wrapper::Parameters(
-                    quire_server::mcp::DigestParams {
-                        doc_id: doc_id.clone(),
-                        query: None,
-                    },
-                ))
-                .await
-                .map_err(mcp_error_to_tool_error)?;
-            digest.digest.current_rev
-        }
+        None => digest_receipt.digest.current_rev,
     };
+
+    let ops = if existing_echarts {
+        let chart = preview.chart;
+        let patch = quire_protocol::BlockPatch {
+            option: Some(chart.option),
+            option_patch: chart.option_patch,
+            height: Some(chart.height),
+            fallback_summary: Some(chart.fallback_summary),
+            title: chart.title,
+            note: chart.note,
+            source_ids: (!parsed_source_ids.is_empty()).then_some(parsed_source_ids),
+            source_note: effective_source_note,
+            ..Default::default()
+        };
+        let mut patch_ops = vec![PatchOp::PatchBlock {
+            block_id: target_id.clone(),
+            patch,
+        }];
+        if let Some(anchor) = after_block_id {
+            let anchor_id = BlockId::parse(anchor.trim()).map_err(tool_other)?;
+            if anchor_id != target_id {
+                patch_ops.push(PatchOp::MoveBlock {
+                    block_id: target_id.clone(),
+                    after_id: Some(anchor_id),
+                });
+            }
+        } else if let Some(anchor) = before_block_id {
+            let anchor_id = BlockId::parse(anchor.trim()).map_err(tool_other)?;
+            if anchor_id != target_id {
+                let block_ids: Vec<&str> = digest_receipt
+                    .digest
+                    .blocks
+                    .iter()
+                    .map(|block| block.id.as_str())
+                    .collect();
+                let target_index = block_ids.iter().position(|id| *id == target_id.as_str());
+                let anchor_index = block_ids
+                    .iter()
+                    .position(|id| *id == anchor_id.as_str())
+                    .ok_or_else(|| {
+                        ToolExecutionError::invalid_args(format!(
+                            "`before_block_id` anchor `{}` does not exist",
+                            anchor_id.as_str()
+                        ))
+                    })?;
+                let already_before = target_index.is_some_and(|index| index + 1 == anchor_index);
+                if !already_before {
+                    let predecessor = anchor_index
+                        .checked_sub(1)
+                        .and_then(|index| block_ids.get(index))
+                        .and_then(|id| (*id != target_id.as_str()).then_some(*id))
+                        .map(|id| BlockId::parse(id).map_err(tool_other))
+                        .transpose()?;
+                    patch_ops.push(PatchOp::MoveBlock {
+                        block_id: target_id.clone(),
+                        after_id: predecessor,
+                    });
+                }
+            }
+        }
+        patch_ops
+    } else {
+        let mut block = Block::new(target_id.clone(), BlockKind::Echarts(preview.chart));
+        block.source_ids = parsed_source_ids;
+        block.source_note = effective_source_note;
+        let op = if let Some(anchor) = after_block_id {
+            PatchOp::InsertAfter {
+                target_id: BlockId::parse(anchor.trim()).map_err(tool_other)?,
+                blocks: vec![block],
+            }
+        } else if let Some(anchor) = before_block_id {
+            PatchOp::InsertBefore {
+                target_id: BlockId::parse(anchor.trim()).map_err(tool_other)?,
+                blocks: vec![block],
+            }
+        } else if let Some(section) = section_id {
+            PatchOp::AppendToSection {
+                section_id: BlockId::parse(section.trim()).map_err(tool_other)?,
+                blocks: vec![block],
+            }
+        } else {
+            PatchOp::Append {
+                blocks: vec![block],
+            }
+        };
+        vec![op]
+    };
+
     let summary = summary
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -819,7 +934,7 @@ async fn commit_chart_tool(
                 doc_id,
                 expected_revision,
                 summary,
-                ops: vec![op],
+                ops,
                 sources: None,
                 preview_ids: Vec::new(),
             },

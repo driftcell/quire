@@ -14,7 +14,15 @@ allowed_tools:
   - preview_report
   - upsert_sources
   - lint_document
+  - list_comments
+  - reply_comment
   - describe_task
+  - load_skill
+  - read_skill_resource
+  - sandbox_execute
+  - sandbox_read_file
+  - sandbox_write_file
+  - sandbox_mount_attachment
   - deepseek_fetch
   - panorama_report_*
   - shuangyou_*
@@ -53,18 +61,23 @@ enabled: true
 - **进度同步**：可用 `describe_task` 向用户界面同步当前处理进度。
 1. 首次创建前调用 `get_protocol_guide("tables_and_charts")` 对齐协议；需要引用时用 `list_sources` 读取真实来源和证据摘录，必要时用 `deepseek_fetch` 核对原文，禁止凭 ID 猜来源或为覆盖率挂引用。
 2. **学术三线表规范**：使用递归 `ColumnNode` 树（如按“年度/项目类别/立项数与占比”分组表头），为数值/百分比/排名列显式设置 `data_type`（`number` / `percent` / `currency`）与 `align: "right"`，必要时提供 `summary_rows`（合计/均值/省内均值对标行）。
-   - **6–8 列紧凑对标表默认预设**：叶表头控制在 2–4 字，把 `（项）`、`（%）`、`（万元）` 等单位上提到 `note` 或父级 `ColumnNode`；默认省略 `style.column_widths`，由前端 Water-Filling 自动保护数值列并允许表头两行。不得通过压缩首列、短表头或数值列掩盖超宽；超过 8 列应优先按主题拆表，硬上限 9 列。
-3. **表格与版面实际核验**：用 `preview_report` 检查表格换行、宽度与跨页效果。未看到实际渲染前不得抑制布局告警；确需保留抑制时，在交付中写明当前版本证据。
+   - **6–8 列紧凑对标表默认预设**：叶表头控制在 2–4 字，把 `（项）`、`（%）`、`（万元）` 等单位上提到 `note` 或父级 `ColumnNode`；8 列及以内默认省略 `style.column_widths`，由前端 Water-Filling 自动保护数值列并允许表头两行；仅在 9 列特殊表格或 `preview_report` 实测确需锁列宽时才手工设置。不得通过压缩首列、短表头或数值列掩盖超宽；超过 8 列应优先按主题拆表，硬上限 9 列。
+   - **行向多指标表**：第一列指标名必须用括号注明每行单位（如 `现有高层次人才（人）`、`领军人才数量省占比（%）`、`国家自然科学基金年均立项（项）`、`产业契合度（分）`），使整数计数行与小数比例/均值行口径自洽。
+3. **表格与版面实际核验**：用 `preview_report(doc_id, block_ids=[...])` 检查表格换行、宽度与跨页效果；局部预览已自动隐藏封面与目录，第 1 页直接展示目标表格/图表。未看到实际渲染前不得抑制布局告警；确需保留抑制时，在交付中写明当前版本证据。
 4. **图表先看后落（`preview_echarts` -> `commit_chart`）**：
    - 编写完整原生 ECharts 6 `option`（纯 JSON，不含 JS 函数字符串）。
    - 多校对标且含“总量 + 增长率/占比”双维度时，优先采用双 Y 轴（柱线结合）或单 `EchartsBlock` 多 `grid` 联动图；高校名称较长时合理配置坐标轴标签换行或水平条形图，防止文字截断。
-   - 必须先调用 `preview_echarts` 亲自检查成图（坐标轴标签是否重叠、图例是否遮挡、网格是否居中），通过 `based_on_preview_id` + `option_patch` 微调至出版级水准后，再调用 `commit_chart` 落库。
+   - 首次调用 `preview_echarts` 时同时传入 `source_ids` 与 `source_note`；需微调时用 `based_on_preview_id` + `option_patch`，不要重传完整 `option`。亲自检查坐标轴标签、图例、网格与截图后再 `commit_chart`。
+   - **信源一步到位**：`preview_echarts` 或 `commit_chart` 均可绑定 `source_ids` / `source_note`，不再额外用 `apply_operations` 补来源，避免瞬时 `QR422`。
+   - **已有图表原地更新**：修改文档中已存在的图表块时，直接传入原 `block_id` 调 `commit_chart`；工具会执行原地 `PatchBlock`，并可附 `after_block_id` / `before_block_id` 调整位置，不会生成重复图表块。
+   - **精准穿插**：向已有正文补图时优先使用 `after_block_id`，把图表锚定在引出该分析问题的段落之后，切分长段纯文运行。
 5. 写入后调用 `lint_document` 确认零结构错误；诊断只用于定位问题，不得把“零 warning”当作视觉价值或可读性的替代证明。
-6. **交付回报**：除视觉块与 `shared_facts` 外，必须返回派生数据清单（公式、属性、假设、适用块）、实际预览结果和需要主编裁定的风险；不得只给散点结论。
+6. **评论修订模式**：被派发处理图表/表格评论时，先 `list_comments(doc_id, status="open")` 筛选所属块，完成修订后用 `reply_comment(..., mark_addressed=true, addressed_rev=最新版本)` 闭环。
+7. **交付回报**：除视觉块与 `shared_facts` 外，必须返回派生数据清单（公式、属性、假设、适用块）、实际预览结果和需要主编裁定的风险；不得只给散点结论。
 
 ## 交付回报
 完成全部表格与图表落库后，必须向主编输出以下三部分，不得只给散点结论：
-1. **已落库视觉清单**：逐项列出 `block_id`、标题、核心发现、可替代的正文明细与实际预览结果。
+1. **已落库视觉清单**：最新 `revision`，逐项列出 `block_id`、标题、锚定位置、绑定的 `source_ids`、核心发现、可替代的正文明细与实际预览/Lint 结果。
 2. **派生数据清单**：列出目标值、差值、比率、斜率的公式、存量/流量属性、参照对象、假设与所有下游块，供后续统一重算。
 3. **`shared_facts` 与风险处置**：区分已核实、冲突与假设，标明来源与适用范围；列出已解决及仍需主编裁定的问题，供主编转发给 `writer` 与 `reviewer`。
 

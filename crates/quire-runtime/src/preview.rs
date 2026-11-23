@@ -41,6 +41,10 @@ pub struct ChartPreviewRecord {
     pub note: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub based_on_preview_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

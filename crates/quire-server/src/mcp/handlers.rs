@@ -712,7 +712,37 @@ impl QuireMcpServer {
         document.session_id = Some(session_id);
         document.cover.enabled = request.enable_cover.unwrap_or(true);
         document.cover.title = title.to_string();
+        if let Some(subtitle) = request
+            .subtitle
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            document.cover.subtitle = Some(subtitle.to_string());
+        }
+        if let Some(authors) = request.authors {
+            document.cover.authors = authors
+                .into_iter()
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect();
+        }
+        if let Some(date) = request
+            .date
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            document.cover.date = Some(date.to_string());
+        }
+        if let Some(meta) = request.cover_meta {
+            document.cover.meta = meta;
+        }
         document.toc.enabled = request.enable_toc.unwrap_or(true);
+        if title.chars().any(is_cjk_char) {
+            document.toc.title = "目录".to_string();
+            document.references.title = "参考文献".to_string();
+        }
         if let Some(preset) = request.theme_preset {
             document.theme.preset = preset;
         }
@@ -1418,6 +1448,13 @@ fn generate_doc_id(title: &str) -> Result<DocId, ErrorData> {
     let suffix = short_token(8);
     let prefix: String = slug.chars().take(48).collect();
     DocId::parse(format!("{prefix}-{suffix}")).map_err(protocol_error)
+}
+
+fn is_cjk_char(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}' | '\u{f900}'..='\u{faff}'
+    )
 }
 
 fn slugify_title(input: &str) -> String {

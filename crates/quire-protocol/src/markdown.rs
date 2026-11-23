@@ -160,16 +160,7 @@ impl<'a> MarkdownProjector<'a> {
                 Ok(selected)
             }
             Selection::Section(query) => {
-                let query_lower = query.trim().to_lowercase();
-                let Some(start) = self.document.blocks.iter().position(|block| {
-                    if let BlockKind::Heading { text, .. } = &block.body {
-                        crate::inline::inline_plain_text(text)
-                            .to_lowercase()
-                            .contains(&query_lower)
-                    } else {
-                        false
-                    }
-                }) else {
+                let Some(start) = find_section_heading_start(self.document, query) else {
                     return Err(MarkdownError::SectionNotFound {
                         query: query.to_string(),
                         headings: heading_list(self.document),
@@ -418,13 +409,55 @@ impl<'a> MarkdownProjector<'a> {
     }
 
     fn write_block_sources(&self, output: &mut String, block: &Block) {
-        if block.source_ids.is_empty() {
+        let mut source_ids: Vec<String> = Vec::new();
+        let mut push_unique = |id: &str| {
+            if !source_ids.iter().any(|existing| existing == id) {
+                source_ids.push(id.to_string());
+            }
+        };
+        match &block.body {
+            BlockKind::Paragraph { text } | BlockKind::Quote { text } => {
+                for id in crate::inline::inline_citations(text) {
+                    push_unique(id.as_str());
+                }
+            }
+            BlockKind::Table(table) => {
+                if let Some(note) = table.note.as_deref() {
+                    for id in crate::inline::inline_citations(note) {
+                        push_unique(id.as_str());
+                    }
+                }
+            }
+            BlockKind::Echarts(chart) => {
+                if let Some(note) = chart.note.as_deref() {
+                    for id in crate::inline::inline_citations(note) {
+                        push_unique(id.as_str());
+                    }
+                }
+            }
+            BlockKind::CustomHtml(html) => {
+                if let Some(note) = html.note.as_deref() {
+                    for id in crate::inline::inline_citations(note) {
+                        push_unique(id.as_str());
+                    }
+                }
+            }
+            BlockKind::Heading { .. } => {}
+        }
+        if let Some(source_note) = block.source_note.as_deref() {
+            for id in crate::inline::inline_citations(source_note) {
+                push_unique(id.as_str());
+            }
+        }
+        for id in &block.source_ids {
+            push_unique(id.as_str());
+        }
+        if source_ids.is_empty() {
             return;
         }
-        let markers: Vec<String> = block
-            .source_ids
-            .iter()
-            .map(|source_id| self.citation_marker(source_id))
+        let markers: Vec<String> = source_ids
+            .into_iter()
+            .map(|source_id| self.citation_marker(&source_id))
             .collect();
         let _ = writeln!(output, "Sources: {}\n", markers.join(", "));
     }
@@ -436,7 +469,7 @@ impl<'a> MarkdownProjector<'a> {
             .get(source_id)
             .map(|entry| entry.title.as_str())
             .unwrap_or("UNRESOLVED SOURCE");
-        format!("[^{source_id}: {}]", escape_footnote(title))
+        format!("[^{source_id}] ({})", escape_footnote(title))
     }
 
     fn render_inline(&self, text: &str) -> String {
@@ -520,12 +553,8 @@ fn render_inline_nodes(nodes: &[InlineNode], document: &ReportDocument) -> Strin
                 output.push(')');
             }
             InlineNode::Citation(source_id) => {
-                let title = document
-                    .sources
-                    .get(source_id)
-                    .map(|entry| entry.title.as_str())
-                    .unwrap_or("UNRESOLVED SOURCE");
-                output.push_str(&format!("[^{source_id}: {}]", escape_footnote(title)));
+                let _ = document;
+                output.push_str(&format!("[^{source_id}]"));
             }
             InlineNode::Break => output.push_str("  \n"),
         }
@@ -554,6 +583,157 @@ fn block_id_list(document: &ReportDocument) -> String {
             .map(|block| block.id.as_str())
             .collect::<Vec<_>>()
             .join(", ")
+    }
+}
+
+fn find_section_heading_start(document: &ReportDocument, query: &str) -> Option<usize> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let query_lower = trimmed.to_lowercase();
+
+    // 1. Exact Heading block_id match (case-insensitive), e.g. `ch1`, `c1-1`, `intro`.
+    if let Some(pos) = document.blocks.iter().position(|block| {
+        matches!(&block.body, BlockKind::Heading { .. })
+            && block.id.as_str().eq_ignore_ascii_case(trimmed)
+    }) {
+        return Some(pos);
+    }
+
+    // 2. Direct heading plain-text substring match (case-insensitive).
+    if let Some(pos) = document.blocks.iter().position(|block| {
+        if let BlockKind::Heading { text, .. } = &block.body {
+            crate::inline::inline_plain_text(text)
+                .to_lowercase()
+                .contains(&query_lower)
+        } else {
+            false
+        }
+    }) {
+        return Some(pos);
+    }
+
+    // 3. Ordinal chapter prefix / label resolution (`第一章`, `第1章`, `第三章：师资与人才`, `Chapter 1`, `ch1`).
+    let (ordinal, remainder) = parse_chapter_query(trimmed);
+    if let Some(remainder) = remainder {
+        let remainder_lower = remainder.to_lowercase();
+        if let Some(pos) = document.blocks.iter().position(|block| {
+            if let BlockKind::Heading { text, .. } = &block.body {
+                crate::inline::inline_plain_text(text)
+                    .to_lowercase()
+                    .contains(&remainder_lower)
+            } else {
+                false
+            }
+        }) {
+            return Some(pos);
+        }
+    }
+    if let Some(ordinal) = ordinal {
+        let h1_positions: Vec<usize> = document
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, block)| match &block.body {
+                BlockKind::Heading { level: 1, .. } => Some(idx),
+                _ => None,
+            })
+            .collect();
+        if let Some(pos) = h1_positions.get(ordinal.saturating_sub(1)).copied() {
+            return Some(pos);
+        }
+    }
+    None
+}
+
+fn parse_chapter_query(query: &str) -> (Option<usize>, Option<&str>) {
+    let trimmed = query.trim();
+    if let Some(after_di) = trimmed.strip_prefix('第') {
+        let mut numeral_bytes = 0usize;
+        for ch in after_di.chars() {
+            if ch.is_ascii_digit()
+                || matches!(
+                    ch,
+                    '一' | '二' | '两' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十'
+                )
+            {
+                numeral_bytes += ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        if numeral_bytes > 0
+            && let Some(numeral_str) = after_di.get(..numeral_bytes)
+            && let Some(rest) = after_di.get(numeral_bytes..)
+        {
+            let after_marker = rest
+                .strip_prefix("部分")
+                .or_else(|| rest.strip_prefix('章'))
+                .or_else(|| rest.strip_prefix('节'))
+                .or_else(|| rest.strip_prefix('篇'));
+            if let Some(tail) = after_marker {
+                let ordinal = parse_chinese_or_arabic_ordinal(numeral_str);
+                let tail = tail
+                    .trim_start_matches(|ch: char| {
+                        ch.is_whitespace() || matches!(ch, ':' | '：' | '、' | '-' | '—')
+                    })
+                    .trim();
+                let remainder = (!tail.is_empty()).then_some(tail);
+                return (ordinal, remainder);
+            }
+        }
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    for prefix in ["chapter", "ch"] {
+        if let Some(rest) = lowered.strip_prefix(prefix) {
+            let rest_trimmed = rest.trim_start_matches([' ', '_', '-']);
+            let digit_len: usize = rest_trimmed
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .map(char::len_utf8)
+                .sum();
+            if digit_len > 0
+                && let Some(digits) = rest_trimmed.get(..digit_len)
+                && let Ok(ordinal) = digits.parse::<usize>()
+                && ordinal >= 1
+            {
+                let after = rest_trimmed.get(digit_len..).unwrap_or("");
+                if after.is_empty() || after.starts_with([':', '：', ' ', '-', '—']) {
+                    return (Some(ordinal), None);
+                }
+            }
+        }
+    }
+    (None, None)
+}
+
+fn parse_chinese_or_arabic_ordinal(input: &str) -> Option<usize> {
+    if let Ok(value) = input.parse::<usize>() {
+        return (value >= 1).then_some(value);
+    }
+    match input {
+        "一" => Some(1),
+        "二" | "两" => Some(2),
+        "三" => Some(3),
+        "四" => Some(4),
+        "五" => Some(5),
+        "六" => Some(6),
+        "七" => Some(7),
+        "八" => Some(8),
+        "九" => Some(9),
+        "十" => Some(10),
+        "十一" => Some(11),
+        "十二" => Some(12),
+        "十三" => Some(13),
+        "十四" => Some(14),
+        "十五" => Some(15),
+        "十六" => Some(16),
+        "十七" => Some(17),
+        "十八" => Some(18),
+        "十九" => Some(19),
+        "二十" => Some(20),
+        _ => None,
     }
 }
 
@@ -678,7 +858,9 @@ mod tests {
         let output = project_markdown(&sample(), &MarkdownOptions::default()).unwrap();
         assert!(output.contains("<!-- report:md-report | revision:4 -->"));
         assert!(output.contains("<!-- block:summary | type:paragraph -->"));
-        assert!(output.contains("[^sec10: Annual filing 10-K]"));
+        assert!(output.contains("Revenue grew **18%** [^sec10] with `automation` momentum."));
+        assert!(output.contains("Sources: [^sec10] (Annual filing 10-K)"));
+        assert!(!output.contains("[^sec10:"));
         assert!(output.contains("**表 1 — Revenue by region**"));
         assert!(output.contains("| Region | Revenue / Q1 | Revenue / Q2 |"));
         assert!(output.contains("| :--- | ---: | ---: |"));
@@ -926,6 +1108,21 @@ mod tests {
         assert!(output.contains("block:intro"));
         assert!(output.contains("block:chart"));
         assert!(!output.contains("block:appendix"));
+
+        // Match by exact heading block_id (`intro`) and by ordinal chapter label (`第一章`, `第2章`).
+        let by_id = project_section(&sample(), "intro", &MarkdownOptions::default()).unwrap();
+        assert!(by_id.contains("block:intro"));
+        assert!(!by_id.contains("block:appendix"));
+
+        let by_ordinal_1 =
+            project_section(&sample(), "第一章", &MarkdownOptions::default()).unwrap();
+        assert!(by_ordinal_1.contains("block:intro"));
+        assert!(!by_ordinal_1.contains("block:appendix"));
+
+        let by_ordinal_2 =
+            project_section(&sample(), "第二章", &MarkdownOptions::default()).unwrap();
+        assert!(by_ordinal_2.contains("block:appendix"));
+        assert!(!by_ordinal_2.contains("block:intro"));
     }
 
     #[test]

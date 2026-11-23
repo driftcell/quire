@@ -505,6 +505,7 @@ const DENSE_PROSE_EXEMPT_SECTION_HEADINGS: &[&str] = &[
     "相关建议",
     "行动建议",
     "行动方案建议",
+    "行动路径",
     "下一步工作",
     "存在问题与下一步工作",
     "保障措施",
@@ -595,6 +596,24 @@ const COUNTING_NOUNS: &[&str] = &[
     "支柱",
     "驱动力",
     "要素",
+    "判断",
+    "结论",
+    "发现",
+    "主攻线",
+    "主线",
+    "路径",
+    "对策",
+    "问题",
+    "短板",
+    "瓶颈",
+    "抓手",
+    "重点",
+    "任务",
+    "措施",
+    "原则",
+    "机制",
+    "行动",
+    "工程",
 ];
 
 fn is_scope_only_heading(normalized: &str) -> bool {
@@ -766,9 +785,15 @@ pub(super) fn dense_prose_section_exempt(text: &str) -> bool {
     let label = section_label(text);
     let lowered = label.to_ascii_lowercase();
     heading_list_contains(OPENING_SECTION_HEADINGS, label, &lowered)
-        || heading_list_contains(CLOSING_SECTION_HEADINGS, label, &lowered)
+        || action_or_closing_section_exempt(text)
+}
+
+pub(super) fn action_or_closing_section_exempt(text: &str) -> bool {
+    let label = section_label(text);
+    let lowered = label.to_ascii_lowercase();
+    heading_list_contains(CLOSING_SECTION_HEADINGS, label, &lowered)
         || heading_list_contains(DENSE_PROSE_EXEMPT_SECTION_HEADINGS, label, &lowered)
-        || ["建议", "举措", "路径"]
+        || ["建议", "举措", "路径", "主攻线", "行动线"]
             .iter()
             .any(|marker| label.contains(marker))
 }
@@ -956,7 +981,17 @@ fn starts_with_counting_pattern(text: &str) -> bool {
         return false;
     }
     let mut rest = rest.get(quantifier.len_utf8()..).unwrap_or("").trim_start();
-    for adjective in ["核心", "主要", "关键"] {
+    for adjective in [
+        "核心",
+        "主要",
+        "关键",
+        "结构性",
+        "系统性",
+        "阶段性",
+        "战略",
+        "重要",
+        "基本",
+    ] {
         if let Some(after) = rest.strip_prefix(adjective) {
             rest = after.trim_start();
             break;

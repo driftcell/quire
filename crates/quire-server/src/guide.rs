@@ -343,7 +343,7 @@ ONLINE AUTHORING
 - Register sources in the same call with the inline `sources` map; URL/title deduplication commits atomically with the blocks.
 
 REVIEW LOOP
-1. `read_as_markdown(doc_id, section_heading=...)` for the section under review.
+1. `read_as_markdown(doc_id, section_heading=...)` for the section under review (accepts an exact heading `block_id` like `"ch1"` / `"c2-1"`, a heading text substring, or an ordinal chapter label like `"第一章"`).
 2. `lint_document(doc_id)`; fix every error and review warnings. Diagnostics carry `code`, `rule`, `hint` and `suppressible`; ignore only suppressible diagnostics that genuinely do not apply.
 3. Patch specific blocks via block IDs from the Markdown anchors.
 4. `rollback_revision(doc_id, target_revision)` creates a new monotonic revision; never rewrites history.

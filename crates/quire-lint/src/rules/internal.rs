@@ -28,11 +28,13 @@ const INTERNAL_NAMES: &[&str] = &[
     "target_level",
     "includeSub",
     "学科云index系统",
+    "指标库口径",
+    "指标库记录",
     "左panel",
     "右panel",
 ];
 
-const SUGGESTION: &str = "将内部参数、数据库主键、结构体名转译为正式出版级业务中文：删去 `(record_id=42)`、`(includeSub=true)`、`(local:4.1.1)` 等实现细节；`FacultyInfo` 写为“高层次人才称号记录”，`左panel/右panel` 写为“左图/右图”，无数据单元格填 `—` 或“暂未收录”。";
+const SUGGESTION: &str = "将内部参数、数据库主键、结构体名转译为正式出版级业务中文：删去 `(record_id=42)`、`(includeSub=true)`、`(local:4.1.1)` 等实现细节；`FacultyInfo` 写为“高层次人才称号记录”，`指标库口径/指标库记录` 写为“全省统一统计口径”或“数据平台统计记录”，`左panel/右panel` 写为“左图/右图”，无数据单元格填 `—` 或“暂未收录”。";
 
 struct VisibleField<'a> {
     text: Cow<'a, str>,
@@ -232,6 +234,8 @@ mod tests {
             "rankable=false",
             "2021=4、2026=43",
             "local:4.1.1",
+            "省部级科研平台（指标库口径）",
+            "指标库记录显示为12个",
         ] {
             assert!(!internal_leaks(text, false).is_empty(), "{text}");
         }
@@ -242,6 +246,8 @@ mod tests {
         for text in [
             "统计口径含参与单位与附属机构",
             "高层次人才称号记录",
+            "全省统一统计口径",
+            "数据平台统计记录",
             "左图与右图",
             "暂未收录",
             "2021—2026年",

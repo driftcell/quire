@@ -5,7 +5,10 @@ use std::{collections::BTreeSet, sync::LazyLock};
 use quire_protocol::{BlockKind, ColumnNode, ReportDocument};
 use regex::Regex;
 
-use super::{evidence::has_quantitative_evidence, structure::dense_prose_section_exempt};
+use super::{
+    evidence::has_quantitative_evidence,
+    structure::{action_or_closing_section_exempt, dense_prose_section_exempt},
+};
 use crate::{engine::Engine, registry::RuleId};
 
 const CLICHE_TRANSITIONS: &[&str] = &[
@@ -656,6 +659,7 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
         *total = visual_total;
     }
 
+    let mut parent_h1_exempt = false;
     let mut exempt = false;
     let mut prose_blocks = 0usize;
     let mut prose_chars = 0usize;
@@ -666,7 +670,11 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 prose_blocks = 0;
                 prose_chars = 0;
                 reported = false;
-                exempt = dense_prose_section_exempt(text)
+                if *level == 1 {
+                    parent_h1_exempt = action_or_closing_section_exempt(text);
+                }
+                exempt = parent_h1_exempt
+                    || dense_prose_section_exempt(text)
                     || section_visual_totals.get(index).copied().unwrap_or(0) >= 2;
             }
             BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_) => {
@@ -786,6 +794,13 @@ fn editorial_meta_label(text: &str) -> Option<&'static str> {
         "本报告判断",
         "本报告不作逐条引证",
         "本报告不将其计入既有事实",
+        "本节只确认",
+        "本章只确认",
+        "在行动路径章统一处理",
+        "在后续章节统一处理",
+        "需要在申报口径上收敛的一处细节",
+        "这一位置决定了它在申报中的用法",
+        "是基于学科名称的推断",
     ] {
         if text.contains(phrase) {
             return Some(phrase);

@@ -4193,3 +4193,126 @@ fn metadata_helpers_roundtrip_new_fields() {
         .unwrap_or_else(|error| panic!("document deserializes: {error}"));
     assert_eq!(parsed, document);
 }
+
+#[test]
+fn qr418_flags_structural_judgment_and_action_line_counting_headings() {
+    for raw in ["三条结构性判断", "四条主攻线", "五大阶段性任务"] {
+        let mut document = doc();
+        document
+            .blocks
+            .push(heading("h1", 1, "总体态势：海洋学科领跑"));
+        document.blocks.push(heading("h2", 2, raw));
+        document
+            .blocks
+            .push(paragraph("p1", "2025年经费达1.2亿元。"));
+        let report = lint_document(&document);
+        assert!(
+            has_code(&report, "QR418"),
+            "bare counting heading `{raw}` must trigger QR418: {:?}",
+            report.diagnostics
+        );
+    }
+
+    let mut concrete = doc();
+    concrete
+        .blocks
+        .push(heading("h1", 1, "总体态势：海洋学科领跑"));
+    concrete.blocks.push(heading(
+        "h2",
+        2,
+        "三条结构性判断：海洋水产领跑、工科增量补位、高层次人才待破局",
+    ));
+    concrete
+        .blocks
+        .push(paragraph("p1", "2025年经费达1.2亿元。"));
+    assert!(!has_code(&lint_document(&concrete), "QR418"));
+}
+
+#[test]
+fn qr205_exempts_row_oriented_indicator_tables_with_parenthesized_units() {
+    let mut document = doc();
+    let mut gap_table = table(
+        "tab_gap",
+        Some("关键指标现值与目标差距测算"),
+        vec![
+            ColumnNode::leaf("metric", "核心指标"),
+            ColumnNode::leaf("current", "2025现值"),
+            ColumnNode::leaf("target_2027", "2027目标"),
+            ColumnNode::leaf("target_2030", "2030目标"),
+        ],
+        vec![
+            row(&[
+                ("metric", CellValue::text("现有高层次人才（人）")),
+                ("current", CellValue::Integer(15)),
+                ("target_2027", CellValue::Integer(25)),
+                ("target_2030", CellValue::Integer(40)),
+            ]),
+            row(&[
+                ("metric", CellValue::text("领军人才数量省占比（%）")),
+                ("current", CellValue::text("0.34")),
+                ("target_2027", CellValue::text("0.55")),
+                ("target_2030", CellValue::text("0.80")),
+            ]),
+            row(&[
+                ("metric", CellValue::text("国家自然科学基金年均立项（项）")),
+                ("current", CellValue::text("24.7")),
+                ("target_2027", CellValue::Integer(35)),
+                ("target_2030", CellValue::Integer(45)),
+            ]),
+            row(&[
+                ("metric", CellValue::text("教师研究领域产业契合度（分）")),
+                ("current", CellValue::text("51.1")),
+                ("target_2027", CellValue::text("60.0")),
+                ("target_2030", CellValue::text("68.0")),
+            ]),
+        ],
+    );
+    gap_table.source_note = Some("省重点建设高校监测平台".into());
+    document.blocks.push(gap_table);
+    assert!(
+        !has_code(&lint_document(&document), "QR205"),
+        "row-oriented indicator table with per-row units must not trigger QR205"
+    );
+}
+
+#[test]
+fn qr419_inherits_action_path_h1_exemption_across_child_h2_sections() {
+    let text = "数".repeat(420);
+    let mut document = doc();
+    document.blocks.push(heading(
+        "ch6",
+        1,
+        "行动路径：在海工装备与远洋渔业两条线上集中破局",
+    ));
+    document.blocks.push(heading(
+        "c6-2",
+        2,
+        "主攻方向：围绕四大省级平台配置学科交叉增量",
+    ));
+    for index in 1..=5 {
+        document
+            .blocks
+            .push(paragraph(&format!("c6-2-p{index}"), text.as_str()));
+    }
+    assert!(
+        !has_code(&lint_document(&document), "QR419"),
+        "child H2 inside an action-path H1 chapter must inherit the QR419 exemption"
+    );
+}
+
+#[test]
+fn qr426_catches_section_boundary_meta_narration() {
+    for text in [
+        "存量目标与缺口测算在行动路径章统一处理，本节只确认增长节奏与相对位置这两件事。",
+        "需要在申报口径上收敛的一处细节是省部级平台数量。",
+        "这一位置决定了它在申报中的用法，也解释了第三节的口径差异。",
+        "这一对应是基于学科名称的推断，正式申报前应由教务处核对。",
+    ] {
+        let mut document = doc();
+        document.blocks.push(paragraph("meta", text));
+        assert!(
+            has_code(&lint_document(&document), "QR426"),
+            "meta narration `{text}` must trigger QR426"
+        );
+    }
+}

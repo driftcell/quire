@@ -253,19 +253,36 @@ fn check_numeric_units(
             if is_placeholder_empty(&value) {
                 continue;
             }
-            // In row-oriented indicator tables, explicitly labelled percentage
-            // rows may coexist with count rows in the same entity columns.
-            let explicit_percent_row = first_key.is_some_and(|first_key| {
+            // In row-oriented indicator tables, explicitly labelled percentage,
+            // ratio, average or score rows (e.g. `领军人才数量省占比（%）`,
+            // `国家自然科学基金年均立项（项）`, `产业契合度（分）`) legitimately coexist
+            // with integer count rows in the same value columns.
+            let explicit_ratio_or_rate_row = first_key.is_some_and(|first_key| {
                 first_key != leaf.key
-                    && value.contains('%')
                     && row.get(first_key).is_some_and(|label| {
                         let label = label.display_text();
-                        ["占比", "比例", "百分", "增长率", "费率"]
-                            .iter()
-                            .any(|marker| label.contains(marker))
+                        let has_ratio_label = [
+                            "占比",
+                            "比例",
+                            "百分",
+                            "增长率",
+                            "费率",
+                            "比重",
+                            "契合度",
+                            "得分",
+                            "均值",
+                            "年均",
+                            "人均",
+                            "生师比",
+                        ]
+                        .iter()
+                        .any(|marker| label.contains(marker));
+                        let has_percent_unit = label.contains("（%）") || label.contains("(%)");
+                        has_percent_unit
+                            || (has_ratio_label && (value.contains('%') || value.contains('.')))
                     })
             });
-            if !explicit_percent_row {
+            if !explicit_ratio_or_rate_row {
                 values.push(value);
             }
         }

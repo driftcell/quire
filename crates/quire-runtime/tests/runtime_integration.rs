@@ -5241,6 +5241,8 @@ async fn chart_preview_endpoint_accepts_ro_token_and_hides_expired_previews() {
         title: Some("Preview".into()),
         note: None,
         based_on_preview_id: None,
+        source_ids: vec![],
+        source_note: None,
     };
     store.bus().store_chart_preview(&record).await.unwrap();
     let app = quire_runtime::http::router(service);

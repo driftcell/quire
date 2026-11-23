@@ -85,6 +85,7 @@ function DocumentPreviewPage() {
 
   const previewDocKey = `${docId}:${docQuery.data?.current_rev ?? 0}`;
   const previewReady = readyDocKey === previewDocKey && docQuery.isSuccess;
+  const isPartial = Boolean(search.blockIds || search.sectionId);
 
   const filteredDocument: ReportDocumentView | null = useMemo(() => {
     if (!docQuery.data) return null;
@@ -101,16 +102,25 @@ function DocumentPreviewPage() {
     } else if (search.sectionId) {
       blocks = sliceBlocksBySection(blocks, search.sectionId);
     }
-    const isPartial = Boolean(search.blockIds || search.sectionId);
     return {
       ...doc,
       cover: isPartial ? { ...doc.cover, enabled: false } : doc.cover,
+      toc: isPartial ? { ...doc.toc, enabled: false } : doc.toc,
       references: isPartial
         ? { ...doc.references, enabled: false }
         : doc.references,
       blocks,
     };
-  }, [docQuery.data, search.blockIds, search.sectionId]);
+  }, [docQuery.data, isPartial, search.blockIds, search.sectionId]);
+
+  const filteredComputed = useMemo(() => {
+    if (!docQuery.data) return null;
+    if (!isPartial) return docQuery.data.computed;
+    return {
+      ...docQuery.data.computed,
+      toc_tree: [],
+    };
+  }, [docQuery.data, isPartial]);
 
   useEffect(() => {
     if (!docQuery.isSuccess || !filteredDocument || !docQuery.data) {
@@ -176,10 +186,10 @@ function DocumentPreviewPage() {
           预览加载失败：{docQuery.error.message}
         </div>
       )}
-      {filteredDocument && docQuery.data && (
+      {filteredDocument && filteredComputed && (
         <ReportViewer
           document={filteredDocument}
-          computed={docQuery.data.computed}
+          computed={filteredComputed}
           viewMode={mode}
           previewMode
           pageFilter={mode === "paged" ? search.page : undefined}

@@ -142,3 +142,27 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cd web && bun test && bun run typecheck && bun run lint && bun run build
 ```
+
+## 8. Trace-Driven Systemic Optimizations (`sess_y416xn07sh76` Forensic Calibration)
+
+Forensic inspection of the 19 agent runs and 429 tool calls in session `sess_y416xn07sh76` (`doc_id=2021-2025-6h89g98h`, `rev=69`) identified ten systemic friction points across tool contracts, lint rules, preview routing, and agent prompts:
+
+1. **Canonical Inline Citations in `read_as_markdown` (`crates/quire-protocol/src/markdown.rs`)**:
+   - `MarkdownProjector` previously expanded inline `[^source_id]` into `[^source_id: Source Title]` inside projected paragraph text, causing writers and the lead agent to copy or mimic `[^id: title]` when patching blocks and triggering 20+ non-suppressible `QR107` blocking errors.
+   - Inline citations now project as canonical `[^source_id]`, while resolved source titles are listed beneath each block in `Sources: [^id] (Title)`.
+2. **Heading ID & Ordinal Chapter Resolution in `read_as_markdown(section_heading=...)` (`crates/quire-protocol/src/markdown.rs`)**:
+   - `Selection::Section` now matches exact Heading `block.id`s (`"ch1"`, `"c3-2"`), plain-text substrings, and Chinese/English ordinal chapter queries (`"第一章"`, `"第2章"`, `"第三章：师资与人才"`, `"Chapter 1"`), eliminating first-turn lookup errors in parallel writers.
+3. **Partial `preview_report` TOC Suppression (`web/src/routes/docs.$docId_.preview.tsx`)**:
+   - When `blockIds` or `sectionId` is set (`isPartial = true`), `filteredDocument` and `filteredComputed` now disable `toc` (`enabled: false`, `toc_tree: []`) alongside `cover` and `references`, so Page 1 directly renders the target table or chart rather than a full-page TOC.
+4. **Atomic Source Attribution & In-Place Update in `preview_echarts` / `commit_chart` (`crates/quire-runtime/src/rig_agent/builtin_tools.rs`)**:
+   - Both `preview_echarts` and `commit_chart` now accept optional `source_ids` and `source_note`, binding chart attribution in one transaction without a transient `QR422` warning.
+   - When `commit_chart` targets an existing `Echarts` `block_id`, it now emits `PatchOp::PatchBlock` (and optional `MoveBlock` if a new anchor is supplied) instead of creating a colliding duplicate block.
+5. **CJK Default TOC/References Titles & Cover Initialization (`crates/quire-server/src/mcp/handlers.rs`, `schema.rs`)**:
+   - `exec_create_report` automatically sets `toc.title = "目录"` and `references.title = "参考文献"` whenever `title` contains CJK characters, and accepts optional `subtitle`, `authors`, `date`, and `cover_meta` fields at creation time.
+6. **Lint Rule Precision (`crates/quire-lint/src/rules/{structure.rs,tables.rs,prose.rs,internal.rs}`)**:
+   - `QR418`: Expanded counting adjectives (`结构性`, `系统性`, `阶段性`, `战略`) and counting nouns (`判断`, `主攻线`, `主线`, `路径`, `问题`, `短板`, `任务`, `行动`, `工程`) to catch bare counting headings like `三条结构性判断` and `四条主攻线`.
+   - `QR205`: Exempted explicitly labelled ratio, percentage, average, and score rows (such as `领军人才数量省占比（%）`, `国家自然科学基金年均立项（项）`, `产业契合度（分）`) in row-oriented multi-indicator tables from false-positive decimal-spread warnings against integer count rows.
+   - `QR419`: Preserved parent H1 action-path/recommendation/conclusion exemptions (`行动路径`, `对策建议`, `结语`) across child H2 subsections.
+   - `QR424` & `QR426`: Added internal platform shorthand (`指标库口径`, `指标库记录`) to `QR424` and section-boundary self-narration (`本节只确认`, `本章只确认`, `在行动路径章统一处理`, `需要在申报口径上收敛的一处细节`, `这一位置决定了它在申报中的用法`, `是基于学科名称的推断`) to `QR426`.
+7. **SOTA Multi-Agent Context & Prompt Architecture (`agents/*.md`, `skills/higher-education-writing/**`)**:
+   - Stripped generic coding-assistant boilerplate from `agents/main.md` and added an explicit `<delegation_brief_contract>` that replaces per-section character count quotas with question-driven synthesis (3–4 analytical questions / 6–8 focused paragraphs per H2), mandates `定位词：具体判断` on both H1 and H2 headings, enforces verbatim `SourceEntry.excerpt` coverage, and requires mid-section visual interleaving (`after_block_id`).
