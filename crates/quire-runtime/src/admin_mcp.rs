@@ -26,7 +26,7 @@ use crate::{
     kb::{
         AgentDefinitionRecord, KbBranchDiff, KbBranchRecord, KbBranchStatus, KbDocumentRecord,
         KbItemKind, KbItemSummary, KbPromoteReport, KbRollbackReport, KbSnapshotSummary,
-        SkillDefinitionRecord,
+        SkillDefinitionRecord, UpsertKbAgentCommand,
     },
     mcp_registry::{McpServerInput, McpServerRecord, McpSyncReport, McpToolRecord},
     models::{
@@ -864,13 +864,15 @@ impl AdminMcpServer {
             .kb()
             .upsert_agent_on(
                 &request.branch,
-                &request.name,
-                &request.description,
-                &request.model,
-                &request.system_prompt,
-                &request.allowed_tools,
-                request.is_default,
-                request.enabled,
+                UpsertKbAgentCommand {
+                    name: &request.name,
+                    description: &request.description,
+                    model: &request.model,
+                    system_prompt: &request.system_prompt,
+                    allowed_tools: &request.allowed_tools,
+                    is_default: request.is_default,
+                    enabled: request.enabled,
+                },
             )
             .await
             .map_err(admin_error)?;

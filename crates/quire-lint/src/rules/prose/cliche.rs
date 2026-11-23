@@ -15,10 +15,14 @@ pub(super) fn check_cliche_density(context: &LintContext<'_>, engine: &mut Engin
         let masked = &precomputed.masked;
         let mut hits = BTreeSet::new();
         scan_cliche_patterns(masked, &mut hits);
-        if CHAPTER_GUIDE_RE
-            .as_ref()
-            .is_some_and(|pattern| pattern.is_match(masked))
-        {
+        let chapter_guide = match &*CHAPTER_GUIDE_RE {
+            Ok(pattern) => pattern.is_match(masked),
+            Err(error) => {
+                tracing::warn!(%error, "chapter guide regex is invalid; skipping this check");
+                false
+            }
+        };
+        if chapter_guide {
             hits.insert("chapter-preview narration");
         }
         for phrase in ENGLISH_CLICHES {
@@ -158,6 +162,7 @@ mod tests {
     #[test]
     fn cliche_automaton_is_valid_and_preserves_overlapping_hits() {
         assert!(CLICHE_AUTOMATON.is_ok());
+        assert!(CHAPTER_GUIDE_RE.is_ok());
         let mut hits = BTreeSet::new();
         scan_cliche_patterns("以上判断仅供参考，组合拳与组合拳并用", &mut hits);
         assert!(hits.contains("以上判断仅供参考"));

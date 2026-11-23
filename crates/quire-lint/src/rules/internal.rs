@@ -13,13 +13,12 @@ use crate::{
     registry::RuleId,
 };
 
-static ASSIGNMENT_RE: LazyLock<Option<Regex>> = LazyLock::new(|| {
-    Regex::new(r"(?-u:\b)[a-zA-Z_][a-zA-Z0-9_]{1,30}\s*=\s*[^\s，。；、）)]+").ok()
-});
-static YEAR_KEY_RE: LazyLock<Option<Regex>> =
-    LazyLock::new(|| Regex::new(r"(?-u:\b)20\d{2}\s*=\s*\d+").ok());
-static LOCAL_METRIC_RE: LazyLock<Option<Regex>> =
-    LazyLock::new(|| Regex::new(r"(?-u:\b)local:\d+(?:\.\d+)+").ok());
+static ASSIGNMENT_RE: LazyLock<Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new(r"(?-u:\b)[a-zA-Z_][a-zA-Z0-9_]{1,30}\s*=\s*[^\s，。；、）)]+"));
+static YEAR_KEY_RE: LazyLock<Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new(r"(?-u:\b)20\d{2}\s*=\s*\d+"));
+static LOCAL_METRIC_RE: LazyLock<Result<Regex, regex::Error>> =
+    LazyLock::new(|| Regex::new(r"(?-u:\b)local:\d+(?:\.\d+)+"));
 
 const INTERNAL_NAMES: &[&str] = &[
     "FacultyInfo",
@@ -178,12 +177,20 @@ fn push_option<'a>(fields: &mut Vec<VisibleField<'a>>, text: Option<&'a str>, pa
 
 fn internal_leaks(text: &str, table_cell: bool) -> BTreeSet<String> {
     let mut hits = BTreeSet::new();
-    for pattern in [&*ASSIGNMENT_RE, &*YEAR_KEY_RE, &*LOCAL_METRIC_RE]
-        .into_iter()
-        .flatten()
-    {
-        for matched in pattern.find_iter(text) {
-            hits.insert(matched.as_str().to_string());
+    for (name, pattern) in [
+        ("assignment", &*ASSIGNMENT_RE),
+        ("year key", &*YEAR_KEY_RE),
+        ("local metric", &*LOCAL_METRIC_RE),
+    ] {
+        match pattern {
+            Ok(pattern) => {
+                for matched in pattern.find_iter(text) {
+                    hits.insert(matched.as_str().to_string());
+                }
+            }
+            Err(error) => {
+                tracing::warn!(%error, %name, "internal identifier regex is invalid; skipping this check");
+            }
         }
     }
     for name in INTERNAL_NAMES {
@@ -231,6 +238,9 @@ mod tests {
 
     #[test]
     fn assignment_patterns_cover_api_and_year_keys() {
+        assert!(ASSIGNMENT_RE.is_ok());
+        assert!(YEAR_KEY_RE.is_ok());
+        assert!(LOCAL_METRIC_RE.is_ok());
         for text in [
             "record_id=42",
             "target_id=0",

@@ -19,11 +19,10 @@ use crate::{
 mod constants;
 use constants::*;
 
-static CHAPTER_GUIDE_RE: LazyLock<Option<Regex>> = LazyLock::new(|| {
+static CHAPTER_GUIDE_RE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
     Regex::new(
         r"(?:本章|本节|下文|后文|接下来)[^。；！？\n]{0,24}(?:先看|(?:从|以|围绕|按照|通过)[^。；！？\n]{0,12}[一二两三四五六七八九十\d]+个?(?:维度|方面|观测面|角度|层面|视角|步骤|部分))|(?:观察|分析|研判|审视)?(?:角度|维度|观测面|层面|视角)有[一二两三四五六七八九十\d]+",
     )
-    .ok()
 });
 
 struct ClichePattern {

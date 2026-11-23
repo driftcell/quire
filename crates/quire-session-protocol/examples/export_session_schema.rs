@@ -14,7 +14,10 @@ use quire_session_protocol::{
 };
 use schemars::JsonSchema;
 
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Fields exist only to pull public types into the generated schema definitions"
+)]
 #[derive(Debug, JsonSchema)]
 #[schemars(title = "Quire Session Protocol")]
 struct SessionProtocolContract {

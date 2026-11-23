@@ -35,7 +35,7 @@ use crate::{
     error::{RuntimeError, RuntimeResult},
     kb::{
         AgentDefinitionRecord, KbBranchDiff, KbBranchRecord, KbDocumentRecord, KbPromoteReport,
-        KbRollbackReport, SkillDefinitionRecord,
+        KbRollbackReport, SkillDefinitionRecord, UpsertKbAgentCommand,
     },
     mcp_registry::{McpServerInput, McpServerPatch, McpServerRecord, McpSyncReport, McpToolRecord},
     models::{
@@ -1463,15 +1463,15 @@ async fn create_agent(
         .ok_or_else(|| RuntimeError::InvalidRequest("agent name is required".into()))?;
     service
         .kb()
-        .upsert_agent(
-            &name,
-            &request.description,
-            &request.model,
-            &request.system_prompt,
-            &request.allowed_tools,
-            request.is_default,
-            request.enabled,
-        )
+        .upsert_agent(UpsertKbAgentCommand {
+            name: &name,
+            description: &request.description,
+            model: &request.model,
+            system_prompt: &request.system_prompt,
+            allowed_tools: &request.allowed_tools,
+            is_default: request.is_default,
+            enabled: request.enabled,
+        })
         .await
         .map(Json)
 }
@@ -1483,15 +1483,15 @@ async fn update_agent(
 ) -> RuntimeResult<Json<AgentDefinitionRecord>> {
     service
         .kb()
-        .upsert_agent(
-            &name,
-            &request.description,
-            &request.model,
-            &request.system_prompt,
-            &request.allowed_tools,
-            request.is_default,
-            request.enabled,
-        )
+        .upsert_agent(UpsertKbAgentCommand {
+            name: &name,
+            description: &request.description,
+            model: &request.model,
+            system_prompt: &request.system_prompt,
+            allowed_tools: &request.allowed_tools,
+            is_default: request.is_default,
+            enabled: request.enabled,
+        })
         .await
         .map(Json)
 }

@@ -373,7 +373,7 @@ pub struct TableBlock {
 }
 
 /// Schema-only canonical table shape.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "Schema-only table wire shape")]
 #[derive(JsonSchema)]
 #[schemars(rename = "TableBlockColumns")]
 struct TableBlockColumnsSchema {
@@ -395,7 +395,7 @@ struct TableBlockColumnsSchema {
 }
 
 /// Schema-only compact table shape.
-#[allow(dead_code)]
+#[expect(dead_code, reason = "Schema-only table wire shape")]
 #[derive(JsonSchema)]
 #[schemars(rename = "TableBlockHeaders")]
 struct TableBlockHeadersSchema {

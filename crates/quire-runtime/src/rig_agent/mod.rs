@@ -1,6 +1,10 @@
 //! Native Rig agent construction, MCP adaptation and AgentRunner orchestration.
 
-use std::sync::{Arc, RwLock};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{Arc, RwLock},
+};
 
 use futures::{StreamExt, future::join_all};
 use quire_session_protocol::ContextUsage;
@@ -92,15 +96,19 @@ impl RigModelStreamProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ModelStreamProvider for RigModelStreamProvider {
-    async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream> {
+    fn stream_turn(
+        &self,
+        request: ModelTurnRequest,
+    ) -> Pin<Box<dyn Future<Output = RuntimeResult<ModelEventStream>> + Send + '_>> {
         let core = self.core.clone();
-        Ok(spawn_producer_stream(move |sender| async move {
-            if let Err(error) = core.run_main_turn(request, sender.clone()).await {
-                let _ = sender.send(Err(error)).await;
-            }
-        }))
+        Box::pin(async move {
+            Ok(spawn_producer_stream(move |sender| async move {
+                if let Err(error) = core.run_main_turn(request, sender.clone()).await {
+                    let _ = sender.send(Err(error)).await;
+                }
+            }))
+        })
     }
 
     fn commits_canonical_history(&self) -> bool {

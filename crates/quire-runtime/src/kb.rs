@@ -51,6 +51,16 @@ pub struct SkillResourceRecord {
     pub version: u64,
 }
 
+pub struct UpsertKbAgentCommand<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    pub model: &'a str,
+    pub system_prompt: &'a str,
+    pub allowed_tools: &'a [String],
+    pub is_default: bool,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct SkillDefinitionRecord {
     pub name: String,
@@ -927,13 +937,15 @@ impl KbService {
                         .unwrap_or(true);
                     self.insert_agent_raw(
                         &branch,
-                        &name,
-                        &description,
-                        &model,
-                        &system_prompt,
-                        &allowed_tools,
-                        is_default,
-                        enabled,
+                        UpsertKbAgentCommand {
+                            name: &name,
+                            description: &description,
+                            model: &model,
+                            system_prompt: &system_prompt,
+                            allowed_tools: &allowed_tools,
+                            is_default,
+                            enabled,
+                        },
                     )
                     .await?;
                     report.agents += 1;
@@ -1138,20 +1150,20 @@ impl KbService {
         row.as_ref().map(row_to_agent).transpose()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn upsert_agent(
         &self,
-        name: &str,
-        description: &str,
-        model: &str,
-        system_prompt: &str,
-        allowed_tools: &[String],
-        is_default: bool,
-        enabled: bool,
+        command: UpsertKbAgentCommand<'_>,
     ) -> RuntimeResult<AgentDefinitionRecord> {
         let branch = self.active_branch().await?.name;
-        self.upsert_agent_on(
-            &branch,
+        self.upsert_agent_on(&branch, command).await
+    }
+
+    pub async fn upsert_agent_on(
+        &self,
+        branch: &str,
+        command: UpsertKbAgentCommand<'_>,
+    ) -> RuntimeResult<AgentDefinitionRecord> {
+        let UpsertKbAgentCommand {
             name,
             description,
             model,
@@ -1159,22 +1171,7 @@ impl KbService {
             allowed_tools,
             is_default,
             enabled,
-        )
-        .await
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub async fn upsert_agent_on(
-        &self,
-        branch: &str,
-        name: &str,
-        description: &str,
-        model: &str,
-        system_prompt: &str,
-        allowed_tools: &[String],
-        is_default: bool,
-        enabled: bool,
-    ) -> RuntimeResult<AgentDefinitionRecord> {
+        } = command;
         let branch_record = self.mutable_branch(branch).await?;
         let tools = serde_json::to_value(allowed_tools)?;
         let mut tx = self.store.pool().begin().await?;
@@ -1489,18 +1486,20 @@ impl KbService {
         self.prompt_cache.run_pending_tasks().await;
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn insert_agent_raw(
         &self,
         branch: &str,
-        name: &str,
-        description: &str,
-        model: &str,
-        system_prompt: &str,
-        allowed_tools: &[String],
-        is_default: bool,
-        enabled: bool,
+        command: UpsertKbAgentCommand<'_>,
     ) -> RuntimeResult<()> {
+        let UpsertKbAgentCommand {
+            name,
+            description,
+            model,
+            system_prompt,
+            allowed_tools,
+            is_default,
+            enabled,
+        } = command;
         sqlx::query(
             r#"INSERT INTO agent_definitions
                (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled)

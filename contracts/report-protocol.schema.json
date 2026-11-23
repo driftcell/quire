@@ -1507,7 +1507,7 @@
       ]
     },
     "PatchOp": {
-      "description": "A declarative mutation. Deserialized with a `type` discriminator.\n\nThe large `PatchBlock` variant is intentional: boxing it would force every JSON caller and\nstore adapter to unwrap an extra pointer for a cold error path.",
+      "description": "A declarative mutation. Deserialized with a `type` discriminator.",
       "oneOf": [
         {
           "description": "Insert blocks immediately after an existing anchor block.",

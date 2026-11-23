@@ -1070,7 +1070,7 @@ impl QuireMcpServer {
                 let mut cover = document.cover.clone();
                 patch.apply_to(&mut cover)?;
                 Ok(vec![PatchOp::SetCover {
-                    cover: cover.clone(),
+                    cover: Box::new(cover.clone()),
                 }])
             })
             .await?;
@@ -1236,7 +1236,9 @@ impl QuireMcpServer {
             .apply_with_reload(&doc_id, &actor, "configure_page_chrome", |document| {
                 let mut theme = document.theme.clone();
                 theme.page_chrome = Some(merge_page_chrome(theme.page_chrome.as_ref(), &request));
-                Ok(vec![PatchOp::SetTheme { theme }])
+                Ok(vec![PatchOp::SetTheme {
+                    theme: Box::new(theme),
+                }])
             })
             .await?;
         let page_chrome = updated.theme.page_chrome.clone().unwrap_or_default();
@@ -1300,7 +1302,7 @@ impl QuireMcpServer {
                     };
                 }
                 Ok(vec![PatchOp::SetTheme {
-                    theme: theme.clone(),
+                    theme: Box::new(theme.clone()),
                 }])
             })
             .await?;

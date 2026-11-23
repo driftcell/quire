@@ -185,11 +185,11 @@ impl<T: Tool> Tool for DescribedTool<T> {
         self.inner.map_error(error)
     }
 
-    fn call(
-        &self,
-        context: &mut ToolContext,
+    fn call<'a, 'b>(
+        &'a self,
+        context: &'b mut ToolContext,
         args: Self::Args,
-    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send {
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send + use<'a, 'b, T> {
         self.inner.call(context, args)
     }
 }
@@ -532,7 +532,10 @@ fn redact_query_parameter(text: &str, parameter: &str) -> String {
     output
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "rig_tool exposes each argument as a separate JSON Schema field"
+)]
 #[rig_tool(name = "preview_report")]
 async fn preview_report_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -573,7 +576,10 @@ async fn preview_report_tool(
     ToolOutput::content(content)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "rig_tool exposes each argument as a separate JSON Schema field"
+)]
 #[rig_tool(name = "preview_echarts")]
 async fn preview_echarts_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -770,7 +776,10 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "rig_tool exposes each argument as a separate JSON Schema field"
+)]
 #[rig_tool(name = "commit_chart")]
 async fn commit_chart_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -879,7 +888,7 @@ async fn commit_chart_tool(
         };
         let mut patch_ops = vec![PatchOp::PatchBlock {
             block_id: target_id.clone(),
-            patch,
+            patch: Box::new(patch),
         }];
         if let Some(anchor) = after_block_id {
             let anchor_id = BlockId::parse(anchor.trim()).map_err(tool_other)?;

@@ -9,7 +9,9 @@
 
 use std::{
     collections::VecDeque,
+    future::Future,
     path::Path,
+    pin::Pin,
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -29,13 +31,13 @@ use quire_runtime::{
     RigModelStreamProvider, RuntimeError, RuntimeService, RuntimeStore,
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
-    kb::{KbBranchStatus, KbItemKind, KbPromoteMode},
+    kb::{KbBranchStatus, KbItemKind, KbPromoteMode, UpsertKbAgentCommand},
     mcp_registry::{McpServerBinding, McpServerInput},
     models::ModelInput,
     preview::ChartPreviewRecord,
     sandbox::build_sandbox_provider,
     service::{AttachmentWrite, PostMessageOutcome},
-    store::SessionPatch,
+    store::{EnqueuePendingMessage, SessionPatch},
 };
 use quire_session_protocol::{
     ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
@@ -282,15 +284,15 @@ async fn install_scripted_agent(
         .unwrap();
     service
         .kb()
-        .upsert_agent(
-            "main",
-            "",
-            &route_id,
-            "Scripted attachment mount agent",
+        .upsert_agent(UpsertKbAgentCommand {
+            name: "main",
+            description: "",
+            model: &route_id,
+            system_prompt: "Scripted attachment mount agent",
             allowed_tools,
-            true,
-            true,
-        )
+            is_default: true,
+            enabled: true,
+        })
         .await
         .unwrap();
     route_id
@@ -684,22 +686,23 @@ impl RecordingStreamProvider {
     }
 }
 
-#[async_trait::async_trait]
+type ProviderFuture<'a> =
+    Pin<Box<dyn Future<Output = quire_runtime::RuntimeResult<ModelEventStream>> + Send + 'a>>;
+
 impl ModelStreamProvider for RecordingStreamProvider {
-    async fn stream_turn(
-        &self,
-        request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        self.requests.lock().await.push(request);
-        let events = self
-            .turns
-            .lock()
-            .await
-            .pop_front()
-            .unwrap_or_else(|| vec![ModelStreamEvent::TextDelta("mock reply".into())]);
-        Ok(Box::pin(futures::stream::iter(
-            events.into_iter().map(Ok).collect::<Vec<_>>(),
-        )))
+    fn stream_turn(&self, request: ModelTurnRequest) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            self.requests.lock().await.push(request);
+            let events = self
+                .turns
+                .lock()
+                .await
+                .pop_front()
+                .unwrap_or_else(|| vec![ModelStreamEvent::TextDelta("mock reply".into())]);
+            Ok(Box::pin(futures::stream::iter(
+                events.into_iter().map(Ok).collect::<Vec<_>>(),
+            )) as ModelEventStream)
+        })
     }
 }
 
@@ -950,20 +953,18 @@ impl QuestionnaireGateProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ModelStreamProvider for QuestionnaireGateProvider {
-    async fn stream_turn(
-        &self,
-        _request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        self.started.notify_one();
-        self.release.notified().await;
-        Ok(Box::pin(futures::stream::iter(vec![Ok(
-            ModelStreamEvent::QuestionnaireRequested {
-                tool_call_id: Some("ask-1".into()),
-                questions: question_items(),
-            },
-        )])))
+    fn stream_turn(&self, _request: ModelTurnRequest) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(Box::pin(futures::stream::iter(vec![Ok(
+                ModelStreamEvent::QuestionnaireRequested {
+                    tool_call_id: Some("ask-1".into()),
+                    questions: question_items(),
+                },
+            )])) as ModelEventStream)
+        })
     }
 }
 
@@ -987,18 +988,16 @@ impl GateStreamProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ModelStreamProvider for GateStreamProvider {
-    async fn stream_turn(
-        &self,
-        _request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        while !self.released.load(Ordering::SeqCst) {
-            self.notify.notified().await;
-        }
-        Ok(Box::pin(futures::stream::iter(vec![Ok(
-            ModelStreamEvent::TextDelta("gated reply".into()),
-        )])))
+    fn stream_turn(&self, _request: ModelTurnRequest) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            while !self.released.load(Ordering::SeqCst) {
+                self.notify.notified().await;
+            }
+            Ok(Box::pin(futures::stream::iter(vec![Ok(
+                ModelStreamEvent::TextDelta("gated reply".into()),
+            )])) as ModelEventStream)
+        })
     }
 }
 
@@ -1696,7 +1695,15 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
     );
     service
         .kb()
-        .upsert_agent("main", "", "stub/echo", "ONLINE EDIT", &[], true, true)
+        .upsert_agent(UpsertKbAgentCommand {
+            name: "main",
+            description: "",
+            model: "stub/echo",
+            system_prompt: "ONLINE EDIT",
+            allowed_tools: &[],
+            is_default: true,
+            enabled: true,
+        })
         .await
         .unwrap();
     let second = service.seed().await.unwrap();
@@ -2316,7 +2323,15 @@ async fn models_registry_imports_catalog_and_routes_context_limit() {
 
     service
         .kb()
-        .upsert_agent("main", "", &route.id, "Runtime test agent", &[], true, true)
+        .upsert_agent(UpsertKbAgentCommand {
+            name: "main",
+            description: "",
+            model: &route.id,
+            system_prompt: "Runtime test agent",
+            allowed_tools: &[],
+            is_default: true,
+            enabled: true,
+        })
         .await
         .unwrap();
     let session = service
@@ -2441,15 +2456,15 @@ async fn canonical_compaction_preserves_pending_state() {
         .await
         .unwrap();
     store
-        .enqueue_pending_message(
-            &session.session_id,
-            "compact:queue",
-            "queued follow-up",
-            &[],
-            PendingQueueSource::User,
-            None,
-            &[],
-        )
+        .enqueue_pending_message(EnqueuePendingMessage {
+            session_id: &session.session_id,
+            client_msg_id: "compact:queue",
+            content: "queued follow-up",
+            comment_refs: &[],
+            source: PendingQueueSource::User,
+            thread_id: None,
+            attachment_ids: &[],
+        })
         .await
         .unwrap();
     store
@@ -3000,15 +3015,15 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
     let (service, store) = test_service().await;
     service
         .kb()
-        .upsert_agent(
-            "main",
-            "",
-            "stub/echo",
-            "Runtime admin MCP test",
-            &[],
-            true,
-            true,
-        )
+        .upsert_agent(UpsertKbAgentCommand {
+            name: "main",
+            description: "",
+            model: "stub/echo",
+            system_prompt: "Runtime admin MCP test",
+            allowed_tools: &[],
+            is_default: true,
+            enabled: true,
+        })
         .await
         .unwrap();
     let branch_name = unique("mcp-draft");
@@ -3290,13 +3305,15 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
         .kb()
         .upsert_agent_on(
             &branch,
-            "main",
-            "",
-            "stub/echo",
-            "BRANCH AGENT PROMPT",
-            &["describe_task".into(), "apply_operations".into()],
-            true,
-            true,
+            UpsertKbAgentCommand {
+                name: "main",
+                description: "",
+                model: "stub/echo",
+                system_prompt: "BRANCH AGENT PROMPT",
+                allowed_tools: &["describe_task".into(), "apply_operations".into()],
+                is_default: true,
+                enabled: true,
+            },
         )
         .await
         .unwrap();
@@ -4319,15 +4336,15 @@ async fn tool_boundary_supersedes_run_and_starts_queued_turn() {
         .unwrap();
     service
         .kb()
-        .upsert_agent(
-            "main",
-            "",
-            &route_id,
-            "Mock tool-boundary agent",
-            &["set_session_title".to_string()],
-            true,
-            true,
-        )
+        .upsert_agent(UpsertKbAgentCommand {
+            name: "main",
+            description: "",
+            model: &route_id,
+            system_prompt: "Mock tool-boundary agent",
+            allowed_tools: &["set_session_title".to_string()],
+            is_default: true,
+            enabled: true,
+        })
         .await
         .unwrap();
     let sandbox_provider = build_sandbox_provider(&service.config().sandbox).unwrap();
@@ -5538,16 +5555,16 @@ struct FailingTurnProvider {
     cancellation: Arc<Mutex<Option<CancellationToken>>>,
 }
 
-#[async_trait::async_trait]
 impl ModelStreamProvider for FailingTurnProvider {
-    async fn stream_turn(
-        &self,
-        request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        *self.cancellation.lock().await = Some(request.cancellation.clone());
-        Ok(Box::pin(futures::stream::iter(vec![Err(
-            RuntimeError::Internal("turn failed".into()),
-        )])))
+    fn stream_turn(&self, request: ModelTurnRequest) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            *self.cancellation.lock().await = Some(request.cancellation.clone());
+            Ok(
+                Box::pin(futures::stream::iter(vec![Err(RuntimeError::Internal(
+                    "turn failed".into(),
+                ))])) as ModelEventStream,
+            )
+        })
     }
 }
 
@@ -5614,27 +5631,25 @@ impl FailOnceGateProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ModelStreamProvider for FailOnceGateProvider {
-    async fn stream_turn(
-        &self,
-        _request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        let call = self.calls.fetch_add(1, Ordering::SeqCst);
-        if call == 0 {
-            while !self.released.load(Ordering::SeqCst) {
-                self.notify.notified().await;
+    fn stream_turn(&self, _request: ModelTurnRequest) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                while !self.released.load(Ordering::SeqCst) {
+                    self.notify.notified().await;
+                }
+                return Ok(Box::pin(futures::stream::iter(vec![
+                    Ok(ModelStreamEvent::TextDelta(
+                        "保留这段失败前的助手文本。".into(),
+                    )),
+                    Err(RuntimeError::Internal("simulated canonical failure".into())),
+                ])) as ModelEventStream);
             }
-            return Ok(Box::pin(futures::stream::iter(vec![
-                Ok(ModelStreamEvent::TextDelta(
-                    "保留这段失败前的助手文本。".into(),
-                )),
-                Err(RuntimeError::Internal("simulated canonical failure".into())),
-            ])));
-        }
-        Ok(Box::pin(futures::stream::iter(vec![Ok(
-            ModelStreamEvent::TextDelta("pending 接管后的完整回复。".into()),
-        )])))
+            Ok(Box::pin(futures::stream::iter(vec![Ok(
+                ModelStreamEvent::TextDelta("pending 接管后的完整回复。".into()),
+            )])) as ModelEventStream)
+        })
     }
 }
 
@@ -5912,21 +5927,19 @@ impl DripStreamProvider {
     }
 }
 
-#[async_trait::async_trait]
 impl ModelStreamProvider for DripStreamProvider {
-    async fn stream_turn(
-        &self,
-        request: ModelTurnRequest,
-    ) -> quire_runtime::RuntimeResult<ModelEventStream> {
-        let cancellation = request.cancellation.clone();
-        let first_delta_consumed = self.first_delta_consumed.clone();
-        Ok(Box::pin(async_stream::stream! {
-            yield Ok(ModelStreamEvent::TextDelta("partial answer".into()));
-            // This notification fires when the consumer polls again, after it
-            // has accepted the first delta into its coalescer.
-            first_delta_consumed.notify_one();
-            cancellation.cancelled().await;
-        }))
+    fn stream_turn(&self, request: ModelTurnRequest) -> ProviderFuture<'_> {
+        Box::pin(async move {
+            let cancellation = request.cancellation.clone();
+            let first_delta_consumed = self.first_delta_consumed.clone();
+            Ok(Box::pin(async_stream::stream! {
+                yield Ok(ModelStreamEvent::TextDelta("partial answer".into()));
+                // This notification fires when the consumer polls again, after it
+                // has accepted the first delta into its coalescer.
+                first_delta_consumed.notify_one();
+                cancellation.cancelled().await;
+            }) as ModelEventStream)
+        })
     }
 }
 
@@ -6050,15 +6063,15 @@ async fn concurrent_queue_claims_have_one_winner() {
         .await
         .unwrap();
     let item = store
-        .enqueue_pending_message(
-            &session.session_id,
-            &unique("queue-claim"),
-            "queued message",
-            &[],
-            PendingQueueSource::User,
-            None,
-            &[],
-        )
+        .enqueue_pending_message(EnqueuePendingMessage {
+            session_id: &session.session_id,
+            client_msg_id: &unique("queue-claim"),
+            content: "queued message",
+            comment_refs: &[],
+            source: PendingQueueSource::User,
+            thread_id: None,
+            attachment_ids: &[],
+        })
         .await
         .unwrap();
     let request = SendMessageRequest {

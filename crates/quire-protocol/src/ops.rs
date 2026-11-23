@@ -223,9 +223,55 @@ impl BlockPatch {
     }
 }
 
+#[derive(Deserialize)]
+struct RawPatchBlock {
+    block_id: BlockId,
+    #[serde(default)]
+    patch: Option<BlockPatch>,
+    #[serde(default)]
+    text: Option<String>,
+    #[serde(default)]
+    level: Option<u8>,
+    #[serde(default)]
+    class_name: Option<String>,
+    #[serde(default)]
+    source_ids: Option<Vec<SourceId>>,
+    #[serde(default)]
+    source_note: Option<String>,
+    #[serde(default)]
+    lint_ignore: Option<Vec<String>>,
+    #[serde(default)]
+    style: Option<BlockStylePatch>,
+    #[serde(default)]
+    option: Option<serde_json::Value>,
+    #[serde(default)]
+    option_patch: Option<serde_json::Value>,
+    #[serde(default)]
+    height: Option<u32>,
+    #[serde(default)]
+    fallback_summary: Option<String>,
+    #[serde(default, alias = "caption")]
+    title: Option<String>,
+    #[serde(default)]
+    numbering: Option<NumberingKind>,
+    #[serde(default)]
+    note: Option<String>,
+    #[serde(default)]
+    fallback_text: Option<String>,
+    #[serde(default)]
+    columns: Option<Vec<ColumnNode>>,
+    #[serde(default)]
+    rows: Option<Vec<BTreeMap<String, CellValue>>>,
+    #[serde(default)]
+    summary_rows: Option<Vec<BTreeMap<String, CellValue>>>,
+    #[serde(default)]
+    append_rows: Vec<BTreeMap<String, CellValue>>,
+    #[serde(default)]
+    update_cell: Option<CellUpdate>,
+}
+
 /// Forgiving wire format for `PatchOp` that accepts `PatchBlock` fields either nested under
 /// `"patch": {...}`, flattened directly at the top level of `"type": "patch_block"`, or both.
-#[allow(clippy::large_enum_variant)]
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum RawPatchOp {
@@ -244,51 +290,7 @@ enum RawPatchOp {
         section_id: BlockId,
         blocks: Vec<Block>,
     },
-    PatchBlock {
-        block_id: BlockId,
-        #[serde(default)]
-        patch: Option<BlockPatch>,
-        #[serde(default)]
-        text: Option<String>,
-        #[serde(default)]
-        level: Option<u8>,
-        #[serde(default)]
-        class_name: Option<String>,
-        #[serde(default)]
-        source_ids: Option<Vec<SourceId>>,
-        #[serde(default)]
-        source_note: Option<String>,
-        #[serde(default)]
-        lint_ignore: Option<Vec<String>>,
-        #[serde(default)]
-        style: Option<BlockStylePatch>,
-        #[serde(default)]
-        option: Option<serde_json::Value>,
-        #[serde(default)]
-        option_patch: Option<serde_json::Value>,
-        #[serde(default)]
-        height: Option<u32>,
-        #[serde(default)]
-        fallback_summary: Option<String>,
-        #[serde(default, alias = "caption")]
-        title: Option<String>,
-        #[serde(default)]
-        numbering: Option<NumberingKind>,
-        #[serde(default)]
-        note: Option<String>,
-        #[serde(default)]
-        fallback_text: Option<String>,
-        #[serde(default)]
-        columns: Option<Vec<ColumnNode>>,
-        #[serde(default)]
-        rows: Option<Vec<BTreeMap<String, CellValue>>>,
-        #[serde(default)]
-        summary_rows: Option<Vec<BTreeMap<String, CellValue>>>,
-        #[serde(default)]
-        append_rows: Vec<BTreeMap<String, CellValue>>,
-        #[serde(default)]
-        update_cell: Option<CellUpdate>,
-    },
+    PatchBlock(Box<RawPatchBlock>),
     ReplaceRange {
         start_id: BlockId,
         end_id: BlockId,
@@ -302,7 +304,7 @@ enum RawPatchOp {
         after_id: Option<BlockId>,
     },
     SetCover {
-        cover: CoverConfig,
+        cover: Box<CoverConfig>,
     },
     SetToc {
         toc: TocConfig,
@@ -314,7 +316,7 @@ enum RawPatchOp {
         lint: LintConfig,
     },
     SetTheme {
-        theme: ThemeConfig,
+        theme: Box<ThemeConfig>,
     },
     SetSources {
         sources: IndexMap<SourceId, SourceEntry>,
@@ -334,30 +336,31 @@ impl From<RawPatchOp> for PatchOp {
             RawPatchOp::AppendToSection { section_id, blocks } => {
                 Self::AppendToSection { section_id, blocks }
             }
-            RawPatchOp::PatchBlock {
-                block_id,
-                patch,
-                text,
-                level,
-                class_name,
-                source_ids,
-                source_note,
-                lint_ignore,
-                style,
-                option,
-                option_patch,
-                height,
-                fallback_summary,
-                title,
-                numbering,
-                note,
-                fallback_text,
-                columns,
-                rows,
-                summary_rows,
-                append_rows,
-                update_cell,
-            } => {
+            RawPatchOp::PatchBlock(raw) => {
+                let RawPatchBlock {
+                    block_id,
+                    patch,
+                    text,
+                    level,
+                    class_name,
+                    source_ids,
+                    source_note,
+                    lint_ignore,
+                    style,
+                    option,
+                    option_patch,
+                    height,
+                    fallback_summary,
+                    title,
+                    numbering,
+                    note,
+                    fallback_text,
+                    columns,
+                    rows,
+                    summary_rows,
+                    append_rows,
+                    update_cell,
+                } = *raw;
                 let inline = BlockPatch {
                     text,
                     level,
@@ -382,7 +385,7 @@ impl From<RawPatchOp> for PatchOp {
                 };
                 Self::PatchBlock {
                     block_id,
-                    patch: inline.merge_with(patch),
+                    patch: Box::new(inline.merge_with(patch)),
                 }
             }
             RawPatchOp::ReplaceRange {
@@ -408,9 +411,6 @@ impl From<RawPatchOp> for PatchOp {
 
 /// A declarative mutation. Deserialized with a `type` discriminator.
 ///
-/// The large `PatchBlock` variant is intentional: boxing it would force every JSON caller and
-/// store adapter to unwrap an extra pointer for a cold error path.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PatchOp {
@@ -446,7 +446,7 @@ pub enum PatchOp {
         /// Target block ID.
         block_id: BlockId,
         /// Partial patch. Unsupported fields return a self-healing error.
-        patch: BlockPatch,
+        patch: Box<BlockPatch>,
     },
     /// Replace an inclusive range with new blocks.
     ReplaceRange {
@@ -473,7 +473,7 @@ pub enum PatchOp {
     /// configuration changes are revisioned, streamed and reversible just like block changes.
     SetCover {
         /// Complete replacement cover config.
-        cover: CoverConfig,
+        cover: Box<CoverConfig>,
     },
     SetToc {
         /// Complete replacement TOC config.
@@ -490,7 +490,7 @@ pub enum PatchOp {
     },
     SetTheme {
         /// Complete replacement theme config.
-        theme: ThemeConfig,
+        theme: Box<ThemeConfig>,
     },
     /// Replace the full source registry. Used for rollback and source deduplication.
     SetSources {
@@ -846,7 +846,7 @@ fn apply_internal(
                 applied_ops.push(op.clone());
             }
             PatchOp::SetCover { cover } => {
-                document.cover = cover.clone();
+                document.cover = cover.as_ref().clone();
                 outcome.metadata_changed = true;
                 applied_ops.push(op.clone());
             }
@@ -866,7 +866,7 @@ fn apply_internal(
                 applied_ops.push(op.clone());
             }
             PatchOp::SetTheme { theme } => {
-                document.theme = theme.clone();
+                document.theme = theme.as_ref().clone();
                 outcome.metadata_changed = true;
                 applied_ops.push(op.clone());
             }
@@ -1449,10 +1449,10 @@ mod tests {
                 },
                 PatchOp::PatchBlock {
                     block_id: block_id("missing"),
-                    patch: BlockPatch {
+                    patch: Box::new(BlockPatch {
                         text: Some("x".into()),
                         ..Default::default()
-                    },
+                    }),
                 },
             ],
         );
@@ -1494,7 +1494,7 @@ mod tests {
             &mut doc,
             &[PatchOp::PatchBlock {
                 block_id: block_id("a"),
-                patch: BlockPatch {
+                patch: Box::new(BlockPatch {
                     text: Some("Alpha updated **bold**".into()),
                     class_name: Some("lead".into()),
                     source_note: Some("Primary filing".into()),
@@ -1505,7 +1505,7 @@ mod tests {
                         ..Default::default()
                     }),
                     ..Default::default()
-                },
+                }),
             }],
         )
         .unwrap();
@@ -1570,7 +1570,7 @@ mod tests {
             &mut doc,
             &[PatchOp::PatchBlock {
                 block_id: block_id("t"),
-                patch: BlockPatch {
+                patch: Box::new(BlockPatch {
                     title: Some("Revenue".into()),
                     numbering: Some(NumberingKind::Table),
                     note: Some("Audited".into()),
@@ -1589,7 +1589,7 @@ mod tests {
                         summary: false,
                     }),
                     ..Default::default()
-                },
+                }),
             }],
         )
         .unwrap();
@@ -1627,11 +1627,11 @@ mod tests {
             &mut doc,
             &[PatchOp::PatchBlock {
                 block_id: block_id("chart"),
-                patch: BlockPatch {
+                patch: Box::new(BlockPatch {
                     option_patch: Some(serde_json::json!({"series":[{"data":[1,2]}]})),
                     fallback_summary: Some("Updated summary".into()),
                     ..Default::default()
-                },
+                }),
             }],
         )
         .unwrap();
@@ -1667,7 +1667,7 @@ mod tests {
             &mut doc,
             &[PatchOp::PatchBlock {
                 block_id: block_id("chart"),
-                patch: BlockPatch {
+                patch: Box::new(BlockPatch {
                     option: Some(serde_json::json!({
                         "dataset": {"source": [["Q", "V"], ["Q1", 10]]},
                         "series": [{"type": "bar", "data": [10]}]
@@ -1675,7 +1675,7 @@ mod tests {
                     height: Some(480),
                     title: Some("Patched chart".into()),
                     ..Default::default()
-                },
+                }),
             }],
         )
         .unwrap();
@@ -1694,10 +1694,10 @@ mod tests {
             &mut doc,
             &[PatchOp::PatchBlock {
                 block_id: block_id("chart"),
-                patch: BlockPatch {
+                patch: Box::new(BlockPatch {
                     option: Some(serde_json::json!("not an object")),
                     ..Default::default()
-                },
+                }),
             }],
         )
         .unwrap_err();
@@ -1711,7 +1711,7 @@ mod tests {
             &mut doc,
             &[PatchOp::PatchBlock {
                 block_id: block_id("a"),
-                patch: BlockPatch {
+                patch: Box::new(BlockPatch {
                     update_cell: Some(CellUpdate {
                         row_index: 0,
                         column_key: "x".into(),
@@ -1719,7 +1719,7 @@ mod tests {
                         summary: false,
                     }),
                     ..Default::default()
-                },
+                }),
             }],
         )
         .unwrap_err();
@@ -1823,6 +1823,26 @@ mod tests {
             [PatchOp::Append {
                 blocks: doc.blocks[1..].to_vec()
             }]
+        );
+    }
+
+    #[test]
+    fn patch_operation_stack_size_is_bounded() {
+        assert!(
+            std::mem::size_of::<PatchOp>() <= 96,
+            "PatchOp size is {}; cover={} toc={} refs={} theme={} sources={} block={}",
+            std::mem::size_of::<PatchOp>(),
+            std::mem::size_of::<CoverConfig>(),
+            std::mem::size_of::<TocConfig>(),
+            std::mem::size_of::<ReferencesConfig>(),
+            std::mem::size_of::<ThemeConfig>(),
+            std::mem::size_of::<IndexMap<SourceId, SourceEntry>>(),
+            std::mem::size_of::<Block>()
+        );
+        assert!(
+            std::mem::size_of::<RawPatchOp>() <= 96,
+            "RawPatchOp size is {}",
+            std::mem::size_of::<RawPatchOp>()
         );
     }
 }

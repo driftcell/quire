@@ -81,10 +81,10 @@ fn paragraph(id: &str, text: &str) -> Block {
 fn patch_text(block_id: &str, text: &str) -> PatchOp {
     PatchOp::PatchBlock {
         block_id: as_block_id(block_id),
-        patch: BlockPatch {
+        patch: Box::new(BlockPatch {
             text: Some(text.into()),
             ..Default::default()
-        },
+        }),
     }
 }
 
@@ -716,7 +716,7 @@ async fn table_patch_and_ordered_load_work_against_real_rows() {
             "update cell",
             &[PatchOp::PatchBlock {
                 block_id: as_block_id("financials"),
-                patch: BlockPatch {
+                patch: Box::new(BlockPatch {
                     append_rows: vec![std::collections::BTreeMap::from([
                         (
                             "region".to_string(),
@@ -735,7 +735,7 @@ async fn table_patch_and_ordered_load_work_against_real_rows() {
                         ..Default::default()
                     }),
                     ..Default::default()
-                },
+                }),
             }],
         )
         .await

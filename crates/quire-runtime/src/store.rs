@@ -31,6 +31,16 @@ pub struct CompactionWrite<'a> {
     pub context_usage: &'a quire_session_protocol::ContextUsage,
 }
 
+pub struct EnqueuePendingMessage<'a> {
+    pub session_id: &'a str,
+    pub client_msg_id: &'a str,
+    pub content: &'a str,
+    pub comment_refs: &'a [SessionCommentRef],
+    pub source: PendingQueueSource,
+    pub thread_id: Option<&'a str>,
+    pub attachment_ids: &'a [String],
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionEventDraft {
     pub run_id: String,
@@ -763,17 +773,19 @@ impl RuntimeStore {
         rows.iter().map(row_to_pending_queue_item).collect()
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn enqueue_pending_message(
         &self,
-        session_id: &str,
-        client_msg_id: &str,
-        content: &str,
-        comment_refs: &[SessionCommentRef],
-        source: PendingQueueSource,
-        thread_id: Option<&str>,
-        attachment_ids: &[String],
+        command: EnqueuePendingMessage<'_>,
     ) -> RuntimeResult<PendingQueueItem> {
+        let EnqueuePendingMessage {
+            session_id,
+            client_msg_id,
+            content,
+            comment_refs,
+            source,
+            thread_id,
+            attachment_ids,
+        } = command;
         if client_msg_id.trim().is_empty() {
             return Err(RuntimeError::InvalidRequest(
                 "pending queue client_msg_id must not be empty".into(),

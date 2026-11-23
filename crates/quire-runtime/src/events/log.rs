@@ -1,4 +1,5 @@
-use async_trait::async_trait;
+use std::future::Future;
+
 use quire_session_protocol::{
     PendingQuestion, QuestionItem, SessionEvent, SessionEventKind, ToolCallDetail,
 };
@@ -14,74 +15,81 @@ use super::EventScope;
 ///
 /// Keeping this separate from the full runtime store makes ordering and failure
 /// behaviour testable without a database.
-#[async_trait]
 pub trait SessionEventLog: Send + Sync {
-    async fn append_event(
+    fn append_event(
         &self,
         session_id: &str,
         scope: &EventScope,
         kind: SessionEventKind,
-    ) -> RuntimeResult<SessionEvent>;
+    ) -> impl Future<Output = RuntimeResult<SessionEvent>> + Send;
 
-    async fn save_tool_call(&self, detail: &ToolCallDetail) -> RuntimeResult<()>;
+    fn save_tool_call(
+        &self,
+        detail: &ToolCallDetail,
+    ) -> impl Future<Output = RuntimeResult<()>> + Send;
 
-    async fn create_question(
+    fn create_question(
         &self,
         session_id: &str,
         run_id: &str,
         tool_call_id: Option<&str>,
         questions: &[QuestionItem],
-    ) -> RuntimeResult<PendingQuestion>;
+    ) -> impl Future<Output = RuntimeResult<PendingQuestion>> + Send;
 
     /// Append a coalesced batch. Stores override this with one transaction;
     /// the default keeps simple test fakes concise.
-    async fn append_events(
+    fn append_events(
         &self,
         session_id: &str,
         events: Vec<(EventScope, SessionEventKind)>,
-    ) -> RuntimeResult<Vec<SessionEvent>> {
-        let mut appended = Vec::with_capacity(events.len());
-        for (scope, kind) in events {
-            appended.push(self.append_event(session_id, &scope, kind).await?);
+    ) -> impl Future<Output = RuntimeResult<Vec<SessionEvent>>> + Send {
+        async move {
+            let mut appended = Vec::with_capacity(events.len());
+            for (scope, kind) in events {
+                appended.push(self.append_event(session_id, &scope, kind).await?);
+            }
+            Ok(appended)
         }
-        Ok(appended)
     }
 
     /// Persist a tool row and its wire event. The production store performs
     /// both in one transaction.
-    async fn save_tool_call_with_event(
+    fn save_tool_call_with_event(
         &self,
         detail: &ToolCallDetail,
         scope: &EventScope,
         kind: SessionEventKind,
-    ) -> RuntimeResult<SessionEvent> {
-        self.save_tool_call(detail).await?;
-        self.append_event(&detail.session_id, scope, kind).await
+    ) -> impl Future<Output = RuntimeResult<SessionEvent>> + Send {
+        async move {
+            self.save_tool_call(detail).await?;
+            self.append_event(&detail.session_id, scope, kind).await
+        }
     }
 
     /// Create a question and its request event. The production store performs
     /// both in one transaction.
-    async fn create_question_with_event(
+    fn create_question_with_event(
         &self,
         session_id: &str,
         scope: &EventScope,
         tool_call_id: Option<&str>,
         questions: &[QuestionItem],
-    ) -> RuntimeResult<(PendingQuestion, SessionEvent)> {
-        let question = self
-            .create_question(session_id, &scope.run_id, tool_call_id, questions)
-            .await?;
-        let kind = SessionEventKind::QuestionnaireRequested {
-            question_id: question.question_id.clone(),
-            tool_call_id: question.tool_call_id.clone(),
-            questions: question.questions.clone(),
-        };
-        let event = self.append_event(session_id, scope, kind).await?;
-        Ok((question, event))
+    ) -> impl Future<Output = RuntimeResult<(PendingQuestion, SessionEvent)>> + Send {
+        async move {
+            let question = self
+                .create_question(session_id, &scope.run_id, tool_call_id, questions)
+                .await?;
+            let kind = SessionEventKind::QuestionnaireRequested {
+                question_id: question.question_id.clone(),
+                tool_call_id: question.tool_call_id.clone(),
+                questions: question.questions.clone(),
+            };
+            let event = self.append_event(session_id, scope, kind).await?;
+            Ok((question, event))
+        }
     }
 }
 
-#[async_trait]
 impl SessionEventLog for RuntimeStore {
     async fn append_event(
         &self,

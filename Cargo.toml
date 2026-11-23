@@ -67,7 +67,6 @@ redis = { version = "1.8", features = ["tokio-comp", "streams", "connection-mana
 zstd = "0.14"
 moka = { version = "0.12", features = ["future"] }
 serde_yaml_ng = "0.10"
-async-trait = "0.1"
 base64 = "0.22"
 ring = "0.17"
 rig = { version = "0.46.0", features = ["derive", "memory", "postgres", "rmcp", "reqwest"] }

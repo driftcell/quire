@@ -97,7 +97,7 @@ macro_rules! define_rules {
     ($( $variant:ident = $code:literal, $name:literal, $severity:ident, $suppressible:literal; )+) => {
         $(
             // Const names intentionally mirror enum variants inside the registry macro.
-            #[allow(non_upper_case_globals)]
+            #[expect(non_upper_case_globals, reason = "Const names intentionally mirror registry enum variants")]
             const $variant: RuleMeta = RuleMeta {
                 id: RuleId::$variant,
                 code: $code,

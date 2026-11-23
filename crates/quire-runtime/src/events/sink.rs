@@ -259,7 +259,6 @@ mod tests {
         }
     }
 
-    #[async_trait::async_trait]
     impl SessionEventLog for FakeLog {
         async fn append_event(
             &self,

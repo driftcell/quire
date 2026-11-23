@@ -11,6 +11,7 @@ quire-protocol.workspace = true
 regex.workspace = true
 rayon.workspace = true
 aho-corasick.workspace = true
+tracing.workspace = true
 serde_json.workspace = true
 
 [lints]

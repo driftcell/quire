@@ -4,6 +4,8 @@ use std::{
     collections::{BTreeMap, HashMap},
     env,
     fmt::{Debug, Formatter},
+    future::Future,
+    pin::Pin,
     sync::{
         Arc, Mutex as StdMutex,
         atomic::{AtomicBool, Ordering},
@@ -11,7 +13,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use quire_protocol::short_id;
 use secrecy::SecretString;
 use tokio::{runtime::Handle, sync::Mutex};
@@ -81,25 +82,22 @@ pub enum SandboxError {
     Failed(String),
 }
 
-#[async_trait]
+pub type SandboxFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, SandboxError>> + Send + 'a>>;
+
 pub trait Sandbox: Send + Sync {
     fn id(&self) -> &str;
 
-    async fn exec_code(
-        &self,
-        request: SandboxExecRequest,
-    ) -> Result<SandboxExecResult, SandboxError>;
+    fn exec_code(&self, request: SandboxExecRequest) -> SandboxFuture<'_, SandboxExecResult>;
 
-    async fn upload_file(&self, path: &str, contents: &[u8]) -> Result<(), SandboxError>;
+    fn upload_file<'a>(&'a self, path: &'a str, contents: &'a [u8]) -> SandboxFuture<'a, ()>;
 
-    async fn download_file(&self, path: &str) -> Result<Vec<u8>, SandboxError>;
+    fn download_file<'a>(&'a self, path: &'a str) -> SandboxFuture<'a, Vec<u8>>;
 
-    async fn destroy(&self) -> Result<(), SandboxError>;
+    fn destroy(&self) -> SandboxFuture<'_, ()>;
 }
 
-#[async_trait]
 pub trait SandboxProvider: Send + Sync {
-    async fn create_sandbox(&self, spec: SandboxSpec) -> Result<Arc<dyn Sandbox>, SandboxError>;
+    fn create_sandbox(&self, spec: SandboxSpec) -> SandboxFuture<'_, Arc<dyn Sandbox>>;
 }
 
 #[derive(Clone)]
@@ -203,21 +201,36 @@ pub fn build_sandbox_provider(
 
 pub struct DisabledSandboxProvider;
 
-#[async_trait]
 impl SandboxProvider for DisabledSandboxProvider {
-    async fn create_sandbox(&self, _spec: SandboxSpec) -> Result<Arc<dyn Sandbox>, SandboxError> {
-        Err(SandboxError::Unsupported(
-            "sandbox support is disabled; set SANDBOX_PROVIDER=fc with SANDBOX_FC_API_KEY, or use SANDBOX_PROVIDER=local for the explicit test stub".into(),
-        ))
+    fn create_sandbox(&self, _spec: SandboxSpec) -> SandboxFuture<'_, Arc<dyn Sandbox>> {
+        Box::pin(async {
+            Err(SandboxError::Unsupported(
+                "sandbox support is disabled; set SANDBOX_PROVIDER=fc with SANDBOX_FC_API_KEY, or use SANDBOX_PROVIDER=local for the explicit test stub".into(),
+            ))
+        })
     }
 }
 
 /// A run-scoped lazy sandbox. Dropping the lease schedules best-effort remote cleanup.
+struct NonPoisonMutex<T>(StdMutex<T>);
+
+impl<T> NonPoisonMutex<T> {
+    fn new(value: T) -> Self {
+        Self(StdMutex::new(value))
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, T> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 pub struct SandboxLease {
     provider: Arc<dyn SandboxProvider>,
     spec: SandboxSpec,
     operation: Mutex<()>,
-    current: StdMutex<Option<Arc<dyn Sandbox>>>,
+    current: NonPoisonMutex<Option<Arc<dyn Sandbox>>>,
 }
 
 impl SandboxLease {
@@ -226,52 +239,41 @@ impl SandboxLease {
             provider,
             spec,
             operation: Mutex::new(()),
-            current: StdMutex::new(None),
+            current: NonPoisonMutex::new(None),
         }
     }
 
     pub async fn get_or_create(&self) -> Result<Arc<dyn Sandbox>, SandboxError> {
         let _operation = self.operation.lock().await;
-        if let Some(sandbox) = self.current()? {
+        if let Some(sandbox) = self.current() {
             return Ok(sandbox);
         }
         let sandbox = self.provider.create_sandbox(self.spec.clone()).await?;
-        let mut current = self
-            .current
-            .lock()
-            .map_err(|_| SandboxError::Failed("sandbox lease lock was poisoned".into()))?;
+        let mut current = self.current.lock();
         *current = Some(Arc::clone(&sandbox));
         Ok(sandbox)
     }
 
     pub async fn close(&self) -> Result<(), SandboxError> {
-        let sandbox = self.take_current()?;
+        let sandbox = self.take_current();
         match sandbox {
             Some(sandbox) => sandbox.destroy().await,
             None => Ok(()),
         }
     }
 
-    fn current(&self) -> Result<Option<Arc<dyn Sandbox>>, SandboxError> {
-        self.current
-            .lock()
-            .map(|current| current.clone())
-            .map_err(|_| SandboxError::Failed("sandbox lease lock was poisoned".into()))
+    fn current(&self) -> Option<Arc<dyn Sandbox>> {
+        self.current.lock().clone()
     }
 
-    fn take_current(&self) -> Result<Option<Arc<dyn Sandbox>>, SandboxError> {
-        self.current
-            .lock()
-            .map(|mut current| current.take())
-            .map_err(|_| SandboxError::Failed("sandbox lease lock was poisoned".into()))
+    fn take_current(&self) -> Option<Arc<dyn Sandbox>> {
+        self.current.lock().take()
     }
 }
 
 impl Drop for SandboxLease {
     fn drop(&mut self) {
-        let Ok(sandbox) = self.take_current() else {
-            return;
-        };
+        let sandbox = self.take_current();
         let Some(sandbox) = sandbox else {
             return;
         };
@@ -304,64 +306,70 @@ impl LocalSandbox {
     }
 }
 
-#[async_trait]
 impl SandboxProvider for LocalSandboxProvider {
-    async fn create_sandbox(&self, _spec: SandboxSpec) -> Result<Arc<dyn Sandbox>, SandboxError> {
-        Ok(Arc::new(LocalSandbox {
-            id: short_id("local"),
-            files: Mutex::new(HashMap::new()),
-            destroyed: AtomicBool::new(false),
-        }))
+    fn create_sandbox(&self, _spec: SandboxSpec) -> SandboxFuture<'_, Arc<dyn Sandbox>> {
+        Box::pin(async {
+            let sandbox: Arc<dyn Sandbox> = Arc::new(LocalSandbox {
+                id: short_id("local"),
+                files: Mutex::new(HashMap::new()),
+                destroyed: AtomicBool::new(false),
+            });
+            Ok(sandbox)
+        })
     }
 }
 
-#[async_trait]
 impl Sandbox for LocalSandbox {
     fn id(&self) -> &str {
         &self.id
     }
 
-    async fn exec_code(
-        &self,
-        request: SandboxExecRequest,
-    ) -> Result<SandboxExecResult, SandboxError> {
-        self.ensure_active()?;
-        Ok(SandboxExecResult {
-            exit_code: 0,
-            stdout: format!(
-                "local sandbox accepted {} program ({} chars); execution is stubbed",
-                request.language,
-                request.code.chars().count()
-            ),
-            stderr: String::new(),
-            stdout_truncated: false,
-            stderr_truncated: false,
+    fn exec_code(&self, request: SandboxExecRequest) -> SandboxFuture<'_, SandboxExecResult> {
+        Box::pin(async move {
+            self.ensure_active()?;
+            Ok(SandboxExecResult {
+                exit_code: 0,
+                stdout: format!(
+                    "local sandbox accepted {} program ({} chars); execution is stubbed",
+                    request.language,
+                    request.code.chars().count()
+                ),
+                stderr: String::new(),
+                stdout_truncated: false,
+                stderr_truncated: false,
+            })
         })
     }
 
-    async fn upload_file(&self, path: &str, contents: &[u8]) -> Result<(), SandboxError> {
-        self.ensure_active()?;
-        self.files
-            .lock()
-            .await
-            .insert(path.to_string(), contents.to_vec());
-        Ok(())
+    fn upload_file<'a>(&'a self, path: &'a str, contents: &'a [u8]) -> SandboxFuture<'a, ()> {
+        Box::pin(async move {
+            self.ensure_active()?;
+            self.files
+                .lock()
+                .await
+                .insert(path.to_string(), contents.to_vec());
+            Ok(())
+        })
     }
 
-    async fn download_file(&self, path: &str) -> Result<Vec<u8>, SandboxError> {
-        self.ensure_active()?;
-        self.files
-            .lock()
-            .await
-            .get(path)
-            .cloned()
-            .ok_or_else(|| SandboxError::Failed(format!("file `{path}` was not uploaded")))
+    fn download_file<'a>(&'a self, path: &'a str) -> SandboxFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            self.ensure_active()?;
+            self.files
+                .lock()
+                .await
+                .get(path)
+                .cloned()
+                .ok_or_else(|| SandboxError::Failed(format!("file `{path}` was not uploaded")))
+        })
     }
 
-    async fn destroy(&self) -> Result<(), SandboxError> {
-        self.destroyed.store(true, Ordering::Release);
-        self.files.lock().await.clear();
-        Ok(())
+    fn destroy(&self) -> SandboxFuture<'_, ()> {
+        Box::pin(async move {
+            self.destroyed.store(true, Ordering::Release);
+            self.files.lock().await.clear();
+            Ok(())
+        })
     }
 }
 

@@ -2,7 +2,6 @@
 
 use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
 
-use async_trait::async_trait;
 use futures::Stream;
 use quire_session_protocol::{ContextUsage, QuestionItem};
 use serde_json::Value;
@@ -102,9 +101,11 @@ pub struct ModelTurnRequest {
 pub type ModelEventStream =
     Pin<Box<dyn Stream<Item = RuntimeResult<ModelStreamEvent>> + Send + 'static>>;
 
-#[async_trait]
 pub trait ModelStreamProvider: Send + Sync {
-    async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream>;
+    fn stream_turn(
+        &self,
+        request: ModelTurnRequest,
+    ) -> Pin<Box<dyn Future<Output = RuntimeResult<ModelEventStream>> + Send + '_>>;
 
     /// Whether the provider commits canonical history and UI receipts itself.
     fn commits_canonical_history(&self) -> bool {
@@ -150,19 +151,24 @@ where
 #[derive(Debug, Default)]
 pub struct StubStreamProvider;
 
-#[async_trait]
 impl ModelStreamProvider for StubStreamProvider {
-    async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream> {
-        let response = format!(
-            "Runtime accepted the request for `{}`. Connect a rig model provider to stream the full answer.",
-            request.session_id
-        );
-        Ok(Box::pin(futures::stream::iter(vec![
-            Ok(ModelStreamEvent::ThinkingDelta(
-                "Preparing the next report action.".into(),
-            )),
-            Ok(ModelStreamEvent::TextDelta(response)),
-        ])))
+    fn stream_turn(
+        &self,
+        request: ModelTurnRequest,
+    ) -> Pin<Box<dyn Future<Output = RuntimeResult<ModelEventStream>> + Send + '_>> {
+        Box::pin(async move {
+            let response = format!(
+                "Runtime accepted the request for `{}`. Connect a rig model provider to stream the full answer.",
+                request.session_id
+            );
+            let stream: ModelEventStream = Box::pin(futures::stream::iter(vec![
+                Ok(ModelStreamEvent::ThinkingDelta(
+                    "Preparing the next report action.".into(),
+                )),
+                Ok(ModelStreamEvent::TextDelta(response)),
+            ]));
+            Ok(stream)
+        })
     }
 }
 
@@ -179,22 +185,27 @@ impl MockStreamProvider {
     }
 }
 
-#[async_trait]
 impl ModelStreamProvider for MockStreamProvider {
-    async fn stream_turn(&self, request: ModelTurnRequest) -> RuntimeResult<ModelEventStream> {
-        let events = {
-            let mut turns = self.turns.lock().await;
-            turns.pop_front()
-        }
-        .unwrap_or_else(|| {
-            vec![ModelStreamEvent::TextDelta(format!(
-                "mock reply for {}",
-                request.session_id
-            ))]
-        });
-        Ok(Box::pin(futures::stream::iter(
-            events.into_iter().map(Ok).collect::<Vec<_>>(),
-        )))
+    fn stream_turn(
+        &self,
+        request: ModelTurnRequest,
+    ) -> Pin<Box<dyn Future<Output = RuntimeResult<ModelEventStream>> + Send + '_>> {
+        Box::pin(async move {
+            let events = {
+                let mut turns = self.turns.lock().await;
+                turns.pop_front()
+            }
+            .unwrap_or_else(|| {
+                vec![ModelStreamEvent::TextDelta(format!(
+                    "mock reply for {}",
+                    request.session_id
+                ))]
+            });
+            let stream: ModelEventStream = Box::pin(futures::stream::iter(
+                events.into_iter().map(Ok).collect::<Vec<_>>(),
+            ));
+            Ok(stream)
+        })
     }
 }
 

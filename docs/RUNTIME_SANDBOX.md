@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/fc_sandbox_provider.md`, `../notes/quire_typed_json_boundaries.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/fc_sandbox_provider.md`, `../notes/quire_typed_json_boundaries.md`, `../notes/rust_2024_async_boundaries.md`
 
 ## 1. Scope & Non-Goals
 
@@ -19,8 +19,11 @@ cross-turn artifact storage, browser automation or sandbox template construction
 
 `crates/quire-runtime/src/sandbox.rs` defines `SandboxProvider`, which creates a `Sandbox` handle.
 The handle owns `exec_code`, byte file upload/download and idempotent destruction. `SandboxLease`
-lazily creates and memoizes one handle per agent run. `LocalSandboxProvider` is an explicit test
-stub; `DisabledSandboxProvider` is the default and never falls back to host-shell execution.
+lazily creates and memoizes one handle per agent run. Dynamic provider methods use explicit boxed
+futures through `SandboxFuture<'a, T>` rather than `async-trait`; the short `current` pointer critical
+section uses a non-poisoning synchronous mutex, while creation/destruction I/O uses a Tokio mutex.
+`LocalSandboxProvider` is an explicit test stub; `DisabledSandboxProvider` is the default and never
+falls back to host-shell execution.
 
 `SandboxConfig::from_env` and `build_sandbox_provider` support:
 

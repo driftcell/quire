@@ -19,7 +19,10 @@ use quire_protocol::{
 use schemars::JsonSchema;
 
 // Fields exist solely to pull each public type into the generated `$defs`.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "Fields exist only to pull public types into the generated schema definitions"
+)]
 #[derive(Debug, JsonSchema)]
 #[schemars(title = "Quire Report Protocol")]
 struct ProtocolContract {

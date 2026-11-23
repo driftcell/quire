@@ -37,7 +37,10 @@ use crate::{
     mcp_registry::McpRegistry,
     model_stream::{ModelStreamEvent, ModelStreamProvider, ModelTurnRequest, StubStreamProvider},
     models::ModelRegistry,
-    store::{AttachmentInsert, CompactionWrite, RunRecord, RuntimeStore, SessionPatch},
+    store::{
+        AttachmentInsert, CompactionWrite, EnqueuePendingMessage, RunRecord, RuntimeStore,
+        SessionPatch,
+    },
 };
 
 /// Admin-facing session observation: full detail plus the latest run regardless of outcome.
@@ -563,15 +566,15 @@ impl RuntimeService {
         if active || queue_non_empty {
             let item = self
                 .store
-                .enqueue_pending_message(
+                .enqueue_pending_message(EnqueuePendingMessage {
                     session_id,
-                    &request.client_msg_id,
-                    &request.content,
-                    &request.comment_refs,
+                    client_msg_id: &request.client_msg_id,
+                    content: &request.content,
+                    comment_refs: &request.comment_refs,
                     source,
                     thread_id,
-                    &request.attachment_ids,
-                )
+                    attachment_ids: &request.attachment_ids,
+                })
                 .await?;
             self.emit_queue_update(session_id).await?;
             if !active {
@@ -1530,11 +1533,7 @@ impl RuntimeService {
                                 response.push_str(text);
                             }
                             let mut subagent_cost_updated = false;
-                            if let crate::events::EventAction::Usage {
-                                ref scope,
-                                ref mut usage,
-                            } = action
-                            {
+                            if let crate::events::EventAction::Usage { scope, usage } = &mut action {
                                 if usage.cost_rmb.is_none()
                                     && let Some(resolved) = main_resolved_model.as_ref()
                                 {

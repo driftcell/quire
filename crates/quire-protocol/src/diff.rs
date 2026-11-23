@@ -8,20 +8,19 @@ use serde::{Deserialize, Serialize};
 use crate::{Block, BlockId, DocId, ReportDocument, Revision};
 
 /// One block-level change between two snapshots.
-#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum BlockDiffEntry {
     Added {
-        block: Block,
+        block: Box<Block>,
     },
     Removed {
-        block: Block,
+        block: Box<Block>,
     },
     Modified {
         block_id: BlockId,
-        before: Block,
-        after: Block,
+        before: Box<Block>,
+        after: Box<Block>,
     },
 }
 
@@ -102,13 +101,13 @@ pub fn diff_documents(before: &ReportDocument, after: &ReportDocument) -> Docume
     for block in &after.blocks {
         match before_by_id.get(&block.id) {
             None => blocks.push(BlockDiffEntry::Added {
-                block: block.clone(),
+                block: Box::new(block.clone()),
             }),
             Some(before_block) if *before_block != block => {
                 blocks.push(BlockDiffEntry::Modified {
                     block_id: block.id.clone(),
-                    before: (*before_block).clone(),
-                    after: block.clone(),
+                    before: Box::new((*before_block).clone()),
+                    after: Box::new(block.clone()),
                 });
             }
             Some(_) => {}
@@ -117,7 +116,7 @@ pub fn diff_documents(before: &ReportDocument, after: &ReportDocument) -> Docume
     for block in &before.blocks {
         if !after_by_id.contains_key(&block.id) {
             blocks.push(BlockDiffEntry::Removed {
-                block: block.clone(),
+                block: Box::new(block.clone()),
             });
         }
     }
@@ -209,5 +208,10 @@ mod tests {
         let report = diff_documents(&before, &after);
         assert!(report.blocks.is_empty());
         assert!(report.order_changed);
+    }
+
+    #[test]
+    fn diff_entry_stack_size_is_bounded() {
+        assert!(std::mem::size_of::<BlockDiffEntry>() <= 96);
     }
 }

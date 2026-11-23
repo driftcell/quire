@@ -2,7 +2,6 @@
 
 use std::{future::Future, pin::Pin, time::Duration};
 
-use async_trait::async_trait;
 use futures::StreamExt;
 use quire_session_protocol::SessionEvent;
 use redis::{AsyncCommands, Client, aio::PubSub};
@@ -312,9 +311,8 @@ pub type InvalidationCallback =
     Box<dyn FnMut() -> Pin<Box<dyn Future<Output = ()> + Send + 'static>> + Send + 'static>;
 
 /// A unit-valued cache-invalidation subscription.
-#[async_trait]
 pub trait InvalidationSubscriber: Send + 'static {
-    async fn next_notification(&mut self) -> Option<()>;
+    fn next_notification(&mut self) -> impl Future<Output = Option<()>> + Send;
 }
 
 /// Keep a cache-invalidation subscription alive across Redis failures.
@@ -384,7 +382,6 @@ impl KbInvalidateSubscriber {
     }
 }
 
-#[async_trait]
 impl InvalidationSubscriber for KbInvalidateSubscriber {
     async fn next_notification(&mut self) -> Option<()> {
         self.next_invalidation().await.map(|_| ())
@@ -401,7 +398,6 @@ impl ModelInvalidateSubscriber {
     }
 }
 
-#[async_trait]
 impl InvalidationSubscriber for ModelInvalidateSubscriber {
     async fn next_notification(&mut self) -> Option<()> {
         self.next_invalidation().await.map(|_| ())
@@ -418,7 +414,6 @@ impl McpInvalidateSubscriber {
     }
 }
 
-#[async_trait]
 impl InvalidationSubscriber for McpInvalidateSubscriber {
     async fn next_notification(&mut self) -> Option<()> {
         self.next_invalidation().await.map(|_| ())

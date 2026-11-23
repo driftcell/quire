@@ -10,7 +10,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::StreamExt;
 use reqwest::{Response, StatusCode};
@@ -21,8 +20,8 @@ use serde_json::Value;
 use serde_json::json;
 
 use super::{
-    FcSandboxConfig, Sandbox, SandboxError, SandboxExecRequest, SandboxExecResult, SandboxProvider,
-    SandboxSpec, sandbox_operation_timeout,
+    FcSandboxConfig, Sandbox, SandboxError, SandboxExecRequest, SandboxExecResult, SandboxFuture,
+    SandboxProvider, SandboxSpec, sandbox_operation_timeout,
 };
 
 const ENVD_PORT: u16 = 49_983;
@@ -191,156 +190,163 @@ impl FcSandbox {
     }
 }
 
-#[async_trait]
 impl SandboxProvider for FcSandboxProvider {
-    async fn create_sandbox(&self, spec: SandboxSpec) -> Result<Arc<dyn Sandbox>, SandboxError> {
-        let template = spec
-            .template
-            .unwrap_or_else(|| self.config.template.clone());
-        let response = self
-            .http
-            .post(format!(
-                "{}/sandboxes",
-                self.config.api_url.trim_end_matches('/')
-            ))
-            .header("X-API-Key", self.api_key()?.expose_secret())
-            .json(&FcCreateSandboxRequest {
-                template_id: template,
-                timeout: spec.timeout_seconds.clamp(60, 86_400),
-                auto_pause: false,
-                secure: true,
-                metadata: spec.metadata,
-                env_vars: BTreeMap::new(),
-                allow_internet_access: true,
-            })
-            .timeout(Duration::from_secs(60))
-            .send()
-            .await
-            .map_err(|_| SandboxError::Failed("FC create sandbox request failed".into()))?;
-        let response = expect_success(response, "FC create sandbox").await?;
-        let created = response
-            .json::<FcCreateResponse>()
-            .await
-            .map_err(|_| SandboxError::Failed("FC create sandbox returned invalid JSON".into()))?;
-        if created.sandbox_id.trim().is_empty() {
-            return Err(SandboxError::Failed(
-                "FC create sandbox returned an empty sandbox ID".into(),
-            ));
-        }
-        let domain = created.domain.unwrap_or_else(|| self.config.domain.clone());
-        let envd_url =
-            self.config.sandbox_url.clone().unwrap_or_else(|| {
+    fn create_sandbox(&self, spec: SandboxSpec) -> SandboxFuture<'_, Arc<dyn Sandbox>> {
+        Box::pin(async move {
+            let template = spec
+                .template
+                .unwrap_or_else(|| self.config.template.clone());
+            let response = self
+                .http
+                .post(format!(
+                    "{}/sandboxes",
+                    self.config.api_url.trim_end_matches('/')
+                ))
+                .header("X-API-Key", self.api_key()?.expose_secret())
+                .json(&FcCreateSandboxRequest {
+                    template_id: template,
+                    timeout: spec.timeout_seconds.clamp(60, 86_400),
+                    auto_pause: false,
+                    secure: true,
+                    metadata: spec.metadata,
+                    env_vars: BTreeMap::new(),
+                    allow_internet_access: true,
+                })
+                .timeout(Duration::from_secs(60))
+                .send()
+                .await
+                .map_err(|_| SandboxError::Failed("FC create sandbox request failed".into()))?;
+            let response = expect_success(response, "FC create sandbox").await?;
+            let created = response.json::<FcCreateResponse>().await.map_err(|_| {
+                SandboxError::Failed("FC create sandbox returned invalid JSON".into())
+            })?;
+            if created.sandbox_id.trim().is_empty() {
+                return Err(SandboxError::Failed(
+                    "FC create sandbox returned an empty sandbox ID".into(),
+                ));
+            }
+            let domain = created.domain.unwrap_or_else(|| self.config.domain.clone());
+            let envd_url = self.config.sandbox_url.clone().unwrap_or_else(|| {
                 format!("https://{}-{}.{}", ENVD_PORT, created.sandbox_id, domain)
             });
-        Ok(Arc::new(FcSandbox {
-            id: created.sandbox_id,
-            api_key: self.api_key()?.clone(),
-            api_url: self.config.api_url.trim_end_matches('/').to_string(),
-            envd_url: envd_url.trim_end_matches('/').to_string(),
-            envd_access_token: created.envd_access_token.map(SecretString::from),
-            http: self.http.clone(),
-            destroyed: AtomicBool::new(false),
-        }))
+            let sandbox: Arc<dyn Sandbox> = Arc::new(FcSandbox {
+                id: created.sandbox_id,
+                api_key: self.api_key()?.clone(),
+                api_url: self.config.api_url.trim_end_matches('/').to_string(),
+                envd_url: envd_url.trim_end_matches('/').to_string(),
+                envd_access_token: created.envd_access_token.map(SecretString::from),
+                http: self.http.clone(),
+                destroyed: AtomicBool::new(false),
+            });
+            Ok(sandbox)
+        })
     }
 }
 
-#[async_trait]
 impl Sandbox for FcSandbox {
     fn id(&self) -> &str {
         &self.id
     }
 
-    async fn exec_code(
-        &self,
-        request: SandboxExecRequest,
-    ) -> Result<SandboxExecResult, SandboxError> {
-        let timeout = sandbox_operation_timeout(&request);
-        let timeout_seconds = timeout.as_secs();
-        let language = request.language.trim().to_ascii_lowercase();
-        let code = request.code;
-        let (program, args) = match language.as_str() {
-            "python" | "python3" => ("python3".to_string(), vec!["-c".into(), code]),
-            "javascript" | "node" | "nodejs" => ("node".to_string(), vec!["-e".into(), code]),
-            "bash" | "sh" | "shell" => (
-                "/bin/bash".to_string(),
-                vec!["-l".into(), "-c".into(), code],
-            ),
-            _ => {
-                return Err(SandboxError::Unsupported(format!(
-                    "language `{language}`; expected python, javascript or bash"
+    fn exec_code(&self, request: SandboxExecRequest) -> SandboxFuture<'_, SandboxExecResult> {
+        Box::pin(async move {
+            let timeout = sandbox_operation_timeout(&request);
+            let timeout_seconds = timeout.as_secs();
+            let language = request.language.trim().to_ascii_lowercase();
+            let code = request.code;
+            let (program, args) = match language.as_str() {
+                "python" | "python3" => ("python3".to_string(), vec!["-c".into(), code]),
+                "javascript" | "node" | "nodejs" => ("node".to_string(), vec!["-e".into(), code]),
+                "bash" | "sh" | "shell" => (
+                    "/bin/bash".to_string(),
+                    vec!["-l".into(), "-c".into(), code],
+                ),
+                _ => {
+                    return Err(SandboxError::Unsupported(format!(
+                        "language `{language}`; expected python, javascript or bash"
+                    )));
+                }
+            };
+            self.execute(program, args, request.cwd, timeout_seconds)
+                .await
+        })
+    }
+
+    fn upload_file<'a>(&'a self, path: &'a str, contents: &'a [u8]) -> SandboxFuture<'a, ()> {
+        Box::pin(async move {
+            self.ensure_active()?;
+            if path.trim().is_empty() {
+                return Err(SandboxError::InvalidInput(
+                    "sandbox file path cannot be empty".into(),
+                ));
+            }
+            if contents.len() > MAX_FILE_BYTES {
+                return Err(SandboxError::InvalidInput(format!(
+                    "sandbox file exceeds the {MAX_FILE_BYTES}-byte limit"
                 )));
             }
-        };
-        self.execute(program, args, request.cwd, timeout_seconds)
-            .await
-    }
-
-    async fn upload_file(&self, path: &str, contents: &[u8]) -> Result<(), SandboxError> {
-        self.ensure_active()?;
-        if path.trim().is_empty() {
-            return Err(SandboxError::InvalidInput(
-                "sandbox file path cannot be empty".into(),
-            ));
-        }
-        if contents.len() > MAX_FILE_BYTES {
-            return Err(SandboxError::InvalidInput(format!(
-                "sandbox file exceeds the {MAX_FILE_BYTES}-byte limit"
-            )));
-        }
-        let part = reqwest::multipart::Part::bytes(contents.to_vec()).file_name(path.to_string());
-        let form = reqwest::multipart::Form::new().part("file", part);
-        let response = self
-            .envd(self.http.post(format!("{}/files", self.envd_url)))
-            .query(&[("path", path)])
-            .multipart(form)
-            .timeout(Duration::from_secs(60))
-            .send()
-            .await
-            .map_err(|_| SandboxError::Failed("FC file upload failed".into()))?;
-        expect_success(response, "FC file upload").await?;
-        Ok(())
-    }
-
-    async fn download_file(&self, path: &str) -> Result<Vec<u8>, SandboxError> {
-        self.ensure_active()?;
-        let response = self
-            .envd(self.http.get(format!("{}/files", self.envd_url)))
-            .query(&[("path", path)])
-            .timeout(Duration::from_secs(60))
-            .send()
-            .await
-            .map_err(|_| SandboxError::Failed("FC file download failed".into()))?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(SandboxError::NotFound(format!("{}:{path}", self.id)));
-        }
-        let response = expect_success(response, "FC file download").await?;
-        read_bounded(response, MAX_FILE_BYTES).await
-    }
-
-    async fn destroy(&self) -> Result<(), SandboxError> {
-        if self.destroyed.swap(true, Ordering::AcqRel) {
-            return Ok(());
-        }
-        let result = async {
+            let part =
+                reqwest::multipart::Part::bytes(contents.to_vec()).file_name(path.to_string());
+            let form = reqwest::multipart::Form::new().part("file", part);
             let response = self
-                .http
-                .delete(format!("{}/sandboxes/{}", self.api_url, self.id))
-                .header("X-API-Key", self.api_key.expose_secret())
-                .timeout(Duration::from_secs(15))
+                .envd(self.http.post(format!("{}/files", self.envd_url)))
+                .query(&[("path", path)])
+                .multipart(form)
+                .timeout(Duration::from_secs(60))
                 .send()
                 .await
-                .map_err(|_| SandboxError::Failed("FC destroy sandbox request failed".into()))?;
+                .map_err(|_| SandboxError::Failed("FC file upload failed".into()))?;
+            expect_success(response, "FC file upload").await?;
+            Ok(())
+        })
+    }
+
+    fn download_file<'a>(&'a self, path: &'a str) -> SandboxFuture<'a, Vec<u8>> {
+        Box::pin(async move {
+            self.ensure_active()?;
+            let response = self
+                .envd(self.http.get(format!("{}/files", self.envd_url)))
+                .query(&[("path", path)])
+                .timeout(Duration::from_secs(60))
+                .send()
+                .await
+                .map_err(|_| SandboxError::Failed("FC file download failed".into()))?;
             if response.status() == StatusCode::NOT_FOUND {
+                return Err(SandboxError::NotFound(format!("{}:{path}", self.id)));
+            }
+            let response = expect_success(response, "FC file download").await?;
+            read_bounded(response, MAX_FILE_BYTES).await
+        })
+    }
+
+    fn destroy(&self) -> SandboxFuture<'_, ()> {
+        Box::pin(async move {
+            if self.destroyed.swap(true, Ordering::AcqRel) {
                 return Ok(());
             }
-            expect_success(response, "FC destroy sandbox").await?;
-            Ok(())
-        }
-        .await;
-        if result.is_err() {
-            self.destroyed.store(false, Ordering::Release);
-        }
-        result
+            let result = async {
+                let response = self
+                    .http
+                    .delete(format!("{}/sandboxes/{}", self.api_url, self.id))
+                    .header("X-API-Key", self.api_key.expose_secret())
+                    .timeout(Duration::from_secs(15))
+                    .send()
+                    .await
+                    .map_err(|_| {
+                        SandboxError::Failed("FC destroy sandbox request failed".into())
+                    })?;
+                if response.status() == StatusCode::NOT_FOUND {
+                    return Ok(());
+                }
+                expect_success(response, "FC destroy sandbox").await?;
+                Ok(())
+            }
+            .await;
+            if result.is_err() {
+                self.destroyed.store(false, Ordering::Release);
+            }
+            result
+        })
     }
 }
 

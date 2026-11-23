@@ -59,14 +59,14 @@ fn table(
 }
 
 fn with_table_note(mut block: Block, note: &str) -> Block {
-    if let BlockKind::Table(ref mut table) = block.body {
+    if let BlockKind::Table(table) = &mut block.body {
         table.note = Some(note.into());
     }
     block
 }
 
 fn with_summary_row(mut block: Block, summary: BTreeMap<String, CellValue>) -> Block {
-    if let BlockKind::Table(ref mut table) = block.body {
+    if let BlockKind::Table(table) = &mut block.body {
         table.summary_rows.push(summary);
     }
     block
@@ -551,7 +551,7 @@ fn malformed_citations_are_checked_in_notes_and_source_notes() {
         vec![ColumnNode::leaf("a", "A")],
         vec![row(&[("a", CellValue::text("x"))])],
     );
-    if let BlockKind::Table(ref mut table) = table_block.body {
+    if let BlockKind::Table(table) = &mut table_block.body {
         table.note = Some("口径见 [^jxufe_101: 公报]".into());
     }
     table_block.source_note = Some("来源 [jxufe_101]".into());
@@ -561,13 +561,13 @@ fn malformed_citations_are_checked_in_notes_and_source_notes() {
         "note-chart",
         serde_json::json!({"series": [{"type": "bar", "data": [1]}]}),
     );
-    if let BlockKind::Echarts(ref mut chart) = chart_block.body {
+    if let BlockKind::Echarts(chart) = &mut chart_block.body {
         chart.note = Some("说明 [^jxufe_101, jxufe_102]".into());
     }
     document.blocks.push(chart_block);
 
     let mut html_block = custom_html("<div>KPI</div>", "KPI");
-    if let BlockKind::CustomHtml(ref mut html) = html_block.body {
+    if let BlockKind::CustomHtml(html) = &mut html_block.body {
         html.note = Some("注释 [^jxufe_101 ]".into());
     }
     document.blocks.push(html_block);
@@ -3011,7 +3011,7 @@ fn qr420_flags_redundant_note_prefixes() {
         "chart-note",
         serde_json::json!({"series": [{"type": "bar", "data": [1, 2]}]}),
     );
-    if let BlockKind::Echarts(ref mut chart_block) = chart.body {
+    if let BlockKind::Echarts(chart_block) = &mut chart.body {
         chart_block.note = Some("图注：数据来自学校官网。".into());
     }
     let mut chart_document = doc();
@@ -3033,7 +3033,7 @@ fn qr420_flags_redundant_note_prefixes() {
         "数据来源：教育部。",
     ));
     let mut html = custom_html("<div>KPI</div>", "KPI");
-    if let BlockKind::CustomHtml(ref mut custom) = html.body {
+    if let BlockKind::CustomHtml(custom) = &mut html.body {
         custom.note = Some("注：不计入合计。".into());
     }
     clean.blocks.push(html);
@@ -3413,7 +3413,7 @@ fn qr422_requires_visual_sources_and_bounds_note_length() {
     let mut long_table_note = doc();
     let mut table_block = make_table("long-table-note");
     table_block.source_note = Some("教育部".into());
-    if let BlockKind::Table(ref mut table) = table_block.body {
+    if let BlockKind::Table(table) = &mut table_block.body {
         table.note = Some("长".repeat(181));
     }
     long_table_note.blocks.push(table_block);
@@ -3427,7 +3427,7 @@ fn qr422_requires_visual_sources_and_bounds_note_length() {
     let mut long_chart_note = doc();
     let mut chart_block = make_chart("long-chart-note");
     chart_block.source_note = Some("教育部".into());
-    if let BlockKind::Echarts(ref mut chart) = chart_block.body {
+    if let BlockKind::Echarts(chart) = &mut chart_block.body {
         chart.note = Some("长".repeat(181));
     }
     long_chart_note.blocks.push(chart_block);
@@ -3438,7 +3438,7 @@ fn qr422_requires_visual_sources_and_bounds_note_length() {
     let mut boundary_note = doc();
     let mut table_block = make_table("boundary-table-note");
     table_block.source_note = Some("教育部".into());
-    if let BlockKind::Table(ref mut table) = table_block.body {
+    if let BlockKind::Table(table) = &mut table_block.body {
         table.note = Some("长".repeat(180));
     }
     boundary_note.blocks.push(table_block);

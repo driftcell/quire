@@ -267,7 +267,7 @@ impl PgReportStore {
 
         let mut initial_ops = vec![
             PatchOp::SetCover {
-                cover: document.cover.clone(),
+                cover: Box::new(document.cover.clone()),
             },
             PatchOp::SetToc {
                 toc: document.toc.clone(),
@@ -279,7 +279,7 @@ impl PgReportStore {
                 lint: document.lint.clone(),
             },
             PatchOp::SetTheme {
-                theme: document.theme.clone(),
+                theme: Box::new(document.theme.clone()),
             },
             PatchOp::SetSources {
                 sources: document.sources.clone(),
@@ -2181,7 +2181,7 @@ pub fn generate_inverse_ops(
     let mut ops = Vec::new();
     if before.cover != after.cover {
         ops.push(PatchOp::SetCover {
-            cover: before.cover.clone(),
+            cover: Box::new(before.cover.clone()),
         });
     }
     if before.toc != after.toc {
@@ -2201,7 +2201,7 @@ pub fn generate_inverse_ops(
     }
     if before.theme != after.theme {
         ops.push(PatchOp::SetTheme {
-            theme: before.theme.clone(),
+            theme: Box::new(before.theme.clone()),
         });
     }
     if before.sources != after.sources {
