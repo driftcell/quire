@@ -44,7 +44,7 @@ is not a runtime setting and is not interchangeable with `SANDBOX_FC_API_KEY`.
 
 ### rig tools and lifecycle
 
-`RigModelStreamProvider::new` receives an `Arc<dyn SandboxProvider>`. `rig_agent/builtin_tools.rs` adds four
+`RigModelStreamProvider::new` receives an `Arc<dyn SandboxProvider>`. `rig_agent/builtin_tools/` adds four
 allow-listed built-ins, with the same wildcard, event persistence and cancellation behavior as
 other runtime tools:
 
@@ -65,7 +65,7 @@ implicitly across user turns.
 
 ### Alibaba Cloud FC adapter
 
-`crates/quire-runtime/src/sandbox/fc.rs` keeps FC/E2B protocol details behind the port. Request bodies
+`crates/quire-runtime/src/sandbox/fc/` keeps FC/E2B protocol details behind the port. Request bodies
 use concrete serde types (`EnvdStartProcessRequest` and `FcCreateSandboxRequest`), while built-in tool
 functions return `SandboxExecuteReceipt`, `SandboxReadFileReceipt`, `SandboxWriteFileReceipt` and
 `SandboxMountAttachmentReceipt` directly:

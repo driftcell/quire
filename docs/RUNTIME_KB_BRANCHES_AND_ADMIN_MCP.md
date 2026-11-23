@@ -21,7 +21,7 @@ wire protocols beyond the provider registry already owned by `quire-runtime`.
   conflict reports, snapshot writes, rollback and branch-aware prompt caching.
 - `ModelRegistry` owns provider/model persistence, models.dev import and masked provider receipts.
 - `RuntimeService` owns session creation on a branch, session inspection and run orchestration.
-- `http.rs` and `admin_mcp.rs` only deserialize inputs, rely on runtime Bearer authentication, call a
+- `http/` and `admin_mcp/` only deserialize inputs, rely on runtime Bearer authentication, call a
   service method and wrap the receipt. They contain no merge, persistence or run logic.
 
 ### Tables
@@ -94,7 +94,7 @@ branch.
 
 ### `/admin/mcp`
 
-`admin_mcp.rs` mounts an rmcp Streamable HTTP server at `/admin/mcp`, protected by `runtime_auth`.
+`admin_mcp/` mounts an rmcp Streamable HTTP server at `/admin/mcp`, protected by `runtime_auth`.
 It is separate from the report-authoring `/mcp` surface and is not exposed to report sub-agents.
 Every input uses `#[serde(deny_unknown_fields)]`; every receipt is compact and carries `_next_hint`.
 Provider API keys are only returned through `ProviderRecord.api_key_masked`.

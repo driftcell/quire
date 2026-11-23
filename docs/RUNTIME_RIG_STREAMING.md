@@ -28,9 +28,9 @@ through that facade rather than maintaining parallel direct dependencies on the 
 
 - `mod.rs`: model/tool assembly and the `AgentRunner` driver;
 - `context.rs`: serializable `ToolContext` values and host-only result metadata;
-- `hooks.rs`: responsibility-focused hook implementations and their unit tests;
-- `builtin_tools.rs`: native Rig `Tool` implementations and allow-list matching;
-- `preview_stream.rs`: partial `apply_operations` parsing, preview transport and ID injection;
+- `hooks/`: responsibility-focused hook implementations and their unit tests;
+- `builtin_tools/`: native Rig `Tool` implementations and allow-list matching;
+- `preview_stream/`: partial `apply_operations` parsing, preview transport and ID injection;
 - `subagents.rs`: child scheduling and canonical child-history resume.
 
 `crates/quire-runtime/src/memory.rs` owns canonical history access and UI-message projection.

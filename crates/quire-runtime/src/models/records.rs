@@ -1,0 +1,212 @@
+//! Provider/model records and the shared HTTP client.
+
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
+
+use chrono::{DateTime, Utc};
+use moka::future::Cache;
+use schemars::JsonSchema;
+use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::{
+    error::{RuntimeError, RuntimeResult},
+    store::RuntimeStore,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderProtocol {
+    OpenaiCompatible,
+    Anthropic,
+}
+
+impl ProviderProtocol {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenaiCompatible => "openai_compatible",
+            Self::Anthropic => "anthropic",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "openai_compatible" => Some(Self::OpenaiCompatible),
+            "anthropic" => Some(Self::Anthropic),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ProviderRecord {
+    pub provider_id: String,
+    pub name: String,
+    pub protocol: ProviderProtocol,
+    pub base_url: String,
+    /// Never the raw secret: `env:VAR` is retained, encrypted refs are masked.
+    pub api_key_masked: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ProviderInput {
+    pub provider_id: String,
+    pub name: String,
+    pub protocol: ProviderProtocol,
+    pub base_url: String,
+    pub api_key_ref: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ModelRecord {
+    pub id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub display_name: String,
+    pub context_limit: i64,
+    pub max_output_tokens: Option<i64>,
+    pub supports_reasoning: bool,
+    pub supports_tools: bool,
+    pub supports_vision: bool,
+    pub cost_input: Option<f64>,
+    pub cost_output: Option<f64>,
+    pub cost_cache_read: Option<f64>,
+    pub enabled: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ModelInput {
+    pub id: String,
+    pub provider_id: String,
+    pub model_id: String,
+    pub display_name: String,
+    pub context_limit: i64,
+    #[serde(default)]
+    pub max_output_tokens: Option<i64>,
+    #[serde(default)]
+    pub supports_reasoning: bool,
+    #[serde(default = "default_enabled")]
+    pub supports_tools: bool,
+    #[serde(default)]
+    pub supports_vision: bool,
+    #[serde(default)]
+    pub cost_input: Option<f64>,
+    #[serde(default)]
+    pub cost_output: Option<f64>,
+    #[serde(default)]
+    pub cost_cache_read: Option<f64>,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedModel {
+    pub route_id: String,
+    pub provider_id: String,
+    pub protocol: ProviderProtocol,
+    pub base_url: String,
+    pub model_id: String,
+    pub display_name: String,
+    pub context_limit: i64,
+    pub max_output_tokens: Option<i64>,
+    pub supports_reasoning: bool,
+    pub supports_tools: bool,
+    pub supports_vision: bool,
+    pub cost_input: Option<f64>,
+    pub cost_output: Option<f64>,
+    pub cost_cache_read: Option<f64>,
+    pub api_key: SecretString,
+}
+
+impl ResolvedModel {
+    /// Compute the RMB (CNY) cost of a single completion call from its token counts.
+    /// `cost_input`, `cost_output`, and `cost_cache_read` are priced in RMB per 1,000,000 tokens.
+    pub fn calculate_cost_rmb(
+        &self,
+        input_tokens: u64,
+        output_tokens: u64,
+        cached_tokens: u64,
+    ) -> Option<f64> {
+        if self.cost_input.is_none() && self.cost_output.is_none() && self.cost_cache_read.is_none()
+        {
+            return None;
+        }
+        let uncached_input = input_tokens.saturating_sub(cached_tokens);
+        let input_rate = self.cost_input.unwrap_or(0.0);
+        let output_rate = self.cost_output.unwrap_or(0.0);
+        let cache_rate = self.cost_cache_read.or(self.cost_input).unwrap_or(0.0);
+        Some(
+            ((uncached_input as f64) * input_rate
+                + (cached_tokens as f64) * cache_rate
+                + (output_tokens as f64) * output_rate)
+                / 1_000_000.0,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ModelsDevImportRequest {
+    /// Local provider row the imported models are bound to.
+    pub provider_id: String,
+    /// Match this upstream models.dev provider id (for example `deepseek`).
+    #[serde(default)]
+    pub provider_filter: Option<String>,
+    /// Optional subset of upstream model IDs.
+    #[serde(default)]
+    pub model_ids: Option<Vec<String>>,
+    /// Offline payload. When omitted, `models_dev_url` is fetched.
+    #[serde(default)]
+    pub payload: Option<Value>,
+    /// Optional one-off catalog URL override.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct ModelsDevImportReport {
+    pub provider_id: String,
+    pub imported: usize,
+    pub models: Vec<ModelRecord>,
+}
+
+#[derive(Clone)]
+pub struct ModelRegistry {
+    pub(crate) store: RuntimeStore,
+    pub(crate) cache: Cache<String, Arc<ResolvedModel>>,
+    pub(crate) master_key: Option<SecretString>,
+    pub(crate) models_dev_url: String,
+    pub(crate) http: reqwest::Client,
+}
+
+/// Public routing facade used by the agent runtime.
+pub type ModelRouter = ModelRegistry;
+
+static MODEL_HTTP_CLIENT: LazyLock<Result<rig::http_client::ReqwestClient, String>> =
+    LazyLock::new(|| {
+        let client = rig::rig_reqwest::reqwest::Client::builder()
+            .connect_timeout(crate::http_client::CONNECT_TIMEOUT)
+            .timeout(Duration::from_secs(600))
+            .build()
+            .map_err(|error| format!("model HTTP client init failed: {error}"))?;
+        Ok(rig::http_client::ReqwestClient::from(client))
+    });
+
+pub(crate) fn model_http_client() -> RuntimeResult<rig::http_client::ReqwestClient> {
+    match &*MODEL_HTTP_CLIENT {
+        Ok(client) => Ok(client.clone()),
+        Err(error) => Err(RuntimeError::Internal(error.clone())),
+    }
+}

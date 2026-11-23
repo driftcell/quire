@@ -3,7 +3,7 @@
 ## Metadata
 
 - **Status:** Settled
-- **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-runtime`
+- **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-runtime`, `quire-server`, `quire-store`, `quire-session-protocol`
 - **Related Notes:** `../notes/rust_2024_async_boundaries.md`, `../notes/quire_typed_json_boundaries.md`
 
 ## 1. Scope & Non-Goals
@@ -44,6 +44,13 @@ The Aho-Corasick cliche automaton uses the same result discipline and a tested l
 
 `SandboxLease.current` is protected by a short non-poisoning synchronous mutex. The separate Tokio
 mutex serializes creation/destruction I/O; no synchronous lock is held across an `.await`.
+
+### Module size and public compatibility
+
+Production source files stay at or below 650 lines. Large modules use directory modules with cohesive
+child files and, where useful, multiple inherent `impl` blocks for the same type. Original module roots
+retain public re-exports, tool registration and MCP route composition so downstream paths and wire
+contracts remain unchanged. Test-only files are outside this production-size limit.
 
 ## 3. Invariants & Verification
 

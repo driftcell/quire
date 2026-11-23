@@ -143,7 +143,7 @@ raw auth token reference.
 - Shared connections carry no fixed session identity; each call forwards host-authored `_meta.quire`.
 - Header/metadata mismatches are rejected and report creation cannot proceed without a session.
 
-Unit coverage in `crates/quire-runtime/src/mcp_registry.rs` and `rig_agent/builtin_tools.rs`:
+Unit coverage in `crates/quire-runtime/src/mcp_registry/` and `rig_agent/builtin_tools/`:
 
 - `tool_patterns_support_prefix_suffix_and_multi_segment_wildcards`
 - `scoped_wildcards_never_cross_server_boundaries`
