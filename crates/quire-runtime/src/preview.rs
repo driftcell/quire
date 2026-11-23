@@ -82,7 +82,7 @@ pub struct PreviewReportInput {
     /// Optional 1-based A4 page number when `mode` is `paged`.
     #[serde(default)]
     pub page: Option<usize>,
-    /// Optional expected document revision.
+    /// Optional exact committed revision (>=1); a different revision is never accepted.
     #[serde(default)]
     pub rev: Option<u64>,
     /// Include active theme tokens, custom_css, and computed styles for key selectors.
@@ -352,6 +352,11 @@ pub async fn execute_preview_report(
     if doc_id.is_empty() {
         return Err(RuntimeError::InvalidRequest("`doc_id` is required".into()));
     }
+    if input.rev == Some(0) {
+        return Err(RuntimeError::InvalidRequest(
+            "rev must be a committed revision (>=1)".into(),
+        ));
+    }
     let playwright_url = config
         .playwright_mcp_url
         .as_deref()
@@ -445,8 +450,9 @@ pub async fn execute_preview_report(
     }};
   }}
   return {{
-    revision: Number(root?.getAttribute('data-revision') || 0),
-    totalPages: Number(root?.getAttribute('data-total-pages') || 1),
+    docId: root?.getAttribute('data-doc-id'),
+    revision: Number(root?.getAttribute('data-revision')),
+    totalPages: Number(root?.getAttribute('data-total-pages')),
     overflowCount: overflow.length,
     overflow: overflow.slice(0, 10),
     styles,
@@ -462,7 +468,10 @@ pub async fn execute_preview_report(
     let inspected_raw = client
         .call_tool_raw("browser_evaluate", json!({ "function": inspect_fn }))
         .await?;
-    let inspected = extract_eval_json(&inspected_raw).unwrap_or_else(|| json!({}));
+    let inspected = extract_eval_json(&inspected_raw).ok_or_else(|| {
+        RuntimeError::Internal("Preview inspection did not return diagnostics".into())
+    })?;
+    let (revision, total_pages) = checked_preview_identity(&inspected, &doc_id, input.rev)?;
 
     let (image_base64, image_mime_type) = if input.include_image {
         let screenshot_raw = client
@@ -480,16 +489,6 @@ pub async fn execute_preview_report(
     } else {
         (None, None)
     };
-
-    let revision = inspected
-        .get("revision")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
-    let total_pages = inspected
-        .get("totalPages")
-        .and_then(Value::as_u64)
-        .and_then(|v| usize::try_from(v).ok())
-        .unwrap_or(1);
 
     Ok(PreviewReportResult {
         doc_id,
@@ -509,6 +508,37 @@ pub async fn execute_preview_report(
         image_mime_type,
         image_base64,
     })
+}
+
+fn checked_preview_identity(
+    inspected: &Value,
+    doc_id: &str,
+    expected: Option<u64>,
+) -> RuntimeResult<(u64, usize)> {
+    let revision = inspected["revision"]
+        .as_u64()
+        .filter(|r| *r > 0)
+        .ok_or_else(|| {
+            RuntimeError::Internal("Preview did not identify a committed revision".into())
+        })?;
+    if inspected["docId"].as_str() != Some(doc_id) {
+        return Err(RuntimeError::Internal(format!(
+            "Preview did not render document `{doc_id}`"
+        )));
+    }
+    if let Some(expected) = expected
+        && revision != expected
+    {
+        return Err(RuntimeError::InvalidRequest(format!(
+            "Expected preview revision {expected}, rendered {revision}"
+        )));
+    }
+    let pages = inspected["totalPages"]
+        .as_u64()
+        .and_then(|v| usize::try_from(v).ok())
+        .filter(|n| *n > 0)
+        .ok_or_else(|| RuntimeError::Internal("Preview did not identify its page count".into()))?;
+    Ok((revision, pages))
 }
 
 /// Navigate to the stateless single-chart preview route, wait for the chart to render, and capture
@@ -631,6 +661,32 @@ mod tests {
             image_mime_type: image.map(|(_, mime)| mime.to_string()),
             image_base64: image.map(|(data, _)| data.to_string()),
         }
+    }
+
+    #[test]
+    fn preview_identity_rejects_a_different_revision() {
+        let inspected = json!({
+            "docId": "report-test",
+            "revision": 11,
+            "totalPages": 2
+        });
+        let error = checked_preview_identity(&inspected, "report-test", Some(10)).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("Expected preview revision 10, rendered 11")
+        );
+    }
+
+    #[test]
+    fn preview_identity_rejects_a_different_document() {
+        let inspected = json!({
+            "docId": "another-report",
+            "revision": 10,
+            "totalPages": 2
+        });
+        let error = checked_preview_identity(&inspected, "report-test", None).unwrap_err();
+        assert!(error.to_string().contains("report-test"));
     }
 
     #[test]

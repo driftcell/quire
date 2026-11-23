@@ -1,6 +1,9 @@
 //! MCP tool implementations, Smart CAS reload helpers and document projections.
 
-use std::collections::{BTreeSet, HashSet};
+use std::{
+    collections::{BTreeSet, HashSet},
+    num::NonZeroU32,
+};
 
 use axum::http::request::Parts;
 use indexmap::IndexMap;
@@ -116,7 +119,7 @@ impl QuireMcpServer {
     #[tool(
         name = "get_document_digest",
         annotations(read_only_hint = true),
-        description = "Low-token outline with current_rev, requirement aggregates (paragraphs, prose chars, visuals, cited sources) and compact blocks (id/type/level/preview/char_count/source_ids). Optional keyword query filters blocks."
+        description = "Get heading IDs for read_as_markdown(section_id), revision, readable prose length and signed difference from the agreed target. Optional query filters only the returned blocks."
     )]
     pub async fn get_document_digest(
         &self,
@@ -129,12 +132,26 @@ impl QuireMcpServer {
             .get_document(&doc_id)
             .await
             .map_err(mcp_error)?;
-        let digest = build_digest(&document, request.query.as_deref());
+        if let (Some(stored), Some(requested)) =
+            (document.target_prose_chars, request.target_prose_chars)
+            && stored != requested
+        {
+            return Err(invalid_params(
+                format!("This report already has an agreed target of {stored} characters."),
+                "Omit target_prose_chars to read the stored agreement.",
+                Some(json!({"stored_target_prose_chars": stored})),
+            ));
+        }
+        let digest = build_digest(
+            &document,
+            request.query.as_deref(),
+            request.target_prose_chars,
+        );
         let _next_hint = if digest.blocks.is_empty() {
-            "No blocks matched. Append blocks with apply_operations.".to_string()
+            "No blocks matched this query. Omit query to list the document outline.".to_string()
         } else {
             format!(
-                "rev={}; read_blocks/read_as_markdown for details.",
+                "rev={}; pass a heading's id to read_as_markdown(section_id) to read the section.",
                 digest.current_rev
             )
         };
@@ -147,12 +164,28 @@ impl QuireMcpServer {
     #[tool(
         name = "read_as_markdown",
         annotations(read_only_hint = true),
-        description = "Project an online report into token-efficient Markdown with block anchors, flattened tables, expanded chart data and expanded citations."
+        description = "Read a whole chapter by passing section_id from get_document_digest (heading block ID, not its title). Use block_ids for individual blocks; omit both for the whole report. Returns Markdown with stable block anchors."
     )]
     pub async fn read_as_markdown(
         &self,
         Parameters(request): Parameters<ReadMarkdownParams>,
     ) -> Result<Json<ReadMarkdownReceipt>, ErrorData> {
+        if [
+            request.section_id.is_some(),
+            request.section_heading.is_some(),
+            request.block_ids.is_some(),
+        ]
+        .into_iter()
+        .filter(|v| *v)
+        .count()
+            > 1
+        {
+            return Err(invalid_params(
+                "Conflicting read selectors.",
+                "Use section_id for a whole section or block_ids for individual blocks.",
+                None,
+            ));
+        }
         let markdown_options = MarkdownOptions {
             include_chart_data: request.include_chart_data.unwrap_or(true),
             include_front_matter: true,
@@ -174,11 +207,19 @@ impl QuireMcpServer {
                     None,
                 )
             })?
+        } else if let Some(id) = &request.section_id {
+            projector.render_section_by_id(id).map_err(|error| {
+                invalid_params(
+                    error.to_string(),
+                    "Copy the id of a heading from get_document_digest.",
+                    None,
+                )
+            })?
         } else if let Some(section) = &request.section_heading {
             projector.render_section(section).map_err(|error| {
                 invalid_params(
                     error.to_string(),
-                    "Use an exact or substring heading from get_document_digest.",
+                    "Pass section_id with the exact heading id from get_document_digest.",
                     None,
                 )
             })?
@@ -612,7 +653,11 @@ fn block_digest(block: &Block) -> BlockDigest {
 }
 
 /// Build the compact outline returned by `get_document_digest` and create receipts.
-pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> DocumentDigest {
+fn build_digest(
+    document: &ReportDocument,
+    query: Option<&str>,
+    fallback_target: Option<NonZeroU32>,
+) -> DocumentDigest {
     let query = query
         .map(str::trim)
         .filter(|query| !query.is_empty())
@@ -635,7 +680,7 @@ pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> Do
         .iter()
         .filter(|block| matches!(&block.body, BlockKind::Paragraph { .. }))
         .count();
-    let prose_char_count = document
+    let prose_char_count: usize = document
         .blocks
         .iter()
         .filter(|block| matches!(&block.body, BlockKind::Paragraph { .. }))
@@ -652,6 +697,7 @@ pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> Do
         })
         .count();
     let cited_source_count = scan_document_citations(document).cited_source_ids.len();
+    let target_prose_chars = document.target_prose_chars.or(fallback_target);
     DocumentDigest {
         title: document.title(),
         current_rev: document.revision.get(),
@@ -661,6 +707,10 @@ pub(crate) fn build_digest(document: &ReportDocument, query: Option<&str>) -> Do
         source_count: document.sources.len(),
         paragraph_count,
         prose_char_count,
+        target_prose_chars,
+        prose_char_delta: target_prose_chars.map(|target| {
+            i64::try_from(prose_char_count).unwrap_or(i64::MAX) - i64::from(target.get())
+        }),
         visual_block_count,
         cited_source_count,
         blocks,
@@ -733,6 +783,7 @@ impl QuireMcpServer {
         };
 
         let mut document = ReportDocument::new(doc_id);
+        document.target_prose_chars = request.target_prose_chars;
         document.session_id = Some(session_id);
         document.cover.enabled = request.enable_cover.unwrap_or(true);
         document.cover.title = title.to_string();
@@ -792,7 +843,7 @@ impl QuireMcpServer {
             .get_document(&result.doc_id)
             .await
             .map_err(mcp_error)?;
-        let digest = build_digest(&stored, None);
+        let digest = build_digest(&stored, None, None);
         let revision = result.revision.get();
         let _next_hint = if result.idempotent_replay {
             format!(
@@ -852,8 +903,9 @@ impl QuireMcpServer {
             publish_ephemeral_clear(&self.state, &doc_id, &preview_ids).await;
         }
         let touched = touched_blocks(&request.ops, &result.outcome.assigned_ids);
+        let suppress_empty_heading = is_heading_only_batch(&request.ops);
         let (blocking_errors, inline_warnings) =
-            split_scoped_diagnostics(result.inline_warnings, &touched);
+            split_scoped_diagnostics(result.inline_warnings, &touched, suppress_empty_heading);
         let _next_hint = lint_hint::apply_operations_next_hint(
             result.new_revision.get(),
             &blocking_errors,
@@ -945,6 +997,15 @@ impl QuireMcpServer {
             .upsert_sources(&doc_id, &actor, upserts)
             .await
             .map_err(mcp_error)?;
+        // Suppress transient `QR102` (unused-source) and block-scoped layout/structure warnings
+        // inside `upsert_sources` receipts: newly registered sources are naturally uncited until
+        // subsequent `apply_operations` commits, and full-document `lint_document` /
+        // `configure_references` verify orphan sources at verification time.
+        let inline_warnings = result
+            .inline_warnings
+            .into_iter()
+            .filter(|diagnostic| diagnostic.code != "QR102" && diagnostic.block_id.is_none())
+            .collect();
         let _next_hint = if result.changed {
             format!(
                 "Sources committed at revision {}. Use canonical_id_map values in [^source_id] markers.",
@@ -964,7 +1025,7 @@ impl QuireMcpServer {
                 .map(|(from, to)| (from.to_string(), to.to_string()))
                 .collect(),
             source_count: result.sources.len(),
-            inline_warnings: result.inline_warnings,
+            inline_warnings,
             _next_hint,
         }))
     }
@@ -1392,9 +1453,41 @@ fn touched_blocks(ops: &[PatchOp], assigned: &[IdAssignment]) -> BTreeSet<BlockI
     touched
 }
 
+/// Returns `true` when every operation in `ops` only creates or patches `Heading` blocks (e.g.
+/// Step 2 skeleton creation or heading title upgrades), where newly created headings naturally
+/// have no body paragraphs yet until downstream `analyst` and `writer` subagents run.
+fn is_heading_only_batch(ops: &[PatchOp]) -> bool {
+    !ops.is_empty()
+        && ops.iter().all(|op| match op {
+            PatchOp::InsertAfter { blocks, .. }
+            | PatchOp::InsertBefore { blocks, .. }
+            | PatchOp::Append { blocks }
+            | PatchOp::AppendToSection { blocks, .. } => {
+                !blocks.is_empty()
+                    && blocks
+                        .iter()
+                        .all(|block| matches!(&block.body, BlockKind::Heading { .. }))
+            }
+            PatchOp::PatchBlock { patch, .. } => {
+                (patch.text.is_some() || patch.level.is_some())
+                    && patch.title.is_none()
+                    && patch.note.is_none()
+                    && patch.option.is_none()
+                    && patch.option_patch.is_none()
+                    && patch.columns.is_none()
+                    && patch.rows.is_none()
+                    && patch.summary_rows.is_none()
+                    && patch.append_rows.is_empty()
+                    && patch.update_cell.is_none()
+            }
+            _ => false,
+        })
+}
+
 fn split_scoped_diagnostics(
     diagnostics: Vec<Diagnostic>,
     touched: &BTreeSet<BlockId>,
+    suppress_empty_heading: bool,
 ) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let scoped: Vec<Diagnostic> = if touched.is_empty() {
         diagnostics
@@ -1402,6 +1495,9 @@ fn split_scoped_diagnostics(
         diagnostics
             .into_iter()
             .filter(|diagnostic| {
+                if suppress_empty_heading && diagnostic.code == "QR403" {
+                    return false;
+                }
                 diagnostic
                     .block_id
                     .as_ref()

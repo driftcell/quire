@@ -100,11 +100,18 @@ function isDocumentDiffReport(value: unknown): value is DocumentDiffReport {
 export function getDocument(
   docId: string,
   tokenOverride?: string,
+  revision?: number,
 ): Promise<DocumentView> {
   return quireFetch(
-    `/api/docs/${encodeURIComponent(docId)}`,
+    `/api/docs/${encodeURIComponent(docId)}${revision === undefined ? "" : `?rev=${revision}`}`,
     "ro",
-    normalizeDocumentResponse,
+    (raw) => {
+      const view = normalizeDocumentResponse(raw);
+      if (revision !== undefined && (view.current_rev !== revision || view.document.revision !== revision)) {
+        throw new Error(`请求第 ${revision} 版，返回第 ${view.document.revision} 版，无法预览。`);
+      }
+      return view;
+    },
     {},
     tokenOverride,
   );

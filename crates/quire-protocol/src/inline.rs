@@ -24,6 +24,17 @@ pub enum InlineNode {
 }
 
 impl InlineNode {
+    fn readable_chars(&self) -> usize {
+        match self {
+            Self::Text(text) | Self::Code(text) => text.chars().count(),
+            Self::Em(children) | Self::Strong(children) | Self::Link { children, .. } => {
+                children.iter().map(Self::readable_chars).sum()
+            }
+            Self::Citation(_) => 0,
+            Self::Break => 1,
+        }
+    }
+
     pub fn plain_text(&self) -> String {
         let mut output = String::new();
         self.write_plain_text(&mut output);
@@ -73,6 +84,14 @@ impl InlineNode {
 /// Parse inline Markdown into a neutral inline AST.
 pub fn parse_inline(input: &str) -> Vec<InlineNode> {
     parse_inner(input, 0)
+}
+
+/// Visible text for a length target: count the link label and code literals, not markup or citations.
+pub(crate) fn readable_char_count(input: &str) -> usize {
+    parse_inline(input)
+        .iter()
+        .map(InlineNode::readable_chars)
+        .sum()
 }
 
 /// Return citation source IDs in first-appearance order, including citations nested in marks.
@@ -479,6 +498,19 @@ mod tests {
                 InlineNode::Text("line two".into())
             ]
         );
+    }
+
+    #[test]
+    fn readable_length_ignores_citation_markers_and_markup() {
+        let text = "Revenue grew **18%** [^sec10] with `automation` momentum.";
+        // The citation vanishes but the spaces on either side of it are real source text.
+        assert_eq!(
+            readable_char_count(text),
+            "Revenue grew 18%  with automation momentum."
+                .chars()
+                .count()
+        );
+        assert!(readable_char_count(text) < inline_plain_text(text).chars().count());
     }
 
     #[test]

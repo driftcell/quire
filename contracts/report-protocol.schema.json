@@ -120,6 +120,15 @@
             }
           ]
         },
+        "target_prose_chars": {
+          "description": "Optional document-wide target for readable paragraph characters, agreed at creation.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 1
+        },
         "revision": {
           "$ref": "#/$defs/Revision",
           "default": 0
@@ -1929,6 +1938,42 @@
             "string",
             "null"
           ]
+        },
+        "columns": {
+          "description": "Replace a table's column schema in place (preserving `block_id` and comment anchors).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/ColumnNode"
+          }
+        },
+        "rows": {
+          "description": "Replace a table's body rows in place (preserving `block_id` and comment anchors).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/CellValue"
+            }
+          }
+        },
+        "summary_rows": {
+          "description": "Replace a table's summary rows in place.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/$defs/CellValue"
+            }
+          }
         },
         "append_rows": {
           "description": "Append rows to a table's body.",

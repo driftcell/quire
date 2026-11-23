@@ -74,11 +74,11 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
 
 1. INIT
    - Send `X-Session-Id` on MCP HTTP requests so the frontend can discover your report.
-   - Call `create_report(title, idempotency_key?)`. It returns `doc_id` and `revision`.
+   - Call `create_report(title, idempotency_key?)`. If the user agreed a total length, pass `target_prose_chars` (e.g. 30000 for 约3万字). It returns `doc_id` and `revision`.
    - If you already have a doc, call `list_reports` and `get_document_digest(doc_id)`.
 
 2. SCHEMA
-   - Read `read_as_markdown(doc_id)` or `get_document_digest(doc_id)` before editing.
+   - Use the heading ID from your assignment or `get_document_digest(doc_id)` and call `read_as_markdown(doc_id, section_id=ID)` for the heading and its contents. `block_ids=[ID]` reads only the named block.
    - Block IDs are short and semantic (`sec_intro`, `b_01`), never UUIDv4, unique in the document.
    - Every block supports `class_name`, `style` (`variant`, `keep_together`, `page_break_before`, `column_widths`), `source_ids`, `source_note`.
 
@@ -88,13 +88,14 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
    - Section append example: `{"type":"append_to_section","section_id":"ch1","blocks":[...]}`.
    - `expected_revision` enables Smart CAS: disjoint block edits rebase automatically; overlapping edits return conflict details with latest blocks.
    - Successful receipts report `base_revision`, `rebased`, and `rebased_over`. Errors are split into `blocking_errors` (committed but not lint-clean) and non-blocking `inline_warnings`, scoped to the blocks you touched.
-   - Patch block text/style/source IDs; use `option_patch` for charts, `append_rows` / `update_cell` for tables.
+   - Patch block text/style/source IDs; use `option_patch` for charts, and `columns` / `rows` / `summary_rows` / `append_rows` / `update_cell` on `patch_block` for in-place table updates (preserving `block_id` and review comment anchors).
    - Register citations with `upsert_sources`, or pass an inline `sources` map to `apply_operations` so registration commits atomically with the blocks. Inline syntax is `[^source_id]`.
 
 4. VERIFY
    - `lint_document(doc_id)` returns diagnostics that carry `code`, `rule`, `hint` and `suppressible`. Fix every `error` and review every `warning`.
    - Only when a diagnostic has `suppressible: true` and the rule genuinely does not apply may you ignore it through `PatchBlock.lint_ignore`. Never use ignore to hide a real problem; core contract and safety rules are never suppressible.
    - `read_as_markdown(doc_id)` gives block anchors, flattened tables and expanded chart data for review.
+   - On the delivery revision check digest `prose_char_count`, `target_prose_chars`, and `prose_char_delta` (actual minus agreed). If under the agreed length, add substantive analysis or disclose the gap; do not treat clean lint as meeting the target.
    - `GET /api/docs/{doc_id}` supplies canonical JSON plus `computed.table_layouts`, `computed.citation_map`, `computed.bibliography`, `computed.toc_tree` to the external frontend.
 
 Rules:
@@ -147,7 +148,7 @@ TABLE BLOCK EXAMPLE
 DEFAULT COMPACT TABLE PRESET (8 columns or fewer)
 - For 8 leaf columns or fewer, omit `style.column_widths` entirely and let the frontend Water-Filling allocator decide. It measures the same formatted cell text the renderer uses (including zero-padded decimals), locks short headers and enumerations to one line, keeps numeric cells unbreakable and retains a 78px floor for text columns during compression. Hand-written narrow percentages are the main cause of vertically squeezed short columns.
 - Add explicit `column_widths` only when leaf columns >= 9 or when a preview confirms a specific locked ratio is required. Both percentages and pixels are accepted: `"style":{"column_widths":{"region":"24%","school":"136px"}}`.
-- Keep leaf headers to 2–5 Chinese characters. Move parenthetical scopes and units (`（表述清晰度）`, `2026 快照，个`) into `note` or a grouped parent `ColumnNode`; do not repeat the same qualifier in every leaf header.
+- Keep leaf headers to 2–5 Chinese characters. Move parenthetical scopes and units (`（表述清晰度）`, `2026 快照，个`) into `note` or a grouped parent `ColumnNode`; do not repeat the same qualifier in every leaf header. For numeric `percent` columns where cells are raw numbers (`56.0`, `48.9`), include `（%）` in the leaf or parent column label (`青年占比（%）`) so the unit is self-explanatory.
 - Keep status and enumeration values concise (`否（双一流）`, not a full sentence) so short columns can stay on one line.
 - Prefer `keep_together: true` for compact benchmark tables.
 Copyable 7-column preset (no manual widths):
@@ -184,7 +185,7 @@ Rules:
 - Title rules: put the title in outer `title` ONLY (the alias `caption` is accepted for legacy input). Numbering is automatic (`表 N` / `图 N`); never hardcode it. `note` is an explanatory footnote.
 - Compact shorthand is accepted: `{"headers":["Region","Revenue"],"rows":[["EMEA","$900"]],"summary_rows":[["Total","$900"]]}`. Column keys/types are inferred and array-form summary rows are normalized to row objects.
 - The server pre-computes spans and normalized `<colgroup>` percentages in `computed.table_layouts`; frontends must not recalculate them.
-- Table patch: `{"type":"patch_block","block_id":"financials","patch":{"append_rows":[...],"update_cell":{"row_index":0,"column_key":"q1","value":1250000}}}`. The same `patch` object can set outer `title` (legacy alias `caption`), `numbering` and `note` for tables, charts and custom HTML.
+- Table patch (in-place, preserves `block_id` and comment anchors): `{"type":"patch_block","block_id":"financials","patch":{"columns":[...],"rows":[...],"summary_rows":[...],"append_rows":[...],"update_cell":{"row_index":0,"column_key":"q1","value":1250000}}}`. Use `patch_block` with `columns` or `rows` instead of `replace_range` whenever renaming column headers or updating multiple rows on an existing table. The same `patch` object can set outer `title` (legacy alias `caption`), `numbering` and `note` for tables, charts and custom HTML.
 
 ECHARTS BLOCK EXAMPLE (dual axis)
 {
@@ -326,7 +327,7 @@ OWNERSHIP
 - For long multi-chapter reports, complete and review one pilot chapter before starting the remaining writers in parallel.
 - Analysts own derived metrics, tables and charts. Writers own prose and disjoint block IDs, and return visual requests instead of adding duplicate visuals to satisfy lint.
 - Reading is always allowed; mutations must use apply_operations with the latest expected_revision.
-- Before delivery the Lead reads every chapter with read_as_markdown(section_heading=...). A reviewer's APPROVED applies only to the reviewed revision; any later content mutation requires another review.
+- Before delivery the Lead reads every chapter with read_as_markdown(section_id=heading_id). A reviewer's APPROVED applies only to the reviewed revision; any later content mutation requires another review.
 
 SMART CAS
 - Pass the revision you read. If another agent committed first, the server inspects intervening revisions.
@@ -343,7 +344,7 @@ ONLINE AUTHORING
 - Register sources in the same call with the inline `sources` map; URL/title deduplication commits atomically with the blocks.
 
 REVIEW LOOP
-1. `read_as_markdown(doc_id, section_heading=...)` for the section under review (accepts an exact heading `block_id` like `"ch1"` / `"c2-1"`, a heading text substring, or an ordinal chapter label like `"第一章"`).
+1. `read_as_markdown(doc_id, section_id=heading_id)` for the section under review. Reuse the exact heading ID from the brief or digest (e.g. `ch1` or `c2-1`).
 2. `lint_document(doc_id)`; fix every error and review warnings. Diagnostics carry `code`, `rule`, `hint` and `suppressible`; ignore only suppressible diagnostics that genuinely do not apply.
 3. Patch specific blocks via block IDs from the Markdown anchors.
 4. `rollback_revision(doc_id, target_revision)` creates a new monotonic revision; never rewrites history.

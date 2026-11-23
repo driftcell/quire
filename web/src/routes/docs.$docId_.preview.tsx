@@ -31,8 +31,10 @@ export const Route = createFileRoute("/docs/$docId_/preview")({
         ? Math.floor(rawPage)
         : undefined;
     const rawRev = Number(search.rev);
-    const rev =
-      Number.isFinite(rawRev) && rawRev >= 0 ? Math.floor(rawRev) : undefined;
+    if (search.rev !== undefined && (!Number.isSafeInteger(rawRev) || rawRev < 1)) {
+      throw new Error("预览版本号必须是正整数。");
+    }
+    const rev = search.rev === undefined ? undefined : rawRev;
     return { mode, sectionId, blockIds, page, rev };
   },
   component: DocumentPreviewPage,
@@ -79,7 +81,7 @@ function DocumentPreviewPage() {
 
   const docQuery = useQuery({
     queryKey: ["doc-preview", docId, search.rev ?? "latest"],
-    queryFn: () => getDocument(docId, roToken),
+    queryFn: () => getDocument(docId, roToken, search.rev),
     retry: false,
   });
 

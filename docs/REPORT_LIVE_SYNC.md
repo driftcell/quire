@@ -21,7 +21,10 @@ in `quire-protocol`; the frontend does not reimplement `PatchOp` or computed pro
 ### 2.1 Snapshot and applied-delta APIs
 
 `GET /api/docs/{doc_id}` is the initial-load and recovery API. It returns the complete canonical
-document and `compute_document_meta` output.
+document and `compute_document_meta` output. `GET /api/docs/{doc_id}?rev=N` returns the same contract
+reconstructed at committed revision N (revision 0 and future revisions are rejected). Preview pages
+pass the revision they intend to inspect; a live document must never be presented as evidence for an
+older revision.
 
 `GET /api/docs/{doc_id}/sync?fromRev=N` loads the current target snapshot, reconstructs the requested
 base when it differs, and returns `DocumentSyncDelta`. A `fromRev` ahead of the target is rejected.
@@ -73,6 +76,11 @@ updates from rerendering the report.
 
 ## 3. Invariants & Verification
 
+- A revision-pinned snapshot matches the state that `document_at_revision` reconstructs; an
+  incomplete forward or inverse history fails with `CORRUPT_REVISION` instead of returning a
+  partial document.
+- Preview receipts identify the rendered document and revision, and a requested revision that does
+  not match the rendered one is an error.
 - Initial snapshot loading does not turn historical SSE replay into full-document or sync requests.
 - A revision burst has one active sync and a bounded trailing latest-revision request; no revision is
   silently lost.

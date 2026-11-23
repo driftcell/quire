@@ -638,6 +638,7 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         "title": title,
         "enable_cover": true,
         "enable_toc": true,
+        "target_prose_chars": 30_000,
         "initial_blocks": initial_blocks,
         "idempotency_key": idempotency_key,
     });
@@ -701,6 +702,50 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .await?;
     let lead_revision = digest["digest"]["current_rev"].as_i64().unwrap();
     assert_eq!(lead_revision, 4, "create + cover + toc + references");
+
+    // 2b. The agreed length is a persisted requirement, not a prompt-only reminder.
+    assert_eq!(
+        digest["digest"]["target_prose_chars"].as_u64(),
+        Some(30_000)
+    );
+    let prose_chars = digest["digest"]["prose_char_count"].as_u64().unwrap();
+    assert_eq!(
+        digest["digest"]["prose_char_delta"].as_i64(),
+        Some(prose_chars as i64 - 30_000)
+    );
+
+    // 2c. Section reads take the digest heading ID; text selectors cannot pick another chapter.
+    let section = lead
+        .call_tool(
+            "read_as_markdown",
+            json!({"doc_id": doc_id, "section_id": "ch1_placeholder"}),
+        )
+        .await?;
+    let section_markdown = section["markdown"].as_str().unwrap();
+    assert!(section_markdown.contains("block:ch1_placeholder"));
+    assert!(!section_markdown.contains("block:ch2_placeholder"));
+    let heading_only = lead
+        .call_tool(
+            "read_as_markdown",
+            json!({"doc_id": doc_id, "block_ids": ["ch1_placeholder"]}),
+        )
+        .await?;
+    assert!(
+        !heading_only["markdown"]
+            .as_str()
+            .unwrap()
+            .contains("block:ch2_placeholder")
+    );
+    let ambiguous = lead
+        .call_tool_error(
+            "read_as_markdown",
+            json!({"doc_id": doc_id, "section_heading": "Chapter"}),
+        )
+        .await?;
+    assert!(
+        ambiguous.to_string().contains("matches multiple headings"),
+        "ambiguous heading must fail closed: {ambiguous}"
+    );
 
     // 3. Document SSE subscribes at revision 0 and must replay the setup revisions.
     let doc_sse = SseCollector::spawn(
@@ -1445,6 +1490,33 @@ async fn e2e_multi_agent_workflow() -> anyhow::Result<()> {
         .await?;
     let final_revision = final_doc["current_rev"].as_i64().unwrap();
     assert_eq!(final_revision, revision_before_rollback + 2);
+
+    // A pinned revision read returns that committed state, not the latest document.
+    let pinned = http
+        .get(format!("{base}/api/docs/{doc_id}?rev=1"))
+        .send()
+        .await?
+        .json::<Value>()
+        .await?;
+    assert_eq!(pinned["current_rev"].as_i64(), Some(1));
+    assert_eq!(pinned["revision"].as_i64(), Some(1));
+    assert_eq!(pinned["blocks"].as_array().unwrap().len(), 4);
+    let ahead = http
+        .get(format!(
+            "{base}/api/docs/{doc_id}?rev={}",
+            final_revision + 1
+        ))
+        .send()
+        .await?;
+    assert!(
+        ahead.status().is_client_error(),
+        "a future revision must be rejected"
+    );
+    let zero = http
+        .get(format!("{base}/api/docs/{doc_id}?rev=0"))
+        .send()
+        .await?;
+    assert!(zero.status().is_client_error(), "rev=0 is not readable");
     assert_eq!(final_doc["session_id"].as_str(), Some(session_id.as_str()));
     assert_eq!(final_doc["cover"]["title"].as_str(), Some(title));
     assert_eq!(final_doc["toc"]["variant"].as_str(), Some("numbered"));

@@ -53,20 +53,22 @@ fn check_column_width(
             .chain(table.summary_rows.iter())
             .filter_map(|row| row.get(&leaf.key))
             .any(|cell| !cell.display_text().trim().is_empty());
-        let body_has_cjk = table
+        let max_cjk_chars = table
             .rows
             .iter()
             .chain(table.summary_rows.iter())
             .filter_map(|row| row.get(&leaf.key))
-            .any(|cell| has_cjk(&cell.display_text()));
+            .map(|cell| cjk_char_count(&cell.display_text()))
+            .max()
+            .unwrap_or(0);
         let body_required = if leaf.data_type.is_numeric() {
             body_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX
-        } else if body_has_cjk {
-            // CJK entity names need 3–4 characters before they become a
+        } else if max_cjk_chars >= 3 {
+            // CJK entity names (3+ CJK characters) need 3–4 characters before they become a
             // one-character vertical strip, regardless of an explicit width.
             76.0
         } else if body_has_text {
-            (body_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX).min(56.0)
+            (body_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX).min(64.0)
         } else {
             0.0
         };
@@ -718,8 +720,22 @@ fn display_width(text: &str) -> usize {
     text.chars().map(|ch| if is_wide(ch) { 2 } else { 1 }).sum()
 }
 
-fn has_cjk(text: &str) -> bool {
-    text.chars().any(is_wide)
+fn cjk_char_count(text: &str) -> usize {
+    text.chars().filter(|ch| is_cjk_letter(*ch)).count()
+}
+
+fn is_cjk_letter(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x1100..=0x115F
+            | 0x2E80..=0x2FFF
+            | 0x3041..=0x33FF
+            | 0x3400..=0x4DBF
+            | 0x4E00..=0x9FFF
+            | 0xA000..=0xA4CF
+            | 0xAC00..=0xD7A3
+            | 0xF900..=0xFAFF
+    )
 }
 
 fn is_wide(ch: char) -> bool {

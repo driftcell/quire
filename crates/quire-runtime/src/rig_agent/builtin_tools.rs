@@ -499,7 +499,7 @@ fn redact_query_parameter(text: &str, parameter: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 #[rig_tool(
     name = "preview_report",
-    description = "Render a preview of the Quire report via controlled Playwright MCP, returning layout diagnostics and a public preview URL. Vision-capable models also receive the screenshot."
+    description = "Render a report preview with layout diagnostics. Pass rev to inspect that exact committed revision; omit for latest. Vision-capable models also receive the screenshot."
 )]
 async fn preview_report_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -782,14 +782,12 @@ async fn commit_chart_tool(
                 "chart preview `{preview_id}` was not found or expired after 30 minutes; call preview_echarts again to regenerate it"
             ))
         })?;
-    let anchors = [
-        after_block_id.is_some(),
-        before_block_id.is_some(),
-        section_id.is_some(),
-    ];
-    if anchors.iter().filter(|present| **present).count() > 1 {
+    let after_block_id = normalize_optional_text(after_block_id);
+    let before_block_id = normalize_optional_text(before_block_id);
+    let section_id = normalize_optional_text(section_id);
+    if after_block_id.is_some() && before_block_id.is_some() {
         return Err(ToolExecutionError::invalid_args(
-            "use at most one of `after_block_id`, `before_block_id` or `section_id`",
+            "use at most one of `after_block_id` or `before_block_id`",
         ));
     }
     if !preview.chart.option.is_object() {
@@ -815,6 +813,7 @@ async fn commit_chart_tool(
             quire_server::mcp::DigestParams {
                 doc_id: doc_id.clone(),
                 query: None,
+                target_prose_chars: None,
             },
         ))
         .await

@@ -1,6 +1,6 @@
 //! Document-level configuration and metadata.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::NonZeroU32};
 
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -367,6 +367,9 @@ pub struct ReportDocument {
     /// Optional agent session used for frontend session discovery (`X-Session-Id`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<SessionId>,
+    /// Optional document-wide target for readable paragraph characters, agreed at creation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_prose_chars: Option<NonZeroU32>,
     #[serde(default)]
     pub revision: Revision,
     #[serde(default)]
@@ -392,6 +395,7 @@ impl ReportDocument {
         Self {
             doc_id,
             session_id: None,
+            target_prose_chars: None,
             revision: Revision::ZERO,
             cover: CoverConfig::default(),
             toc: TocConfig::default(),

@@ -69,6 +69,7 @@ function extractToolInlineSummary(item: ToolCallTraceItem): string | null {
     case "read_as_markdown":
     case "read_blocks": {
       return (
+        extractJsonField(raw, "section_id") ??
         extractJsonField(raw, "section_heading") ??
         extractJsonField(raw, "query") ??
         extractJsonField(raw, "doc_id")

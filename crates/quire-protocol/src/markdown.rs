@@ -19,7 +19,7 @@ use crate::{
     json::merge_optional_json,
     model::{CitationStyle, ReportDocument},
     normalize::strip_duplicate_inner_title,
-    table::{TableError, display_cell, validate_table},
+    table::{TableError, compute_column_decimals, display_cell_aligned, validate_table},
     text::collapse_whitespace,
 };
 
@@ -44,7 +44,7 @@ impl Default for MarkdownOptions {
 enum Selection<'a> {
     All,
     Blocks(&'a [BlockId]),
-    Section(&'a str),
+    SectionAt(usize, u8),
 }
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
@@ -56,6 +56,8 @@ pub enum MarkdownError {
     },
     #[error("section heading `{query}` was not found. Available headings: {headings}")]
     SectionNotFound { query: String, headings: String },
+    #[error("`{query}` matches multiple headings; pass an exact section_id: {ids}")]
+    AmbiguousSection { query: String, ids: String },
     #[error("table block `{block_id}` cannot be projected: {source}")]
     InvalidTable {
         block_id: BlockId,
@@ -83,7 +85,7 @@ pub fn project_blocks(
     MarkdownProjector::new(document, options).render_blocks(block_ids)
 }
 
-/// Project one section starting at the first matching heading.
+/// Project a section using the legacy heading selector.
 pub fn project_section(
     document: &ReportDocument,
     heading: &str,
@@ -118,7 +120,32 @@ impl<'a> MarkdownProjector<'a> {
     }
 
     pub fn render_section(&self, heading: &str) -> Result<String, MarkdownError> {
-        self.render_selection(Selection::Section(heading))
+        let index = find_section_heading_start(self.document, heading)?;
+        self.render_heading_at(index, heading)
+    }
+
+    /// The agent-facing path takes an exact heading ID from the digest; never fall back to text.
+    pub fn render_section_by_id(&self, id: &BlockId) -> Result<String, MarkdownError> {
+        self.render_heading_at(self.document.position(id), id)
+    }
+
+    fn render_heading_at(
+        &self,
+        index: Option<usize>,
+        query: &str,
+    ) -> Result<String, MarkdownError> {
+        if let Some(start) = index
+            && let Some(Block {
+                body: BlockKind::Heading { level, .. },
+                ..
+            }) = self.document.blocks.get(start)
+        {
+            return self.render_selection(Selection::SectionAt(start, *level));
+        }
+        Err(MarkdownError::SectionNotFound {
+            query: query.to_string(),
+            headings: heading_list(self.document),
+        })
     }
 
     fn render_selection(&self, selection: Selection<'_>) -> Result<String, MarkdownError> {
@@ -159,17 +186,7 @@ impl<'a> MarkdownProjector<'a> {
                 selected.dedup();
                 Ok(selected)
             }
-            Selection::Section(query) => {
-                let Some(start) = find_section_heading_start(self.document, query) else {
-                    return Err(MarkdownError::SectionNotFound {
-                        query: query.to_string(),
-                        headings: heading_list(self.document),
-                    });
-                };
-                let level = match self.document.blocks.get(start).map(|block| &block.body) {
-                    Some(BlockKind::Heading { level, .. }) => *level,
-                    _ => 1,
-                };
+            Selection::SectionAt(start, level) => {
                 let mut indices = vec![start];
                 for (index, block) in self.document.blocks.iter().enumerate().skip(start + 1) {
                     if let BlockKind::Heading {
@@ -299,6 +316,7 @@ impl<'a> MarkdownProjector<'a> {
             block_id: block.id.clone(),
             source,
         })?;
+        let column_decimals = compute_column_decimals(table, &shape.leaves);
         let framing = self.framing.get(&block.id);
         match (
             framing.map(|framing| framing.label.as_str()),
@@ -336,9 +354,10 @@ impl<'a> MarkdownProjector<'a> {
         for row in &table.rows {
             output.push('|');
             for leaf in &shape.leaves {
+                let min_decimals = column_decimals.get(&leaf.key).copied().unwrap_or(0);
                 let cell = row
                     .get(&leaf.key)
-                    .map(|value| display_cell(value, leaf.data_type))
+                    .map(|value| display_cell_aligned(value, leaf.data_type, min_decimals))
                     .unwrap_or_default();
                 let _ = write!(output, " {} |", escape_table_cell(&cell));
             }
@@ -348,9 +367,10 @@ impl<'a> MarkdownProjector<'a> {
             for row in &table.summary_rows {
                 output.push('|');
                 for leaf in &shape.leaves {
+                    let min_decimals = column_decimals.get(&leaf.key).copied().unwrap_or(0);
                     let cell = row
                         .get(&leaf.key)
-                        .map(|value| display_cell(value, leaf.data_type))
+                        .map(|value| display_cell_aligned(value, leaf.data_type, min_decimals))
                         .unwrap_or_default();
                     let _ = write!(output, " **{}** |", escape_table_cell(&cell));
                 }
@@ -586,10 +606,15 @@ fn block_id_list(document: &ReportDocument) -> String {
     }
 }
 
-fn find_section_heading_start(document: &ReportDocument, query: &str) -> Option<usize> {
-    let trimmed = query.trim();
+fn find_section_heading_start(
+    document: &ReportDocument,
+    query: &str,
+) -> Result<Option<usize>, MarkdownError> {
+    // Strip trailing ellipsis (`…` or `...`) when an agent passes a truncated 30-char heading
+    // `preview` copied verbatim from `get_document_digest`.
+    let trimmed = query.trim().trim_end_matches(['…', '.']).trim();
     if trimmed.is_empty() {
-        return None;
+        return Ok(None);
     }
     let query_lower = trimmed.to_lowercase();
 
@@ -598,36 +623,20 @@ fn find_section_heading_start(document: &ReportDocument, query: &str) -> Option<
         matches!(&block.body, BlockKind::Heading { .. })
             && block.id.as_str().eq_ignore_ascii_case(trimmed)
     }) {
-        return Some(pos);
+        return Ok(Some(pos));
     }
 
     // 2. Direct heading plain-text substring match (case-insensitive).
-    if let Some(pos) = document.blocks.iter().position(|block| {
-        if let BlockKind::Heading { text, .. } = &block.body {
-            crate::inline::inline_plain_text(text)
-                .to_lowercase()
-                .contains(&query_lower)
-        } else {
-            false
-        }
-    }) {
-        return Some(pos);
+    if let Some(pos) = unique_heading_match(document, &query_lower)? {
+        return Ok(Some(pos));
     }
 
     // 3. Ordinal chapter prefix / label resolution (`第一章`, `第1章`, `第三章：师资与人才`, `Chapter 1`, `ch1`).
     let (ordinal, remainder) = parse_chapter_query(trimmed);
     if let Some(remainder) = remainder {
         let remainder_lower = remainder.to_lowercase();
-        if let Some(pos) = document.blocks.iter().position(|block| {
-            if let BlockKind::Heading { text, .. } = &block.body {
-                crate::inline::inline_plain_text(text)
-                    .to_lowercase()
-                    .contains(&remainder_lower)
-            } else {
-                false
-            }
-        }) {
-            return Some(pos);
+        if let Some(pos) = unique_heading_match(document, &remainder_lower)? {
+            return Ok(Some(pos));
         }
     }
     if let Some(ordinal) = ordinal {
@@ -641,10 +650,34 @@ fn find_section_heading_start(document: &ReportDocument, query: &str) -> Option<
             })
             .collect();
         if let Some(pos) = h1_positions.get(ordinal.saturating_sub(1)).copied() {
-            return Some(pos);
+            return Ok(Some(pos));
         }
     }
-    None
+    Ok(None)
+}
+
+fn unique_heading_match(
+    document: &ReportDocument,
+    text: &str,
+) -> Result<Option<usize>, MarkdownError> {
+    let mut matches = document.blocks.iter().enumerate().filter(|(_, block)| {
+        matches!(&block.body, BlockKind::Heading { text: heading, .. } if crate::inline::inline_plain_text(heading).to_lowercase().contains(text))
+    });
+    let Some((index, first)) = matches.next() else {
+        return Ok(None);
+    };
+    let Some((_, second)) = matches.next() else {
+        return Ok(Some(index));
+    };
+    let ids = [first.id.as_str(), second.id.as_str()]
+        .into_iter()
+        .chain(matches.map(|(_, block)| block.id.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(MarkdownError::AmbiguousSection {
+        query: text.to_string(),
+        ids,
+    })
 }
 
 fn parse_chapter_query(query: &str) -> (Option<usize>, Option<&str>) {
@@ -1123,6 +1156,55 @@ mod tests {
             project_section(&sample(), "第二章", &MarkdownOptions::default()).unwrap();
         assert!(by_ordinal_2.contains("block:appendix"));
         assert!(!by_ordinal_2.contains("block:intro"));
+
+        // Truncated digest preview ending with `…` or `...` matches the full heading.
+        let by_truncated_preview =
+            project_section(&sample(), "Intro…", &MarkdownOptions::default()).unwrap();
+        assert!(by_truncated_preview.contains("block:intro"));
+    }
+
+    #[test]
+    fn section_id_reads_the_requested_heading_and_text_ambiguity_fails_closed() {
+        let mut doc = ReportDocument::new(doc_id("collision"));
+        doc.blocks
+            .push(Block::heading(block_id("intro"), 1, "Introduction"));
+        doc.blocks
+            .push(Block::paragraph(block_id("intro_body"), "Opening body."));
+        doc.blocks.push(Block::heading(
+            block_id("intro_appendix"),
+            1,
+            "Introduction appendix",
+        ));
+        doc.blocks.push(Block::paragraph(
+            block_id("appendix_body"),
+            "Appendix body.",
+        ));
+
+        let projector = MarkdownProjector::new(&doc, &MarkdownOptions::default());
+        let by_id = projector
+            .render_section_by_id(&block_id("intro_appendix"))
+            .unwrap();
+        assert!(by_id.contains("block:intro_appendix"));
+        assert!(by_id.contains("block:appendix_body"));
+        assert!(!by_id.contains("block:intro_body"));
+
+        let error = project_section(&doc, "Introduction", &MarkdownOptions::default()).unwrap_err();
+        assert!(matches!(error, MarkdownError::AmbiguousSection { .. }));
+        assert!(error.to_string().contains("intro"));
+        assert!(error.to_string().contains("intro_appendix"));
+
+        // A block_ids read of a heading returns only that heading, never the section body.
+        let heading_only = project_blocks(
+            &doc,
+            &[block_id("intro")],
+            &MarkdownOptions {
+                include_front_matter: false,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(heading_only.contains("block:intro"));
+        assert!(!heading_only.contains("block:intro_body"));
     }
 
     #[test]

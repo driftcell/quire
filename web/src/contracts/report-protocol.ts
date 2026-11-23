@@ -419,6 +419,10 @@ export interface ReportDocument {
    */
   session_id?: SessionId | null;
   /**
+   * Optional document-wide target for readable paragraph characters, agreed at creation.
+   */
+  target_prose_chars?: number | null;
+  /**
    * Monotonic non-negative report revision.
    */
   revision?: number;
@@ -921,6 +925,26 @@ export interface BlockPatch {
    * Replace custom HTML fallback text.
    */
   fallback_text?: string | null;
+  /**
+   * Replace a table's column schema in place (preserving `block_id` and comment anchors).
+   */
+  columns?: ColumnNode[] | null;
+  /**
+   * Replace a table's body rows in place (preserving `block_id` and comment anchors).
+   */
+  rows?:
+    | {
+        [k: string]: CellValue;
+      }[]
+    | null;
+  /**
+   * Replace a table's summary rows in place.
+   */
+  summary_rows?:
+    | {
+        [k: string]: CellValue;
+      }[]
+    | null;
   /**
    * Append rows to a table's body.
    */

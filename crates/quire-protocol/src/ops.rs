@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    block::{Block, BlockKind, BlockStyle, CellValue, NumberingKind, is_semantic_block_id},
+    block::{
+        Block, BlockKind, BlockStyle, CellValue, ColumnNode, NumberingKind, is_semantic_block_id,
+    },
     ids::{BlockId, SourceId},
     json::merge_optional_json,
     lint::LintConfig,
@@ -113,6 +115,15 @@ pub struct BlockPatch {
     /// Replace custom HTML fallback text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fallback_text: Option<String>,
+    /// Replace a table's column schema in place (preserving `block_id` and comment anchors).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<ColumnNode>>,
+    /// Replace a table's body rows in place (preserving `block_id` and comment anchors).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<Vec<BTreeMap<String, CellValue>>>,
+    /// Replace a table's summary rows in place.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary_rows: Option<Vec<BTreeMap<String, CellValue>>>,
     /// Append rows to a table's body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub append_rows: Vec<BTreeMap<String, CellValue>>,
@@ -137,6 +148,9 @@ impl BlockPatch {
             && self.numbering.is_none()
             && self.note.is_none()
             && self.fallback_text.is_none()
+            && self.columns.is_none()
+            && self.rows.is_none()
+            && self.summary_rows.is_none()
             && self.append_rows.is_empty()
             && self.update_cell.is_none()
     }
@@ -878,6 +892,19 @@ fn apply_block_patch(block: &mut Block, patch: &BlockPatch) -> Result<(), PatchE
             if let Some(note) = &patch.note {
                 table.note = (!note.trim().is_empty()).then(|| note.clone());
             }
+            if let Some(columns) = &patch.columns {
+                table.columns = columns.clone();
+                validate_table(table).map_err(|error| PatchError::InvalidPatch {
+                    block_id: block_id.clone(),
+                    message: error.to_string(),
+                })?;
+            }
+            if let Some(rows) = &patch.rows {
+                table.rows = rows.clone();
+            }
+            if let Some(summary_rows) = &patch.summary_rows {
+                table.summary_rows = summary_rows.clone();
+            }
             if !patch.append_rows.is_empty() {
                 table.rows.extend(patch.append_rows.iter().cloned());
             }
@@ -935,8 +962,17 @@ fn validate_patch_compatibility(block: &Block, patch: &BlockPatch) -> Result<(),
         BlockKind::Heading { .. } => (&["text", "level"][..], "text, level"),
         BlockKind::Paragraph { .. } | BlockKind::Quote { .. } => (&["text"][..], "text"),
         BlockKind::Table(_) => (
-            &["title", "numbering", "note", "append_rows", "update_cell"][..],
-            "title, numbering, note, append_rows, update_cell",
+            &[
+                "title",
+                "numbering",
+                "note",
+                "columns",
+                "rows",
+                "summary_rows",
+                "append_rows",
+                "update_cell",
+            ][..],
+            "title, numbering, note, columns, rows, summary_rows, append_rows, update_cell",
         ),
         BlockKind::Echarts(_) => (
             &[
@@ -966,6 +1002,9 @@ fn validate_patch_compatibility(block: &Block, patch: &BlockPatch) -> Result<(),
         ("option", patch.option.is_some()),
         ("option_patch", patch.option_patch.is_some()),
         ("height", patch.height.is_some()),
+        ("columns", patch.columns.is_some()),
+        ("rows", patch.rows.is_some()),
+        ("summary_rows", patch.summary_rows.is_some()),
         ("append_rows", !patch.append_rows.is_empty()),
         ("update_cell", patch.update_cell.is_some()),
     ];
@@ -1219,7 +1258,7 @@ mod tests {
     }
 
     #[test]
-    fn table_append_and_update_cell() {
+    fn table_append_update_cell_and_in_place_columns_rows_patch() {
         let mut doc = ReportDocument::new(doc_id("doc"));
         doc.blocks.push(Block::table(
             block_id("t"),
@@ -1246,6 +1285,10 @@ mod tests {
                     title: Some("Revenue".into()),
                     numbering: Some(NumberingKind::Table),
                     note: Some("Audited".into()),
+                    columns: Some(vec![
+                        ColumnNode::leaf("region", "Region"),
+                        ColumnNode::leaf("revenue", "Revenue ($M)"),
+                    ]),
                     append_rows: vec![BTreeMap::from([
                         ("region".to_string(), CellValue::text("EMEA")),
                         ("revenue".to_string(), CellValue::Integer(20)),
@@ -1264,6 +1307,7 @@ mod tests {
         let BlockKind::Table(table) = &doc.block("t").unwrap().body else {
             panic!()
         };
+        assert_eq!(table.columns[1].label, "Revenue ($M)");
         assert_eq!(table.rows.len(), 2);
         assert_eq!(table.rows[0]["revenue"], CellValue::Integer(15));
         assert_eq!(table.title.as_deref(), Some("Revenue"));

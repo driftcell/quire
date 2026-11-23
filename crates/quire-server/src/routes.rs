@@ -194,16 +194,34 @@ struct DocumentView {
     computed: ComputedDocumentMeta,
 }
 
+#[derive(Debug, Deserialize)]
+struct DocumentQuery {
+    rev: Option<i64>,
+}
+
 async fn get_document(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
+    Query(query): Query<DocumentQuery>,
 ) -> Result<Json<DocumentView>, ApiError> {
-    let loaded = state.store.load_document(&doc_id).await?;
-    let computed = compute_document_meta(&loaded.document);
-    let current_rev = loaded.document.revision;
+    let document = match query.rev {
+        Some(rev) if rev < 1 => {
+            return Err(ApiError(StoreError::InvalidRequest(
+                "rev must identify a committed revision (1 or higher)".into(),
+            )));
+        }
+        Some(rev) => {
+            state
+                .store
+                .document_at_revision(&doc_id, Revision::new(rev)?)
+                .await?
+        }
+        None => state.store.get_document(&doc_id).await?,
+    };
+    let computed = compute_document_meta(&document);
     Ok(Json(DocumentView {
-        current_rev,
-        document: loaded.document,
+        current_rev: document.revision,
+        document,
         computed,
     }))
 }

@@ -928,7 +928,12 @@ impl Block {
 
     /// Number of Unicode scalar values in visible text.
     pub fn char_count(&self) -> usize {
-        self.visible_text().chars().count()
+        match &self.body {
+            BlockKind::Paragraph { text }
+            | BlockKind::Heading { text, .. }
+            | BlockKind::Quote { text } => crate::inline::readable_char_count(text),
+            _ => self.visible_text().chars().count(),
+        }
     }
 }
 

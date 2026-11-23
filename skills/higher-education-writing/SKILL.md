@@ -12,9 +12,10 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 - **结论先行**：每个 H2 小节首段首句直接给出带量化锚点与对比坐标的核心判断；严禁以“本章先看……”“本节围绕三个维度展开”等报幕套话开篇（触发 `QR412`）。
 - **两级标题原创结论化（严禁套用示范标题）**：H1 与 H2 均采用 `<分析对象或切面>：<基于本节证据得出的具体比较结论或结构性判断>` 的抽象语法结构，让目录本身成为管理层摘要；**所有标题必须根据当前报告的真实数据与独有论证原创提炼，严禁照抄任何提示词或参考文件里的句式或标题**。无判断的裸话题短语或仅报数量的计数空壳标题一律触发 `QR418`。
 - **四维对标坐标**：指标不孤立报数，必须落入纵向跨期、省内同类、全国行业特色院校或政策申报门槛之一；多源口径差异（全口径/专任、平台含共建与否等）在总编阶段先裁定，首次出现处用一句业务中文交代。
-- **`excerpt` 原文闭环与真实信源**：`SourceEntry.excerpt` 必须完整包含正文与图表将引用的数字、年份和口径；严禁把 `excerpt` 中不存在的数字硬挂在某条 `[^source_id]` 下，也严禁伪造单一笼统的“公开数据大汇编”口袋信源或根据 `note` 脑补编造 `excerpt`。外部网页来源必须经 `deepseek_fetch` 读取原文后登记真实摘录；内部平台数据库按业务数据域分别登记权责清晰的来源条目。
+- **`excerpt` 原文闭环与双体系隔离**：`SourceEntry.excerpt` 必须完整包含正文与图表将引用的数字、年份和口径；严禁把 `excerpt` 中不存在的数字硬挂在某条 `[^source_id]` 下，也严禁伪造单一笼统的“公开数据大汇编”口袋信源或根据 `note` 脑补编造 `excerpt`。外部网页来源必须经 `deepseek_fetch` 读取原文后登记真实摘录；内部平台数据库按业务数据域分别登记权责清晰的来源条目。`subjectcloud` 的 `moe`（学科评估折算口径）与 `index`（年度学科指数口径）两套体系必须严格隔离，主编在 Step 1 锁定唯一主口径后，`sc-discipline` 的 `excerpt` 与下发给子代理的 `shared_facts` 必须完全一致。
+- **跨分析师校名与表头单位统一**：行向对标表（高校作为行维度，列数≤7）首列统一使用高校**官方全称**；列向多校矩阵表（高校作为列维度，7–9列）及多校横向柱线图 X 轴统一使用 2–4 字**官方简称**，严禁前半篇表格用简称、后半篇同构表格用全称。数值型百分比列（`data_type: "percent"`）必须在叶表头或父级分组表头显式标注 `（%）`（如 `青年占比（%）`）。
 - **视觉穿插与无锁锚定**：图表不堆在节首后拖十余段纯文。标准结构是“1–2 段核心判断引出问题 → 表格/图表 → 4–6 段围绕图表的结构拆解、机制归因与建设抓手”（`analyst` 在 Step 3 将视觉块 `vis_id` 插入小节 `section_id` 后，`writer` 在 Step 4 使用 `InsertBefore(target_id=vis_id)` 在视觉块前插入 1–2 段开篇判断，使用 `InsertAfter(target_id=vis_id)` 在视觉块后插入 4–6 段纵深分析，既避免 `QR419` 纯文墙，又彻底消除主代理代写导语段的死锁）。
-- **语言纯净**：正文、表头、单元格与注释不得出现 `指标库口径`、`指标库记录`、`FacultyInfo`、`includeSub=true`、`local:4.1.1`（`QR424`），也不得出现“本节只确认……”“在行动路径章统一处理”“是基于学科名称的推断”等审稿元话语或章节分工自白（`QR426`）。
+- **段段有据与语言纯净**：凡自然段内出现具体统计数字、年份、位次或分差（含机制/建议段回指基线数字），该段必须在句中直接附带对应的 `[^source_id]`（防 `QR103`）；正文、表头、单元格与注释不得出现 `指标库口径`、`指标库记录`、`FacultyInfo`、`includeSub=true`、`local:4.1.1`（`QR424`），不得使用 `不是…而是…`、`并非…而是…`、`需要说明的是`、`值得注意的是` 等二元对比与缓冲套式（`QR415`），也不得出现“本节只确认……”“在行动路径章统一处理”“是基于学科名称的推断”等审稿元话语或章节分工自白（`QR426`）。
 
 ## 按需加载参考文件（一级直连，按任务取用）
 
@@ -60,7 +61,7 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 - **主代理不得越权单干**：在 4+ 章综合研报中，主代理必须调用 `spawn_subagents` 派发 `analyst` 子代理（可按章节分组并行派 1—2 个 `analyst`）完成全部三线表与 ECharts 图表落库，**严禁主代理自己调用 `preview_echarts` / `commit_chart` 包办图表**。
 - `analyst` 先复核高风险共享事实，再按阅读问题设计视觉：定量对比落为学术三线表（`Table`），趋势与结构分化落为原生 ECharts 6 图。没有新增信息时不建图，不为打断正文或消除 lint 添加重复视觉。
 - 所有目标值、差值、比率、斜率和阶段节点由 analyst 单一维护，记录基线、时间窗、存量/流量/合计/净增属性、公式、参照对象、来源与假设；不同性质的数据不得直接比较，核心假设变化时重算全部下游块。
-- 所有 analyst 使用主编下发的同一实体配色与样式合同。每张图执行 `preview_echarts` 后再 `commit_chart`，并在两步之一直接绑定 `source_ids` / `source_note`；修改已有图表时用原 `block_id` 原地更新。表格用 `preview_report` 实际检查，`fallback_summary` 写出核心发现。
+- 所有 analyst 使用主编下发的同一实体配色、高校全称/简称映射与样式合同。每张图执行 `preview_echarts` 后再 `commit_chart`，并在两步之一直接绑定 `source_ids` / `source_note`；修改已有图表时用原 `block_id` 原地更新。表格用 `preview_report` 实际检查，`fallback_summary` 写出核心发现；修订已有表格的列定义或行数据时使用 `PatchBlock`（`columns` / `rows` / `summary_rows` / `update_cell`）原地更新，保留 `block_id` 与评论锚点。
 - **先行落入小节 `section_id`**：在 Step 3，`analyst` 将每张表格与 ECharts 直接插入对应小节 `section_id`（如 `c2-1`），并向主编返回每个视觉块的 `block_id`。
 - **表注与来源精简铁律**：每张表和每张图的 `note` 严格控制在 **120 字以内（最多不超过 160 字，约 1~2 行）**，固定写为 `单位：…；统计口径：…（时间窗与包含范围）。`；同一缺失事实只在首次出现的总览表表注交代一次，后续图表表注只写 `未收录项标“—”`。
 - **3–5 列定性表表达完整**：制度规则对照、产业-学科映射、风险缓释矩阵等 3–5 列定性表，每个文本单元格应写 10–22 字的完整业务表述（A4 下自动折为 1–2 行），严禁砍成 4–6 字的电报式口号。
@@ -75,7 +76,7 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 
 ### Step 5 主编逐章通读与视觉归并
 
-- `main` 按一级章节调用 `read_as_markdown(section_heading=...)` 通读全稿，不得以 digest、lint、局部截图或子代理汇报代替。逐章检查跨章重复、图表复述、多中心长段、自我标签、标题原创性和方法可比性，并核对硬要求台账。
+- `main` 先从 `get_document_digest` 取一级章节标题块 ID，再按 `read_as_markdown(section_id="ch1")`..`read_as_markdown(section_id="chN")` 通读全稿，不得以 digest、lint、局部截图或子代理汇报代替。逐章检查跨章重复、图表复述、跨表校名全称/简称一致性、多中心长段、自我标签、标题原创性和方法可比性，并核对硬要求台账。
 - 需要视觉归并时续接 analyst：先压缩正文明细，再删除低价值重复视觉；不得为消 lint 补图。核心假设变化时由 analyst 重算全部下游值，不能只替换正文数字。
 - 全部主体章节完成后，由 main 亲自撰写或重写全篇结语，不能沿用 writer 在其他章节未完成时提前生成的收束。
 
@@ -87,7 +88,7 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 
 ### Step 7 主编全局改稿与标题终定
 
-- `main` 调用 `list_comments(doc_id, status="open")`，逐项修复或说明不采纳理由，消除跨章重复、口径冲突和方法问题，并回复批注。
+- `main` 调用 `list_comments(doc_id, status="open")`，逐项修复或说明不采纳理由（对表格列头或行数据的修改使用 `PatchBlock` 原地更新 `columns` / `rows` / `update_cell`，不更换 `block_id`），消除跨章重复、口径冲突和方法问题，并回复批注。
 - 统揽全篇内容与图表，最终敲定各级标题：不得残留 `[待拟标题]`、套路化口号或不自然比喻。
 
 ### Step 8 Continue 同一个 `reviewer` 复核与版本绑定
@@ -125,6 +126,6 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 
 1. `target_scope`：`doc_id`、`expected_revision`、章/节 `section_id` 与允许使用的 `block_id` 前缀。
 2. `analytical_questions`：每节 3–4 个核心问题与结论方向，并要求用 `PatchBlock` 升级原创 H1/H2 标题。
-3. `verified_facts_and_sources`：仅列 `excerpt` 有原文支撑的 `source_id` 与统一口径规则。
+3. `verified_facts_and_sources`：仅列 `excerpt` 有原文支撑的 `source_id` 与统一口径规则，提醒含数字段落必附 `[^source_id]`、初稿禁用 `不是…而是…` 等对比与缓冲套式。
 4. `existing_visuals_and_anchors`：已有 table/echarts 块 ID（`vis_id`），指示 writer 用 `InsertBefore(vis_id)` 写 1–2 段开篇判断、用 `InsertAfter(vis_id)` 写 4–6 段结构拆解与机制归因，不移动视觉块。
 5. `cross_chapter_boundaries`：前序章节已展开的数据、本章只回指结论，禁止章节分工自白。

@@ -4,13 +4,13 @@
 //! turns the `///` comments below into JSON Schema descriptions, so keep them short and
 //! actionable for agents that discover tools dynamically.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, num::NonZeroU32};
 
 use indexmap::IndexMap;
 use quire_protocol::{
-    Block, CitationStyle, CommentStatus, CommentThread, CoverConfig, Diagnostic, HeadingPageBreak,
-    IdAssignment, LintSummary, PageChromeConfig, PageChromeSlots, PatchOp, ReferencesConfig,
-    SourceEntry, SourceId, TextQuoteSelector, ThemeSummary, TocConfig,
+    Block, BlockId, CitationStyle, CommentStatus, CommentThread, CoverConfig, Diagnostic,
+    HeadingPageBreak, IdAssignment, LintSummary, PageChromeConfig, PageChromeSlots, PatchOp,
+    ReferencesConfig, SourceEntry, SourceId, TextQuoteSelector, ThemeSummary, TocConfig,
 };
 use quire_store::ReportSummary;
 use schemars::JsonSchema;
@@ -47,6 +47,9 @@ pub struct GuideReceipt {
 pub struct CreateReportParams {
     /// Human-readable report title, for example "Q3 Revenue Review".
     pub title: String,
+    /// Agreed length in visible paragraph characters (e.g. 30000 for 约3万字). Omit when unspecified.
+    #[serde(default)]
+    pub target_prose_chars: Option<NonZeroU32>,
     /// Optional frontend theme preset, for example "editorial" or "technical".
     #[serde(default)]
     pub theme_preset: Option<String>,
@@ -154,6 +157,9 @@ pub struct DigestParams {
     /// Optional case-insensitive keyword filter over id/type/text.
     #[serde(default)]
     pub query: Option<String>,
+    /// Optional read-only comparison target for older reports with no stored agreement.
+    #[serde(default)]
+    pub target_prose_chars: Option<NonZeroU32>,
 }
 
 /// Output for `get_document_digest`.
@@ -201,9 +207,14 @@ pub struct DocumentDigest {
     /// Number of paragraph blocks, excluding headings, quotations and visuals.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub paragraph_count: usize,
-    /// Visible prose characters across paragraph blocks, for requirement checks rather than quotas.
-    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    /// Visible Unicode characters across paragraphs, excluding inline citations and Markdown syntax.
     pub prose_char_count: usize,
+    /// User's agreed length, or an explicit comparison target for an older report.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_prose_chars: Option<NonZeroU32>,
+    /// Actual minus target; negative means below target. This is not a per-chapter quota.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prose_char_delta: Option<i64>,
     /// Combined Table, ECharts and CustomHtml block count.
     #[serde(default, skip_serializing_if = "is_zero_usize")]
     pub visual_block_count: usize,
@@ -219,8 +230,12 @@ pub struct DocumentDigest {
 pub struct ReadMarkdownParams {
     /// Existing report ID.
     pub doc_id: String,
-    /// Project one matching heading section.
+    /// Exact heading block ID from get_document_digest. Returns that heading and its contents up to the next same-or-higher heading.
     #[serde(default)]
+    pub section_id: Option<BlockId>,
+    /// Legacy input for older callers; new agents use the exact `section_id`.
+    #[serde(default)]
+    #[schemars(skip)]
     pub section_heading: Option<String>,
     /// Project specific block IDs, in document order. Example: `["ch1_summary"]`.
     #[serde(default)]

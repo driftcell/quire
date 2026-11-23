@@ -194,8 +194,8 @@ impl PgReportStore {
 
         let inserted = sqlx::query!(
             r#"INSERT INTO report_documents
-               (doc_id, session_id, idempotency_key, current_rev, cover, toc, theme, "references", lint)
-               VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8)
+               (doc_id, session_id, idempotency_key, current_rev, cover, toc, theme, "references", lint, target_prose_chars)
+               VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9)
                RETURNING current_rev"#,
             document.doc_id.as_str(),
             document.session_id.as_ref().map(SessionId::as_str),
@@ -205,6 +205,7 @@ impl PgReportStore {
             theme,
             references,
             lint,
+            document.target_prose_chars.map(|n| i64::from(n.get())),
         )
         .fetch_one(&mut *tx)
         .await;
@@ -1417,6 +1418,13 @@ impl PgReportStore {
             )
             .fetch_all(&self.pool)
             .await?;
+            if i64::try_from(rows.len()).ok() != Some(revision.get() - snapshot.rev_num) {
+                return Err(StoreError::CorruptRevision {
+                    doc_id: doc_id.clone(),
+                    revision,
+                    message: "incomplete forward history for the requested snapshot".into(),
+                });
+            }
             for row in rows {
                 let ops: Vec<PatchOp> = serde_json::from_value(row.forward_ops)?;
                 apply_operations_in_place(&mut document, &ops)?;
@@ -1435,6 +1443,13 @@ impl PgReportStore {
         )
         .fetch_all(&self.pool)
         .await?;
+        if i64::try_from(rows.len()).ok() != Some(current.revision.get() - revision.get()) {
+            return Err(StoreError::CorruptRevision {
+                doc_id: doc_id.clone(),
+                revision,
+                message: "incomplete inverse history for the requested snapshot".into(),
+            });
+        }
         let mut document = current;
         for row in rows {
             let ops: Vec<PatchOp> = serde_json::from_value(row.inverse_ops)?;
@@ -1617,7 +1632,7 @@ async fn load_document_in_tx(
 ) -> Result<LoadedDocument, StoreError> {
     let typed_doc_id = DocId::parse(doc_id)?;
     let row = sqlx::query!(
-        r#"SELECT doc_id, session_id, current_rev, cover, toc, theme,
+        r#"SELECT doc_id, session_id, current_rev, cover, toc, theme, target_prose_chars,
                   "references" AS "references_json!", lint AS "lint_json!"
            FROM report_documents WHERE doc_id = $1"#,
         doc_id
@@ -1677,6 +1692,15 @@ async fn load_document_in_tx(
     let document = ReportDocument {
         doc_id: doc_row.doc_id,
         session_id: doc_row.session_id,
+        target_prose_chars: row
+            .target_prose_chars
+            .map(|value| {
+                u32::try_from(value)
+                    .ok()
+                    .and_then(std::num::NonZeroU32::new)
+                    .ok_or_else(|| StoreError::Internal("invalid stored target_prose_chars".into()))
+            })
+            .transpose()?,
         revision: doc_row.current_rev,
         cover: parse_json(doc_row.cover, "report_documents.cover")?,
         toc: parse_json(doc_row.toc, "report_documents.toc")?,

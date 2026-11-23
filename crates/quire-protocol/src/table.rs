@@ -4,13 +4,15 @@
 //! validates recursive header trees and exposes the ordered leaf columns that Markdown
 //! projection, storage validation, and the linter need.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::block::{Align, CellValue, ColumnDataType, ColumnNode, ColumnSizing, TableBlock};
+use crate::block::{
+    Align, CellValue, ColumnDataType, ColumnNode, ColumnSizing, TableBlock, format_number,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum TableError {
@@ -177,11 +179,132 @@ pub fn unknown_width_overrides(
 
 /// Display a cell with type-aware numeric annotation.
 pub fn display_cell(cell: &CellValue, data_type: ColumnDataType) -> String {
-    let mut text = cell.display_text();
+    display_cell_aligned(cell, data_type, 0)
+}
+
+/// Display a cell with column-consistent decimal alignment (matching frontend `tableCellFormat.ts`).
+pub fn display_cell_aligned(
+    cell: &CellValue,
+    data_type: ColumnDataType,
+    min_decimals: usize,
+) -> String {
+    let mut text = match cell {
+        CellValue::Float(value) if min_decimals > 0 && value.is_finite() => {
+            format_number_with_min_decimals(*value, min_decimals)
+        }
+        CellValue::Integer(value) if min_decimals > 0 => {
+            format_number_with_min_decimals(*value as f64, min_decimals)
+        }
+        CellValue::Rich(rich) if rich.text.is_none() => rich
+            .number
+            .map(|value| {
+                if min_decimals > 0 && value.is_finite() {
+                    format_number_with_min_decimals(value, min_decimals)
+                } else {
+                    format_number(value)
+                }
+            })
+            .unwrap_or_default(),
+        _ => cell.display_text(),
+    };
     if data_type == ColumnDataType::Percent && cell.as_number().is_some() && !text.ends_with('%') {
         text.push('%');
     }
     text
+}
+
+/// Compute per-column decimal precision (`0..=2`) across all body and summary rows so Markdown
+/// projections preserve `.0` trailing zeros in decimal columns (e.g. `56.0%` alongside `48.9%`),
+/// while keeping integer count rows unpadded in mixed row-oriented indicator tables.
+pub fn compute_column_decimals(
+    table: &TableBlock,
+    leaves: &[LeafColumn],
+) -> BTreeMap<String, usize> {
+    let mut precision = BTreeMap::new();
+    let first_col_key = leaves.first().map(|leaf| leaf.key.as_str());
+    let has_explicit_integer_unit_row = leaves.len() > 1
+        && first_col_key.is_some_and(|first_key| {
+            table
+                .rows
+                .iter()
+                .chain(table.summary_rows.iter())
+                .filter_map(|row| row.get(first_key))
+                .any(|cell| has_explicit_integer_row_unit(&cell.display_text()))
+        });
+
+    for (col_idx, leaf) in leaves.iter().enumerate() {
+        if !leaf.data_type.is_numeric() {
+            continue;
+        }
+        if col_idx > 0 && has_explicit_integer_unit_row {
+            precision.insert(leaf.key.clone(), 0);
+            continue;
+        }
+        let mut max_decimals = 0usize;
+        for row in table.rows.iter().chain(table.summary_rows.iter()) {
+            let Some(cell) = row.get(&leaf.key) else {
+                continue;
+            };
+            let is_explicit_text = matches!(cell, CellValue::Text(_))
+                || matches!(cell, CellValue::Rich(rich) if rich.text.is_some());
+            if is_explicit_text {
+                continue;
+            }
+            if let Some(value) = cell.as_number() {
+                max_decimals = max_decimals.max(decimal_places(value));
+            }
+        }
+        precision.insert(leaf.key.clone(), max_decimals.min(2));
+    }
+    precision
+}
+
+fn decimal_places(value: f64) -> usize {
+    if !value.is_finite() {
+        return 0;
+    }
+    let rendered = format_number(value);
+    rendered
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len())
+}
+
+fn format_number_with_min_decimals(value: f64, min_decimals: usize) -> String {
+    let base = format_number(value);
+    if min_decimals == 0 || !value.is_finite() {
+        return base;
+    }
+    let current = base
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len());
+    if current >= min_decimals {
+        base
+    } else {
+        format!("{value:.min_decimals$}")
+    }
+}
+
+fn has_explicit_integer_row_unit(label: &str) -> bool {
+    const UNITS: &[&str] = &[
+        "人", "个", "项", "门", "席", "位", "所", "家", "篇", "部", "本", "次", "条", "套", "台",
+        "名", "届",
+    ];
+    for (open, close) in [('（', '）'), ('(', ')')] {
+        let mut rest = label;
+        while let Some(start) = rest.find(open) {
+            let after_open = &rest[start + open.len_utf8()..];
+            if let Some(end) = after_open.find(close) {
+                let inner = after_open[..end].trim();
+                if UNITS.contains(&inner) {
+                    return true;
+                }
+                rest = &after_open[end + close.len_utf8()..];
+            } else {
+                break;
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -315,5 +438,28 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(unknown_width_overrides(&style, &shape), vec!["zzz"]);
+    }
+
+    #[test]
+    fn column_decimals_pad_mixed_decimal_columns_and_protect_integer_unit_rows() {
+        let mut pct_table = table(vec![
+            ColumnNode::leaf("school", "高校"),
+            ColumnNode::leaf("share", "青年占比（%）").with_type(ColumnDataType::Percent),
+        ]);
+        pct_table.rows.push(BTreeMap::from([
+            ("school".to_string(), CellValue::text("南京工业大学")),
+            ("share".to_string(), CellValue::Float(56.0)),
+        ]));
+        pct_table.rows.push(BTreeMap::from([
+            ("school".to_string(), CellValue::text("江苏大学")),
+            ("share".to_string(), CellValue::Float(48.9)),
+        ]));
+        let shape = validate_table(&pct_table).unwrap();
+        let decimals = compute_column_decimals(&pct_table, &shape.leaves);
+        assert_eq!(decimals.get("share").copied(), Some(1));
+        assert_eq!(
+            display_cell_aligned(&CellValue::Float(56.0), ColumnDataType::Percent, 1),
+            "56.0%"
+        );
     }
 }

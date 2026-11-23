@@ -92,8 +92,8 @@ pub fn validate_custom_css(css: &str) -> Result<(), ProtocolError> {
     }
 }
 pub use table::{
-    LeafColumn, TableError, TableShape, display_cell, unknown_row_keys, unknown_width_overrides,
-    validate_table,
+    LeafColumn, TableError, TableShape, compute_column_decimals, display_cell,
+    display_cell_aligned, unknown_row_keys, unknown_width_overrides, validate_table,
 };
 pub use text::{CssBraceIssue, css_brace_issue, safe_href};
 #[cfg(test)]

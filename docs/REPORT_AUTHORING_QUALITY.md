@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-server`, `quire-runtime`, `quire-lint`
-- **Related Notes:** `../notes/report_quality_systemic_improvement.md`, `../notes/report_prompt_lint_calibration.md`
+- **Related Notes:** `../notes/report_quality_systemic_improvement.md`, `../notes/report_prompt_lint_calibration.md`, `../notes/report_verification_receipts.md`
 
 ## 1. Scope & Non-Goals
 
@@ -24,8 +24,14 @@ than keyword-only lint.
 
 The lead records explicit user requirements before authoring: total length, effective source count,
 comparison set, time window, requested calculations and layout. Total length is never decomposed into
-hard per-chapter prose quotas. `get_document_digest` exposes `paragraph_count`, `prose_char_count`,
-`visual_block_count`, `source_count` and `cited_source_count` for requirement checks.
+hard per-chapter prose quotas. When a report is created with an agreed total, `create_report` stores
+it as `target_prose_chars`; `get_document_digest` then returns `target_prose_chars` and a signed
+`prose_char_delta` (actual minus target) alongside `paragraph_count`, `prose_char_count`,
+`visual_block_count`, `source_count` and `cited_source_count`. `prose_char_count` counts visible
+paragraph text only: inline citations and Markdown markers are excluded so the number matches what a
+reader sees. An under-target delivery must add substantive analysis or disclose the gap; clean lint
+does not discharge the length agreement. Older reports without a stored target may pass
+`target_prose_chars` explicitly for a read-only comparison.
 
 Shared facts have three states:
 
@@ -53,7 +59,8 @@ value rather than patching isolated prose numbers.
 4. Complete and calibrate one representative pilot chapter before starting the remaining writers in
    parallel. Writers own only their assigned body prose and headings; they never draft the whole-report
    conclusion early and request visuals or derived calculations instead of creating them to satisfy lint.
-5. The lead reads every chapter through `read_as_markdown(section_heading=...)`, checks requirements,
+5. The lead reads every chapter through `read_as_markdown(section_id=<heading block ID>)` from the
+   digest, checks requirements,
    repetition, methods, titles and readability, asks analysts to consolidate visuals when needed, and
    personally writes or rewrites the whole-report conclusion after every body chapter is complete.
 6. An independent reviewer checks facts, original citations, derived methods, prose/visual redundancy,
@@ -100,6 +107,13 @@ agent prompts do not duplicate the complete lint catalog.
 
 ## 3. Invariants & Verification
 
+- `read_as_markdown(section_id=...)` returns exactly the named heading and its contents. The legacy
+  text selector fails closed with candidate IDs when a string matches multiple headings; it never
+  guesses. `block_ids=[heading]` returns only the heading block, not the section.
+- A preview of revision N either renders revision N or fails; a screenshot is never returned as
+  evidence for a different revision. The same pinning applies to `GET /api/docs/{doc_id}?rev=N`.
+- `prose_char_count` excludes citation markers and markup, and `prose_char_delta` is computed against
+  the persisted `target_prose_chars` so every reviewer sees the same agreement.
 - `list_sources` preserves request order for exact-ID queries, returns evidence excerpts and rejects
   unknown IDs with valid IDs in the error details.
 - Digest aggregates describe the whole document even when `query` filters the returned block list.
@@ -150,8 +164,8 @@ Forensic inspection of the 19 agent runs and 429 tool calls in session `sess_y41
 1. **Canonical Inline Citations in `read_as_markdown` (`crates/quire-protocol/src/markdown.rs`)**:
    - `MarkdownProjector` previously expanded inline `[^source_id]` into `[^source_id: Source Title]` inside projected paragraph text, causing writers and the lead agent to copy or mimic `[^id: title]` when patching blocks and triggering 20+ non-suppressible `QR107` blocking errors.
    - Inline citations now project as canonical `[^source_id]`, while resolved source titles are listed beneath each block in `Sources: [^id] (Title)`.
-2. **Heading ID & Ordinal Chapter Resolution in `read_as_markdown(section_heading=...)` (`crates/quire-protocol/src/markdown.rs`)**:
-   - `Selection::Section` now matches exact Heading `block.id`s (`"ch1"`, `"c3-2"`), plain-text substrings, and Chinese/English ordinal chapter queries (`"第一章"`, `"第2章"`, `"第三章：师资与人才"`, `"Chapter 1"`), eliminating first-turn lookup errors in parallel writers.
+2. **Heading ID & Ordinal Chapter Resolution in `read_as_markdown` (`crates/quire-protocol/src/markdown.rs`)**:
+   - `Selection::SectionAt` now matches exact Heading `block.id`s (`"ch1"`, `"c3-2"`), plain-text substrings, and Chinese/English ordinal chapter queries (`"第一章"`, `"第2章"`, `"第三章：师资与人才"`, `"Chapter 1"`), eliminating first-turn lookup errors in parallel writers. Canonical entry is now the `section_id` parameter; the legacy text selector fails closed when a string matches multiple headings.
 3. **Partial `preview_report` TOC Suppression (`web/src/routes/docs.$docId_.preview.tsx`)**:
    - When `blockIds` or `sectionId` is set (`isPartial = true`), `filteredDocument` and `filteredComputed` now disable `toc` (`enabled: false`, `toc_tree: []`) alongside `cover` and `references`, so Page 1 directly renders the target table or chart rather than a full-page TOC.
 4. **Atomic Source Attribution & In-Place Update in `preview_echarts` / `commit_chart` (`crates/quire-runtime/src/rig_agent/builtin_tools.rs`)**:
