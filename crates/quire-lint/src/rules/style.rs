@@ -4,16 +4,23 @@ use quire_protocol::{
     BlockKind, ReportDocument, css_brace_issue, is_safe_css_token_value, is_valid_css_token_name,
 };
 
-use crate::{engine::Engine, registry::RuleId};
+use crate::{
+    context::LintContext,
+    engine::{Engine, Finding},
+    registry::RuleId,
+};
 
-pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
-    check_theme(document, engine);
-    check_toc(document, engine);
-    check_cover(document, engine);
-    check_custom_html(document, engine);
+pub(crate) fn check(context: &LintContext<'_>) -> Vec<Finding> {
+    let mut engine = Engine::new();
+    let document = context.document;
+    check_theme(document, &mut engine);
+    check_toc(document, &mut engine);
+    check_cover(document, &mut engine);
+    check_custom_html(document, &mut engine);
+    engine.into_findings()
 }
 
-fn check_theme(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_theme(document: &ReportDocument, engine: &mut Engine) {
     if let Some(issue) = css_brace_issue(&document.theme.custom_css) {
         engine.report(
             RuleId::CssSyntaxError,
@@ -56,7 +63,7 @@ fn check_theme(document: &ReportDocument, engine: &mut Engine<'_>) {
     }
 }
 
-fn check_toc(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_toc(document: &ReportDocument, engine: &mut Engine) {
     if !(1..=3).contains(&document.toc.max_depth) {
         engine.report(
             RuleId::TocDepthRange,
@@ -80,7 +87,7 @@ fn check_toc(document: &ReportDocument, engine: &mut Engine<'_>) {
     }
 }
 
-fn check_cover(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_cover(document: &ReportDocument, engine: &mut Engine) {
     if document.cover.enabled
         && document.cover.title.trim().is_empty()
         && document.title() == document.doc_id.as_str()
@@ -104,7 +111,7 @@ fn check_cover(document: &ReportDocument, engine: &mut Engine<'_>) {
     }
 }
 
-fn check_custom_html(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_custom_html(document: &ReportDocument, engine: &mut Engine) {
     for (index, block) in document.blocks.iter().enumerate() {
         let BlockKind::CustomHtml(html) = &block.body else {
             continue;

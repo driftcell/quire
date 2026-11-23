@@ -2,19 +2,24 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use quire_protocol::{
-    BlockKind, CitationScan, ReportDocument, SourceId, safe_href, scan_document_citations,
-};
+use quire_protocol::{BlockKind, CitationScan, ReportDocument, SourceId, safe_href};
 
 use super::evidence::has_quantitative_evidence;
-use crate::{engine::Engine, registry::RuleId};
+use crate::{
+    context::LintContext,
+    engine::{Engine, Finding},
+    registry::RuleId,
+};
 
-pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
-    let scan = scan_document_citations(document);
-    check_citations(document, engine, &scan);
-    check_malformed_citations(document, engine);
-    check_numeric_claims(document, engine, &scan);
-    check_sources(document, engine);
+pub(crate) fn check(context: &LintContext<'_>) -> Vec<Finding> {
+    let mut engine = Engine::new();
+    let document = context.document;
+    let scan = &context.citation_scan;
+    check_citations(document, &mut engine, scan);
+    check_malformed_citations(document, &mut engine);
+    check_numeric_claims(document, &mut engine, scan);
+    check_sources(document, &mut engine);
+    engine.into_findings()
 }
 
 struct MalformedCitation {
@@ -23,7 +28,7 @@ struct MalformedCitation {
     hint: String,
 }
 
-fn check_malformed_citations(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_malformed_citations(document: &ReportDocument, engine: &mut Engine) {
     let registered: BTreeSet<&str> = document.sources.keys().map(SourceId::as_str).collect();
     let valid_values: Vec<String> = registered.iter().map(|id| (*id).to_string()).collect();
     for (index, block) in document.blocks.iter().enumerate() {
@@ -350,7 +355,7 @@ fn find_matching_bracket(text: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn check_citations(document: &ReportDocument, engine: &mut Engine<'_>, scan: &CitationScan) {
+fn check_citations(document: &ReportDocument, engine: &mut Engine, scan: &CitationScan) {
     let valid_ids = source_ids(document);
     let mut seen = BTreeSet::new();
     for usage in &scan.dangling {
@@ -409,7 +414,7 @@ fn check_citations(document: &ReportDocument, engine: &mut Engine<'_>, scan: &Ci
     }
 }
 
-fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>, scan: &CitationScan) {
+fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine, scan: &CitationScan) {
     let cited_blocks: BTreeSet<&str> = scan
         .uses
         .iter()
@@ -443,7 +448,7 @@ fn check_numeric_claims(document: &ReportDocument, engine: &mut Engine<'_>, scan
     }
 }
 
-fn check_sources(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_sources(document: &ReportDocument, engine: &mut Engine) {
     let mut seen_urls: HashMap<String, &str> = HashMap::new();
     for (source_id, source) in &document.sources {
         if source.title.trim().is_empty() {

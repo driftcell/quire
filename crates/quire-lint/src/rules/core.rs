@@ -4,12 +4,18 @@ use std::collections::HashSet;
 
 use quire_protocol::{
     BlockKind, ReportDocument, TableError, block::looks_like_uuid_v4, unknown_row_keys,
-    unknown_width_overrides, validate_table,
+    unknown_width_overrides,
 };
 
-use crate::{engine::Engine, registry::RuleId};
+use crate::{
+    context::LintContext,
+    engine::{Engine, Finding},
+    registry::RuleId,
+};
 
-pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
+pub(crate) fn check(context: &LintContext<'_>) -> Vec<Finding> {
+    let mut engine = Engine::new();
+    let document = context.document;
     let mut seen = HashSet::new();
     for (index, block) in document.blocks.iter().enumerate() {
         if !seen.insert(block.id.as_str()) {
@@ -44,25 +50,30 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
                     );
                 }
             }
-            BlockKind::Table(table) => check_table_schema(document, engine, index, table),
+            BlockKind::Table(table) => check_table_schema(context, &mut engine, index, table),
             BlockKind::Paragraph { .. } | BlockKind::Quote { .. } | BlockKind::Echarts(_) => {}
             BlockKind::CustomHtml(_) => {}
         }
     }
+    engine.into_findings()
 }
 
 fn check_table_schema(
-    document: &ReportDocument,
-    engine: &mut Engine<'_>,
+    context: &LintContext<'_>,
+    engine: &mut Engine,
     index: usize,
     table: &quire_protocol::TableBlock,
 ) {
+    let document = context.document;
     let Some(block) = document.blocks.get(index) else {
         return;
     };
-    match validate_table(table) {
+    let Some(shape_result) = context.table_shape(index) else {
+        return;
+    };
+    match shape_result {
         Ok(shape) => {
-            let unknown = unknown_row_keys(table, &shape);
+            let unknown = unknown_row_keys(table, shape);
             if !unknown.is_empty() {
                 let valid = shape
                     .leaves
@@ -83,7 +94,7 @@ fn check_table_schema(
                     shape.leaves.iter().map(|leaf| leaf.key.clone()).collect(),
                 );
             }
-            let unknown_widths = unknown_width_overrides(&block.style, &shape);
+            let unknown_widths = unknown_width_overrides(&block.style, shape);
             if !unknown_widths.is_empty() {
                 let valid = shape
                     .leaves

@@ -4,10 +4,14 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
-use quire_protocol::{BlockKind, ReportDocument};
+use quire_protocol::BlockKind;
 use regex::Regex;
 
-use crate::{engine::Engine, registry::RuleId};
+use crate::{
+    context::LintContext,
+    engine::{Engine, Finding},
+    registry::RuleId,
+};
 
 static ASSIGNMENT_RE: LazyLock<Option<Regex>> = LazyLock::new(|| {
     Regex::new(r"(?-u:\b)[a-zA-Z_][a-zA-Z0-9_]{1,30}\s*=\s*[^\s，。；、）)]+").ok()
@@ -42,8 +46,9 @@ struct VisibleField<'a> {
     table_cell: bool,
 }
 
-pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
-    for (index, block) in document.blocks.iter().enumerate() {
+pub(crate) fn check(context: &LintContext<'_>) -> Vec<Finding> {
+    let mut engine = Engine::new();
+    for (index, block) in context.document.blocks.iter().enumerate() {
         let mut fields = Vec::new();
         match &block.body {
             BlockKind::Heading { text, .. }
@@ -154,6 +159,7 @@ pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
             );
         }
     }
+    engine.into_findings()
 }
 
 fn push<'a>(fields: &mut Vec<VisibleField<'a>>, text: &'a str, path: String, table_cell: bool) {

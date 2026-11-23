@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub(crate) mod context;
 pub mod engine;
 pub mod normalize;
 pub mod registry;

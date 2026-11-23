@@ -1,4 +1,4 @@
-//! Rule modules. Each module owns one diagnostic family and reports through the shared engine.
+//! Independent rule passes. Each pass owns its collector so parallel execution needs no locks.
 
 pub(crate) mod charts;
 pub(crate) mod citations;
@@ -11,17 +11,31 @@ pub(crate) mod structure;
 pub(crate) mod style;
 pub(crate) mod tables;
 
-use crate::engine::Engine;
+use rayon::prelude::*;
 
-pub(crate) fn run(engine: &mut Engine<'_>) {
-    let document = engine.document;
-    core::check(document, engine);
-    citations::check(document, engine);
-    tables::check(document, engine);
-    charts::check(document, engine);
-    structure::check(document, engine);
-    prose::check(document, engine);
-    higher_ed::check(document, engine);
-    internal::check(document, engine);
-    style::check(document, engine);
+use crate::{context::LintContext, engine::Finding};
+
+type RulePass = fn(&LintContext<'_>) -> Vec<Finding>;
+
+const PASSES: &[RulePass] = &[
+    core::check,
+    citations::check,
+    tables::check,
+    charts::check,
+    structure::check,
+    prose::check,
+    higher_ed::check,
+    internal::check,
+    style::check,
+];
+
+pub(crate) fn run(context: &LintContext<'_>, parallel: bool) -> Vec<Finding> {
+    if parallel {
+        PASSES
+            .par_iter()
+            .flat_map_iter(|pass| pass(context))
+            .collect()
+    } else {
+        PASSES.iter().flat_map(|pass| pass(context)).collect()
+    }
 }

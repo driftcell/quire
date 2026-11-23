@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use quire_protocol::{BlockId, Diagnostic, LintReport, LintSummary, ReportDocument, Severity};
 
 use crate::{
+    context::{LintContext, PARALLEL_BLOCK_THRESHOLD},
     registry::{RuleId, rule_matches_token},
     rules,
 };
@@ -30,15 +31,13 @@ pub(crate) struct Finding {
     pub valid_values: Vec<String>,
 }
 
-pub(crate) struct Engine<'a> {
-    pub document: &'a ReportDocument,
+pub(crate) struct Engine {
     findings: Vec<Finding>,
 }
 
-impl<'a> Engine<'a> {
-    pub(crate) fn new(document: &'a ReportDocument) -> Self {
+impl Engine {
+    pub(crate) fn new() -> Self {
         Self {
-            document,
             findings: Vec::new(),
         }
     }
@@ -73,78 +72,87 @@ impl<'a> Engine<'a> {
         });
     }
 
-    fn finish(self, options: &LintOptions) -> LintReport {
-        let block_ignores: HashMap<&str, &[String]> = self
-            .document
-            .blocks
+    pub(crate) fn into_findings(self) -> Vec<Finding> {
+        self.findings
+    }
+}
+
+fn finish_report(
+    document: &ReportDocument,
+    findings: Vec<Finding>,
+    options: &LintOptions,
+) -> LintReport {
+    let block_ignores: HashMap<&str, &[String]> = document
+        .blocks
+        .iter()
+        .map(|block| (block.id.as_str(), block.lint_ignore.as_slice()))
+        .collect();
+    let mut diagnostics = Vec::new();
+    let mut suppressed = 0usize;
+    for finding in findings {
+        let meta = finding.rule.meta();
+        if !options.select.is_empty()
+            && !options
+                .select
+                .iter()
+                .any(|token| rule_matches_token(meta, token))
+        {
+            continue;
+        }
+        let ignored = options
+            .ignore
             .iter()
-            .map(|block| (block.id.as_str(), block.lint_ignore.as_slice()))
-            .collect();
-        let mut diagnostics = Vec::new();
-        let mut suppressed = 0usize;
-        for finding in self.findings {
-            let meta = finding.rule.meta();
-            if !options.select.is_empty()
-                && !options
-                    .select
-                    .iter()
-                    .any(|token| rule_matches_token(meta, token))
-            {
-                continue;
-            }
-            let ignored = options
+            .any(|token| rule_matches_token(meta, token))
+            || document
+                .lint
                 .ignore
                 .iter()
                 .any(|token| rule_matches_token(meta, token))
-                || self
-                    .document
-                    .lint
-                    .ignore
-                    .iter()
-                    .any(|token| rule_matches_token(meta, token))
-                || finding.block_id.as_ref().is_some_and(|block_id| {
-                    block_ignores.get(block_id.as_str()).is_some_and(|tokens| {
-                        tokens.iter().any(|token| rule_matches_token(meta, token))
-                    })
-                });
-            if ignored && meta.suppressible {
-                suppressed += 1;
-                continue;
-            }
-            diagnostics.push(Diagnostic {
-                code: meta.code.to_string(),
-                rule: meta.name.to_string(),
-                severity: meta.default_severity,
-                message: finding.message,
-                hint: finding.hint,
-                suppressible: meta.suppressible,
-                block_id: finding.block_id,
-                path: finding.path,
-                valid_values: finding.valid_values,
+            || finding.block_id.as_ref().is_some_and(|block_id| {
+                block_ignores.get(block_id.as_str()).is_some_and(|tokens| {
+                    tokens.iter().any(|token| rule_matches_token(meta, token))
+                })
             });
+        if ignored && meta.suppressible {
+            suppressed += 1;
+            continue;
         }
-        diagnostics.sort_by(|left, right| {
-            severity_rank(left.severity)
-                .cmp(&severity_rank(right.severity))
-                .then_with(|| left.code.cmp(&right.code))
-                .then_with(|| left.block_id.cmp(&right.block_id))
-                .then_with(|| left.message.cmp(&right.message))
+        diagnostics.push(Diagnostic {
+            code: meta.code.to_string(),
+            rule: meta.name.to_string(),
+            severity: meta.default_severity,
+            message: finding.message,
+            hint: finding.hint,
+            suppressible: meta.suppressible,
+            block_id: finding.block_id,
+            path: finding.path,
+            valid_values: finding.valid_values,
         });
-        let mut summary = LintSummary {
-            suppressed,
-            ..LintSummary::default()
-        };
-        for diagnostic in &diagnostics {
-            match diagnostic.severity {
-                Severity::Error => summary.errors += 1,
-                Severity::Warning => summary.warnings += 1,
-                Severity::Info => summary.infos += 1,
-            }
+    }
+    diagnostics.sort_by(|left, right| {
+        severity_rank(left.severity)
+            .cmp(&severity_rank(right.severity))
+            .then_with(|| left.code.cmp(&right.code))
+            .then_with(|| left.block_id.cmp(&right.block_id))
+            .then_with(|| left.message.cmp(&right.message))
+            .then_with(|| left.path.cmp(&right.path))
+            .then_with(|| left.hint.cmp(&right.hint))
+            .then_with(|| left.valid_values.cmp(&right.valid_values))
+    });
+    let mut summary = LintSummary {
+        suppressed,
+        ..LintSummary::default()
+    };
+    for diagnostic in &diagnostics {
+        match diagnostic.severity {
+            Severity::Error => summary.errors += 1,
+            Severity::Warning => summary.warnings += 1,
+            Severity::Info => summary.infos += 1,
         }
-        LintReport {
-            diagnostics,
-            summary,
-        }
+    }
+    LintReport {
+        diagnostics,
+        summary,
     }
 }
 
@@ -156,9 +164,21 @@ pub fn lint_document(document: &ReportDocument) -> LintReport {
 /// Run every static check with call-level select/ignore filters. Document-level
 /// `document.lint.ignore` and block-level `block.lint_ignore` are always applied as well.
 pub fn lint_document_with_options(document: &ReportDocument, options: &LintOptions) -> LintReport {
-    let mut engine = Engine::new(document);
-    rules::run(&mut engine);
-    engine.finish(options)
+    lint_document_with_strategy(
+        document,
+        options,
+        document.blocks.len() >= PARALLEL_BLOCK_THRESHOLD,
+    )
+}
+
+fn lint_document_with_strategy(
+    document: &ReportDocument,
+    options: &LintOptions,
+    parallel: bool,
+) -> LintReport {
+    let context = LintContext::build(document, parallel);
+    let findings = rules::run(&context, parallel);
+    finish_report(document, findings, options)
 }
 
 /// Validate one ECharts block in isolation before it is written to a report.
@@ -228,6 +248,72 @@ mod tests {
                 .all(|diagnostic| diagnostic.code.starts_with("QR4"))
         );
         assert!(!report.diagnostics.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn parallel_and_serial_reports_are_identical() -> Result<(), Box<dyn std::error::Error>> {
+        let mut document = document()?;
+        for index in 0..60 {
+            let block_id = quire_protocol::BlockId::parse(format!("p{index}"))?;
+            let text = match index % 3 {
+                0 => format!("综上所述，第{index}项需要合并解读。"),
+                1 => "这是一个缺少证据但需要展开分析的长段落。".repeat(24),
+                _ => format!("第{index}项指标增长18项。"),
+            };
+            let mut block = quire_protocol::Block::paragraph(block_id, text);
+            if index == 1 {
+                block.lint_ignore = vec!["QR413".into()];
+            }
+            document.blocks.push(block);
+        }
+        document.blocks.push(quire_protocol::Block::table(
+            quire_protocol::BlockId::parse("metrics")?,
+            quire_protocol::TableBlock {
+                title: Some("指标表".into()),
+                numbering: None,
+                note: None,
+                columns: vec![
+                    quire_protocol::ColumnNode::leaf("name", "高校"),
+                    quire_protocol::ColumnNode::leaf("count", "数量（项）"),
+                ],
+                rows: vec![std::collections::BTreeMap::from([
+                    ("name".into(), quire_protocol::CellValue::text("某高校")),
+                    ("count".into(), quire_protocol::CellValue::Integer(12)),
+                ])],
+                summary_rows: Vec::new(),
+            },
+        ));
+        document.blocks.push(quire_protocol::Block::new(
+            quire_protocol::BlockId::parse("trend")?,
+            quire_protocol::BlockKind::Echarts(quire_protocol::EchartsBlock {
+                title: Some("趋势".into()),
+                height: 320,
+                option: serde_json::json!({
+                    "xAxis": {"type": "category", "data": ["2025"]},
+                    "yAxis": {"type": "value"},
+                    "series": [{"type": "line", "data": [12]}]
+                }),
+                option_patch: Some(serde_json::json!({
+                    "series": [{"data": [12, 18]}]
+                })),
+                fallback_summary: "指标由12项增至18项。".into(),
+                numbering: None,
+                note: Some("单位：项；2025—2026年。".into()),
+            }),
+        ));
+        let options = LintOptions {
+            select: Vec::new(),
+            ignore: vec!["QR412".into()],
+        };
+        let serial = lint_document_with_strategy(&document, &options, false);
+        assert!(!serial.diagnostics.is_empty());
+        assert!(serial.summary.suppressed > 0);
+        for _ in 0..8 {
+            let parallel = lint_document_with_strategy(&document, &options, true);
+            assert_eq!(serial, parallel);
+        }
+        assert_eq!(serial, lint_document_with_options(&document, &options));
         Ok(())
     }
 

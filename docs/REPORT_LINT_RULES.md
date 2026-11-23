@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-store`, `quire-server`
-- **Related Notes:** `../notes/quire_lint_registry_split.md`, `../notes/quire_lint_incremental_refactor.md`, `../notes/report_prompt_lint_calibration.md`, `../notes/report_quality_systemic_improvement.md`
+- **Related Notes:** `../notes/quire_lint_registry_split.md`, `../notes/quire_lint_incremental_refactor.md`, `../notes/quire_lint_parallel_precomputation.md`, `../notes/report_prompt_lint_calibration.md`, `../notes/report_quality_systemic_improvement.md`
 
 ## 1. Scope & Non-Goals
 
@@ -26,8 +26,29 @@ or CLI work.
 | `quire-store` | Persists `report_documents.lint` JSONB and block payload `lint_ignore`; runs lint for inline warnings and blocking errors. |
 | `quire-server` | Exposes `lint_document(doc_id, select?, ignore?)` and forwards diagnostics to MCP receipts. |
 
-`quire-lint` depends only on `quire-protocol`, `serde_json` and `regex`. There is no compatibility
-module, re-export shim or legacy uppercase diagnostic code in `quire-protocol`.
+`quire-lint` depends only on `quire-protocol`, `serde_json`, `regex`, `rayon` and `aho-corasick`.
+There is no compatibility module, re-export shim or legacy uppercase diagnostic code in
+`quire-protocol`.
+
+### Precomputation and deterministic scheduling
+
+Each lint call builds a block-indexed `LintContext`. The context owns one citation scan, one masked
+text view and derived wall-of-text measurements per paragraph, one `TableShape` result per table,
+and one effective ECharts option per chart. Rules read these views by block index; they never repeat
+the deep merge, table validation, citation scan, or paragraph masking performed by another pass.
+
+Nine rule passes have the pure signature `fn(&LintContext) -> Vec<Finding>` and own their temporary
+collectors. Documents with at least 40 blocks build the context and execute the passes with Rayon;
+smaller documents use serial iterators to avoid scheduling overhead. No global cache, Tokio runtime,
+or shared mutable collector is involved. Cliche phrases are matched by one overlapping Aho-Corasick
+scan, with special ecological-compound and English-boundary handling preserved. If the built-in
+automaton cannot be constructed, the rule falls back to its linear matcher instead of silently
+disabling diagnostics; a unit test requires construction to succeed.
+
+The report finish boundary remains the sole owner of select/ignore filtering, suppression counts and
+ordering. It sorts by severity, code, block ID, message, path, hint and valid values, so serial and
+parallel execution produce the same complete `LintReport`, including diagnostics with otherwise
+identical primary fields.
 
 ### Diagnostic contract
 
@@ -332,6 +353,8 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
 ## 3. Invariants & Verification
 
 - `quire-lint` has no CLI and no I/O dependencies.
+- `parallel_and_serial_reports_are_identical` compares full reports repeatedly on a mixed 62-block
+  document, including a chart patch, a table, call-level ignores and block-level suppression.
 - Every `RuleMeta.code` and `.name` is unique; the registry stays code-sorted.
 - `QR001`, `QR003`-`QR007`, `QR101`, `QR107`, `QR301`-`QR304`, `QR424` and `QR501` are never
   suppressible.

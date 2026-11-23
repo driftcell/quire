@@ -2,14 +2,14 @@
 
 use std::collections::BTreeSet;
 
-use quire_protocol::{
-    BlockKind, CellValue, ReportDocument, chart_series, effective_chart_option, entries,
-    validate_table,
-};
+use quire_protocol::{BlockKind, CellValue, ReportDocument, chart_series, entries};
 use serde_json::Value;
 
-use super::prose::mask_text;
-use crate::{engine::Engine, registry::RuleId};
+use crate::{
+    context::LintContext,
+    engine::{Engine, Finding},
+    registry::RuleId,
+};
 
 const ACADEMIC_JARGON_ZH: &[&str] = &[
     "研究设计",
@@ -52,13 +52,16 @@ const ORDINAL_EVALUATIONS: &[&str] = &[
 ];
 const POLICY_TERMS_REQUIRING_QUOTES: &[&str] = &["双一流", "双优", "十四五", "十五五"];
 
-pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
-    check_blind_ordinals_and_academic_jargon(document, engine);
-    check_visual_unit_notes(document, engine);
-    check_policy_and_document_format(document, engine);
+pub(crate) fn check(context: &LintContext<'_>) -> Vec<Finding> {
+    let mut engine = Engine::new();
+    check_blind_ordinals_and_academic_jargon(context, &mut engine);
+    check_visual_unit_notes(context, &mut engine);
+    check_policy_and_document_format(context.document, &mut engine);
+    engine.into_findings()
 }
 
-fn check_blind_ordinals_and_academic_jargon(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_blind_ordinals_and_academic_jargon(context: &LintContext<'_>, engine: &mut Engine) {
+    let document = context.document;
     for (index, block) in document.blocks.iter().enumerate() {
         let BlockKind::Paragraph { text } = &block.body else {
             continue;
@@ -67,18 +70,21 @@ fn check_blind_ordinals_and_academic_jargon(document: &ReportDocument, engine: &
         if let Some(reference) = blind_ordinal_reference(text) {
             hits.insert(format!("盲指序号 `{reference}`"));
         }
-        let masked = mask_text(text);
+        let Some(precomputed) = context.paragraph(index) else {
+            continue;
+        };
+        let masked = &precomputed.masked;
         for phrase in ACADEMIC_JARGON_ZH {
             if masked.contains(phrase) {
                 hits.insert(format!("论文腔术语 `{phrase}`"));
             }
         }
         for phrase in ACADEMIC_JARGON_ASCII {
-            if contains_ascii_term(&masked, phrase) {
+            if contains_ascii_term(masked, phrase) {
                 hits.insert(format!("论文腔术语 `{phrase}`"));
             }
         }
-        if has_p_value_statement(&masked) {
+        if has_p_value_statement(masked) {
             hits.insert("论文腔术语 `p<0.05`".to_string());
         }
         if hits.is_empty() {
@@ -222,7 +228,8 @@ fn has_p_value_statement(text: &str) -> bool {
     compact.contains("p<0.0") || compact.contains("p＜0.0")
 }
 
-fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_visual_unit_notes(context: &LintContext<'_>, engine: &mut Engine) {
+    let document = context.document;
     for (index, block) in document.blocks.iter().enumerate() {
         match &block.body {
             BlockKind::Table(table) => {
@@ -237,7 +244,7 @@ fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
                 {
                     continue;
                 }
-                let Ok(shape) = validate_table(table) else {
+                let Some(Ok(shape)) = context.table_shape(index) else {
                     continue;
                 };
                 let missing: Vec<String> = shape
@@ -264,8 +271,10 @@ fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
                 }
             }
             BlockKind::Echarts(chart) => {
-                let option = effective_chart_option(chart);
-                let has_numeric_data = chart_has_numeric_data(&option);
+                let Some(option) = context.effective_option(index) else {
+                    continue;
+                };
+                let has_numeric_data = chart_has_numeric_data(option);
                 if has_numeric_data {
                     check_visual_source(block, index, engine);
                 }
@@ -278,7 +287,7 @@ fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
                 {
                     continue;
                 }
-                if !chart_units_complete(&option) {
+                if !chart_units_complete(option) {
                     report_visual_note(
                         engine,
                         block,
@@ -292,7 +301,7 @@ fn check_visual_unit_notes(document: &ReportDocument, engine: &mut Engine<'_>) {
     }
 }
 
-fn check_visual_source(block: &quire_protocol::Block, index: usize, engine: &mut Engine<'_>) {
+fn check_visual_source(block: &quire_protocol::Block, index: usize, engine: &mut Engine) {
     if !block.source_ids.is_empty() || !block.source_note.as_deref().unwrap_or("").trim().is_empty()
     {
         return;
@@ -314,7 +323,7 @@ fn check_visual_note_length(
     block: &quire_protocol::Block,
     index: usize,
     note: Option<&str>,
-    engine: &mut Engine<'_>,
+    engine: &mut Engine,
 ) {
     let note_length = note.map_or(0, |note| note.chars().count());
     if note_length <= 180 {
@@ -419,7 +428,7 @@ fn label_has_unit(label: &str) -> bool {
 }
 
 fn report_visual_note(
-    engine: &mut Engine<'_>,
+    engine: &mut Engine,
     block: &quire_protocol::Block,
     index: usize,
     detail: String,
@@ -437,7 +446,7 @@ fn report_visual_note(
     );
 }
 
-fn check_policy_and_document_format(document: &ReportDocument, engine: &mut Engine<'_>) {
+fn check_policy_and_document_format(document: &ReportDocument, engine: &mut Engine) {
     for (index, block) in document.blocks.iter().enumerate() {
         let mut fields: Vec<(&str, String)> = Vec::new();
         match &block.body {
