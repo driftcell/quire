@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { BrainIcon } from "lucide-react";
 import {
   MessageScroller,
@@ -42,7 +42,7 @@ function formatDurationSeconds(totalSeconds: number): string {
   return secs > 0 ? `${mins}分${secs}秒` : `${mins}分`;
 }
 
-export function ThinkingTrace({
+export const ThinkingTrace = memo(function ThinkingTrace({
   content,
   isStreaming,
   isActive = false,
@@ -53,14 +53,14 @@ export function ThinkingTrace({
 }: ThinkingTraceProps) {
   const [open, setOpen] = useState<boolean | undefined>(undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const expanded = open ?? (autoExpand && (isStreaming || isActive));
   const { text: smoothedContent } = useSmoothStreamText(
     content,
-    isStreaming,
+    isStreaming && expanded,
     maxSmoothBacklog,
   );
 
   const hasContent = content.trim().length > 0;
-  const expanded = open ?? (autoExpand && (isStreaming || isActive));
   const elapsedSeconds =
     isStreaming && startedAtMs !== undefined
       ? Math.max(0, Math.floor((nowMs - startedAtMs) / 1000))
@@ -138,4 +138,4 @@ export function ThinkingTrace({
       </TraceCollapsible>
     </Trace>
   );
-}
+});

@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { UsersIcon } from "lucide-react";
 import { SubagentOutput } from "@/components/chat/SubagentOutput";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
@@ -32,7 +33,7 @@ export interface SubagentTraceModel {
  * A subagent is the second and final collapsible layer. Its thinking, tools
  * and output render flat, with no intermediate "执行详情" wrapper.
  */
-export function SubagentTrace({
+export const SubagentTrace = memo(function SubagentTrace({
   sessionId,
   model,
 }: {
@@ -119,4 +120,4 @@ export function SubagentTrace({
       </TraceCollapsible>
     </Trace>
   );
-}
+});

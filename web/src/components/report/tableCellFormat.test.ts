@@ -55,6 +55,24 @@ describe("computeColumnDecimals", () => {
     );
     expect(precision.get("value")).toBe(2);
   });
+
+  test("does not pad integer count rows in row-oriented multi-indicator tables", () => {
+    const columns = [
+      leafColumn(0, "metric", "核心指标", "text"),
+      leafColumn(1, "y2025", "2025现值", "number"),
+      leafColumn(2, "y2030", "2030目标", "number"),
+    ];
+    const rows = [
+      { metric: "高层次人才总量（人）", y2025: 14, y2030: 35 },
+      { metric: "领军人才省占比（%）", y2025: 0.35, y2030: 0.9 },
+      { metric: "国家自然科学基金年均立项（项）", y2025: 25, y2030: 45 },
+    ];
+    const precision = computeColumnDecimals(rows, undefined, columns);
+    expect(precision.get("y2025")).toBe(0);
+    expect(precision.get("y2030")).toBe(0);
+    expect(formatTableCell(14, precision.get("y2025")).text).toBe("14");
+    expect(formatTableCell(0.35, precision.get("y2025")).text).toBe("0.35");
+  });
 });
 
 describe("formatTableCell", () => {

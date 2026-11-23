@@ -698,13 +698,37 @@ impl QuireMcpServer {
             )
         })?;
         let actor = context.actor;
+        let scoped_idempotency_key = request.idempotency_key.as_deref().map(|key| {
+            let trimmed = key.trim();
+            let prefix = format!("{}:", session_id.as_str());
+            let scoped = if trimmed.starts_with(&prefix) {
+                trimmed.to_string()
+            } else {
+                format!("{prefix}{trimmed}")
+            };
+            if scoped.len() > 128 {
+                scoped.chars().take(128).collect()
+            } else {
+                scoped
+            }
+        });
         let doc_id = match request
             .doc_id
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            Some(value) => DocId::parse(value).map_err(protocol_error)?,
+            Some(value) => {
+                let requested_id = DocId::parse(value).map_err(protocol_error)?;
+                match self.state.store.get_document(&requested_id).await {
+                    Ok(existing) if existing.session_id.as_ref() != Some(&session_id) => {
+                        let suffix = short_token(6);
+                        let base: String = requested_id.as_str().chars().take(56).collect();
+                        DocId::parse(format!("{base}-{suffix}")).map_err(protocol_error)?
+                    }
+                    _ => requested_id,
+                }
+            }
             None => generate_doc_id(title)?,
         };
 
@@ -759,7 +783,7 @@ impl QuireMcpServer {
         let result = self
             .state
             .store
-            .create_document(&document, &actor, request.idempotency_key.as_deref())
+            .create_document(&document, &actor, scoped_idempotency_key.as_deref())
             .await
             .map_err(mcp_error)?;
         let stored = self

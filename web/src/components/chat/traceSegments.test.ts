@@ -452,8 +452,8 @@ describe("buildLiveSegments", () => {
     if (activity.kind !== "activity") {
       throw new Error("expected activity segment");
     }
-    expect(activity.isActive).toBe(false);
-    expect(activity.isLive).toBe(false);
+    expect(activity.isActive).toBe(true);
+    expect(activity.isLive).toBe(true);
     const thinking = activity.items[0];
     if (thinking?.kind !== "thinking") {
       throw new Error("expected thinking item");
@@ -652,20 +652,41 @@ describe("extractSubagentLiveView", () => {
     ]);
     expect(view.streamingText).toBe("中间正文\n\n最终正文");
     expect(view.isThinkingStreaming).toBe(false);
+    expect(view.isTextStreaming).toBe(false);
   });
 
-  test("marks a trailing thinking segment as streaming", () => {
+  test("marks a trailing thinking segment as streaming and prior text as settled", () => {
     const trace: LiveAgentTrace = {
       agentId: "writer",
       isStreaming: true,
-      segments: [{ kind: "thinking", text: "正在推理" }],
+      segments: [
+        { kind: "text", text: "第一轮已完成正文与表格" },
+        { kind: "thinking", text: "正在推理第二轮" },
+      ],
     };
 
     const view = extractSubagentLiveView(trace);
-    expect(view.thinkingText).toBe("正在推理");
+    expect(view.thinkingText).toBe("正在推理第二轮");
     expect(view.isThinkingStreaming).toBe(true);
-    expect(view.streamingText).toBe("");
+    expect(view.streamingText).toBe("第一轮已完成正文与表格");
+    expect(view.isTextStreaming).toBe(false);
     expect(view.tools).toEqual([]);
+  });
+
+  test("marks a trailing text segment as streaming when active", () => {
+    const trace: LiveAgentTrace = {
+      agentId: "reviewer",
+      isStreaming: true,
+      segments: [
+        { kind: "thinking", text: "思考完毕", durationMs: 1200 },
+        { kind: "text", text: "正在输出审阅结论" },
+      ],
+    };
+
+    const view = extractSubagentLiveView(trace);
+    expect(view.isThinkingStreaming).toBe(false);
+    expect(view.isTextStreaming).toBe(true);
+    expect(view.streamingText).toBe("正在输出审阅结论");
   });
 
   test("sums settled thinking durations and exposes the active start", () => {
@@ -683,5 +704,6 @@ describe("extractSubagentLiveView", () => {
     expect(view.thinkingDurationMs).toBe(2000);
     expect(view.thinkingStartedAtMs).toBe(5000);
     expect(view.isThinkingStreaming).toBe(true);
+    expect(view.isTextStreaming).toBe(false);
   });
 });

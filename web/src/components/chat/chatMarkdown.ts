@@ -12,5 +12,5 @@ export const STREAMDOWN_ANIMATION: AnimateOptions = {
   animation: "fadeIn",
   duration: 120,
   easing: "ease-out",
-  sep: "char",
+  sep: "word",
 };

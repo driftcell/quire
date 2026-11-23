@@ -676,7 +676,7 @@ fn check_boring_headings(document: &ReportDocument, engine: &mut Engine<'_>) {
                 block.id,
                 text.trim()
             ),
-            "Rewrite this Heading via apply_operations to name a specific subject, metric or takeaway. For a standard official-document section, keep its column label and add a concrete judgment after a colon (e.g. '对策建议：依托省重点实验室集中引育领军人才'); fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
+            "Rewrite this Heading via apply_operations to name a specific subject, metric or takeaway. For a standard official-document section, keep its column label and add a concrete data-backed judgment after a colon (`<栏目或切面>：<基于本节证据得出的具体比较结论或结构性判断>`); fix this together with QR412/QR413 in one apply_operations batch when they hit the same block.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );

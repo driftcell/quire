@@ -63,6 +63,7 @@ export interface SubagentLiveView {
   thinkingStartedAtMs?: number;
   tools: LiveToolTraceItem[];
   streamingText: string;
+  isTextStreaming: boolean;
 }
 
 export interface ActivitySummary {
@@ -183,14 +184,15 @@ export function extractSubagentLiveView(
     thinkingStartedAtMs,
     tools,
     streamingText: joinLiveText(textParts),
+    isTextStreaming: trace.isStreaming && lastSegment?.kind === "text",
   };
 }
 
 export function activityHasQuestion(
   items: ActivityItem[],
-  questionSlots?: ReadonlyMap<string, unknown>,
+  questionSlots?: Map<string, unknown>,
 ): boolean {
-  if (!questionSlots) {
+  if (!questionSlots || questionSlots.size === 0) {
     return false;
   }
   return items.some(
@@ -200,158 +202,209 @@ export function activityHasQuestion(
   );
 }
 
+/**
+ * Group a historical run into strictly chronological activity and text
+ * segments. A text segment closes the current activity group; later thinking
+ * or tool calls open a new activity segment after that text.
+ */
 export function buildHistoricalSegments(
   trace: RunTraceSummary,
 ): RenderSegment[] {
-  const source = trace.segments ?? [];
-  const segments: RenderSegment[] = [];
-  const activity: ActivityItem[] = [];
-  const flushActivity = (isFinal: boolean) => {
-    if (activity.length === 0) {
+  const result: RenderSegment[] = [];
+  let pendingItems: ActivityItem[] = [];
+  let activityGroupIndex = 0;
+
+  const flushActivity = () => {
+    if (pendingItems.length === 0) {
       return;
     }
-    const hasRunningTool = activity.some(
-      (item) =>
-        item.kind === "execution" &&
-        item.tools.some((tool) => tool.status === "running"),
-    );
-    const hasRunningSubagent = activity.some(
-      (item) =>
-        item.kind === "execution" &&
-        item.subagents.some((entry) => entry.subagent.status === "running"),
-    );
-    segments.push({
-      key: `activity-${activity[0]?.key ?? segments.length}`,
+    result.push({
+      key: `${trace.run_id}-activity-${activityGroupIndex}`,
       kind: "activity",
-      items: [...activity],
-      isActive:
-        isFinal &&
-        (trace.status === "running" || hasRunningTool || hasRunningSubagent),
-      durationMs: isFinal ? (trace.duration_ms ?? undefined) : undefined,
+      items: pendingItems,
+      isActive: false,
+      isLive: false,
     });
-    activity.length = 0;
+    pendingItems = [];
+    activityGroupIndex += 1;
   };
 
+  const source = trace.segments ?? [];
   source.forEach((segment, index) => {
-    if (segment.kind === "text") {
-      if (!segment.text.trim()) {
-        return;
-      }
-      flushActivity(false);
-      segments.push({
-        key: `text-${index}`,
-        kind: "text",
-        text: segment.text,
-        isStreaming: false,
-      });
-      return;
-    }
+    const key = `${trace.run_id}-seg-${index}`;
     if (segment.kind === "thinking") {
-      if (!segment.text.trim()) {
+      const text = segment.text.trim();
+      if (!text) {
         return;
       }
-      activity.push({
-        key: `thinking-${index}`,
+      pendingItems.push({
+        key,
         kind: "thinking",
-        text: segment.text,
+        text,
         isStreaming: false,
         isActive: false,
         durationMs: segment.duration_ms ?? undefined,
       });
       return;
     }
-    const tools = toToolTraceItems(segment.tools).filter(isVisibleTraceTool);
-    const subagents = segment.subagents ?? [];
-    if (tools.length === 0 && subagents.length === 0) {
+
+    if (segment.kind === "execution") {
+      const tools = toToolTraceItems(segment.tools).filter(isVisibleTraceTool);
+      const subagents: ExecutionSubagent[] = (segment.subagents ?? []).map(
+        (sub) => ({
+          kind: "historical",
+          key: sub.subagent_run_id,
+          subagent: sub,
+        }),
+      );
+      if (tools.length === 0 && subagents.length === 0) {
+        return;
+      }
+      pendingItems.push({
+        key,
+        kind: "execution",
+        tools,
+        subagents,
+      });
       return;
     }
-    activity.push({
-      key: `execution-${index}`,
-      kind: "execution",
-      tools,
-      subagents: subagents.map((subagent) => ({
-        kind: "historical" as const,
-        key: subagent.subagent_run_id,
-        subagent,
-      })),
+
+    const text = segment.text.trim();
+    if (!text) {
+      return;
+    }
+    flushActivity();
+    result.push({
+      key,
+      kind: "text",
+      text,
+      isStreaming: false,
     });
   });
-  flushActivity(true);
-  return segments;
+
+  flushActivity();
+  return result;
 }
 
+function isLiveSegmentActive(
+  segment: LiveTraceSegment,
+  isLastSegment: boolean,
+  isRunStreaming: boolean,
+  subagentById: Map<string, LiveSubagentRun>,
+): boolean {
+  if (!isRunStreaming) {
+    return false;
+  }
+  if (segment.kind === "thinking") {
+    return isLastSegment;
+  }
+  if (segment.kind === "execution") {
+    const hasRunningTool = segment.tools.some(
+      (tool) => tool.status === "running",
+    );
+    const hasRunningSubagent = segment.subagentRunIds.some(
+      (id) => subagentById.get(id)?.status === "running",
+    );
+    return isLastSegment || hasRunningTool || hasRunningSubagent;
+  }
+  return false;
+}
+
+/**
+ * Group the live main-agent trace into chronological activity and text
+ * segments. Only the trailing segment can stream; once a text segment is
+ * emitted, any subsequent thinking or tool call opens a new activity segment.
+ */
 export function buildLiveSegments(
   trace: LiveAgentTrace,
   subagents: LiveSubagentRun[],
 ): RenderSegment[] {
-  const lastIndex = trace.segments.length - 1;
-  const segments: RenderSegment[] = [];
-  const activity: ActivityItem[] = [];
-  const flushActivity = (isFinal: boolean) => {
-    if (activity.length === 0) {
+  const subagentById = new Map(
+    subagents.map((subagent) => [subagent.subagentRunId, subagent]),
+  );
+  const result: RenderSegment[] = [];
+  let pendingItems: ActivityItem[] = [];
+  let pendingIsActive = false;
+  let activityGroupIndex = 0;
+
+  const flushActivity = () => {
+    if (pendingItems.length === 0) {
       return;
     }
-    segments.push({
-      key: `activity-${activity[0]?.key ?? segments.length}`,
+    result.push({
+      key: `live-activity-${activityGroupIndex}`,
       kind: "activity",
-      items: [...activity],
-      // The trailing activity stays active for the whole model-turn gap until
-      // a text/user boundary or turn completion closes it. The top live header
-      // owns the running state.
-      isActive: isFinal && trace.isStreaming,
-      isLive: isFinal ? trace.isStreaming : false,
+      items: pendingItems,
+      isActive: pendingIsActive,
+      isLive: pendingIsActive,
     });
-    activity.length = 0;
+    pendingItems = [];
+    pendingIsActive = false;
+    activityGroupIndex += 1;
   };
 
-  trace.segments.forEach((segment: LiveTraceSegment, index) => {
-    if (segment.kind === "text") {
-      if (!segment.text.trim()) {
-        return;
-      }
-      flushActivity(false);
-      segments.push({
-        key: `text-${index}`,
-        kind: "text",
-        text: segment.text,
-        isStreaming: trace.isStreaming && index === lastIndex,
-      });
-      return;
-    }
-    const isLast = index === lastIndex;
+  trace.segments.forEach((segment, index) => {
+    const key = `live-seg-${index}`;
+    const isLast = index === trace.segments.length - 1;
+    const segmentActive = isLiveSegmentActive(
+      segment,
+      isLast,
+      trace.isStreaming,
+      subagentById,
+    );
+
     if (segment.kind === "thinking") {
       if (!segment.text.trim()) {
         return;
       }
-      activity.push({
-        key: `thinking-${index}`,
+      pendingItems.push({
+        key,
         kind: "thinking",
         text: segment.text,
         isStreaming: trace.isStreaming && isLast,
-        isActive: trace.isStreaming && isLast,
+        isActive: segmentActive,
         startedAtMs: segment.startedAtMs,
         durationMs: segment.durationMs,
       });
+      pendingIsActive = pendingIsActive || segmentActive;
       return;
     }
-    const runs = segment.subagentRunIds
-      .map((id) => subagents.find((sub) => sub.subagentRunId === id))
-      .filter((sub): sub is LiveSubagentRun => sub !== undefined);
-    const tools = segment.tools.filter(isVisibleTraceTool);
-    if (tools.length === 0 && runs.length === 0) {
+
+    if (segment.kind === "execution") {
+      const tools = segment.tools.filter(isVisibleTraceTool);
+      const resolvedSubagents: ExecutionSubagent[] = segment.subagentRunIds
+        .map((id) => subagentById.get(id))
+        .filter((sub): sub is LiveSubagentRun => sub !== undefined)
+        .map((sub) => ({
+          kind: "live",
+          key: sub.subagentRunId,
+          subagent: sub,
+        }));
+      if (tools.length === 0 && resolvedSubagents.length === 0) {
+        return;
+      }
+      pendingItems.push({
+        key,
+        kind: "execution",
+        tools,
+        subagents: resolvedSubagents,
+      });
+      pendingIsActive = pendingIsActive || segmentActive;
       return;
     }
-    activity.push({
-      key: `execution-${index}`,
-      kind: "execution",
-      tools,
-      subagents: runs.map((subagent) => ({
-        kind: "live" as const,
-        key: subagent.subagentRunId,
-        subagent,
-      })),
+
+    if (!segment.text.trim()) {
+      return;
+    }
+    flushActivity();
+    result.push({
+      key,
+      kind: "text",
+      text: segment.text,
+      isStreaming: trace.isStreaming && isLast,
     });
   });
-  flushActivity(true);
-  return segments;
+
+  flushActivity();
+  return result;
 }

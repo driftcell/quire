@@ -1,17 +1,19 @@
 import { Fragment, memo, useState, type ReactNode } from "react";
-import { ListTreeIcon } from "lucide-react";
+import { SparklesIcon } from "lucide-react";
 import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
 import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import { SubagentTrace } from "@/components/chat/SubagentTrace";
-import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
+import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import {
   activityHasQuestion,
   buildHistoricalSegments,
   extractSubagentLiveView,
   summarizeActivity,
+  type ActivityItem,
   type ActivityRenderSegment,
+  type ExecutionSubagent,
   type RenderSegment,
 } from "@/components/chat/traceSegments";
 import {
@@ -27,141 +29,137 @@ import {
 import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveSubagentRun } from "@/lib/liveTrace";
 
-function formatActivityDuration(durationMs?: number): string | null {
-  if (durationMs === undefined || durationMs <= 0) {
-    return null;
-  }
-  if (durationMs < 1000) {
-    return `${durationMs}ms`;
-  }
-  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
-  if (totalSeconds < 60) {
-    return `${totalSeconds}秒`;
-  }
-  const mins = Math.floor(totalSeconds / 60);
-  const secs = totalSeconds % 60;
-  return secs > 0 ? `${mins}分${secs}秒` : `${mins}分`;
+function ActivityItems({
+  sessionId,
+  items,
+  questionSlots,
+}: {
+  sessionId: string;
+  items: ActivityItem[];
+  questionSlots?: Map<string, ReactNode>;
+}) {
+  const renderSubagent = (entry: ExecutionSubagent) =>
+    entry.kind === "historical" ? (
+      <HistoricalSubagent
+        key={entry.key}
+        sessionId={sessionId}
+        subagent={entry.subagent}
+      />
+    ) : (
+      <LiveSubagent
+        key={entry.key}
+        sessionId={sessionId}
+        sub={entry.subagent}
+      />
+    );
+
+  return (
+    <div className="space-y-1.5">
+      {items.map((item) => {
+        if (item.kind === "thinking") {
+          return (
+            <ThinkingTrace
+              key={item.key}
+              content={item.text}
+              isStreaming={item.isStreaming}
+              isActive={item.isActive}
+              autoExpand={item.isActive}
+              maxSmoothBacklog={160}
+              startedAtMs={item.startedAtMs}
+              durationMs={item.durationMs}
+            />
+          );
+        }
+        return (
+          <div key={item.key} className="space-y-1.5">
+            <ToolCallList
+              sessionId={sessionId}
+              tools={item.tools}
+              questionSlots={questionSlots}
+            />
+            {item.subagents.map(renderSubagent)}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function ActivitySegment({
   sessionId,
   segment,
   questionSlots,
-  showActiveDetails,
+  showActiveDetails = true,
   liveHeader,
 }: {
   sessionId: string;
   segment: ActivityRenderSegment;
   questionSlots?: Map<string, ReactNode>;
-  showActiveDetails: boolean;
+  showActiveDetails?: boolean;
   liveHeader?: ReactNode;
 }) {
   const hasQuestion = activityHasQuestion(segment.items, questionSlots);
+  const [userOpen, setUserOpen] = useState<boolean | undefined>(undefined);
   const summary = summarizeActivity(segment.items);
-  const isActive = segment.isActive;
-  const defaultOpen = hasQuestion || segment.isLive === true;
-  const [userOpen, setUserOpen] = useState<boolean | null>(null);
-  const open = userOpen ?? defaultOpen;
 
-  const duration = formatActivityDuration(segment.durationMs);
-  const completedParts: string[] = [];
-  if (duration) {
-    completedParts.push(duration);
-  }
-  if (summary.subagentCount > 0) {
-    completedParts.push(`${summary.subagentCount} 个子代理`);
-  }
-  const title =
-    summary.toolCount > 0
-      ? `已完成思考与 ${summary.toolCount} 次操作`
-      : summary.subagentCount > 0
-        ? `已完成思考与 ${summary.subagentCount} 个子代理`
-        : "已完成思考";
-
-  const details = segment.items.map((item) => {
-    if (item.kind === "thinking") {
-      return (
-        <ThinkingTrace
-          key={item.key}
-          content={item.text}
-          isStreaming={item.isStreaming}
-          isActive={item.isActive}
-          startedAtMs={item.startedAtMs}
-          durationMs={item.durationMs}
-        />
-      );
-    }
+  if (segment.isActive) {
     return (
-      <Fragment key={item.key}>
-        <ToolCallList
-          sessionId={sessionId}
-          tools={item.tools}
-          questionSlots={questionSlots}
-        />
-        {item.subagents.map((entry) =>
-          entry.kind === "historical" ? (
-            <HistoricalSubagent
-              key={entry.key}
-              sessionId={sessionId}
-              subagent={entry.subagent}
-            />
-          ) : (
-            <LiveSubagent
-              key={entry.key}
-              sessionId={sessionId}
-              sub={entry.subagent}
-            />
-          ),
-        )}
-      </Fragment>
-    );
-  });
-
-  if (isActive) {
-    return (
-      <Trace
-        data-slot="activity"
-        data-active="true"
-        data-expanded={showActiveDetails ? "true" : "false"}
+      <div
+        data-slot="execution-activity"
+        data-state="active"
+        className="w-full space-y-1.5"
       >
         {liveHeader}
-        {showActiveDetails && (
-          <div
-            data-slot="activity-details"
-            className="mt-1.5 space-y-2 border-l pl-4"
-          >
-            {details}
-          </div>
+        {(showActiveDetails || hasQuestion) && (
+          <ActivityItems
+            sessionId={sessionId}
+            items={segment.items}
+            questionSlots={questionSlots}
+          />
         )}
-      </Trace>
+      </div>
     );
   }
 
+  const open = hasQuestion ? true : (userOpen ?? false);
+  const summaryParts: string[] = [];
+  if (summary.toolCount > 0) {
+    summaryParts.push(`${summary.toolCount} 次工具调用`);
+  }
+  if (summary.subagentCount > 0) {
+    summaryParts.push(`${summary.subagentCount} 个子代理`);
+  }
+  const summaryText = summaryParts.join(" · ");
+
   return (
-    <Trace data-slot="activity" data-active="false">
+    <Trace
+      data-slot="execution-activity"
+      data-state="settled"
+      className="w-full"
+    >
       <TraceCollapsible open={open} onOpenChange={setUserOpen}>
         <TraceCollapsibleTrigger data-activity-trigger="true">
           <TraceLine className="h-6 text-xs leading-5">
             <TraceIcon>
-              <ListTreeIcon className="size-3.5 text-muted-foreground" />
+              <SparklesIcon className="size-3.5 text-muted-foreground" />
             </TraceIcon>
-            <TraceTitle>{title}</TraceTitle>
-            {completedParts.length > 0 && (
-              <TraceDescription className="text-[11px]">
-                {completedParts.join(" · ")}
-              </TraceDescription>
-            )}
+            <TraceTitle>思考与执行过程</TraceTitle>
+            {summaryText && <TraceDescription>{summaryText}</TraceDescription>}
           </TraceLine>
         </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent className="mt-1.5 space-y-2 border-l pl-4">
-          {details}
+        <TraceCollapsibleContent>
+          <ActivityItems
+            sessionId={sessionId}
+            items={segment.items}
+            questionSlots={questionSlots}
+          />
         </TraceCollapsibleContent>
       </TraceCollapsible>
     </Trace>
   );
 }
 
-export const RenderSegments = memo(function RenderSegments({
+const RenderSegments = memo(function RenderSegments({
   sessionId,
   segments,
   questionSlots,
@@ -244,7 +242,7 @@ export function HistoricalRunTrace({
   );
 }
 
-function LiveSubagent({
+const LiveSubagent = memo(function LiveSubagent({
   sessionId,
   sub,
 }: {
@@ -258,6 +256,7 @@ function LiveSubagent({
     thinkingStartedAtMs,
     tools,
     streamingText,
+    isTextStreaming,
   } = extractSubagentLiveView(sub.trace);
   const outputText = sub.summary?.trim() || streamingText.trim();
 
@@ -275,11 +274,11 @@ function LiveSubagent({
         thinkingDurationMs,
         tools,
         outputText,
-        outputStreaming: !sub.summary && sub.status === "running",
+        outputStreaming: !sub.summary && isTextStreaming,
       }}
     />
   );
-}
+});
 
 export function LiveTraceSegments({
   sessionId,

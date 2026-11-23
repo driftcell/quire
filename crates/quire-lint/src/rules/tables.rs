@@ -215,7 +215,16 @@ fn check_a4_width(
         } else {
             body_total as f64 / row_count as f64
         };
-        let widest = header.max(body_average);
+        let effective_body =
+            if shape.leaves.len() <= 5 && matches!(leaf.data_type, ColumnDataType::Text) {
+                // In 2-to-5 column qualitative comparison tables, text columns wrap
+                // naturally across 2 lines in A4 portrait CSS, whereas headers and
+                // numeric columns stay on a single line.
+                (body_average * 0.6).min(22.0)
+            } else {
+                body_average
+            };
+        let widest = header.max(effective_body);
         natural_width += widest * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
     }
     if shape.leaves.len() <= 9 && natural_width <= A4_CONTENT_WIDTH_PX * 1.18 {
