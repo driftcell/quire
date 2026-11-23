@@ -1,6 +1,6 @@
 use super::*;
 use rig::{
-    completion::ResponseIdentity,
+    completion::{ResponseIdentity, Usage},
     effect::{Answered, EffectId, EffectKind},
     message::{CallId, Message, ToolCall, ToolFunction, ToolName},
     test_utils::HookTestHarness,
@@ -37,6 +37,80 @@ fn push_tool(content: &mut Vec<AssistantContent>, call_id: &str, tool_name: &str
 
 fn question_turn(content: &mut Vec<AssistantContent>) {
     push_tool(content, "call_question", "ask_user");
+}
+
+#[tokio::test]
+async fn model_turn_finished_emits_per_call_usage_and_cost() {
+    let (sender, mut receiver) = mpsc::channel(8);
+    let harness = HookTestHarness::new().with_hook(TurnControlHook {
+        execution: execution(),
+        scope: StreamEventSender::top(sender),
+        queue: None,
+        kb_update_notice: None,
+        pricing: Some(ModelTurnPricing {
+            context_limit: 64_000,
+            cost_input: Some(1.0),
+            cost_output: Some(2.0),
+            cost_cache_read: Some(0.5),
+        }),
+        state: SharedTurnState::default(),
+    });
+    harness.set_turn(1);
+    let content = Vec::new();
+    let identity = ResponseIdentity::default();
+    let raw = Value::Null;
+    let calls = [
+        (
+            Usage::new()
+                .input_tokens(120_u64)
+                .output_tokens(30_u64)
+                .cached_input_tokens(40_u64),
+            (120, 30, 40, 150),
+            0.00016,
+        ),
+        (
+            Usage::new().input_tokens(10_u64).output_tokens(5_u64),
+            (10, 5, 0, 15),
+            0.00002,
+        ),
+    ];
+
+    for (usage, expected, expected_cost) in calls {
+        let action = harness
+            .hooks()
+            .on_model_turn_finished(
+                harness.context(),
+                ModelTurnFinished {
+                    turn: 1,
+                    content: &content,
+                    usage,
+                    identity: &identity,
+                    finish_reason: None,
+                    max_tokens: None,
+                    raw: &raw,
+                },
+            )
+            .await;
+        assert_eq!(action, ModelTurnAction::Continue);
+
+        let event = receiver.try_recv().ok().and_then(|result| result.ok());
+        assert!(matches!(event, Some(ModelStreamEvent::Usage(_))));
+        let Some(ModelStreamEvent::Usage(actual)) = event else {
+            return;
+        };
+        assert_eq!(
+            (
+                actual.input_tokens,
+                actual.output_tokens,
+                actual.cached_tokens,
+                actual.context_used,
+            ),
+            expected
+        );
+        assert_eq!(actual.context_limit, 64_000);
+        let cost = actual.cost_rmb.unwrap_or_default();
+        assert!((cost - expected_cost).abs() < f64::EPSILON);
+    }
 }
 
 #[tokio::test]

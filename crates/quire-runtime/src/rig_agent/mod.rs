@@ -517,24 +517,9 @@ impl RigModelCore {
                     .await?;
             }
 
-            let (termination, last_usage, emitted_live_usage) = {
-                let state = state.lock().await;
-                (state.termination, state.last_usage, state.emitted_live_usage)
-            };
+            let termination = state.lock().await.termination;
             if termination == RunTermination::Superseded {
                 scope.send(ModelStreamEvent::Superseded).await;
-            }
-            if termination != RunTermination::Cancelled
-                && !emitted_live_usage
-                && let Some(usage) = last_usage.as_ref()
-            {
-                let mut mapped = context_usage(usage, context_limit);
-                mapped.cost_rmb = turn_pricing.calculate_cost_rmb(
-                    mapped.input_tokens,
-                    mapped.output_tokens,
-                    mapped.cached_tokens,
-                );
-                scope.send(ModelStreamEvent::Usage(mapped)).await;
             }
             Ok((text, full_history))
         }

@@ -9,7 +9,7 @@ use rig::{
         ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction, OutcomeEvent,
         ReasoningDelta, RequestPatch, RunStart, RunStartAction, TextDelta, ToolCallDelta,
     },
-    completion::{Document, Usage},
+    completion::Document,
     message::AssistantContent,
 };
 use serde::Serialize;
@@ -93,8 +93,6 @@ impl ModelTurnPricing {
 #[derive(Default)]
 pub(super) struct TurnRunState {
     pub(super) termination: RunTermination,
-    pub(super) last_usage: Option<Usage>,
-    pub(super) emitted_live_usage: bool,
     turn_has_ask_user: bool,
     started: HashMap<String, Instant>,
 }
@@ -218,7 +216,6 @@ impl AgentHook for TurnControlHook {
         _ctx: &HookContext,
         event: ModelTurnFinished<'_>,
     ) -> ModelTurnAction {
-        self.state.lock().await.last_usage = Some(event.usage);
         if self.execution.cancellation.is_cancelled() {
             terminate(&self.state, RunTermination::Cancelled).await;
             return ModelTurnAction::stop(CANCELLED_REASON);
@@ -231,7 +228,6 @@ impl AgentHook for TurnControlHook {
                 usage.cached_tokens,
             );
             if usage.input_tokens > 0 || usage.output_tokens > 0 || usage.cached_tokens > 0 {
-                self.state.lock().await.emitted_live_usage = true;
                 self.scope.send(ModelStreamEvent::Usage(usage)).await;
             }
         }
