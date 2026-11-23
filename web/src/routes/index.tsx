@@ -1,11 +1,12 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon } from "lucide-react";
+import { PanelLeftIcon } from "lucide-react";
 import { toast } from "sonner";
 import { createSession, postMessage, uploadAttachment } from "@/api/runtime";
 import type { SessionCommentRef } from "@/contracts/session-protocol";
 import { PromptComposer } from "@/components/chat/PromptComposer";
 import { BrandSigil } from "@/components/layout/BrandSigil";
+import { SidebarEdgeHandle } from "@/components/layout/SidebarEdgeHandle";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -90,19 +91,12 @@ function HomePage() {
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center">
         {!isMobile && (
-          <button
-            type="button"
-            title={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            aria-label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            onClick={toggleSidebar}
-            className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-4 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-          >
-            {leftSidebarOpen ? (
-              <ChevronLeftIcon className="size-3.5" />
-            ) : (
-              <ChevronRightIcon className="size-3.5" />
-            )}
-          </button>
+          <SidebarEdgeHandle
+            side="left"
+            open={leftSidebarOpen}
+            label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            onToggle={toggleSidebar}
+          />
         )}
 
         <div className="flex w-full flex-col items-center px-4 pb-12 sm:px-6">

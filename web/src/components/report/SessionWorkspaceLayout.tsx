@@ -1,12 +1,8 @@
 import type { ReactNode } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, PanelLeftIcon } from "lucide-react";
+import { PanelLeftIcon } from "lucide-react";
+import { SidebarEdgeHandle } from "@/components/layout/SidebarEdgeHandle";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 export type SessionMobileTab = "report" | "chat" | "comments";
 
@@ -68,29 +64,13 @@ export function SessionWorkspaceLayout({
         }
       >
         {!isMobile && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <button
-                  type="button"
-                  aria-label={
-                    leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"
-                  }
-                  onClick={toggleSidebar}
-                  className="focus-visible:ring-ring absolute top-1/2 left-0 z-30 flex h-12 w-2.5 -translate-y-1/2 items-center justify-center rounded-r-md border border-l-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-3.5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-                />
-              }
-            >
-              {leftSidebarOpen ? (
-                <ChevronLeftIcon className="size-2.5" />
-              ) : (
-                <ChevronRightIcon className="size-2.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipContent>
-              {leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
-            </TooltipContent>
-          </Tooltip>
+          <SidebarEdgeHandle
+            side="left"
+            open={leftSidebarOpen}
+            label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            onToggle={toggleSidebar}
+            tooltip
+          />
         )}
         {!hasReportData ? (
           chatPane

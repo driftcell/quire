@@ -1,5 +1,5 @@
 import { memo, useCallback, useMemo, useRef } from "react";
-import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { SidebarEdgeHandle } from "@/components/layout/SidebarEdgeHandle";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import { ReportPaneToolbar } from "@/components/report/ReportPaneToolbar";
 import { ReportViewer } from "@/components/report/ReportViewer";
@@ -130,19 +130,13 @@ export const SessionReportPane = memo(function SessionReportPane({
       )}
 
       {!isMobile && (
-        <button
-          type="button"
-          title={rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
-          aria-label={rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
-          onClick={onToggleRightSidebar}
-          className="focus-visible:ring-ring absolute top-1/2 right-0 z-30 flex h-12 w-2.5 -translate-y-1/2 items-center justify-center rounded-l-md border border-r-0 bg-background/90 text-muted-foreground opacity-60 shadow-xs backdrop-blur transition-opacity hover:w-3.5 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:outline-none"
-        >
-          {rightSidebarOpen ? (
-            <ChevronRightIcon className="size-2.5" />
-          ) : (
-            <ChevronLeftIcon className="size-2.5" />
-          )}
-        </button>
+        <SidebarEdgeHandle
+          side="right"
+          open={rightSidebarOpen}
+          label={rightSidebarOpen ? "收起右侧对话栏" : "展开右侧对话栏"}
+          onToggle={onToggleRightSidebar}
+          tooltip
+        />
       )}
 
       <div
