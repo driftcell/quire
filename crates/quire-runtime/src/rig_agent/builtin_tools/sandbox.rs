@@ -1,11 +1,20 @@
 use super::*;
 
+/// Execute Python, JavaScript, or Bash code inside this run's isolated remote sandbox.
+///
+/// The sandbox is provisioned on first use, persists files and installed dependencies across
+/// calls within the same run, and is destroyed when the run ends. Returns `exit_code`, `stdout`,
+/// and `stderr` (each stream is capped at 64 KiB with `stdout_truncated` / `stderr_truncated` flags).
 #[rig_tool(name = "sandbox_execute")]
 pub(crate) async fn sandbox_execute_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Execution runtime: `"python"`, `"javascript"`, or `"bash"`.
     language: String,
+    /// Source code or shell script to execute (up to 256 KiB).
     code: String,
+    /// Optional working directory inside the sandbox container.
     cwd: Option<String>,
+    /// Optional execution timeout in seconds.
     timeout_seconds: Option<u64>,
 ) -> Result<SandboxExecuteReceipt, ToolExecutionError> {
     if code.len() > MAX_TOOL_CODE_BYTES {
@@ -36,9 +45,15 @@ pub(crate) async fn sandbox_execute_tool(
     })
 }
 
+/// Read a file (up to 256 KiB) from this run's sandbox filesystem.
+///
+/// UTF-8 text is returned directly (`encoding: "utf-8"`); binary files are returned as
+/// `encoding: "base64"`. Reading a file larger than 256 KiB will fail—use `sandbox_execute`
+/// with Python or Bash to inspect or chunk larger files.
 #[rig_tool(name = "sandbox_read_file")]
 pub(crate) async fn sandbox_read_file_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Absolute or workspace-relative file path inside the sandbox (must be `<= 256` KiB).
     path: String,
 ) -> Result<SandboxReadFileReceipt, ToolExecutionError> {
     if path.trim().is_empty() {
@@ -66,10 +81,15 @@ pub(crate) async fn sandbox_read_file_tool(
     })
 }
 
+/// Write a UTF-8 text file (up to 256 KiB) in this run's sandbox filesystem, creating missing
+/// parent directories when supported. For files exceeding 256 KiB or binary outputs, generate
+/// them via `sandbox_execute`.
 #[rig_tool(name = "sandbox_write_file")]
 pub(crate) async fn sandbox_write_file_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Destination file path inside the sandbox.
     path: String,
+    /// UTF-8 text content to write (up to 256 KiB).
     content: String,
 ) -> Result<SandboxWriteFileReceipt, ToolExecutionError> {
     if path.trim().is_empty() {
@@ -95,9 +115,16 @@ pub(crate) async fn sandbox_write_file_tool(
     })
 }
 
+/// Mount an attachment uploaded to the current session into the run's sandbox at
+/// `/workspace/attachments/{attachment_id}/{filename}`.
+///
+/// Returns the mounted sandbox `path`, `filename`, `mime_type`, and `size_bytes` without
+/// exposing storage credentials or signed URLs. After mounting, read small text files (`<= 256` KiB)
+/// with `sandbox_read_file` or parse spreadsheets/PDFs/large datasets with `sandbox_execute`.
 #[rig_tool(name = "sandbox_mount_attachment")]
 pub(crate) async fn sandbox_mount_attachment_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Session attachment ID to mount into `/workspace/attachments/{attachment_id}/{filename}`.
     attachment_id: String,
 ) -> Result<SandboxMountAttachmentReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;

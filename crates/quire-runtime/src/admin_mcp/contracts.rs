@@ -7,13 +7,13 @@ pub struct EmptyParams {}
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbCreateBranchParams {
-    /// New branch name: 1-64 letters, digits, '-', '_' or '.', starting alphanumeric.
+    /// New draft branch name (`1..=64` ASCII letters, digits, `'-'`, `'_'`, or `'.'`, starting with an alphanumeric character).
     #[serde(alias = "branch")]
     pub name: String,
-    /// Human-readable purpose of the branch. May be empty.
+    /// Optional human-readable description of what this draft branch changes or tests.
     #[serde(default)]
     pub description: String,
-    /// Source branch. Defaults to the current active branch.
+    /// Optional source branch to clone from. Omit to clone from the current active production branch.
     #[serde(default, alias = "base", alias = "source", alias = "from_branch")]
     pub from: Option<String>,
 }
@@ -21,7 +21,7 @@ pub struct KbCreateBranchParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbBranchParams {
-    /// Branch name returned by kb_list_branches.
+    /// Target branch name returned by `kb_list_branches` (must be a `draft` branch when calling `kb_promote_branch`).
     #[serde(alias = "branch")]
     pub name: String,
 }
@@ -29,7 +29,7 @@ pub struct KbBranchParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbRollbackParams {
-    /// Snapshot version to restore. Omit to restore the latest earlier snapshot.
+    /// Immutable snapshot `version` from `kb_list_branches.recent_snapshots` to restore. Omit to restore the most recent earlier snapshot before the current active version.
     #[serde(default, alias = "snapshot_version", alias = "to_version")]
     pub version: Option<u64>,
 }
@@ -37,9 +37,9 @@ pub struct KbRollbackParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbListItemsParams {
-    /// Branch to inspect.
+    /// Knowledge-base branch name to inspect (e.g. `"main"` or a draft branch name from `kb_list_branches`).
     pub branch: String,
-    /// Optional item kind filter.
+    /// Optional item category filter: `"doc"`, `"agent"`, or `"skill"`. Omit to list all items on `branch`.
     #[serde(default)]
     pub item_kind: Option<KbItemKind>,
 }
@@ -47,12 +47,12 @@ pub struct KbListItemsParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbReadItemParams {
-    /// Branch to inspect.
+    /// Knowledge-base branch name to read from.
     pub branch: String,
-    /// doc, agent or skill.
+    /// Item category: `"doc"`, `"agent"`, or `"skill"`.
     #[serde(alias = "kind")]
     pub item_kind: KbItemKind,
-    /// doc_id for documents, name for agents and skills.
+    /// Exact item identifier from `kb_list_items` (`doc_id` for `"doc"`, `name` for `"agent"` and `"skill"`).
     #[serde(alias = "key")]
     pub item_key: String,
 }
@@ -60,38 +60,38 @@ pub struct KbReadItemParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbUpsertDocParams {
-    /// Branch to edit. Use the active branch only for deliberate production changes.
+    /// Target branch to edit (prefer an isolated `draft` branch; archived branches reject writes).
     pub branch: String,
-    /// Stable document identifier.
+    /// Stable document identifier (`1..=64` chars, e.g. `"system_instructions"` or `"compaction_prompt"`).
     #[serde(alias = "id")]
     pub doc_id: String,
-    /// Display name.
+    /// Human-readable document display name.
     pub name: String,
-    /// Full markdown content.
+    /// Complete Markdown content for the knowledge-base document (replaces the existing document content on `branch`).
     pub content: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbUpsertAgentParams {
-    /// Branch to edit.
+    /// Target branch to edit (prefer an isolated `draft` branch).
     pub branch: String,
-    /// Agent name, for example `main` or `reviewer`.
+    /// Unique agent identifier (`1..=64` chars, e.g. `"main"`, `"researcher"`, `"writer"`, `"reviewer"`).
     pub name: String,
-    /// Short description of when to delegate to this agent.
+    /// Concise delegation description shown to the primary orchestrator via `list_subagents` explaining when to spawn this subagent.
     #[serde(default)]
     pub description: String,
-    /// Registered model route ID.
+    /// Registered model route ID from `models_list` (e.g. `"openai/gpt-5"` or `"deepseek/deepseek-chat"`).
     pub model: String,
-    /// Full system prompt.
+    /// Complete Markdown system prompt governing this agent's role and workflow.
     pub system_prompt: String,
-    /// MCP tool names the agent may call.
+    /// Allow-list of built-in and MCP tool names or patterns (`"*"`, `"apply_operations"`, `"server_id:*"`, `"server_id:tool_name"`). Note: `spawn_subagents` and `ask_user` are automatically stripped from child subagents at runtime.
     #[serde(default, alias = "tools")]
     pub allowed_tools: Vec<String>,
-    /// Whether this agent is the default primary agent for the branch.
+    /// Set `true` to make this the branch's default primary session agent (automatically clears `is_default` on all other agents in `branch`).
     #[serde(default)]
     pub is_default: bool,
-    /// Whether the agent is enabled. Default true.
+    /// Whether this agent can be selected or spawned (`true` by default).
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
@@ -99,27 +99,27 @@ pub struct KbUpsertAgentParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillResourceParam {
-    /// Path relative to the skill directory.
+    /// Relative path inside the skill bundle (e.g. `"templates/table.json"` or `"examples/chart.json"`; no leading `/` or `..` segments).
     pub path: String,
-    /// Full resource content.
+    /// Full UTF-8 text content of the bundled resource file.
     pub content: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbUpsertSkillParams {
-    /// Branch to edit.
+    /// Target branch to edit (prefer an isolated `draft` branch).
     pub branch: String,
-    /// Skill name.
+    /// Unique skill name (`1..=64` chars, loaded at runtime via `load_skill(name)`).
     pub name: String,
-    /// Short description shown in the system prompt.
+    /// Short one-line summary shown in the `<available_skills>` system prompt index telling agents when to load this skill.
     pub description: String,
-    /// Skill body markdown.
+    /// Complete Markdown instructions returned when an agent calls `load_skill(name)`.
     pub body: String,
-    /// Whether the skill is enabled. Default true.
+    /// Whether the skill is advertised in `<available_skills>` and loadable (`true` by default).
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// Optional skill resources.
+    /// Complete list of bundled resource files for this skill (replaces ALL existing resources for `name` on `branch`; read existing resources with `kb_read_item` first if you want to preserve them).
     #[serde(default)]
     pub resources: Vec<SkillResourceParam>,
 }
@@ -127,17 +127,17 @@ pub struct KbUpsertSkillParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelsUpsertProviderParams {
-    /// Stable provider ID.
+    /// Stable provider identifier (`1..=64` chars, e.g. `"deepseek"`, `"dashscope"`, `"anthropic"`).
     pub provider_id: String,
-    /// Display name.
+    /// Human-readable provider display name.
     pub name: String,
-    /// Wire protocol.
+    /// Upstream wire protocol: `"openai_compatible"` or `"anthropic"`.
     pub protocol: ProviderProtocol,
-    /// API base URL.
+    /// Base HTTP API endpoint URL (e.g. `"https://api.deepseek.com/v1"`).
     pub base_url: String,
-    /// `env:VAR`, `enc:...` or a raw key when RUNTIME_MASTER_KEY is configured.
+    /// Credential reference: `"env:VAR_NAME"` (recommended), `"enc:..."`, or a raw API key when `RUNTIME_MASTER_KEY` is configured.
     pub api_key_ref: String,
-    /// Whether the provider is enabled. Default true.
+    /// Whether the provider is enabled for model resolution (`true` by default).
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
@@ -145,18 +145,18 @@ pub struct ModelsUpsertProviderParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelsImportParams {
-    /// Local provider receiving the imported models.
+    /// Registered local `provider_id` that will own the imported model routes.
     pub provider_id: String,
-    /// Optional upstream models.dev provider ID filter.
+    /// Optional upstream `models.dev` provider key to import from (defaults to `provider_id` when omitted).
     #[serde(default)]
     pub provider_filter: Option<String>,
-    /// Optional subset of upstream model IDs.
+    /// Optional explicit allow-list of upstream `model_id`s to import; omit to import all tool-capable models under the provider.
     #[serde(default)]
     pub model_ids: Option<Vec<String>>,
-    /// Inline models.dev payload for offline imports.
+    /// Optional inline `models.dev` JSON catalog payload for offline/air-gapped imports; omit to fetch from `url` or the configured catalog endpoint.
     #[serde(default)]
     pub payload: Option<Value>,
-    /// Optional catalog URL override.
+    /// Optional one-off `models.dev` catalog URL override.
     #[serde(default)]
     pub url: Option<String>,
 }
@@ -164,10 +164,10 @@ pub struct ModelsImportParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionsListParams {
-    /// Page size, 1..=200. Default 50.
+    /// Maximum number of session summaries to return (`1..=200`, defaults to `50`).
     #[serde(default)]
     pub limit: Option<i64>,
-    /// Offset. Default 0.
+    /// Zero-based pagination offset (defaults to `0`).
     #[serde(default)]
     pub offset: Option<i64>,
 }
@@ -175,20 +175,20 @@ pub struct SessionsListParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionsInspectParams {
-    /// Session ID to inspect.
+    /// Target `session_id` from `sessions_list`.
     pub session_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct KbDeleteItemParams {
-    /// Target branch. Omit to use the active branch.
+    /// Target branch to delete from. Omit ONLY when intentionally deleting from the current active production branch.
     #[serde(default)]
     pub branch: Option<String>,
-    /// doc, agent or skill.
+    /// Item category to delete: `"doc"`, `"agent"`, or `"skill"`.
     #[serde(alias = "kind")]
     pub item_kind: KbItemKind,
-    /// doc_id for documents, name for agents and skills.
+    /// Exact item identifier (`doc_id` for `"doc"`, `name` for `"agent"` and `"skill"`).
     #[serde(alias = "key", alias = "id")]
     pub item_key: String,
 }
@@ -196,39 +196,38 @@ pub struct KbDeleteItemParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelIdParams {
-    /// Registered model route ID.
+    /// Registered model route `id` from `models_list` (e.g. `"deepseek/deepseek-chat"`).
     pub id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderIdParams {
-    /// Registered provider ID.
+    /// Registered `provider_id` from `models_list_providers`.
     pub provider_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionsToolCallParams {
-    /// Session ID.
+    /// Session ID that owns the run trace.
     pub session_id: String,
-    /// Tool call ID from run traces or stream events.
+    /// Exact `tool_call_id` from `sessions_traces` (`RunTraceToolItem.tool_call_id`) or live stream events.
     pub tool_call_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionsUpdateParams {
-    /// Session ID to update.
+    /// Target `session_id` to update.
     pub session_id: String,
-    /// Optional new title.
+    /// Optional new human-readable session title. Omit to keep the current title.
     #[serde(default)]
     pub title: Option<String>,
-    /// Optional new status (active or archived).
+    /// Optional lifecycle status (`"active"` or `"archived"`). Omit to keep the current status.
     #[serde(default)]
     pub status: Option<SessionStatus>,
-    /// Optional pin state. `true` pins with the current timestamp; `false`
-    /// unpins. Omit to keep the current value.
+    /// Optional pin state (`true` pins the session to the top with the current timestamp; `false` unpins; omit to keep unchanged).
     #[serde(default)]
     pub pinned: Option<bool>,
 }
@@ -245,11 +244,11 @@ pub enum SessionAdminAction {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionsActionParams {
-    /// Target session ID.
+    /// Target `session_id`.
     pub session_id: String,
-    /// Action to perform: interrupt, retry, compact or delete.
+    /// Lifecycle action: `"interrupt"` (cancel active run), `"retry"` (re-run last failed/interrupted turn), `"compact"` (summarize history & refresh pinned KB prompt while idle), or `"delete"` (permanently remove idle session and traces).
     pub action: SessionAdminAction,
-    /// Optional run ID when action is `interrupt`.
+    /// Optional specific `run_id` guard when `action` is `"interrupt"`; omit to interrupt whichever run is currently active on the session.
     #[serde(default)]
     pub run_id: Option<String>,
 }
@@ -306,14 +305,14 @@ pub struct SessionsActionReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpSyncParams {
-    /// Registered MCP server ID.
+    /// Registered MCP `server_id` from `mcp_list_servers`.
     pub server_id: String,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpListToolsParams {
-    /// Optional server filter.
+    /// Optional `server_id` filter; omit to list discovered tools across all registered MCP servers.
     #[serde(default)]
     pub server_id: Option<String>,
 }
@@ -321,11 +320,11 @@ pub struct McpListToolsParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpSetToolEnabledParams {
-    /// Registered MCP server ID.
+    /// Registered MCP `server_id` that provides the tool.
     pub server_id: String,
-    /// Tool name returned by mcp_list_tools.
+    /// Exact `tool_name` returned by `mcp_list_tools`.
     pub tool_name: String,
-    /// Global enable switch.
+    /// Global enable flag (`true` allows agents with matching `allowed_tools` to call it; `false` disables it globally).
     pub enabled: bool,
 }
 

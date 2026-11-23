@@ -4,7 +4,7 @@ macro_rules! define_stateless_report_tool {
     ($struct_name:ident, $tool_name:literal, $params_ty:ty, $method:ident) => {
         pub(crate) struct $struct_name;
 
-        impl rig::tool::Tool for $struct_name {
+        impl Tool for $struct_name {
             const NAME: &'static str = $tool_name;
             type Error = ToolExecutionError;
             type Args = $params_ty;
@@ -39,7 +39,7 @@ macro_rules! define_contextual_report_tool {
     ($struct_name:ident, $tool_name:literal, $params_ty:ty, $method:ident) => {
         pub(crate) struct $struct_name;
 
-        impl rig::tool::Tool for $struct_name {
+        impl Tool for $struct_name {
             const NAME: &'static str = $tool_name;
             type Error = ToolExecutionError;
             type Args = $params_ty;

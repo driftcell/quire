@@ -33,8 +33,9 @@ no chart preset or mode abstraction.
 - `EchartsOptionView` for typed inspection of titles, series, axes, datasets and coordinate links.
   Canonical options and open style/data tails remain `Value`; component views preserve single-object
   versus array shapes and tolerate malformed entries so lint diagnostics are not skipped.
-- Concrete runtime receipt types in `rig_agent/tool_schemas.rs`; model-facing descriptions live in
-  `descriptions/tools/` and are loaded with `tool_description!` (see `TOOL_DESCRIPTIONS.md`).
+- Concrete runtime receipt types in `rig_agent/tool_schemas.rs`; model-facing tool and parameter
+  descriptions live directly in Rust `///` doc comments on the `#[rig_tool]` definitions (see
+  `TOOL_DESCRIPTIONS.md`).
 
 ### Redis preview record
 

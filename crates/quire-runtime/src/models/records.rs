@@ -83,27 +83,42 @@ pub struct ModelRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Input payload for `models_upsert`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ModelInput {
+    /// Stable model route ID referenced by `kb_upsert_agent.model` (conventionally `"{provider_id}/{model_id}"`, e.g. `"deepseek/deepseek-chat"`).
     pub id: String,
+    /// Registered `provider_id` from `models_list_providers` that serves this model route.
     pub provider_id: String,
+    /// Upstream provider's native model identifier sent on API calls (e.g. `"deepseek-chat"` or `"claude-sonnet-4-5"`).
     pub model_id: String,
+    /// Human-readable model display name shown in the UI.
     pub display_name: String,
+    /// Total context window limit in tokens (`> 0`, e.g. `128000` or `200000`).
     pub context_limit: i64,
+    /// Optional per-turn output token cap (`> 0`).
     #[serde(default)]
     pub max_output_tokens: Option<i64>,
+    /// Whether the model emits reasoning/thinking blocks (`false` by default).
     #[serde(default)]
     pub supports_reasoning: bool,
+    /// Whether the model supports tool/function calling (`true` by default; required for Quire agents).
     #[serde(default = "default_enabled")]
     pub supports_tools: bool,
+    /// Whether the model accepts multimodal image content blocks from `preview_report` and `preview_echarts` (`false` by default).
     #[serde(default)]
     pub supports_vision: bool,
+    /// Optional uncached input price in RMB (CNY) per 1,000,000 tokens (`>= 0.0`).
     #[serde(default)]
     pub cost_input: Option<f64>,
+    /// Optional output completion price in RMB (CNY) per 1,000,000 tokens (`>= 0.0`).
     #[serde(default)]
     pub cost_output: Option<f64>,
+    /// Optional prompt-cache-hit input price in RMB (CNY) per 1,000,000 tokens (`>= 0.0`).
     #[serde(default)]
     pub cost_cache_read: Option<f64>,
+    /// Whether this model route is enabled for agent execution (`true` by default).
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }

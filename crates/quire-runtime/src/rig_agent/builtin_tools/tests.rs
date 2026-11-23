@@ -14,6 +14,7 @@ fn wildcard_allow_list_enables_every_builtin_tool() {
 
 #[test]
 fn ask_user_schema_exposes_questions_array() {
+    assert!(!ASK_USER_TOOL.description().trim().is_empty());
     let parameters = ASK_USER_TOOL.parameters();
     let properties = parameters
         .get("properties")
@@ -30,15 +31,11 @@ fn ask_user_schema_exposes_questions_array() {
 
 #[test]
 fn describe_task_schema_advertises_status_and_parameters() {
-    let tool = DescribedTool::new(
-        DescribeTaskTool,
-        quire_protocol::tool_description!("describe_task"),
-    );
-    let description = tool.description();
+    let description = DESCRIBE_TASK_TOOL.description();
     assert!(description.contains("current work stage"));
     assert!(description.contains("user interface"));
 
-    let parameters = tool.parameters();
+    let parameters = DESCRIBE_TASK_TOOL.parameters();
     let properties = parameters
         .get("properties")
         .and_then(Value::as_object)
@@ -116,6 +113,7 @@ fn warn_missing_allowed_tools_expands_wildcards_instead_of_literal_lookup() {
 
 #[test]
 fn sandbox_tool_schema_exposes_code_and_optional_limits() {
+    assert!(!SANDBOX_EXECUTE_TOOL.description().trim().is_empty());
     let parameters = SANDBOX_EXECUTE_TOOL.parameters();
     let properties = parameters
         .get("properties")
@@ -133,6 +131,12 @@ fn sandbox_tool_schema_exposes_code_and_optional_limits() {
 
 #[test]
 fn sandbox_mount_attachment_schema_requires_attachment_id() {
+    assert!(
+        !SANDBOX_MOUNT_ATTACHMENT_TOOL
+            .description()
+            .trim()
+            .is_empty()
+    );
     let parameters = SANDBOX_MOUNT_ATTACHMENT_TOOL.parameters();
     let properties = parameters
         .get("properties")
@@ -164,6 +168,7 @@ fn shell_quote_handles_quotes_and_shell_metacharacters() {
 
 #[test]
 fn chart_preview_tools_enforce_the_no_repeat_option_contract() {
+    assert!(!PREVIEW_ECHARTS_TOOL.description().trim().is_empty());
     let preview = PREVIEW_ECHARTS_TOOL.parameters();
     let preview_properties = preview
         .get("properties")
@@ -173,6 +178,7 @@ fn chart_preview_tools_enforce_the_no_repeat_option_contract() {
     assert!(preview_properties.contains_key("option_patch"));
     assert!(preview_properties.contains_key("based_on_preview_id"));
 
+    assert!(!COMMIT_CHART_TOOL.description().trim().is_empty());
     let commit = COMMIT_CHART_TOOL.parameters();
     let commit_properties = commit
         .get("properties")

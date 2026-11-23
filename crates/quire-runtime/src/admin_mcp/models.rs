@@ -2,10 +2,8 @@ use super::*;
 
 #[tool_router(router = models_router, vis = "pub(crate)")]
 impl AdminMcpServer {
-    #[tool(
-        name = "models_list_providers",
-        description = quire_protocol::tool_description!("models_list_providers")
-    )]
+    /// List all registered LLM providers with their wire `protocol` (`openai_compatible` or `anthropic`), `base_url`, masked API key reference, and `enabled` flag.
+    #[tool(name = "models_list_providers")]
     pub async fn models_list_providers(
         &self,
         Parameters(_request): Parameters<EmptyParams>,
@@ -24,10 +22,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "models_upsert_provider",
-        description = quire_protocol::tool_description!("models_upsert_provider")
-    )]
+    /// Register or update an LLM provider (`provider_id`, `name`, `protocol`, `base_url`, `api_key_ref`, `enabled`).
+    ///
+    /// Call this before registering or importing model routes for that `provider_id`. Prefer `env:VAR_NAME` for `api_key_ref`; raw keys require `RUNTIME_MASTER_KEY` to be configured for envelope encryption.
+    #[tool(name = "models_upsert_provider")]
     pub async fn models_upsert_provider(
         &self,
         Parameters(request): Parameters<ModelsUpsertProviderParams>,
@@ -54,10 +52,8 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "models_list",
-        description = quire_protocol::tool_description!("models_list")
-    )]
+    /// List all registered model routes across providers, including `id` (the route ID referenced by agents), `provider_id`, upstream `model_id`, token limits, capability flags, and RMB per-1M-token pricing.
+    #[tool(name = "models_list")]
     pub async fn models_list(
         &self,
         Parameters(_request): Parameters<EmptyParams>,
@@ -73,10 +69,10 @@ impl AdminMcpServer {
         Ok(Json(ModelsListReceipt { models, next_hint }))
     }
 
-    #[tool(
-        name = "models_import_models_dev",
-        description = quire_protocol::tool_description!("models_import_models_dev")
-    )]
+    /// Batch-import model routes and capability/pricing metadata from a `models.dev` catalog (remote URL or inline `payload`) into an existing local `provider_id`.
+    ///
+    /// Each imported route receives `id = "{provider_id}/{model_id}"` (or `{model_id}` if already prefixed). Ensure `provider_id` is registered via `models_upsert_provider` first.
+    #[tool(name = "models_import_models_dev")]
     pub async fn models_import_models_dev(
         &self,
         Parameters(request): Parameters<ModelsImportParams>,
@@ -110,10 +106,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "models_upsert",
-        description = quire_protocol::tool_description!("models_upsert")
-    )]
+    /// Create or update a single model route (`id`, `provider_id`, upstream `model_id`, token limits, capability flags, and RMB per-1M-token costs) and run preflight validation.
+    ///
+    /// Always inspect `warnings` in the receipt (for example missing environment variable credentials on the bound provider or disabled `supports_tools`).
+    #[tool(name = "models_upsert")]
     pub async fn models_upsert(
         &self,
         Parameters(request): Parameters<ModelInput>,
@@ -141,10 +137,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "models_delete",
-        description = quire_protocol::tool_description!("models_delete")
-    )]
+    /// Delete a model route by its route `id` and invalidate the model resolution cache.
+    ///
+    /// Before deleting, ensure no active or draft knowledge-base agent still binds `model` to this route ID.
+    #[tool(name = "models_delete")]
     pub async fn models_delete(
         &self,
         Parameters(request): Parameters<ModelIdParams>,
@@ -165,10 +161,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "models_delete_provider",
-        description = quire_protocol::tool_description!("models_delete_provider")
-    )]
+    /// Delete a registered LLM provider by `provider_id` and cascade-delete all model routes bound to it.
+    ///
+    /// Verify via `models_list` that no agents depend on routes under this provider before deleting.
+    #[tool(name = "models_delete_provider")]
     pub async fn models_delete_provider(
         &self,
         Parameters(request): Parameters<ProviderIdParams>,
@@ -188,8 +184,4 @@ impl AdminMcpServer {
             next_hint,
         }))
     }
-
-    // ---------------------------------------------------------------------
-    // Global MCP registry
-    // ---------------------------------------------------------------------
 }

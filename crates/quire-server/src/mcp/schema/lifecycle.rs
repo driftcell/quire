@@ -17,7 +17,7 @@ use crate::guide::GuideTopic;
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GuideParams {
-    /// Topic to disclose: quickstart, tables_and_charts, citations_and_css or parallel_workflow.
+    /// Protocol topic to disclose: `quickstart` (workflow & patch basics), `tables_and_charts` (`ColumnNode` tables & ECharts 6.0 options), `citations_and_css` (`SourceEntry` & `.report-root` CSS tokens), or `parallel_workflow` (subagent prefix isolation & Smart CAS rebase).
     pub topic: GuideTopic,
 }
 
@@ -40,39 +40,39 @@ pub struct GuideReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateReportParams {
-    /// Human-readable report title, for example "Q3 Revenue Review".
+    /// Human-readable report title shown on the cover and document header (non-empty, e.g. `"2026 Q3 营收分析报告"`).
     pub title: String,
-    /// Agreed length in visible paragraph characters (e.g. 30000 for 约3万字). Omit when unspecified.
+    /// Agreed total prose length in visible paragraph Unicode characters (excluding headings, tables, charts, and citation markers, e.g. `30000` for "约 3 万字"). Stored permanently on the report and tracked via `prose_char_delta` in `get_document_digest`.
     #[serde(default)]
     pub target_prose_chars: Option<NonZeroU32>,
-    /// Optional frontend theme preset, for example "editorial" or "technical".
+    /// Optional visual theme preset (`"default"`, `"editorial"`, `"technical"`, `"academic"`, `"executive"`, or `"minimal"`).
     #[serde(default)]
     pub theme_preset: Option<String>,
-    /// Render a cover page. Default true.
+    /// Whether to render the cover page (`true` by default; set `false` for brief memos).
     #[serde(default)]
     pub enable_cover: Option<bool>,
-    /// Enable the auto-generated TOC. Default true.
+    /// Whether to render the auto-generated Table of Contents (`true` by default).
     #[serde(default)]
     pub enable_toc: Option<bool>,
-    /// Optional initial blocks (full Block AST). IDs must be unique semantic strings.
+    /// Optional initial Block AST entries (for example top-level chapter headings seeded before spawning subagents). Every block `id` must be a unique semantic slug (`[a-zA-Z0-9_-]{1,64}`), never a UUID.
     #[serde(default)]
     pub initial_blocks: Option<Vec<Block>>,
-    /// Stable de-duplication key for retries.
+    /// Optional stable idempotency key (`1..=128` chars, automatically prefixed with the current `session_id`) so retries return the existing document instead of creating duplicates.
     #[serde(default)]
     pub idempotency_key: Option<String>,
-    /// Optional caller-supplied doc_id; otherwise generated from the title.
+    /// Optional explicit `doc_id` slug (`[a-zA-Z0-9_-]{1,64}`). Omit to auto-generate a slug from `title`.
     #[serde(default)]
     pub doc_id: Option<String>,
     /// Optional cover subtitle initialized at report creation.
     #[serde(default)]
     pub subtitle: Option<String>,
-    /// Optional cover author lines initialized at report creation.
+    /// Optional cover author or organization lines initialized at report creation (e.g. `["战略研究组"]`).
     #[serde(default)]
     pub authors: Option<Vec<String>>,
-    /// Optional publication date initialized at report creation.
+    /// Optional cover publication date string initialized at report creation (e.g. `"2026-11-23"`).
     #[serde(default)]
     pub date: Option<String>,
-    /// Optional cover key/value metadata initialized at report creation.
+    /// Optional cover key/value metadata badges initialized at report creation (e.g. `{"密级":"内部公开","版本":"v1.0"}`).
     #[serde(default)]
     pub cover_meta: Option<BTreeMap<String, String>>,
 }
@@ -98,10 +98,10 @@ pub struct CreateReportReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListReportsParams {
-    /// Case-insensitive doc_id/title substring.
+    /// Optional case-insensitive substring filter matched against `doc_id` and report `title`. Omit to list recent reports.
     #[serde(default)]
     pub query: Option<String>,
-    /// Page size, 1..=100, default 20.
+    /// Maximum number of report summaries to return (`1..=100`, defaults to `20`).
     #[serde(default)]
     pub limit: Option<i64>,
 }
@@ -148,11 +148,12 @@ impl From<ReportSummary> for ReportSummaryView {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestParams {
+    /// Target report `doc_id` (check `<runtime_session_state>` or `list_reports`).
     pub doc_id: String,
-    /// Optional case-insensitive keyword filter over id/type/text.
+    /// Optional case-insensitive keyword filter matched against block `id`, block `type`, or visible text. Omit to return the full block outline.
     #[serde(default)]
     pub query: Option<String>,
-    /// Optional read-only comparison target for older reports with no stored agreement.
+    /// Optional read-only comparison target in paragraph characters for older reports that have no stored `target_prose_chars`. Must be omitted when the report already stores an agreed target.
     #[serde(default)]
     pub target_prose_chars: Option<NonZeroU32>,
 }
@@ -223,19 +224,19 @@ pub struct DocumentDigest {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadMarkdownParams {
-    /// Existing report ID.
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Exact heading block ID from get_document_digest. Returns that heading and its contents up to the next same-or-higher heading.
+    /// Exact heading `block_id` from `get_document_digest`. Projects that heading and all blocks beneath it up to the next heading of the same or higher level. Mutually exclusive with `block_ids`.
     #[serde(default)]
     pub section_id: Option<BlockId>,
     /// Legacy input for older callers; new agents use the exact `section_id`.
     #[serde(default)]
     #[schemars(skip)]
     pub section_heading: Option<String>,
-    /// Project specific block IDs, in document order. Example: `["ch1_summary"]`.
+    /// Exact list of `block_id`s to project in document order (e.g. `["ch1_summary", "ch1_table"]`). Mutually exclusive with `section_id`.
     #[serde(default)]
     pub block_ids: Option<Vec<String>>,
-    /// Expand ECharts series into Markdown data tables. Default true.
+    /// Whether to expand ECharts series into Markdown data tables in the projection (`true` by default).
     #[serde(default)]
     pub include_chart_data: Option<bool>,
 }
@@ -258,8 +259,9 @@ pub struct ReadMarkdownReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReadBlocksParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Block IDs to fetch, for example `["financials","kpi-grid"]`.
+    /// Non-empty list of exact `block_id`s from `get_document_digest` whose canonical Block AST JSON should be returned (e.g. `["ch2_rev_table", "ch2_kpi_grid"]`).
     pub block_ids: Vec<String>,
 }
 

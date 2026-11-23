@@ -1,8 +1,12 @@
 use super::*;
 
+/// Load a skill definition (`SKILL.md` body and list of bundled resource file paths) from the
+/// session's knowledge-base branch. Follow up with `read_skill_resource` to read specific
+/// bundled reference files listed in the skill.
 #[rig_tool(name = "load_skill")]
 pub(crate) async fn load_skill_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Skill name on the active session KB branch (e.g. `"higher-education-writing"`).
     name: String,
 ) -> Result<crate::kb::SkillDefinitionRecord, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -17,10 +21,14 @@ pub(crate) async fn load_skill_tool(
     Ok(skill)
 }
 
+/// Read one bundled resource file belonging to a skill on the session's knowledge-base branch.
+/// Load only the resource files relevant to your active role and task stage.
 #[rig_tool(name = "read_skill_resource")]
 pub(crate) async fn read_skill_resource_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Skill name that owns the bundled resource (e.g. `"higher-education-writing"`).
     skill: String,
+    /// Relative path of the resource file inside the skill (e.g. `"references/examples.md"` or `"references/review-rubric.md"`).
     path: String,
 ) -> Result<ReadSkillResourceReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -44,18 +52,16 @@ pub(crate) async fn read_skill_resource_tool(
     })
 }
 
-#[rig_tool(
-    name = "describe_task",
-    params(
-        title = "Short Chinese status phrase, ideally at most 16 characters.",
-        detail = "Optional clarification of the current focus or blocker.",
-        section_id = "Optional `block_id` of the report heading currently being worked on."
-    )
-)]
+/// Report the current work stage to the user interface header without cluttering the tool trace.
+/// Use it at major phase transitions during longer multi-step tasks.
+#[rig_tool(name = "describe_task")]
 pub(crate) async fn describe_task_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Short Chinese status phrase, ideally at most 16 characters (no internal tool names or raw IDs).
     title: String,
+    /// Optional clarification of the current focus or blocker.
     detail: Option<String>,
+    /// Optional `block_id` of the report heading currently being worked on to highlight the active chapter in the UI.
     section_id: Option<String>,
 ) -> Result<DescribeTaskReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -80,9 +86,12 @@ pub(crate) async fn describe_task_tool(
     })
 }
 
+/// Set or refine the current chat session title (automatically trimmed and capped at 60 characters)
+/// once the user's topic is clear. Available only to the lead agent; call once in the opening turn.
 #[rig_tool(name = "set_session_title")]
 pub(crate) async fn set_session_title_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Concise human-readable session title (non-empty, automatically capped at 60 characters).
     title: String,
 ) -> Result<SetSessionTitleReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -118,9 +127,16 @@ pub(crate) async fn set_session_title_tool(
     })
 }
 
+/// Present a one-shot structured questionnaire to the user and immediately suspend the current turn
+/// (any sibling tool calls in the same model turn are skipped without execution). Available only
+/// to the lead agent.
+///
+/// Reserve this for genuinely ambiguous scope or direction decisions that cannot be resolved from
+/// the user's prompt, existing workspace data, or sensible defaults.
 #[rig_tool(name = "ask_user")]
 pub(crate) fn ask_user_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Non-empty list of structured questions; each question must provide a non-empty `id`, `title`, and at least one preset option in `options` (place your recommended option first).
     questions: Vec<QuestionItem>,
 ) -> Result<AskUserReceipt, ToolExecutionError> {
     if questions.is_empty() {
@@ -152,6 +168,9 @@ pub(crate) fn ask_user_tool(
     })
 }
 
+/// List enabled subagent definitions available on the current session's knowledge-base branch,
+/// returning each subagent's `name`, `description`, default `model`, and `allowed_tools` patterns.
+/// Excludes the default lead agent and the calling agent itself.
 #[rig_tool(name = "list_subagents")]
 pub(crate) async fn list_subagents_tool(
     #[rig(context)] context: &mut ToolContext,

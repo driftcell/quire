@@ -152,48 +152,6 @@ fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
     })
 }
 
-pub(super) struct DescribedTool<T> {
-    inner: T,
-    description: &'static str,
-}
-
-impl<T> DescribedTool<T> {
-    fn new(inner: T, description: &'static str) -> Self {
-        Self { inner, description }
-    }
-}
-
-impl<T: Tool> Tool for DescribedTool<T> {
-    const NAME: &'static str = T::NAME;
-    type Args = T::Args;
-    type Output = T::Output;
-    type Error = T::Error;
-
-    fn description(&self) -> String {
-        self.description.to_string()
-    }
-
-    fn parameters(&self) -> Value {
-        self.inner.parameters()
-    }
-
-    fn annotations(&self) -> rig::completion::ToolAnnotations {
-        self.inner.annotations()
-    }
-
-    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
-        self.inner.map_error(error)
-    }
-
-    fn call<'a, 'b>(
-        &'a self,
-        context: &'b mut ToolContext,
-        args: Self::Args,
-    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send + use<'a, 'b, T> {
-        self.inner.call(context, args)
-    }
-}
-
 pub(super) struct ToolBuildContext {
     pub(super) execution: AgentExecution,
     pub(super) scope: StreamEventSender,
@@ -285,10 +243,7 @@ impl RigModelCore {
             ($name:literal, $enabled:expr, $tool:expr) => {
                 if $enabled {
                     names.insert($name.to_string());
-                    server = server.tool(DescribedTool::new(
-                        $tool,
-                        quire_protocol::tool_description!($name),
-                    ));
+                    server = server.tool($tool);
                 }
             };
         }

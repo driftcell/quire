@@ -21,9 +21,10 @@ static dispatch. `ModelStreamProvider`, `SandboxProvider` and `Sandbox` remain o
 runtime tests and the service substitute dynamic implementations. Their methods return explicit boxed
 futures; `SandboxFuture<'a, T>` is the shared alias. No crate uses `async-trait`.
 
-`DescribedTool::call` uses Edition 2024 precise capturing (`use<'a, 'b, T>`) so the opaque future
-captures only the actual self/context lifetimes and tool type. Dynamic provider substitution remains
-part of the supported test and runtime contract.
+Built-in Rig tools use `#[rig_tool]` directly with `///` doc comments on both the function and its
+arguments, and in-process report tools implement `rig::tool::Tool` directly via native RPITIT without
+any intermediate wrapper struct. Dynamic provider substitution remains part of the supported test and
+runtime contract.
 
 ### Data layout and write commands
 

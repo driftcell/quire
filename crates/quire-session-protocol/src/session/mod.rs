@@ -192,25 +192,36 @@ pub struct SessionMessage {
     pub created_at: DateTime<Utc>,
 }
 
+/// One selectable option inside an `ask_user` `QuestionItem`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct QuestionOption {
+    /// Stable short identifier for this option within the question (e.g. `"opt_exec"` or `"30k"`).
     pub id: String,
+    /// Concise user-facing option label (put your recommended choice first and suffix it with `"(Recommended)"` / `"（推荐）"`).
     pub label: String,
+    /// Optional 1-sentence explanation of the trade-off or implication of choosing this option.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
 }
 
+/// One structured question card rendered by `ask_user` (`1..=4` questions per call).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionItem {
+    /// Stable short identifier for this question (e.g. `"report_scope"` or `"target_length"`).
     pub id: String,
+    /// Direct, concise question prompt shown to the user.
     pub title: String,
+    /// Optional brief context explaining why this decision matters for the report.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Allow selecting multiple options (`true`) or enforce single-choice (`false`, default).
     #[serde(default)]
     pub multiple: bool,
+    /// Whether the user must answer this question before submitting (`false` by default).
     #[serde(default)]
     pub required: bool,
+    /// Concrete selectable options (2–4 distinct choices recommended; the UI automatically provides a freeform custom text input alongside these options, so do not add a blank `"Other"` option).
     #[serde(default)]
     pub options: Vec<QuestionOption>,
 }

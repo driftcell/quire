@@ -2,10 +2,21 @@ use super::*;
 
 #[tool_router(router = mutations_router, vis = "pub(crate)")]
 impl QuireMcpServer {
-    #[tool(
-        name = "apply_operations",
-        description = quire_protocol::tool_description!("apply_operations")
-    )]
+    // ---------------------------------------------------------------------
+    // Tool 7: apply operations
+    // ---------------------------------------------------------------------
+    /// Atomically apply a batch of block mutations (`ops`) and optional citation `sources` to a report using Smart CAS optimistic concurrency.
+    ///
+    /// Operation selection & comment-anchor preservation:
+    /// - Prefer `patch_block` (`{"type":"patch_block","block_id":"...","patch":{...}}`) when updating an existing block so review comment threads stay anchored to `block_id`.
+    /// - Use `insert_after`, `insert_before`, or `append` to add new blocks with semantic prefix-scoped IDs (e.g. `ch2_overview`, `ch2_rev_table`).
+    /// - Use `replace_range` or `delete_blocks` only when restructuring or removing blocks; deleting a block detaches any review comment thread anchored to it.
+    /// - When `preview_echarts` + `commit_chart` are in your toolset, author new ECharts blocks through `preview_echarts` -> `commit_chart` instead of embedding unverified raw chart options here.
+    ///
+    /// Concurrency & receipt handling:
+    /// - Pass the `expected_revision` you read from `get_document_digest` / `read_blocks`. Smart CAS automatically rebases non-overlapping edits across parallel subagents; on a conflict error, re-read only the conflicting block IDs and retry.
+    /// - Always inspect `blocking_errors` and `inline_warnings` in the receipt and fix any errors on your blocks before finishing.
+    #[tool(name = "apply_operations")]
     pub async fn apply_operations(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -14,13 +25,16 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_apply_operations(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 8: rollback
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "rollback_revision",
-        description = quire_protocol::tool_description!("rollback_revision")
-    )]
+    /// Restore a report's content to an earlier `target_revision` by committing a new monotonic forward revision (`current_rev + 1`).
+    ///
+    /// Guardrails:
+    /// - Rollback is a whole-document operation that undoes all changes committed after `target_revision`, including concurrent edits from sibling subagents.
+    /// - Prefer surgical `apply_operations` (`patch_block`, `delete_blocks`, `replace_range`) when fixing localized mistakes; use `rollback_revision` only when the user explicitly requests a revision rollback or a broad batch corrupted document structure.
+    #[tool(name = "rollback_revision")]
     pub async fn rollback_revision(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -29,13 +43,18 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_rollback_revision(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 9: upsert sources
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "upsert_sources",
-        description = quire_protocol::tool_description!("upsert_sources")
-    )]
+    /// Register or update bibliography `SourceEntry` records on a report with automatic URL and normalized-title deduplication.
+    ///
+    /// Citation integrity rules:
+    /// - Register ONLY real sources that you actually retrieved and read during research; never fabricate URLs, DOIs, authors, or evidence excerpts.
+    /// - Include a verbatim `evidence` excerpt from the source so reviewers and `lint_document` can verify claim-to-source alignment.
+    /// - Always inspect `canonical_id_map` in the receipt: if a duplicate URL or title merged into an existing source ID, cite the mapped canonical ID in your prose (`[^id]`) and block `source_ids`.
+    /// - You can also register sources atomically alongside block edits via the `sources` map on `apply_operations`.
+    #[tool(name = "upsert_sources")]
     pub async fn upsert_sources(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -44,14 +63,15 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_upsert_sources(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 10: list sources
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "list_sources",
-        annotations(read_only_hint = true),
-        description = quire_protocol::tool_description!("list_sources")
-    )]
+    /// List registered bibliography sources and their `evidence` excerpts for a report.
+    ///
+    /// Call this before authoring citations in a shared report to reuse existing canonical `SourceId`s and verify stored evidence excerpts.
+    /// Passing any unregistered ID in `source_ids` returns an error listing all valid registered source IDs.
+    #[tool(name = "list_sources", annotations(read_only_hint = true))]
     pub async fn list_sources(
         &self,
         Parameters(request): Parameters<ListSourcesParams>,
@@ -107,10 +127,10 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     // Tool 11: set cover
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "set_cover",
-        description = quire_protocol::tool_description!("set_cover")
-    )]
+    /// Partially update the report cover page configuration (`enabled`, `variant`, `title`, `subtitle`, `authors`, `date`, `meta`, or `custom_html`).
+    ///
+    /// Omitted fields inside `cover_patch` preserve their existing stored values; supplying an empty string for `subtitle`, `date`, or `custom_html` clears that optional field.
+    #[tool(name = "set_cover")]
     pub async fn set_cover(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -119,13 +139,14 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_set_cover(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 12: configure TOC
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "configure_toc",
-        description = quire_protocol::tool_description!("configure_toc")
-    )]
+    /// Configure the auto-generated Table of Contents (`enabled`, `title`, `max_depth`, visual `variant`, and page breaks).
+    ///
+    /// The TOC is derived automatically from document `heading` blocks up to `max_depth` (`1..=3`); never author a manual TOC block in the document body.
+    #[tool(name = "configure_toc")]
     pub async fn configure_toc(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -134,13 +155,14 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_configure_toc(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 13: configure references
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "configure_references",
-        description = quire_protocol::tool_description!("configure_references")
-    )]
+    /// Configure the auto-generated bibliography section (`enabled`, `title`, citation `style`, and `page_break_before`).
+    ///
+    /// The receipt includes `orphan_sources` (registered source IDs not cited by any block or inline `[^id]` marker) so you can cite or clean them up before finalizing.
+    #[tool(name = "configure_references")]
     pub async fn configure_references(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -149,13 +171,14 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_configure_references(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 14: configure page chrome
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "configure_page_chrome",
-        description = quire_protocol::tool_description!("configure_page_chrome")
-    )]
+    /// Configure A4 print/paged running headers, footers, first-page visibility, and automatic heading page-break policy (`none`, `h1`, or `h1_and_h2`).
+    ///
+    /// Omitted optional fields keep their current settings. Header and footer slot templates support `{title}`, `{page}`, `{pages}`, and `{date}` placeholders.
+    #[tool(name = "configure_page_chrome")]
     pub async fn configure_page_chrome(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -164,13 +187,14 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_configure_page_chrome(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 15: update style and CSS
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "update_style_and_css",
-        description = quire_protocol::tool_description!("update_style_and_css")
-    )]
+    /// Update the report's visual theme preset, `--rpt-*` CSS custom property tokens, or scoped `.report-root` custom CSS.
+    ///
+    /// Call `get_protocol_guide("citations_and_css")` before writing custom CSS rules. External `@import`, remote `url(...)`, and unscoped global selectors are rejected by validation; follow up with `preview_report` to verify visual contrast and A4 layout.
+    #[tool(name = "update_style_and_css")]
     pub async fn update_style_and_css(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -179,14 +203,17 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_update_style_and_css(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 16: lint
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "lint_document",
-        annotations(read_only_hint = true),
-        description = quire_protocol::tool_description!("lint_document")
-    )]
+    /// Run structural, citation, chart/table, and prose quality checks across the report (`QR1xx`–`QR4xx`).
+    ///
+    /// Verification contract:
+    /// - Call `lint_document` during the `VERIFY` stage after authoring or editing blocks.
+    /// - Resolve all `error`-severity diagnostics before declaring the report complete.
+    /// - Review `warning` diagnostics and `suppressed_blocks` (`block_id -> lint_ignore` codes); only suppress a rule via a block's `lint_ignore` when `suppressible: true` and the exception is deliberate.
+    #[tool(name = "lint_document", annotations(read_only_hint = true))]
     pub async fn lint_document(
         &self,
         Parameters(request): Parameters<LintParams>,
@@ -240,11 +267,10 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     // Tool 17: list comments
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "list_comments",
-        annotations(read_only_hint = true),
-        description = quire_protocol::tool_description!("list_comments")
-    )]
+    /// List side-channel review comment threads anchored to blocks in a report.
+    ///
+    /// By default returns `open` and `addressed` threads (excluding `archived` unless `status: "archived"` is explicitly requested), including each thread's `block_id`, `anchor_blocks`, text `quote`, and `anchor_detached` flag.
+    #[tool(name = "list_comments", annotations(read_only_hint = true))]
     pub async fn list_comments(
         &self,
         Parameters(request): Parameters<ListCommentsParams>,
@@ -281,10 +307,10 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     // Tool 18: add comment
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "add_comment",
-        description = quire_protocol::tool_description!("add_comment")
-    )]
+    /// Create a new side-channel review comment thread anchored to one or more existing blocks without incrementing the document revision.
+    ///
+    /// Use this in reviewer/QA workflows when flagging issues for another agent or human without directly mutating the block; when you are the authoring agent asked to fix content, edit the block via `apply_operations` instead.
+    #[tool(name = "add_comment")]
     pub async fn add_comment(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
@@ -293,13 +319,17 @@ impl QuireMcpServer {
         let context = request_context(&context)?;
         self.exec_add_comment(context, request).await
     }
+
     // ---------------------------------------------------------------------
     // Tool 19: reply comment
     // ---------------------------------------------------------------------
-    #[tool(
-        name = "reply_comment",
-        description = quire_protocol::tool_description!("reply_comment")
-    )]
+    /// Reply to an existing review comment thread and optionally transition its status from `open` to `addressed`.
+    ///
+    /// Workflow:
+    /// 1. First fix the underlying block(s) with `apply_operations` (`patch_block` preserves the thread anchor) and note the returned `new_revision`.
+    /// 2. Then call `reply_comment` with a concise summary of the fix, `mark_addressed: true`, and `addressed_rev: new_revision`.
+    /// Agents cannot archive threads (`archived` is reserved for human reviewers).
+    #[tool(name = "reply_comment")]
     pub async fn reply_comment(
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,

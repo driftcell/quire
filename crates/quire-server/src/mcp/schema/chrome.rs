@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetCoverParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Partial cover fields. Omitted fields are preserved.
+    /// Partial cover fields to update; omitted fields retain their current stored values.
     pub cover_patch: CoverPatch,
 }
 
@@ -19,28 +20,28 @@ pub struct SetCoverParams {
 #[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CoverPatch {
-    /// Enable or disable the cover.
+    /// Enable or disable rendering the cover page.
     #[serde(default)]
     pub enabled: Option<bool>,
-    /// classic | modern | minimal | split | custom
+    /// Cover layout variant: `"classic"`, `"modern"`, `"minimal"`, `"split"`, or `"custom"`.
     #[serde(default)]
     pub variant: Option<String>,
-    /// Cover title. Must be non-empty when supplied.
+    /// Primary report title on the cover (must be non-empty when supplied).
     #[serde(default)]
     pub title: Option<String>,
-    /// Subtitle; empty string clears it.
+    /// Optional subtitle; pass an empty string `""` to clear an existing subtitle.
     #[serde(default)]
     pub subtitle: Option<String>,
-    /// Author line, for example `["Ada Lovelace"]`.
+    /// Author or organization lines shown on the cover (e.g. `["战略研究组"]`); replaces the stored author list when supplied.
     #[serde(default)]
     pub authors: Option<Vec<String>>,
-    /// Publication date; empty string clears it.
+    /// Publication date string shown on the cover; pass `""` to clear.
     #[serde(default)]
     pub date: Option<String>,
-    /// Key/value metadata, for example `{"classification":"internal"}`.
+    /// Key/value metadata rows rendered on the cover (e.g. `{"classification":"internal"}`); replaces stored metadata when supplied.
     #[serde(default)]
     pub meta: Option<BTreeMap<String, String>>,
-    /// Raw HTML override for the cover body; empty string clears it.
+    /// Raw HTML override for the cover body (used with `variant: "custom"`); pass `""` to clear.
     #[serde(default)]
     pub custom_html: Option<String>,
 }
@@ -49,22 +50,23 @@ pub struct CoverPatch {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigureTocParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Enable or disable the generated TOC.
+    /// Enable or disable the auto-generated Table of Contents.
     pub enabled: bool,
-    /// TOC heading, for example `"Contents"`.
+    /// Optional TOC section title (e.g. `"目录"` or `"Contents"`). Omit to keep the current title.
     #[serde(default)]
     pub title: Option<String>,
-    /// Heading depth to include, 1..=3.
+    /// Maximum heading level included in the TOC (`1..=3`). Omit to keep the current depth.
     #[serde(default)]
     pub max_depth: Option<u8>,
-    /// standard | numbered | dotted
+    /// TOC layout style: `"standard"`, `"numbered"`, or `"dotted"`.
     #[serde(default)]
     pub variant: Option<String>,
-    /// Start the TOC on a new page after the cover.
+    /// Whether to force a page break before the TOC in paged/A4 mode.
     #[serde(default)]
     pub page_break_before: Option<bool>,
-    /// Start body content on a new page after the TOC.
+    /// Whether to force a page break after the TOC before body chapters begin.
     #[serde(default)]
     pub page_break_after: Option<bool>,
 }
@@ -83,16 +85,17 @@ pub struct ConfigureTocReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigureReferencesParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Enable or disable the bibliography section.
+    /// Enable or disable rendering the bibliography section at the end of the report.
     pub enabled: bool,
-    /// Bibliography heading, for example `"References"`.
+    /// Optional bibliography heading (e.g. `"参考文献"` or `"References"`). Omit to keep the current heading.
     #[serde(default)]
     pub title: Option<String>,
-    /// numeric | author_year
+    /// Citation formatting style: `"numeric"` (`[1]`) or `"author_year"`.
     #[serde(default)]
     pub style: Option<CitationStyle>,
-    /// Start the bibliography on a new page.
+    /// Whether to start the bibliography section on a new A4 page.
     #[serde(default)]
     pub page_break_before: Option<bool>,
 }
@@ -113,24 +116,24 @@ pub struct ConfigureReferencesReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigurePageChromeParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Header slots. Omit to keep the current header.
+    /// Running page header slots (`left`, `center`, `right`, supporting `{title}`, `{page}`, `{pages}`, `{date}`). Omit to keep the current header.
     #[serde(default)]
     pub header: Option<PageChromeSlots>,
-    /// Footer slots. Omit to keep the current footer.
+    /// Running page footer slots (`left`, `center`, `right`, supporting `{title}`, `{page}`, `{pages}`, `{date}`). Omit to keep the current footer.
     #[serde(default)]
     pub footer: Option<PageChromeSlots>,
-    /// Hide the header on the first page. Omit to keep the current setting.
+    /// Whether to hide the running header on the first page. Omit to keep the current setting.
     #[serde(default)]
     pub hide_header_on_first_page: Option<bool>,
-    /// Hide the footer on the first page. Omit to keep the current setting.
+    /// Whether to hide the running footer on the first page. Omit to keep the current setting.
     #[serde(default)]
     pub hide_footer_on_first_page: Option<bool>,
-    /// Automatic page break before headings: `none`, `h1` or `h1_and_h2`.
-    /// Omit to keep the current setting.
+    /// Automatic page break policy before headings in paged/A4 mode: `"none"`, `"h1"`, or `"h1_and_h2"`. Omit to keep the current setting.
     #[serde(default)]
     pub heading_page_break: Option<HeadingPageBreak>,
-    /// Optional expected revision for optimistic concurrency.
+    /// Optional expected document revision for optimistic concurrency check.
     #[serde(default)]
     pub base_revision: Option<u64>,
 }
@@ -159,17 +162,18 @@ pub enum CssMode {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateStyleParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Theme preset, for example `editorial`, `technical` or `default`.
+    /// Optional theme preset (`"default"`, `"editorial"`, `"technical"`, `"academic"`, `"executive"`, or `"minimal"`). Omit to keep the current preset.
     #[serde(default)]
     pub preset: Option<String>,
-    /// Merge into existing CSS custom properties. Example: `{"--rpt-primary":"#0b3d91"}`.
+    /// CSS custom property overrides merged into the active theme tokens (keys must start with `--rpt-`, e.g. `{"--rpt-primary":"#0b3d91"}`).
     #[serde(default)]
     pub tokens_patch: BTreeMap<String, String>,
-    /// Arbitrary CSS scoped to `.report-root` by the frontend. Validated before saving.
+    /// Custom CSS rules scoped to `.report-root`. Validated against disallowed `@import`, external `url(...)`, and unsafe properties before saving.
     #[serde(default)]
     pub custom_css: Option<String>,
-    /// append (default) or replace.
+    /// How `custom_css` is applied: `"append"` (default) appends to existing custom CSS; `"replace"` overwrites it (pass `custom_css: ""` with `"replace"` to clear custom CSS).
     #[serde(default = "default_css_mode")]
     pub css_mode: CssMode,
 }

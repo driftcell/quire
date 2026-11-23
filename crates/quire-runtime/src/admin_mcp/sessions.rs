@@ -2,10 +2,8 @@ use super::*;
 
 #[tool_router(router = sessions_router, vis = "pub(crate)")]
 impl AdminMcpServer {
-    #[tool(
-        name = "sessions_list",
-        description = quire_protocol::tool_description!("sessions_list")
-    )]
+    /// List runtime sessions ordered by pinned state and most recent activity (`updated_at`), including bound `doc_id`, `kb_branch`, `active_run_status`, and cumulative `context_usage` (`cost_rmb`).
+    #[tool(name = "sessions_list")]
     pub async fn sessions_list(
         &self,
         Parameters(request): Parameters<SessionsListParams>,
@@ -28,10 +26,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "sessions_inspect",
-        description = quire_protocol::tool_description!("sessions_inspect")
-    )]
+    /// Inspect the full state of a session (`messages`, `attachments`, unresolved `pending_question`, `pending_queue`, `latest_run`, and `context_usage`).
+    ///
+    /// Use this to diagnose why a session is `running`, `awaiting_input`, `interrupted`, or `failed`; to inspect per-turn thinking/tool/subagent timelines, call `sessions_traces`.
+    #[tool(name = "sessions_inspect")]
     pub async fn sessions_inspect(
         &self,
         Parameters(request): Parameters<SessionsInspectParams>,
@@ -62,10 +60,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "sessions_traces",
-        description = quire_protocol::tool_description!("sessions_traces")
-    )]
+    /// List ordered execution trace summaries (`thinking`, `execution` tool calls and subagent runs, and `text` segments) for all runs in a session.
+    ///
+    /// Tool inputs and outputs in `RunTraceToolItem` are 240-char previews (`truncated: true` when clipped); pass any `tool_call_id` to `sessions_get_tool_call` to inspect the full untruncated JSON input, output, and error payload.
+    #[tool(name = "sessions_traces")]
     pub async fn sessions_traces(
         &self,
         Parameters(request): Parameters<SessionsInspectParams>,
@@ -88,10 +86,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "sessions_get_tool_call",
-        description = quire_protocol::tool_description!("sessions_get_tool_call")
-    )]
+    /// Fetch the complete, untruncated `input` JSON, `output` JSON, `error`, and `duration_ms` for a specific `tool_call_id` in a session.
+    ///
+    /// Use this as the second step after `sessions_traces` identifies a failed, slow, or truncated tool call (including subagent tool calls within the same `session_id`).
+    #[tool(name = "sessions_get_tool_call")]
     pub async fn sessions_get_tool_call(
         &self,
         Parameters(request): Parameters<SessionsToolCallParams>,
@@ -111,10 +109,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "sessions_update",
-        description = quire_protocol::tool_description!("sessions_update")
-    )]
+    /// Update administrative metadata on a session (`title`, `status` between `active` and `archived`, or `pinned`).
+    ///
+    /// Does not interrupt or modify running turns; use `sessions_action` for run lifecycle operations (`interrupt`, `retry`, `compact`, `delete`).
+    #[tool(name = "sessions_update")]
     pub async fn sessions_update(
         &self,
         Parameters(request): Parameters<SessionsUpdateParams>,
@@ -135,10 +133,14 @@ impl AdminMcpServer {
         Ok(Json(SessionsUpdateReceipt { session, next_hint }))
     }
 
-    #[tool(
-        name = "sessions_action",
-        description = quire_protocol::tool_description!("sessions_action")
-    )]
+    /// Execute a lifecycle control action (`interrupt`, `retry`, `compact`, or `delete`) on a session.
+    ///
+    /// Action semantics & preconditions:
+    /// - `interrupt`: cancels the active run (or specific `run_id`) and transitions the session out of `running`.
+    /// - `retry`: re-runs the latest `failed` or `interrupted` turn using the current knowledge-base and model configuration.
+    /// - `compact`: summarizes conversation history into a compaction checkpoint and refreshes the pinned system prompt to the latest KB version (requires the session to be idle).
+    /// - `delete`: permanently deletes the session, its messages, runs, tool traces, and attachments (requires no active run; does not delete the bound Quire report document).
+    #[tool(name = "sessions_action")]
     pub async fn sessions_action(
         &self,
         Parameters(request): Parameters<SessionsActionParams>,

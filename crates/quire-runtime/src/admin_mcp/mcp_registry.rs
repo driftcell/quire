@@ -2,10 +2,10 @@ use super::*;
 
 #[tool_router(router = mcp_registry_router, vis = "pub(crate)")]
 impl AdminMcpServer {
-    #[tool(
-        name = "mcp_list_servers",
-        description = quire_protocol::tool_description!("mcp_list_servers")
-    )]
+    /// List all registered external MCP servers with their endpoint URL, `enabled` switch, and masked auth token reference.
+    ///
+    /// Raw bearer tokens are never returned; `env:VAR` references are shown as-is and encrypted tokens are masked.
+    #[tool(name = "mcp_list_servers")]
     pub async fn mcp_list_servers(
         &self,
         Parameters(_request): Parameters<EmptyParams>,
@@ -22,10 +22,11 @@ impl AdminMcpServer {
         Ok(Json(McpServersReceipt { servers, next_hint }))
     }
 
-    #[tool(
-        name = "mcp_upsert_server",
-        description = quire_protocol::tool_description!("mcp_upsert_server")
-    )]
+    /// Register or update an external HTTP MCP server (`server_id`, `name`, `url`, optional `auth_token_ref`, `enabled`).
+    ///
+    /// Registering a server does NOT automatically discover its tools; you must call `mcp_sync_tools(server_id)` afterwards to connect and populate the tool catalog.
+    /// When updating an existing server, omitting `auth_token_ref` preserves its stored credential reference.
+    #[tool(name = "mcp_upsert_server")]
     pub async fn mcp_upsert_server(
         &self,
         Parameters(request): Parameters<McpServerInput>,
@@ -43,10 +44,10 @@ impl AdminMcpServer {
         Ok(Json(McpServerReceipt { server, next_hint }))
     }
 
-    #[tool(
-        name = "mcp_sync_tools",
-        description = quire_protocol::tool_description!("mcp_sync_tools")
-    )]
+    /// Connect to a registered MCP server, call `tools/list`, and upsert discovered tool descriptors into `mcp_tools`.
+    ///
+    /// Newly discovered tools default to `enabled: true`, while existing tools preserve their current `enabled` switch and refresh `description` and `input_schema`.
+    #[tool(name = "mcp_sync_tools")]
     pub async fn mcp_sync_tools(
         &self,
         Parameters(request): Parameters<McpSyncParams>,
@@ -64,10 +65,10 @@ impl AdminMcpServer {
         Ok(Json(McpSyncReceipt { report, next_hint }))
     }
 
-    #[tool(
-        name = "mcp_list_tools",
-        description = quire_protocol::tool_description!("mcp_list_tools")
-    )]
+    /// List discovered MCP tools from the catalog (optionally filtered by `server_id`) with their descriptions, JSON schemas, and global `enabled` switches.
+    ///
+    /// An agent can invoke an external MCP tool if and only if the triple intersection holds: the server is `enabled`, the tool is globally `enabled`, and the agent's `allowed_tools` matches `tool_name` or `server_id:tool_name`.
+    #[tool(name = "mcp_list_tools")]
     pub async fn mcp_list_tools(
         &self,
         Parameters(request): Parameters<McpListToolsParams>,
@@ -84,10 +85,10 @@ impl AdminMcpServer {
         Ok(Json(McpToolsReceipt { tools, next_hint }))
     }
 
-    #[tool(
-        name = "mcp_set_tool_enabled",
-        description = quire_protocol::tool_description!("mcp_set_tool_enabled")
-    )]
+    /// Toggle the global `enabled` switch for one discovered MCP tool (`server_id` + `tool_name`) and publish cache invalidation.
+    ///
+    /// Disabling a tool globally blocks it across all agents immediately on their next run, even if listed in an agent's `allowed_tools`.
+    #[tool(name = "mcp_set_tool_enabled")]
     pub async fn mcp_set_tool_enabled(
         &self,
         Parameters(request): Parameters<McpSetToolEnabledParams>,
@@ -107,10 +108,8 @@ impl AdminMcpServer {
         Ok(Json(McpToolReceipt { tool, next_hint }))
     }
 
-    #[tool(
-        name = "mcp_delete_server",
-        description = quire_protocol::tool_description!("mcp_delete_server")
-    )]
+    /// Delete a registered MCP server and cascade-delete all of its discovered `mcp_tools` entries, closing pooled connections across the runtime.
+    #[tool(name = "mcp_delete_server")]
     pub async fn mcp_delete_server(
         &self,
         Parameters(request): Parameters<McpSyncParams>,
@@ -130,8 +129,4 @@ impl AdminMcpServer {
             next_hint,
         }))
     }
-
-    // ---------------------------------------------------------------------
-    // Session observation
-    // ---------------------------------------------------------------------
 }

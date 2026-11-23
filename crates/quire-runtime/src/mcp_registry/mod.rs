@@ -34,14 +34,20 @@ pub struct McpServerRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Input payload for `mcp_upsert_server`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct McpServerInput {
+    /// Stable MCP server identifier (`1..=64` ASCII letters, digits, `'-'`, `'_'`, or `'.'`, starting alphanumeric, e.g. `"web-search"`).
     pub server_id: String,
+    /// Human-readable server display name.
     pub name: String,
+    /// Streamable HTTP MCP endpoint URL (`http://` or `https://`, e.g. `"http://127.0.0.1:9000/mcp"`).
     pub url: String,
+    /// Optional bearer token reference (`"env:VAR_NAME"`, `"enc:..."`, or a raw token when `RUNTIME_MASTER_KEY` is configured). When updating an existing server, omitting this field preserves the existing stored token reference.
     #[serde(default)]
     pub auth_token_ref: Option<String>,
+    /// Global server enable switch (`true` by default). Call `mcp_sync_tools(server_id)` after upserting to discover its tools.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
 }

@@ -211,17 +211,50 @@ export interface QuireSessionProtocol {
   run_trace_summary: RunTraceSummary;
   [k: string]: unknown;
 }
+/**
+ * One structured question card rendered by `ask_user` (`1..=4` questions per call).
+ */
 export interface QuestionItem {
+  /**
+   * Stable short identifier for this question (e.g. `"report_scope"` or `"target_length"`).
+   */
   id: string;
+  /**
+   * Direct, concise question prompt shown to the user.
+   */
   title: string;
+  /**
+   * Optional brief context explaining why this decision matters for the report.
+   */
   description?: string | null;
+  /**
+   * Allow selecting multiple options (`true`) or enforce single-choice (`false`, default).
+   */
   multiple?: boolean;
+  /**
+   * Whether the user must answer this question before submitting (`false` by default).
+   */
   required?: boolean;
+  /**
+   * Concrete selectable options (2–4 distinct choices recommended; the UI automatically provides a freeform custom text input alongside these options, so do not add a blank `"Other"` option).
+   */
   options?: QuestionOption[];
 }
+/**
+ * One selectable option inside an `ask_user` `QuestionItem`.
+ */
 export interface QuestionOption {
+  /**
+   * Stable short identifier for this option within the question (e.g. `"opt_exec"` or `"30k"`).
+   */
   id: string;
+  /**
+   * Concise user-facing option label (put your recommended choice first and suffix it with `"(Recommended)"` / `"（推荐）"`).
+   */
   label: string;
+  /**
+   * Optional 1-sentence explanation of the trade-off or implication of choosing this option.
+   */
   description?: string | null;
   [k: string]: unknown;
 }

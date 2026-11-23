@@ -8,12 +8,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LintParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Only report rules matching these codes, names or category prefixes (e.g. `QR2`).
+    /// Optional rule filter: only report rules matching these codes (`"QR204"`), rule names, or category prefixes (`"QR1"`, `"QR2"`, `"QR3"`, `"QR4"`). Omit to run the full lint suite.
     #[serde(default)]
     pub select: Vec<String>,
-    /// Hide suppressible rules matching these codes, names or category prefixes.
-    /// Core contract and safety rules remain visible.
+    /// Optional list of suppressible rule codes, names, or prefixes to hide during this check. Core structural and safety rules (`suppressible: false`) cannot be ignored.
     #[serde(default)]
     pub ignore: Vec<String>,
 }
@@ -44,11 +44,12 @@ pub struct LintReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListCommentsParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Optional lifecycle filter. Archived threads are omitted when this is not supplied.
+    /// Optional thread status filter (`"open"`, `"addressed"`, or `"archived"`). When omitted, returns `open` and `addressed` threads and hides `archived` threads.
     #[serde(default)]
     pub status: Option<CommentStatus>,
-    /// Optional block-ID soft-anchor filter.
+    /// Optional `block_id` filter returning only threads anchored to that block.
     #[serde(default)]
     pub block_id: Option<String>,
 }
@@ -67,24 +68,25 @@ pub struct ListCommentsReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AddCommentParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Existing block the review thread is anchored to.
+    /// Existing `block_id` where the review thread anchor starts.
     pub block_id: String,
-    /// Ending block for a cross-block selection.
+    /// Optional ending `block_id` when the selection spans multiple blocks.
     #[serde(default)]
     pub end_block_id: Option<String>,
-    /// Every selected block in document order.
+    /// Optional ordered list of all selected `block_id`s in a multi-block selection.
     #[serde(default)]
     pub anchor_blocks: Vec<String>,
-    /// Review comment body.
+    /// Actionable review comment text explaining the issue and expected fix.
     pub body: String,
-    /// Optional start-block text-selection quote for highlighting.
+    /// Optional exact text-quote selector (`exact`, optional `prefix`/`suffix`) inside `block_id`.
     #[serde(default)]
     pub quote: Option<TextQuoteSelector>,
-    /// Optional end-block text-selection quote for cross-block highlighting.
+    /// Optional ending text-quote selector inside `end_block_id` for cross-block selections.
     #[serde(default)]
     pub end_quote: Option<TextQuoteSelector>,
-    /// Optional frontend-authored snapshot containing media placeholders.
+    /// Optional markdown/text snapshot of the anchored content at comment creation time.
     #[serde(default)]
     pub anchor_snapshot: Option<String>,
 }
@@ -102,14 +104,16 @@ pub struct AddCommentReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReplyCommentParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
+    /// Comment thread ID (`thread_id`) from `list_comments` or `<comment_ref>`.
     pub thread_id: String,
-    /// Reply body.
+    /// Concise reply explaining how the comment was resolved or answered.
     pub body: String,
-    /// Move an open thread to addressed after the writer fixes the issue.
+    /// Set `true` after committing the fix via `apply_operations` to transition the thread from `open` to `addressed`.
     #[serde(default)]
     pub mark_addressed: bool,
-    /// Revision containing the fix. Defaults to the current document revision.
+    /// Document revision number (`new_revision` from `apply_operations`) that contains the fix. Defaults to the current document revision when omitted.
     #[serde(default)]
     pub addressed_rev: Option<i64>,
 }

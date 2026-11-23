@@ -6,10 +6,13 @@ impl AdminMcpServer {
     // Branch and release tools
     // ---------------------------------------------------------------------
 
-    #[tool(
-        name = "preview_report",
-        description = quire_protocol::tool_description!("preview_report")
-    )]
+    /// Render the report in a headless browser via Playwright MCP and return an MCP `ImageContent` screenshot plus structured DOM overflow and CSS diagnostics.
+    ///
+    /// Scoping & mode guide:
+    /// - Prefer scoping by `section_id`, `block_ids`, or `page` (`1`-based in `paged` mode) to keep screenshots focused.
+    /// - When `section_id` or `block_ids` is set, cover, TOC, and bibliography chrome are automatically suppressed.
+    /// - Set `include_image: false` when only `total_pages`, `layout_diagnostics.overflow_elements`, and computed `styles` are needed.
+    #[tool(name = "preview_report")]
     pub async fn preview_report(
         &self,
         Parameters(request): Parameters<crate::preview::PreviewReportInput>,
@@ -20,10 +23,10 @@ impl AdminMcpServer {
         Ok(result.to_mcp_call_tool_result())
     }
 
-    #[tool(
-        name = "kb_list_branches",
-        description = quire_protocol::tool_description!("kb_list_branches")
-    )]
+    /// List the active production knowledge-base branch, all `draft`/`active`/`archived` branches, and the 20 most recent immutable snapshots.
+    ///
+    /// Call this first before creating, diffing, promoting, or rolling back a knowledge-base branch so you have the current `active_branch` name and valid `recent_snapshots` version numbers.
+    #[tool(name = "kb_list_branches")]
     pub async fn kb_list_branches(
         &self,
         Parameters(_request): Parameters<EmptyParams>,
@@ -64,10 +67,12 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "kb_create_branch",
-        description = quire_protocol::tool_description!("kb_create_branch")
-    )]
+    /// Clone an existing knowledge-base branch (defaulting to the current active branch) into a new isolated `draft` branch.
+    ///
+    /// Workflow:
+    /// `kb_list_branches` -> `kb_create_branch` -> `kb_upsert_doc` / `kb_upsert_agent` / `kb_upsert_skill` -> test via `POST /api/sessions` with `kb_branch` -> `kb_diff_branch` -> `kb_promote_branch`.
+    /// Never mutate the active production branch directly when iterating on prompts, agents, or skills.
+    #[tool(name = "kb_create_branch")]
     pub async fn kb_create_branch(
         &self,
         Parameters(request): Parameters<KbCreateBranchParams>,
@@ -85,10 +90,10 @@ impl AdminMcpServer {
         Ok(Json(KbCreateBranchReceipt { branch, next_hint }))
     }
 
-    #[tool(
-        name = "kb_diff_branch",
-        description = quire_protocol::tool_description!("kb_diff_branch")
-    )]
+    /// Compute a three-way item-level diff (`added`, `modified`, `deleted`, and `conflict` flags) between a draft branch and the current active branch.
+    ///
+    /// Always run `kb_diff_branch` before calling `kb_promote_branch`. If any item reports `conflict: true`, reconcile that item on the draft branch with `kb_upsert_*` or `kb_delete_item` before promoting.
+    #[tool(name = "kb_diff_branch")]
     pub async fn kb_diff_branch(
         &self,
         Parameters(request): Parameters<KbBranchParams>,
@@ -109,10 +114,12 @@ impl AdminMcpServer {
         Ok(Json(KbDiffBranchReceipt { diff, next_hint }))
     }
 
-    #[tool(
-        name = "kb_promote_branch",
-        description = quire_protocol::tool_description!("kb_promote_branch")
-    )]
+    /// Promote a `draft` branch into the active production knowledge base via three-way item merge, recording an immutable rollback snapshot and broadcasting cache invalidation.
+    ///
+    /// Important constraints:
+    /// - The promoted draft branch transitions permanently to `archived` and cannot be edited again after promotion.
+    /// - Overlapping edits on the same `(item_kind, item_key)` abort promotion with `KB_PROMOTE_CONFLICT` (`base`, `active`, and `branch` payloads) and advance the draft's `base_version` to the current active `head_version` so your next `kb_upsert_*` resolves the conflict cleanly.
+    #[tool(name = "kb_promote_branch")]
     pub async fn kb_promote_branch(
         &self,
         Parameters(request): Parameters<KbBranchParams>,
@@ -130,10 +137,10 @@ impl AdminMcpServer {
         Ok(Json(KbPromoteBranchReceipt { report, next_hint }))
     }
 
-    #[tool(
-        name = "kb_rollback_active",
-        description = quire_protocol::tool_description!("kb_rollback_active")
-    )]
+    /// Restore the active production knowledge base from an immutable snapshot version and publish a global KB cache invalidation.
+    ///
+    /// Before rollback, the current active state is automatically captured as a new immutable snapshot so the rollback itself can be reversed if needed.
+    #[tool(name = "kb_rollback_active")]
     pub async fn kb_rollback_active(
         &self,
         Parameters(request): Parameters<KbRollbackParams>,
@@ -155,10 +162,10 @@ impl AdminMcpServer {
     // Branch item editing
     // ---------------------------------------------------------------------
 
-    #[tool(
-        name = "kb_list_items",
-        description = quire_protocol::tool_description!("kb_list_items")
-    )]
+    /// List knowledge-base items (`doc`, `agent`, `skill`) on a branch with their `item_key`, summary metadata, and `content_hash` without loading full bodies.
+    ///
+    /// Use this to discover valid `item_key` identifiers before calling `kb_read_item`, `kb_upsert_*`, or `kb_delete_item`.
+    #[tool(name = "kb_list_items")]
     pub async fn kb_list_items(
         &self,
         Parameters(request): Parameters<KbListItemsParams>,
@@ -180,10 +187,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "kb_read_item",
-        description = quire_protocol::tool_description!("kb_read_item")
-    )]
+    /// Read the complete payload of a single knowledge-base item (`doc`, `agent`, or `skill`, including all bundled skill `resources`) from a branch.
+    ///
+    /// Always call `kb_read_item` before updating an existing agent, skill, or document so you preserve fields (`allowed_tools`, `model`, or bundled skill `resources`) that `kb_upsert_*` replaces in full.
+    #[tool(name = "kb_read_item")]
     pub async fn kb_read_item(
         &self,
         Parameters(request): Parameters<KbReadItemParams>,
@@ -211,10 +218,10 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "kb_upsert_doc",
-        description = quire_protocol::tool_description!("kb_upsert_doc")
-    )]
+    /// Create or replace a knowledge-base document (`doc_id`, `name`, `content`) on a target branch.
+    ///
+    /// Documents with `doc_id`s such as `system_instructions` or `compaction_prompt` are injected into agent preambles or compaction runs. Archived branches reject mutations.
+    #[tool(name = "kb_upsert_doc")]
     pub async fn kb_upsert_doc(
         &self,
         Parameters(request): Parameters<KbUpsertDocParams>,
@@ -240,10 +247,13 @@ impl AdminMcpServer {
         }))
     }
 
-    #[tool(
-        name = "kb_upsert_agent",
-        description = quire_protocol::tool_description!("kb_upsert_agent")
-    )]
+    /// Create or replace an agent definition (`name`, `model`, `system_prompt`, `allowed_tools`, `is_default`, `enabled`) on a target branch.
+    ///
+    /// Important constraints:
+    /// - `model` must reference an existing route ID registered in `models_list`.
+    /// - Setting `is_default: true` automatically clears `is_default` on all other agents in the same branch so exactly one primary orchestrator agent is default.
+    /// - Child subagents never receive `spawn_subagents` or `ask_user` at runtime even if listed in `allowed_tools`.
+    #[tool(name = "kb_upsert_agent")]
     pub async fn kb_upsert_agent(
         &self,
         Parameters(request): Parameters<KbUpsertAgentParams>,
@@ -272,10 +282,12 @@ impl AdminMcpServer {
         Ok(Json(KbAgentReceipt { agent, next_hint }))
     }
 
-    #[tool(
-        name = "kb_upsert_skill",
-        description = quire_protocol::tool_description!("kb_upsert_skill")
-    )]
+    /// Create or replace a skill definition (`name`, `description`, `body`, `enabled`, and bundled `resources`) on a target branch.
+    ///
+    /// Full-replacement warning:
+    /// - `resources` replaces the entire `kb_skill_resources` set for this skill on `branch`.
+    /// - When editing an existing skill, always call `kb_read_item(branch, "skill", name)` first and pass back any existing `resources` you intend to keep; omitting `resources` deletes all bundled resource files for that skill.
+    #[tool(name = "kb_upsert_skill")]
     pub async fn kb_upsert_skill(
         &self,
         Parameters(request): Parameters<KbUpsertSkillParams>,
@@ -305,10 +317,10 @@ impl AdminMcpServer {
         Ok(Json(KbSkillReceipt { skill, next_hint }))
     }
 
-    #[tool(
-        name = "kb_delete_item",
-        description = quire_protocol::tool_description!("kb_delete_item")
-    )]
+    /// Delete a knowledge-base item (`doc`, `agent`, or `skill`, cascading to bundled skill resources) from a branch.
+    ///
+    /// Always pass `branch` explicitly when working in a draft branch; omitting `branch` deletes directly from the current active production branch.
+    #[tool(name = "kb_delete_item")]
     pub async fn kb_delete_item(
         &self,
         Parameters(request): Parameters<KbDeleteItemParams>,
@@ -355,8 +367,4 @@ impl AdminMcpServer {
             next_hint,
         }))
     }
-
-    // ---------------------------------------------------------------------
-    // Model and provider registry
-    // ---------------------------------------------------------------------
 }

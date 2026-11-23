@@ -21,17 +21,23 @@ use super::{
     builtin_tools::{quire_turn_meta, runtime_tool_scope, tool_other},
 };
 
+/// One subagent task dispatched by `spawn_subagents`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig::schemars::JsonSchema)]
 pub struct SubagentTask {
+    /// Enabled subagent name on the current KB branch (e.g. `"analyst"`, `"writer"`, `"reviewer"`, `"designer"`). Call `list_subagents` if unsure.
     pub agent_name: String,
+    /// Short human-readable task title displayed on the UI trace card (e.g. `"撰写第二章：师资梯队对标"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
+    /// Optional registered model route ID override (defaults to the subagent's configured model).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Self-contained task brief including `doc_id`, `expected_revision`, assigned `block_id` prefix, verified `source_ids`, and visual anchor IDs. Subagents cannot call `ask_user` or `spawn_subagents`.
     pub task: String,
+    /// Optional Heading `block_id` (e.g. `"ch2"`) linking the UI subagent card directly to that report chapter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub section_id: Option<String>,
-    /// Resume the canonical rig-memory conversation of an earlier child run.
+    /// Pass a previous `subagent_run_id` to resume that child run's persistent multi-turn conversation memory (e.g. re-invoking the same `reviewer` after fixes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_run_id: Option<String>,
 }
@@ -52,9 +58,16 @@ pub(super) struct SubagentParent {
     cancellation: tokio_util::sync::CancellationToken,
 }
 
+/// Launch one or more specialized subagents concurrently in a JoinSet and wait for their structured outcomes.
+///
+/// Call `list_subagents` first if you need valid subagent names. Outcomes are returned in the exact
+/// input `tasks` order with `agent_name`, `status` (`"completed" | "failed" | "cancelled"`), `summary`,
+/// and `subagent_run_id` (passable as `resume_run_id` on follow-up calls). Always verify actual document
+/// changes via `get_document_digest` or `lint_document` after subagents finish.
 #[rig_tool(name = "spawn_subagents")]
 pub(super) async fn run_subagents_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Subagent tasks to execute concurrently. Assign disjoint `block_id` prefixes when multiple subagents write to the same report in parallel.
     tasks: Vec<SubagentTask>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;

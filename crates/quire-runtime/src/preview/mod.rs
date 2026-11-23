@@ -70,28 +70,27 @@ pub enum PreviewViewMode {
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewReportInput {
-    /// Report document ID to preview.
+    /// Target report `doc_id` to render in the headless preview route.
     pub doc_id: String,
-    /// Layout mode (`paged` for A4 pagination, `continuous` for single-column scroll).
+    /// Layout mode: `"paged"` (default, A4 pagination with page count and page-break checks) or `"continuous"` (single-column scroll).
     #[serde(default)]
     pub mode: PreviewViewMode,
-    /// Optional heading block_id to preview only that section.
+    /// Optional heading `block_id` from `get_document_digest` to preview only that section (automatically suppresses cover, TOC, and bibliography chrome).
     #[serde(default)]
     pub section_id: Option<String>,
-    /// Optional list of specific block IDs to preview.
+    /// Optional list of specific `block_id`s to preview in isolation (automatically suppresses cover, TOC, and bibliography chrome).
     #[serde(default)]
     pub block_ids: Option<Vec<String>>,
-    /// Optional 1-based A4 page number when `mode` is `paged`.
+    /// Optional 1-based A4 page number to focus and screenshot when `mode` is `"paged"`.
     #[serde(default)]
     pub page: Option<usize>,
-    /// Optional exact committed revision (>=1); a different revision is never accepted.
+    /// Optional exact committed document revision (`>= 1`) assertion; fails if the rendered document revision does not match.
     #[serde(default)]
     pub rev: Option<u64>,
-    /// Include active theme tokens, custom_css, and computed styles for key selectors.
+    /// Whether to collect and return active `--rpt-*` theme tokens, `custom_css`, and computed styles (`true` by default).
     #[serde(default = "default_include_styles")]
     pub include_styles: bool,
-    /// Include the base64 PNG screenshot. Defaults to true for MCP visual clients;
-    /// the text-only agent tool forces this off.
+    /// Whether to capture and return a PNG screenshot (`true` by default for visual MCP clients; forced `false` on text-only models).
     #[serde(default = "default_include_image")]
     pub include_image: bool,
 }

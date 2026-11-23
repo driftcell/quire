@@ -9,19 +9,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ApplyOperationsParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Revision you read. Smart CAS rebases disjoint edits; overlapping edits return a conflict.
+    /// Base document revision you read from `get_document_digest`, `read_as_markdown`, or `read_blocks`. Smart CAS automatically rebases non-overlapping concurrent edits and returns a conflict error with valid IDs if overlapping blocks changed.
     pub expected_revision: i64,
-    /// Short intent summary, for example "write chapter 2 revenue section".
+    /// Concise audit summary of this mutation batch (e.g. `"author ch2 revenue analysis and KPI table"`).
     pub summary: String,
-    /// Declarative patch operations. Example: `[{"type":"append","blocks":[...]}]`.
+    /// Ordered declarative patch operations (`append`, `insert_before`, `insert_after`, `patch_block`, `replace_range`, `delete_blocks`, `move_block`). Prefer `patch_block` for in-place edits so review comment anchors are preserved.
     pub ops: Vec<PatchOp>,
-    /// Optional sources upserted atomically in the same transaction as the blocks.
+    /// Optional bibliography sources (`{"src_id": {...}}`) registered atomically in the same transaction before validating citations in `ops`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(with = "Option<BTreeMap<SourceId, SourceInput>>")]
     pub sources: Option<IndexMap<SourceId, SourceInput>>,
-    /// Ephemeral preview IDs superseded by this commit. The emitted revision carries
-    /// `cleared_preview_ids` so the frontend replaces streamed placeholders with no flicker.
+    /// Ephemeral streamed preview IDs superseded by this commit (populated automatically by the runtime streaming hook for flicker-free replacement).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub preview_ids: Vec<String>,
 }
@@ -53,8 +53,9 @@ pub struct ApplyOperationsReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RollbackParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Target revision in 1..current_revision-1.
+    /// Historical revision number to restore (`1..current_revision - 1`). Creates a new forward revision whose document state matches `target_revision`.
     pub target_revision: i64,
 }
 
@@ -77,8 +78,7 @@ pub struct RollbackReceipt {
 /// Source payload accepted by `upsert_sources` and inline source maps.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SourceInput {
-    /// Stable short source ID, e.g. "sec10". Required by `upsert_sources`; optional when the
-    /// source is supplied as a map value (`sources: {"sec10": {...}}`).
+    /// Stable short semantic source ID (`[a-zA-Z0-9_-]{1,48}`, e.g. `"annual_rep_25"`). Required in `upsert_sources` list items; optional when supplied as a map value in `apply_operations.sources`.
     #[serde(default, alias = "source_id", skip_serializing_if = "Option::is_none")]
     pub id: Option<SourceId>,
     #[serde(flatten)]
@@ -89,9 +89,9 @@ pub struct SourceInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpsertSourcesParams {
-    /// Report that owns the sources.
+    /// Target report `doc_id` that owns the bibliography registry.
     pub doc_id: String,
-    /// Sources to register/update. Duplicate URLs or normalized titles map to one canonical ID.
+    /// Non-empty list of real sources actually read during research. Include `title`, optional `url`/`author`/`published_at`/`publisher`/`note`, and a verbatim `evidence` excerpt supporting the cited claim. Duplicate URLs or normalized titles coalesce into one canonical source ID returned in `canonical_id_map`.
     pub sources: Vec<SourceInput>,
 }
 
@@ -114,8 +114,9 @@ pub struct UpsertSourcesReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListSourcesParams {
+    /// Target report `doc_id`.
     pub doc_id: String,
-    /// Optional exact source IDs. Unknown IDs return an error instead of being silently omitted.
+    /// Optional list of exact `SourceId`s to fetch. Omit to list all registered sources on the report; any unknown ID returns an error with the valid registered IDs.
     #[serde(default)]
     pub source_ids: Option<Vec<String>>,
 }

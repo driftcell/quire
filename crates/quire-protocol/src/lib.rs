@@ -7,19 +7,6 @@
 
 #![forbid(unsafe_code)]
 
-/// Load a tool's model-facing description from the workspace-wide `descriptions/tools` directory.
-#[macro_export]
-macro_rules! tool_description {
-    ($tool_name:literal) => {
-        include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../descriptions/tools/",
-            $tool_name,
-            ".md"
-        ))
-    };
-}
-
 pub mod block;
 pub mod citation;
 pub mod comment;

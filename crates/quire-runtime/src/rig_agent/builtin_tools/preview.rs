@@ -1,5 +1,12 @@
 use super::*;
 
+/// Render a committed report in headless Chromium and return A4 pagination metrics,
+/// horizontal overflow diagnostics (`layout_diagnostics.overflow_count` and `overflow_elements`),
+/// computed CSS styles, and page screenshots for vision-capable models.
+///
+/// Pass `block_ids` or `section_id` for fast partial inspection: partial previews automatically
+/// suppress the cover, TOC, and bibliography so Page 1 directly renders the target table, chart,
+/// or section. Omit both for a full-document preview.
 #[expect(
     clippy::too_many_arguments,
     reason = "rig_tool exposes each argument as a separate JSON Schema field"
@@ -7,12 +14,19 @@ use super::*;
 #[rig_tool(name = "preview_report")]
 pub(crate) async fn preview_report_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Target report document ID.
     doc_id: String,
+    /// Layout mode: `"paged"` (default A4 pagination) or `"continuous"` (single-column scroll).
     mode: Option<crate::preview::PreviewViewMode>,
+    /// Heading `block_id` (e.g. `"ch2"`) to preview only that section. Automatically hides cover, TOC, and references.
     section_id: Option<String>,
+    /// Specific block IDs (e.g. `["tbl_peers"]`) to preview in isolation. Automatically hides cover, TOC, and references.
     block_ids: Option<Vec<String>>,
+    /// 1-based A4 page number filter when `mode` is `"paged"`.
     page: Option<usize>,
+    /// Exact committed revision (`>= 1`) to assert; omit to inspect the latest committed revision.
     rev: Option<u64>,
+    /// Include active theme tokens, `custom_css`, and browser computed styles (defaults to `true`).
     include_styles: Option<bool>,
 ) -> Result<ToolOutput, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -44,6 +58,14 @@ pub(crate) async fn preview_report_tool(
     ToolOutput::content(content)
 }
 
+/// Validate and render an ECharts 6.0 chart in headless Chromium before committing it to the report.
+///
+/// - First call: supply the complete native ECharts `option` alongside outer metadata (`title`, `note`,
+///   `fallback_summary`, `height`, `source_ids`, `source_note`).
+/// - Refinement calls: supply `based_on_preview_id` and a minimal `option_patch` (never resend `option`,
+///   or the call will fail).
+/// - Receipt: returns `preview_id` (valid for 30 minutes), `lint_issues`, `preview_url`, and a PNG
+///   screenshot for vision-capable models. Resolve all errors and visual overlaps before calling `commit_chart`.
 #[expect(
     clippy::too_many_arguments,
     reason = "rig_tool exposes each argument as a separate JSON Schema field"
@@ -51,14 +73,23 @@ pub(crate) async fn preview_report_tool(
 #[rig_tool(name = "preview_echarts")]
 pub(crate) async fn preview_echarts_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Complete native ECharts 6.0 option JSON object on the first call (no JS functions `function(` or `=>`). Must be omitted when `based_on_preview_id` is set.
     option: Option<Value>,
+    /// Minimal incremental JSON patch applied on top of `based_on_preview_id` (arrays like `series`/`xAxis`/`yAxis`/`grid` merge element-by-element).
     option_patch: Option<Value>,
+    /// Previous `preview_id` from `preview_echarts` (cached for 30 minutes) to refine incrementally without resending `option`.
     based_on_preview_id: Option<String>,
+    /// Chart canvas height in pixels (defaults to `360`; use `460..520` for 2x2 multi-panel grids).
     height: Option<u32>,
+    /// Outer chart block title. Do not duplicate the main title inside `option.title`.
     title: Option<String>,
+    /// Concise chart caption/note (`<= 120` characters) stating measurement units and scope.
     note: Option<String>,
+    /// Required one-sentence quantitative takeaway stating extremes, deltas, or trends (missing summary triggers a lint warning).
     fallback_summary: Option<String>,
+    /// Registered canonical `source_id`s persisted with the preview so `commit_chart` inherits attribution automatically.
     source_ids: Option<Vec<String>>,
+    /// Optional source attribution note persisted with the preview and inherited by `commit_chart`.
     source_note: Option<String>,
 ) -> Result<ToolOutput, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -244,6 +275,13 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+/// Commit a chart that already passed `preview_echarts` into the report using its cached `preview_id`
+/// (never resend the ECharts `option`).
+///
+/// If `block_id` already exists as an `"echarts"` block in `doc_id`, updates it in place via
+/// `PatchBlock` (preserving review comment anchors) and repositions it when `after_block_id` or
+/// `before_block_id` is supplied. Automatically inherits `source_ids` and `source_note` from the
+/// cached preview unless overridden.
 #[expect(
     clippy::too_many_arguments,
     reason = "rig_tool exposes each argument as a separate JSON Schema field"
@@ -251,15 +289,25 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 #[rig_tool(name = "commit_chart")]
 pub(crate) async fn commit_chart_tool(
     #[rig(context)] context: &mut ToolContext,
+    /// Cached `preview_id` returned by `preview_echarts` (valid for 30 minutes).
     preview_id: String,
+    /// Target report document ID.
     doc_id: String,
+    /// Short semantic block ID for the chart (e.g. `"ch2_funding_chart"`). Updates in place if an ECharts block with this ID already exists.
     block_id: String,
+    /// Insert or move the chart immediately after this existing `block_id` (mutually exclusive with `before_block_id`).
     after_block_id: Option<String>,
+    /// Insert or move the chart immediately before this existing `block_id` (mutually exclusive with `after_block_id`).
     before_block_id: Option<String>,
+    /// Append a new chart to the end of this Heading `block_id` section when neither `after_block_id` nor `before_block_id` is set.
     section_id: Option<String>,
+    /// Base revision for Smart CAS rebasing; omit to auto-fetch the current revision before committing.
     expected_revision: Option<i64>,
+    /// Short commit summary describing the chart insertion or update.
     summary: Option<String>,
+    /// Optional canonical `source_id`s overriding those stored during `preview_echarts`.
     source_ids: Option<Vec<String>>,
+    /// Optional source attribution note overriding the one stored during `preview_echarts`.
     source_note: Option<String>,
 ) -> Result<CommitChartReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
