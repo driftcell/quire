@@ -36,6 +36,7 @@ mod context;
 mod hooks;
 mod preview_stream;
 mod subagents;
+mod tool_schemas;
 
 pub use builtin_tools::BUILTIN_TOOLS;
 pub use preview_stream::{PreviewThrottle, ToolPreviewStreamer};
@@ -51,6 +52,18 @@ use preview_stream::PreviewState;
 /// Maximum concurrent tool executions per model batch. Rig commits answers in
 /// call order, but the tool bodies themselves may interleave.
 const DEFAULT_TOOL_CONCURRENCY: usize = 8;
+
+#[derive(serde::Serialize)]
+struct QuireMcpMeta<'a> {
+    session_id: &'a str,
+    run_id: &'a str,
+    agent_id: &'a str,
+}
+
+#[derive(serde::Serialize)]
+struct TextToolOutput<'a> {
+    text: &'a str,
+}
 
 #[derive(Clone)]
 pub struct RigModelStreamProvider {
@@ -391,11 +404,11 @@ impl RigModelCore {
             let mut mcp_meta = RequestMetaObject::new();
             mcp_meta.insert(
                 "quire".into(),
-                serde_json::json!({
-                    "session_id": execution.session_id,
-                    "run_id": execution.run_id,
-                    "agent_id": execution.agent_id,
-                }),
+                serde_json::to_value(QuireMcpMeta {
+                    session_id: &execution.session_id,
+                    run_id: &execution.run_id,
+                    agent_id: &execution.agent_id,
+                })?,
             );
             tool_context
                 .insert(McpMeta(mcp_meta))
@@ -551,7 +564,10 @@ pub(super) fn tool_output_value(output: &rig::tool::ToolOutput) -> Value {
         return value.clone();
     }
     if let Some(text) = output.as_text() {
-        return serde_json::json!({"text": text});
+        return serde_json::to_value(TextToolOutput { text }).unwrap_or_else(|error| {
+            warn!(%error, "failed to serialize text tool output");
+            Value::Null
+        });
     }
     serde_json::to_value(output).unwrap_or(Value::Null)
 }

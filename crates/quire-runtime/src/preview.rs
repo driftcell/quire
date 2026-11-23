@@ -11,8 +11,10 @@ use quire_protocol::{ChartDataTable, ChartRequirements, EchartsBlock};
 use rmcp::model::{CallToolResult, ContentBlock};
 use schemars::JsonSchema;
 use secrecy::ExposeSecret;
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 use crate::{
     config::Config,
@@ -102,6 +104,101 @@ fn default_include_image() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OverflowElementDiagnostic {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block_id: Option<String>,
+    pub tag: String,
+    pub scroll_width: u64,
+    pub client_width: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LayoutDiagnostics {
+    pub overflow_count: u64,
+    pub overflow_elements: Vec<OverflowElementDiagnostic>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DomLayoutInspection {
+    #[serde(default)]
+    doc_id: Option<String>,
+    #[serde(default)]
+    revision: Option<u64>,
+    #[serde(default)]
+    total_pages: Option<usize>,
+    #[serde(default)]
+    overflow_count: u64,
+    #[serde(default)]
+    overflow: Vec<OverflowElementDiagnostic>,
+    #[serde(default)]
+    styles: Option<Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct PreviewProbe {
+    #[serde(default)]
+    ready: bool,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    rendered: bool,
+}
+
+#[derive(Serialize)]
+struct BrowserNavigateParams<'a> {
+    url: &'a str,
+}
+
+#[derive(Serialize)]
+struct BrowserEvaluateParams<'a> {
+    function: &'a str,
+}
+
+#[derive(Serialize)]
+struct BrowserScreenshotParams {
+    #[serde(rename = "fullPage")]
+    full_page: bool,
+    #[serde(rename = "type")]
+    image_type: &'static str,
+}
+
+#[derive(Serialize)]
+struct PreviewMcpSummary<'a> {
+    doc_id: &'a str,
+    preview_url: &'a str,
+    mode: PreviewViewMode,
+    revision: u64,
+    total_pages: usize,
+    layout_diagnostics: &'a LayoutDiagnostics,
+    styles: Option<&'a Value>,
+}
+
+#[derive(Serialize)]
+struct PreviewImageContent<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(rename = "mimeType")]
+    mime_type: &'a str,
+    data: &'a str,
+}
+
+#[derive(Serialize)]
+struct PreviewToolPayload<'a> {
+    doc_id: &'a str,
+    preview_url: &'a str,
+    mode: PreviewViewMode,
+    revision: u64,
+    total_pages: usize,
+    layout_diagnostics: &'a LayoutDiagnostics,
+    styles: Option<&'a Value>,
+    image_included: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_content: Option<PreviewImageContent<'a>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreviewReportResult {
     pub doc_id: String,
@@ -109,7 +206,7 @@ pub struct PreviewReportResult {
     pub mode: PreviewViewMode,
     pub revision: u64,
     pub total_pages: usize,
-    pub layout_diagnostics: Value,
+    pub layout_diagnostics: LayoutDiagnostics,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub styles: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,15 +218,15 @@ pub struct PreviewReportResult {
 impl PreviewReportResult {
     /// Build an MCP `CallToolResult` with the PNG `ImageContent` when requested, plus a JSON summary.
     pub fn to_mcp_call_tool_result(&self) -> CallToolResult {
-        let summary = json!({
-            "doc_id": self.doc_id,
-            "preview_url": self.preview_url,
-            "mode": self.mode,
-            "revision": self.revision,
-            "total_pages": self.total_pages,
-            "layout_diagnostics": self.layout_diagnostics,
-            "styles": self.styles,
-        });
+        let summary = PreviewMcpSummary {
+            doc_id: &self.doc_id,
+            preview_url: &self.preview_url,
+            mode: self.mode,
+            revision: self.revision,
+            total_pages: self.total_pages,
+            layout_diagnostics: &self.layout_diagnostics,
+            styles: self.styles.as_ref(),
+        };
         let mut content = Vec::new();
         if let (Some(data), Some(mime)) = (&self.image_base64, &self.image_mime_type) {
             content.push(ContentBlock::image(data.clone(), mime.clone()));
@@ -140,37 +237,41 @@ impl PreviewReportResult {
         CallToolResult::success(content)
     }
 
+    fn tool_payload(&self, include_image_content: bool) -> PreviewToolPayload<'_> {
+        let image_content = if include_image_content {
+            match (&self.image_base64, &self.image_mime_type) {
+                (Some(data), Some(mime)) => Some(PreviewImageContent {
+                    kind: "image",
+                    mime_type: mime,
+                    data,
+                }),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        PreviewToolPayload {
+            doc_id: &self.doc_id,
+            preview_url: &self.preview_url,
+            mode: self.mode,
+            revision: self.revision,
+            total_pages: self.total_pages,
+            layout_diagnostics: &self.layout_diagnostics,
+            styles: self.styles.as_ref(),
+            image_included: self.image_base64.is_some(),
+            image_content,
+        }
+    }
+
     /// Build a text-only diagnostic JSON payload (never embeds raw base64).
-    pub fn to_diagnostics_json(&self) -> Value {
-        json!({
-            "doc_id": self.doc_id,
-            "preview_url": self.preview_url,
-            "mode": self.mode,
-            "revision": self.revision,
-            "total_pages": self.total_pages,
-            "layout_diagnostics": self.layout_diagnostics,
-            "styles": self.styles,
-            "image_included": self.image_base64.is_some(),
-        })
+    pub fn to_diagnostics_json(&self) -> RuntimeResult<Value> {
+        Ok(serde_json::to_value(self.tool_payload(false))?)
     }
 
     /// Build a JSON payload for internal `DynamicTool` execution. The screenshot is
     /// omitted unless the caller explicitly requested it.
-    pub fn to_tool_json(&self) -> Value {
-        let mut payload = self.to_diagnostics_json();
-        if let (Some(data), Some(mime)) = (&self.image_base64, &self.image_mime_type)
-            && let Some(object) = payload.as_object_mut()
-        {
-            object.insert(
-                "image_content".to_string(),
-                json!({
-                    "type": "image",
-                    "mimeType": mime,
-                    "data": data,
-                }),
-            );
-        }
-        payload
+    pub fn to_tool_json(&self) -> RuntimeResult<Value> {
+        Ok(serde_json::to_value(self.tool_payload(true))?)
     }
 }
 
@@ -282,9 +383,9 @@ pub fn build_public_chart_preview_url(config: &Config, preview_id: &str) -> Stri
     format!("{base}{}", chart_preview_path(preview_id))
 }
 
-fn extract_eval_json(raw: &Value) -> Option<Value> {
+fn extract_eval_json<T: DeserializeOwned>(raw: &Value) -> Option<T> {
     if let Some(structured) = raw.get("structuredContent") {
-        return Some(structured.clone());
+        return serde_json::from_value(structured.clone()).ok();
     }
     let text = raw
         .get("content")
@@ -293,7 +394,7 @@ fn extract_eval_json(raw: &Value) -> Option<Value> {
         .find_map(|item| item.get("text").and_then(Value::as_str))?;
     // mcp/playwright wraps evaluation results in markdown/text blocks like `### Result\n...`
     if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-        return Some(parsed);
+        return serde_json::from_value(parsed).ok();
     }
     // mcp/playwright pretty-prints evaluation results under `### Result`, so
     // parse the first JSON value after that heading instead of matching lines.
@@ -302,7 +403,7 @@ fn extract_eval_json(raw: &Value) -> Option<Value> {
     {
         let mut values = serde_json::Deserializer::from_str(rest.trim_start()).into_iter::<Value>();
         if let Some(Ok(parsed)) = values.next() {
-            return Some(parsed);
+            return serde_json::from_value(parsed).ok();
         }
     }
     for line in text.lines() {
@@ -312,7 +413,7 @@ fn extract_eval_json(raw: &Value) -> Option<Value> {
             || trimmed == "false")
             && let Ok(parsed) = serde_json::from_str::<Value>(trimmed)
         {
-            return Some(parsed);
+            return serde_json::from_value(parsed).ok();
         }
     }
     // Also check fenced JSON blocks
@@ -321,7 +422,7 @@ fn extract_eval_json(raw: &Value) -> Option<Value> {
         if let Some(end) = rest.find("```")
             && let Ok(parsed) = serde_json::from_str::<Value>(rest[..end].trim())
         {
-            return Some(parsed);
+            return serde_json::from_value(parsed).ok();
         }
     }
     None
@@ -373,7 +474,10 @@ pub async fn execute_preview_report(
     let client = RmcpClient::connect(playwright_url, None, "preview", "quire-preview").await?;
 
     client
-        .call_tool_raw("browser_navigate", json!({ "url": preview_url }))
+        .call_tool_raw(
+            "browser_navigate",
+            serde_json::to_value(BrowserNavigateParams { url: &preview_url })?,
+        )
         .await?;
 
     let started = Instant::now();
@@ -381,19 +485,19 @@ pub async fn execute_preview_report(
         let probe = client
             .call_tool_raw(
                 "browser_evaluate",
-                json!({
-                    "function": "() => ({ ready: Boolean(document.querySelector('[data-preview-ready=\"true\"]')), error: document.querySelector('[data-preview-error=\"true\"]')?.textContent ?? null })"
-                }),
+                serde_json::to_value(BrowserEvaluateParams {
+                    function: "() => ({ ready: Boolean(document.querySelector('[data-preview-ready=\"true\"]')), error: document.querySelector('[data-preview-error=\"true\"]')?.textContent ?? null })",
+                })?,
             )
             .await?;
 
-        if let Some(val) = extract_eval_json(&probe) {
-            if let Some(err_msg) = val.get("error").and_then(Value::as_str) {
+        if let Some(val) = extract_eval_json::<PreviewProbe>(&probe) {
+            if let Some(err_msg) = val.error {
                 return Err(RuntimeError::Internal(format!(
                     "Preview page failed to load: {err_msg}"
                 )));
             }
-            if val.get("ready").and_then(Value::as_bool) == Some(true) {
+            if val.ready {
                 break;
             }
         }
@@ -466,9 +570,14 @@ pub async fn execute_preview_report(
     );
 
     let inspected_raw = client
-        .call_tool_raw("browser_evaluate", json!({ "function": inspect_fn }))
+        .call_tool_raw(
+            "browser_evaluate",
+            serde_json::to_value(BrowserEvaluateParams {
+                function: &inspect_fn,
+            })?,
+        )
         .await?;
-    let inspected = extract_eval_json(&inspected_raw).ok_or_else(|| {
+    let inspected: DomLayoutInspection = extract_eval_json(&inspected_raw).ok_or_else(|| {
         RuntimeError::Internal("Preview inspection did not return diagnostics".into())
     })?;
     let (revision, total_pages) = checked_preview_identity(&inspected, &doc_id, input.rev)?;
@@ -477,7 +586,10 @@ pub async fn execute_preview_report(
         let screenshot_raw = client
             .call_tool_raw(
                 "browser_take_screenshot",
-                json!({ "fullPage": true, "type": "png" }),
+                serde_json::to_value(BrowserScreenshotParams {
+                    full_page: true,
+                    image_type: "png",
+                })?,
             )
             .await?;
         let (data, mime) = extract_image_content(&screenshot_raw).ok_or_else(|| {
@@ -496,12 +608,12 @@ pub async fn execute_preview_report(
         mode: input.mode,
         revision,
         total_pages,
-        layout_diagnostics: json!({
-            "overflow_count": inspected.get("overflowCount").and_then(Value::as_u64).unwrap_or(0),
-            "overflow_elements": inspected.get("overflow").cloned().unwrap_or_else(|| json!([])),
-        }),
+        layout_diagnostics: LayoutDiagnostics {
+            overflow_count: inspected.overflow_count,
+            overflow_elements: inspected.overflow,
+        },
         styles: if input.include_styles {
-            inspected.get("styles").cloned()
+            inspected.styles
         } else {
             None
         },
@@ -511,17 +623,17 @@ pub async fn execute_preview_report(
 }
 
 fn checked_preview_identity(
-    inspected: &Value,
+    inspected: &DomLayoutInspection,
     doc_id: &str,
     expected: Option<u64>,
 ) -> RuntimeResult<(u64, usize)> {
-    let revision = inspected["revision"]
-        .as_u64()
-        .filter(|r| *r > 0)
+    let revision = inspected
+        .revision
+        .filter(|revision| *revision > 0)
         .ok_or_else(|| {
             RuntimeError::Internal("Preview did not identify a committed revision".into())
         })?;
-    if inspected["docId"].as_str() != Some(doc_id) {
+    if inspected.doc_id.as_deref() != Some(doc_id) {
         return Err(RuntimeError::Internal(format!(
             "Preview did not render document `{doc_id}`"
         )));
@@ -533,10 +645,9 @@ fn checked_preview_identity(
             "Expected preview revision {expected}, rendered {revision}"
         )));
     }
-    let pages = inspected["totalPages"]
-        .as_u64()
-        .and_then(|v| usize::try_from(v).ok())
-        .filter(|n| *n > 0)
+    let pages = inspected
+        .total_pages
+        .filter(|pages| *pages > 0)
         .ok_or_else(|| RuntimeError::Internal("Preview did not identify its page count".into()))?;
     Ok((revision, pages))
 }
@@ -569,7 +680,10 @@ pub async fn execute_preview_echarts(
     let client = RmcpClient::connect(playwright_url, None, "preview", "quire-preview").await?;
 
     client
-        .call_tool_raw("browser_navigate", json!({ "url": preview_url }))
+        .call_tool_raw(
+            "browser_navigate",
+            serde_json::to_value(BrowserNavigateParams { url: &preview_url })?,
+        )
         .await?;
 
     let started = Instant::now();
@@ -577,21 +691,19 @@ pub async fn execute_preview_echarts(
         let probe = client
             .call_tool_raw(
                 "browser_evaluate",
-                json!({
-                    "function": "() => ({ ready: Boolean(document.querySelector('[data-preview-ready=\"true\"]')), error: document.querySelector('[data-preview-error=\"true\"]')?.textContent ?? null, rendered: Boolean(document.querySelector('[data-chart-canvas] canvas, [data-chart-canvas] svg')) })"
-                }),
+                serde_json::to_value(BrowserEvaluateParams {
+                    function: "() => ({ ready: Boolean(document.querySelector('[data-preview-ready=\"true\"]')), error: document.querySelector('[data-preview-error=\"true\"]')?.textContent ?? null, rendered: Boolean(document.querySelector('[data-chart-canvas] canvas, [data-chart-canvas] svg')) })",
+                })?,
             )
             .await?;
 
-        if let Some(val) = extract_eval_json(&probe) {
-            if let Some(err_msg) = val.get("error").and_then(Value::as_str) {
+        if let Some(val) = extract_eval_json::<PreviewProbe>(&probe) {
+            if let Some(err_msg) = val.error {
                 return Err(RuntimeError::Internal(format!(
                     "Chart preview page failed to load: {err_msg}"
                 )));
             }
-            if val.get("ready").and_then(Value::as_bool) == Some(true)
-                && val.get("rendered").and_then(Value::as_bool) == Some(true)
-            {
+            if val.ready && val.rendered {
                 break;
             }
         }
@@ -606,7 +718,10 @@ pub async fn execute_preview_echarts(
     let screenshot_raw = client
         .call_tool_raw(
             "browser_take_screenshot",
-            json!({ "fullPage": true, "type": "png" }),
+            serde_json::to_value(BrowserScreenshotParams {
+                full_page: true,
+                image_type: "png",
+            })?,
         )
         .await?;
     let (data, mime) = extract_image_content(&screenshot_raw).ok_or_else(|| {
@@ -635,7 +750,7 @@ mod tests {
                 "text": "### Result\n{\n  \"ready\": true,\n  \"error\": null\n}\n### Ran Playwright code\n```js\nawait page.evaluate('() => ({})');\n```"
             }]
         });
-        let parsed = extract_eval_json(&raw);
+        let parsed = extract_eval_json::<Value>(&raw);
         assert_eq!(
             parsed
                 .as_ref()
@@ -656,7 +771,7 @@ mod tests {
             mode: PreviewViewMode::Paged,
             revision: 3,
             total_pages: 2,
-            layout_diagnostics: json!({"overflow_count": 0, "overflow_elements": []}),
+            layout_diagnostics: LayoutDiagnostics::default(),
             styles: None,
             image_mime_type: image.map(|(_, mime)| mime.to_string()),
             image_base64: image.map(|(data, _)| data.to_string()),
@@ -665,11 +780,12 @@ mod tests {
 
     #[test]
     fn preview_identity_rejects_a_different_revision() {
-        let inspected = json!({
-            "docId": "report-test",
-            "revision": 11,
-            "totalPages": 2
-        });
+        let inspected = DomLayoutInspection {
+            doc_id: Some("report-test".into()),
+            revision: Some(11),
+            total_pages: Some(2),
+            ..DomLayoutInspection::default()
+        };
         let error = checked_preview_identity(&inspected, "report-test", Some(10)).unwrap_err();
         assert!(
             error
@@ -680,11 +796,12 @@ mod tests {
 
     #[test]
     fn preview_identity_rejects_a_different_document() {
-        let inspected = json!({
-            "docId": "another-report",
-            "revision": 10,
-            "totalPages": 2
-        });
+        let inspected = DomLayoutInspection {
+            doc_id: Some("another-report".into()),
+            revision: Some(10),
+            total_pages: Some(2),
+            ..DomLayoutInspection::default()
+        };
         let error = checked_preview_identity(&inspected, "report-test", None).unwrap_err();
         assert!(error.to_string().contains("report-test"));
     }
@@ -725,7 +842,7 @@ mod tests {
 
     #[test]
     fn tool_json_omits_the_image_when_not_requested() {
-        let payload = preview_result(None).to_tool_json();
+        let payload = preview_result(None).to_tool_json().unwrap();
         assert_eq!(
             payload.get("image_included").and_then(Value::as_bool),
             Some(false)
@@ -739,7 +856,9 @@ mod tests {
 
     #[test]
     fn tool_json_includes_the_image_when_requested() {
-        let payload = preview_result(Some(("cG5n", "image/png"))).to_tool_json();
+        let payload = preview_result(Some(("cG5n", "image/png")))
+            .to_tool_json()
+            .unwrap();
         assert_eq!(
             payload.get("image_included").and_then(Value::as_bool),
             Some(true)

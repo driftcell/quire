@@ -11,7 +11,8 @@ use rmcp::{
     model::{Implementation, ServerCapabilities, ServerConfig},
     tool_handler,
 };
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 
 use crate::state::AppState;
 
@@ -62,6 +63,11 @@ pub struct QuireMcpServer {
     tool_router: ToolRouter<Self>,
 }
 
+#[derive(Serialize)]
+struct ObjectSchema {
+    r#type: &'static str,
+}
+
 impl QuireMcpServer {
     /// Construct the MCP server and register all 19 domain tools on the router.
     pub fn new(state: AppState) -> Self {
@@ -89,10 +95,14 @@ impl QuireMcpServer {
                 })
                 .collect()
         });
-        catalog
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| (String::new(), json!({"type": "object"})))
+        catalog.get(name).cloned().unwrap_or_else(|| {
+            let schema =
+                serde_json::to_value(ObjectSchema { r#type: "object" }).unwrap_or_else(|error| {
+                    tracing::error!(%error, "failed to serialize fallback tool schema");
+                    Value::Object(Default::default())
+                });
+            (String::new(), schema)
+        })
     }
 }
 

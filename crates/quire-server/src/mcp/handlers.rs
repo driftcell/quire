@@ -23,11 +23,10 @@ use rmcp::{
     handler::server::wrapper::{Json, Parameters},
     tool, tool_router,
 };
-use serde_json::json;
 
 use crate::{
     auth::RequestContext,
-    error::{invalid_params, mcp_error},
+    error::{McpErrorDetails, invalid_params, mcp_error},
     guide::{guide, guide_workflow},
     state::AppState,
 };
@@ -44,7 +43,7 @@ impl QuireMcpServer {
     #[tool(
         name = "get_protocol_guide",
         annotations(read_only_hint = true),
-        description = "Progressive protocol schema disclosure. Call quickstart first, then tables_and_charts, citations_and_css and parallel_workflow as needed."
+        description = quire_protocol::tool_description!("get_protocol_guide")
     )]
     pub async fn get_protocol_guide(
         &self,
@@ -66,7 +65,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "create_report",
-        description = "Create a new report. Uses X-Session-Id from the MCP HTTP header for frontend session discovery. Idempotent when idempotency_key is supplied."
+        description = quire_protocol::tool_description!("create_report")
     )]
     pub async fn create_report(
         &self,
@@ -82,7 +81,7 @@ impl QuireMcpServer {
     #[tool(
         name = "list_reports",
         annotations(read_only_hint = true),
-        description = "List reports, newest first, optionally filtered by doc_id or title substring."
+        description = quire_protocol::tool_description!("list_reports")
     )]
     pub async fn list_reports(
         &self,
@@ -119,7 +118,7 @@ impl QuireMcpServer {
     #[tool(
         name = "get_document_digest",
         annotations(read_only_hint = true),
-        description = "Get heading IDs for read_as_markdown(section_id), revision, readable prose length and signed difference from the agreed target. Optional query filters only the returned blocks."
+        description = quire_protocol::tool_description!("get_document_digest")
     )]
     pub async fn get_document_digest(
         &self,
@@ -139,7 +138,9 @@ impl QuireMcpServer {
             return Err(invalid_params(
                 format!("This report already has an agreed target of {stored} characters."),
                 "Omit target_prose_chars to read the stored agreement.",
-                Some(json!({"stored_target_prose_chars": stored})),
+                Some(McpErrorDetails::StoredTargetProseChars {
+                    stored_target_prose_chars: stored.get(),
+                }),
             ));
         }
         let digest = build_digest(
@@ -164,7 +165,7 @@ impl QuireMcpServer {
     #[tool(
         name = "read_as_markdown",
         annotations(read_only_hint = true),
-        description = "Read a whole chapter by passing section_id from get_document_digest (heading block ID, not its title). Use block_ids for individual blocks; omit both for the whole report. Returns Markdown with stable block anchors."
+        description = quire_protocol::tool_description!("read_as_markdown")
     )]
     pub async fn read_as_markdown(
         &self,
@@ -247,7 +248,7 @@ impl QuireMcpServer {
     #[tool(
         name = "read_blocks",
         annotations(read_only_hint = true),
-        description = "Fetch full canonical protocol JSON for targeted blocks."
+        description = quire_protocol::tool_description!("read_blocks")
     )]
     pub async fn read_blocks(
         &self,
@@ -270,15 +271,18 @@ impl QuireMcpServer {
             }
         }
         if !missing.is_empty() {
-            let valid: Vec<&str> = document
+            let valid: Vec<String> = document
                 .blocks
                 .iter()
-                .map(|block| block.id.as_str())
+                .map(|block| block.id.to_string())
                 .collect();
             return Err(invalid_params(
                 format!("block IDs not found: {}", missing.join(", ")),
                 format!("Valid block_ids: {}", valid.join(", ")),
-                Some(json!({"missing": missing, "valid_block_ids": valid})),
+                Some(McpErrorDetails::MissingBlockIds {
+                    missing,
+                    valid_block_ids: valid,
+                }),
             ));
         }
         Ok(Json(ReadBlocksReceipt {
@@ -295,7 +299,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "apply_operations",
-        description = "Atomically apply declarative block patch operations with Smart CAS rebasing and optional same-transaction source upserts. Returns new_revision, assigned_ids, inline_warnings and _next_hint."
+        description = quire_protocol::tool_description!("apply_operations")
     )]
     pub async fn apply_operations(
         &self,
@@ -310,7 +314,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "rollback_revision",
-        description = "Revert document state by replaying stored inverse_ops in reverse order. Creates a new monotonic revision; history is never rewritten."
+        description = quire_protocol::tool_description!("rollback_revision")
     )]
     pub async fn rollback_revision(
         &self,
@@ -325,7 +329,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "upsert_sources",
-        description = "Register or update citation metadata with URL + normalized-title deduplication. Returns canonical_id_map; cite the canonical source_id."
+        description = quire_protocol::tool_description!("upsert_sources")
     )]
     pub async fn upsert_sources(
         &self,
@@ -341,7 +345,7 @@ impl QuireMcpServer {
     #[tool(
         name = "list_sources",
         annotations(read_only_hint = true),
-        description = "List registered citation metadata and evidence excerpts. Optionally pass exact source_ids for claim-level verification; unknown IDs fail explicitly."
+        description = quire_protocol::tool_description!("list_sources")
     )]
     pub async fn list_sources(
         &self,
@@ -370,11 +374,14 @@ impl QuireMcpServer {
             sources = document.sources.clone();
         }
         if !missing.is_empty() {
-            let valid: Vec<&str> = document.sources.keys().map(|id| id.as_str()).collect();
+            let valid: Vec<String> = document.sources.keys().map(|id| id.to_string()).collect();
             return Err(invalid_params(
                 format!("source IDs not found: {}", missing.join(", ")),
                 "Pass only registered IDs from list_sources or a citation receipt.".to_string(),
-                Some(json!({"missing": missing, "valid_source_ids": valid})),
+                Some(McpErrorDetails::MissingSourceIds {
+                    missing,
+                    valid_source_ids: valid,
+                }),
             ));
         }
         let _next_hint = if sources.is_empty() {
@@ -397,7 +404,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "set_cover",
-        description = "Partially update cover fields (enabled, variant, title, subtitle, authors, date, meta, custom_html)."
+        description = quire_protocol::tool_description!("set_cover")
     )]
     pub async fn set_cover(
         &self,
@@ -412,7 +419,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_toc",
-        description = "Enable/disable the auto-generated TOC and set title, max_depth (1..=3), variant (standard|numbered|dotted) and page breaks before/after the TOC."
+        description = quire_protocol::tool_description!("configure_toc")
     )]
     pub async fn configure_toc(
         &self,
@@ -427,7 +434,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_references",
-        description = "Configure the bibliography: enabled, title, style (numeric|author_year) and page_break_before. Returns orphan (unreferenced) source IDs."
+        description = quire_protocol::tool_description!("configure_references")
     )]
     pub async fn configure_references(
         &self,
@@ -442,7 +449,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "configure_page_chrome",
-        description = "Configure A4 paged header/footer slots (left/center/right) with template placeholders ({page}, {total}, {title}, {subtitle}, {date}, {kicker}, {authors}), first-page visibility and automatic heading page breaks (none/h1/h1_and_h2)."
+        description = quire_protocol::tool_description!("configure_page_chrome")
     )]
     pub async fn configure_page_chrome(
         &self,
@@ -457,7 +464,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "update_style_and_css",
-        description = "Update theme preset, CSS custom-property tokens and scoped custom_css. Validates token names/values and CSS braces/strings/comments with exact line/column errors."
+        description = quire_protocol::tool_description!("update_style_and_css")
     )]
     pub async fn update_style_and_css(
         &self,
@@ -473,7 +480,7 @@ impl QuireMcpServer {
     #[tool(
         name = "lint_document",
         annotations(read_only_hint = true),
-        description = "Run zero-browser static validation: dangling/unused citations, table schema/row keys, CSS syntax, custom_html fallback, heading/TOC/chart rules."
+        description = quire_protocol::tool_description!("lint_document")
     )]
     pub async fn lint_document(
         &self,
@@ -531,7 +538,7 @@ impl QuireMcpServer {
     #[tool(
         name = "list_comments",
         annotations(read_only_hint = true),
-        description = "List side-channel review threads. Archived threads are omitted unless status=archived is supplied. Includes anchor_snapshot and live anchor_detached flags."
+        description = quire_protocol::tool_description!("list_comments")
     )]
     pub async fn list_comments(
         &self,
@@ -571,7 +578,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "add_comment",
-        description = "Create an agent review comment anchored to a block. Comments are side-channel data: they never increment current_rev or participate in Smart CAS."
+        description = quire_protocol::tool_description!("add_comment")
     )]
     pub async fn add_comment(
         &self,
@@ -586,7 +593,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     #[tool(
         name = "reply_comment",
-        description = "Reply to a review thread. With mark_addressed=true an open thread moves to addressed and records addressed_rev; agents cannot archive or reopen threads."
+        description = quire_protocol::tool_description!("reply_comment")
     )]
     pub async fn reply_comment(
         &self,
@@ -613,7 +620,9 @@ impl CoverPatch {
                 return Err(invalid_params(
                     format!("unknown cover variant `{variant}`"),
                     format!("Valid cover variants: {}", COVER_VARIANTS.join(", ")),
-                    Some(json!({"valid_variants": COVER_VARIANTS})),
+                    Some(McpErrorDetails::ValidVariants {
+                        valid_variants: COVER_VARIANTS,
+                    }),
                 ));
             }
             cover.variant = variant.clone();
@@ -838,7 +847,9 @@ impl QuireMcpServer {
             return Err(invalid_params(
                 format!("duplicate initial block IDs: {}", duplicates.join(", ")),
                 "Every block id must be unique. Rename duplicates before create_report.",
-                Some(json!({"duplicate_block_ids": duplicates})),
+                Some(McpErrorDetails::DuplicateBlockIds {
+                    duplicate_block_ids: duplicates,
+                }),
             ));
         }
 
@@ -1088,7 +1099,9 @@ impl QuireMcpServer {
             return Err(invalid_params(
                 format!("max_depth {depth} is outside 1..=3"),
                 "Use max_depth 1, 2 or 3.",
-                Some(json!({"valid_max_depths":[1,2,3]})),
+                Some(McpErrorDetails::ValidMaxDepths {
+                    valid_max_depths: [1, 2, 3],
+                }),
             ));
         }
         if let Some(variant) = &request.variant
@@ -1097,7 +1110,9 @@ impl QuireMcpServer {
             return Err(invalid_params(
                 format!("unknown TOC variant `{variant}`"),
                 format!("Valid TOC variants: {}", TOC_VARIANTS.join(", ")),
-                Some(json!({"valid_variants": TOC_VARIANTS})),
+                Some(McpErrorDetails::ValidVariants {
+                    valid_variants: TOC_VARIANTS,
+                }),
             ));
         }
         let doc_id = parse_doc_id(&request.doc_id)?;
@@ -1213,7 +1228,7 @@ impl QuireMcpServer {
                         "base_revision {expected} does not match current revision {current_revision}"
                     ),
                     "Reload the document and retry with the current revision.",
-                    Some(json!({"current_revision": current_revision})),
+                    Some(McpErrorDetails::CurrentRevision { current_revision }),
                 ));
             }
         }
@@ -1248,9 +1263,9 @@ impl QuireMcpServer {
                 return Err(invalid_params(
                     format!("invalid CSS token name `{name}`"),
                     "Token names must start with `--` and contain only ASCII letters, digits, '-' or '_'.",
-                    Some(
-                        json!({"valid_examples":["--rpt-primary","--rpt-accent","--rpt-font-body"]}),
-                    ),
+                    Some(McpErrorDetails::ValidExamples {
+                        valid_examples: &["--rpt-primary", "--rpt-accent", "--rpt-font-body"],
+                    }),
                 ));
             }
             if !is_safe_css_token_value(value) {
@@ -1574,18 +1589,7 @@ fn split_scoped_diagnostics(
 
 /// Map a structured protocol failure into an MCP error that exposes stable recovery fields.
 fn protocol_error(error: ProtocolError) -> ErrorData {
-    let code = error.code();
-    let hint = error.hint();
-    let message = error.to_string();
-    ErrorData::invalid_params(
-        message.clone(),
-        Some(json!({
-            "code": code,
-            "message": message,
-            "hint": hint,
-            "protocol_error": error,
-        })),
-    )
+    crate::error::protocol_error(error)
 }
 
 // rmcp moves params._meta into RequestContext.meta before tool extraction; it is

@@ -9,7 +9,7 @@ struct DenseLabelFinding {
 pub(super) fn check_dense_labels(
     engine: &mut Engine,
     block: &quire_protocol::Block,
-    option: &Value,
+    option: &EchartsOptionView,
     index: usize,
 ) {
     let Some(finding) = dense_pie_labels(option, index, &block.id)
@@ -26,13 +26,17 @@ pub(super) fn check_dense_labels(
     );
 }
 
-fn dense_pie_labels(option: &Value, index: usize, block_id: &BlockId) -> Option<DenseLabelFinding> {
-    let series_is_array = option.get("series").is_some_and(Value::is_array);
-    for (series_index, series) in chart_series(option).into_iter().enumerate() {
-        if series.get("type").and_then(Value::as_str) != Some("pie") {
+fn dense_pie_labels(
+    option: &EchartsOptionView,
+    index: usize,
+    block_id: &BlockId,
+) -> Option<DenseLabelFinding> {
+    let series_is_array = option.series.is_array;
+    for (series_index, series) in option.series.iter().enumerate() {
+        if series.kind.as_deref() != Some("pie") {
             continue;
         }
-        let Some(data) = series.get("data").and_then(Value::as_array) else {
+        let Some(data) = series.data.as_ref().and_then(Value::as_array) else {
             continue;
         };
         if data.len() <= 7 {
@@ -56,20 +60,19 @@ fn dense_pie_labels(option: &Value, index: usize, block_id: &BlockId) -> Option<
 }
 
 fn dense_x_axis_labels(
-    option: &Value,
+    option: &EchartsOptionView,
     index: usize,
     block_id: &BlockId,
 ) -> Option<DenseLabelFinding> {
-    let axis_is_array = option.get("xAxis").is_some_and(Value::is_array);
-    for (axis_index, axis) in entries(option.get("xAxis")).into_iter().enumerate() {
-        let Some(data) = axis.get("data").and_then(Value::as_array) else {
+    let axis_is_array = option.x_axis.is_array;
+    for (axis_index, axis) in option.x_axis.iter().enumerate() {
+        let Some(data) = &axis.data else {
             continue;
         };
         if data.is_empty() {
             continue;
         }
-        let category_axis = axis.get("type").and_then(Value::as_str) == Some("category")
-            || axis.get("type").is_none();
+        let category_axis = axis.kind.as_deref() == Some("category") || axis.kind.is_none();
         if !category_axis {
             continue;
         }
@@ -84,12 +87,15 @@ fn dense_x_axis_labels(
         if !dense {
             continue;
         }
-        let axis_label = axis.get("axisLabel");
-        let rotate_handled = axis_label
-            .and_then(|label| label.get("rotate"))
+        let rotate_handled = axis
+            .axis_label
+            .as_ref()
+            .and_then(|label| label.rotate.as_ref())
             .is_some_and(axis_label_handled);
-        let interval_handled = axis_label
-            .and_then(|label| label.get("interval"))
+        let interval_handled = axis
+            .axis_label
+            .as_ref()
+            .and_then(|label| label.interval.as_ref())
             .is_some_and(axis_label_handled);
         if rotate_handled || interval_handled {
             continue;
@@ -119,35 +125,35 @@ fn axis_label_text(value: &Value) -> Option<&str> {
 pub(super) fn check_line_end_labels(
     engine: &mut Engine,
     block: &quire_protocol::Block,
-    option: &Value,
+    option: &EchartsOptionView,
     index: usize,
 ) {
     let top_level_overlap_guard = option
-        .get("labelLayout")
-        .and_then(|layout| layout.get("hideOverlap"))
-        .and_then(Value::as_bool)
+        .label_layout
+        .as_ref()
+        .and_then(|layout| layout.hide_overlap)
         == Some(true);
     let mut enabled_series = 0usize;
     let mut missing_text_border = false;
     let mut series_overlap_guard = false;
-    for series in chart_series(option) {
-        if series.get("type").and_then(Value::as_str) != Some("line") {
+    for series in option.series.iter() {
+        if series.kind.as_deref() != Some("line") {
             continue;
         }
-        let Some(end_label) = series.get("endLabel") else {
+        let Some(end_label) = &series.end_label else {
             continue;
         };
-        if end_label.get("show").and_then(Value::as_bool) != Some(true) {
+        if end_label.show != Some(true) {
             continue;
         }
         enabled_series = enabled_series.saturating_add(1);
-        if end_label.get("textBorderWidth").and_then(Value::as_f64) != Some(0.0) {
+        if end_label.text_border_width != Some(0.0) {
             missing_text_border = true;
         }
         if series
-            .get("labelLayout")
-            .and_then(|layout| layout.get("hideOverlap"))
-            .and_then(Value::as_bool)
+            .label_layout
+            .as_ref()
+            .and_then(|layout| layout.hide_overlap)
             == Some(true)
         {
             series_overlap_guard = true;

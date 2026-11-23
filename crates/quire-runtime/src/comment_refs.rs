@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 
 use quire_session_protocol::{SessionCommentRef, SessionMessage};
+use serde::Serialize;
 
 use crate::error::{RuntimeError, RuntimeResult};
 
@@ -43,6 +44,19 @@ pub fn validate_user_payload(
     validate_comment_refs(comment_refs)
 }
 
+fn slice_is_empty<T>(values: &[T]) -> bool {
+    values.is_empty()
+}
+
+#[derive(Serialize)]
+struct StoredUserMessageEnvelope<'a> {
+    instruction: &'a str,
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    comment_refs: &'a [SessionCommentRef],
+    #[serde(skip_serializing_if = "slice_is_empty")]
+    attachment_ids: &'a [String],
+}
+
 /// Project one stored user message into the single text input accepted by model providers.
 /// Ordinary messages remain byte-for-byte unchanged; metadata uses a JSON envelope.
 pub fn render_model_user_message(
@@ -53,15 +67,15 @@ pub fn render_model_user_message(
     if comment_refs.is_empty() && attachment_ids.is_empty() {
         return content.to_string();
     }
-    let mut envelope = serde_json::Map::new();
-    envelope.insert("instruction".into(), serde_json::json!(content));
-    if !comment_refs.is_empty() {
-        envelope.insert("comment_refs".into(), serde_json::json!(comment_refs));
-    }
-    if !attachment_ids.is_empty() {
-        envelope.insert("attachment_ids".into(), serde_json::json!(attachment_ids));
-    }
-    serde_json::Value::Object(envelope).to_string()
+    let envelope = StoredUserMessageEnvelope {
+        instruction: content,
+        comment_refs,
+        attachment_ids,
+    };
+    serde_json::to_string(&envelope).unwrap_or_else(|error| {
+        tracing::error!(%error, "failed to serialize structured user message; using plain instruction");
+        content.to_string()
+    })
 }
 
 pub fn render_stored_user_message(message: &SessionMessage) -> String {

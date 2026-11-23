@@ -1,8 +1,8 @@
 //! Per-call, block-indexed precomputation shared by all lint passes.
 
 use quire_protocol::{
-    BlockKind, CitationScan, ReportDocument, TableError, TableShape, effective_chart_option,
-    scan_document_citations, validate_table,
+    BlockKind, CitationScan, EchartsOptionView, ReportDocument, TableError, TableShape,
+    effective_chart_option, scan_document_citations, validate_table,
 };
 use rayon::prelude::*;
 use serde_json::Value;
@@ -46,7 +46,10 @@ impl ParagraphPrecomputed {
 pub(crate) enum BlockPrecomputed {
     Paragraph(ParagraphPrecomputed),
     Table(Result<TableShape, TableError>),
-    Echarts { effective_option: Value },
+    Echarts {
+        effective_option: Value,
+        view: Box<EchartsOptionView>,
+    },
     Other,
 }
 
@@ -57,9 +60,14 @@ impl BlockPrecomputed {
                 Self::Paragraph(ParagraphPrecomputed::new(text))
             }
             BlockKind::Table(table) => Self::Table(validate_table(table)),
-            BlockKind::Echarts(chart) => Self::Echarts {
-                effective_option: effective_chart_option(chart),
-            },
+            BlockKind::Echarts(chart) => {
+                let effective_option = effective_chart_option(chart);
+                let view = Box::new(EchartsOptionView::from_value(&effective_option));
+                Self::Echarts {
+                    effective_option,
+                    view,
+                }
+            }
             BlockKind::Heading { .. } | BlockKind::CustomHtml(_) => Self::Other,
         }
     }
@@ -103,7 +111,16 @@ impl<'a> LintContext<'a> {
 
     pub(crate) fn effective_option(&self, index: usize) -> Option<&Value> {
         match self.blocks.get(index) {
-            Some(BlockPrecomputed::Echarts { effective_option }) => Some(effective_option),
+            Some(BlockPrecomputed::Echarts {
+                effective_option, ..
+            }) => Some(effective_option),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn chart_view(&self, index: usize) -> Option<&EchartsOptionView> {
+        match self.blocks.get(index) {
+            Some(BlockPrecomputed::Echarts { view, .. }) => Some(view),
             _ => None,
         }
     }

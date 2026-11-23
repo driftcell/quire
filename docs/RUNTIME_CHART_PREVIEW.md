@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-runtime`, `web`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_chart_preview_flow.md`, `../notes/quire_lint_registry_split.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_chart_preview_flow.md`, `../notes/quire_lint_registry_split.md`, `../notes/quire_typed_json_boundaries.md`
 
 ## 1. Scope & Non-Goals
 
@@ -30,6 +30,11 @@ no chart preset or mode abstraction.
 - `merge_chart_option_patch(base, patch)` for incremental deep merges (arrays replace, objects merge).
 - `chart_requirements(chart)` and `chart_data_tables_for_block(chart)` for the same map/extension and
   tabular projections used by `computed.chart_requirements` and `computed.chart_tables`.
+- `EchartsOptionView` for typed inspection of titles, series, axes, datasets and coordinate links.
+  Canonical options and open style/data tails remain `Value`; component views preserve single-object
+  versus array shapes and tolerate malformed entries so lint diagnostics are not skipped.
+- Concrete runtime receipt types in `rig_agent/tool_schemas.rs`; model-facing descriptions live in
+  `descriptions/tools/` and are loaded with `tool_description!` (see `TOOL_DESCRIPTIONS.md`).
 
 ### Redis preview record
 

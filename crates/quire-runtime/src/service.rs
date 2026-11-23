@@ -66,6 +66,15 @@ pub const ATTACHMENT_PRESIGN_TTL_SECS: u64 = 900;
 /// Short-lived GET TTL for downloads inside the sandbox VPC.
 pub const SANDBOX_ATTACHMENT_GET_TTL_SECS: u64 = 600;
 
+#[derive(Serialize)]
+struct AskUserDismissalPayload<'a> {
+    kind: &'static str,
+    question_id: &'a str,
+    tool_call_id: &'a Option<String>,
+    status: &'static str,
+    reason: &'static str,
+}
+
 /// Browser-facing presign result. The signed URL is never persisted or traced.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
@@ -574,18 +583,18 @@ impl RuntimeService {
         if !dismissed.is_empty() {
             let memory = self.store.memory().await?;
             for question in &dismissed {
-                let payload = serde_json::json!({
-                    "kind": "ask_user_response",
-                    "question_id": question.question_id,
-                    "tool_call_id": question.tool_call_id,
-                    "status": "dismissed",
-                    "reason": "superseded_by_user_message",
-                });
+                let payload = AskUserDismissalPayload {
+                    kind: "ask_user_response",
+                    question_id: &question.question_id,
+                    tool_call_id: &question.tool_call_id,
+                    status: "dismissed",
+                    reason: "superseded_by_user_message",
+                };
                 memory
                     .append_internal_prompt(
                         session_id,
                         format!("question-dismissal:{}", question.question_id),
-                        payload.to_string(),
+                        serde_json::to_string(&payload)?,
                     )
                     .await?;
             }

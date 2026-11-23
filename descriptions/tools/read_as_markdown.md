@@ -1,0 +1,1 @@
+Read a whole chapter by passing section_id from get_document_digest (heading block ID, not its title). Use block_ids for individual blocks; omit both for the whole report. Returns Markdown with stable block anchors.

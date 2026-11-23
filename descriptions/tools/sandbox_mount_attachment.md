@@ -1,0 +1,1 @@
+Mount an attachment uploaded to this session into the run's sandbox at /workspace/attachments/{attachment_id}/{filename}. Returns the sandbox path and attachment metadata. Download credentials, signed URLs and storage internals are never returned.

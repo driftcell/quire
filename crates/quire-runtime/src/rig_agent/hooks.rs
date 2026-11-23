@@ -12,7 +12,10 @@ use rig::{
     completion::{Document, Usage},
     message::AssistantContent,
 };
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::{kb::KbService, model_stream::ModelStreamEvent, service::PendingQueueCoordinator};
@@ -28,6 +31,23 @@ use super::{
 pub(super) const CANCELLED_REASON: &str = "quire:cancelled";
 pub(super) const SUPERSEDED_REASON: &str = "quire:superseded";
 pub(super) const ASK_USER_REASON: &str = "quire:ask_user";
+
+#[derive(Serialize)]
+struct SkippedToolOutput {
+    kind: &'static str,
+    reason: &'static str,
+    message: &'static str,
+}
+
+#[derive(Serialize)]
+struct ToolErrorOutput<'a> {
+    error: &'a str,
+}
+
+#[derive(Serialize)]
+struct AwaitingInputOutput {
+    status: &'static str,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum RunTermination {
@@ -417,10 +437,14 @@ impl AgentHook for ToolLifecycleHook {
         if has_question && tool_name != "ask_user" {
             self.previews.lock().await.abort_call(&call_id.wire()).await;
             self.send_started(tool_call_id, tool_name, arguments).await;
-            let output = json!({
-                "kind": "skipped",
-                "reason": "ask_user_sibling",
-                "message": "not executed because ask_user ends this turn; replan after the structured answer"
+            let output = serde_json::to_string(&SkippedToolOutput {
+                kind: "skipped",
+                reason: "ask_user_sibling",
+                message: "not executed because ask_user ends this turn; replan after the structured answer",
+            })
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "failed to serialize skipped tool output");
+                "not executed because ask_user ends this turn".to_string()
             });
             return DispatchAction::skip(output.to_string());
         }
@@ -484,7 +508,14 @@ impl AgentHook for ToolLifecycleHook {
                 .err()
                 .map(|report| report.message.clone())
                 .unwrap_or_else(|| "tool dispatch failed".into());
-            ("failed", json!({"error": message.clone()}), Some(message))
+            (
+                "failed",
+                serde_json::to_value(ToolErrorOutput { error: &message }).unwrap_or_else(|error| {
+                    tracing::error!(%error, "failed to serialize tool error output");
+                    Value::Null
+                }),
+                Some(message),
+            )
         };
 
         if tool_name == "apply_operations" {
@@ -513,7 +544,13 @@ impl AgentHook for ToolLifecycleHook {
                 })
                 .await;
             status = "awaiting_input";
-            output = json!({"status": "awaiting_input"});
+            output = serde_json::to_value(AwaitingInputOutput {
+                status: "awaiting_input",
+            })
+            .unwrap_or_else(|error| {
+                tracing::error!(%error, "failed to serialize awaiting-input output");
+                Value::Null
+            });
             terminate(&self.state, RunTermination::AskUser).await;
         } else if status == "completed" && tool_name == "create_report" {
             self.bind_created_report(&arguments, &output).await;

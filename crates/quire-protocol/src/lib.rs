@@ -7,12 +7,26 @@
 
 #![forbid(unsafe_code)]
 
+/// Load a tool's model-facing description from the workspace-wide `descriptions/tools` directory.
+#[macro_export]
+macro_rules! tool_description {
+    ($tool_name:literal) => {
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../descriptions/tools/",
+            $tool_name,
+            ".md"
+        ))
+    };
+}
+
 pub mod block;
 pub mod citation;
 pub mod comment;
 pub mod computed;
 pub mod diff;
 pub(crate) mod echarts;
+pub(crate) mod echarts_view;
 pub mod error;
 pub mod events;
 pub mod ids;
@@ -53,7 +67,12 @@ pub use echarts::{
     is_center_inner_title, is_positioned_or_light_inner_title, is_valid_series_type,
     merge_chart_option_patch,
 };
-pub use error::ProtocolError;
+pub use echarts_view::{
+    EchartsAxisLabelView, EchartsAxisView, EchartsComponent, EchartsDatasetView,
+    EchartsEndLabelView, EchartsLabelLayoutView, EchartsOptionView, EchartsSeriesView,
+    EchartsTextStyleView, EchartsTitleView,
+};
+pub use error::{ApiErrorEnvelope, ApiErrorInfo, ProtocolError};
 pub use events::{
     AgentPresenceEvent, CommentUpdatedEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralClearEvent,
     EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor, PreviewStatus,

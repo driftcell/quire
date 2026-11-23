@@ -3,9 +3,8 @@
 use std::collections::BTreeMap;
 
 use quire_protocol::{
-    BlockId, BlockKind, EchartsBlock, axis_count, chart_series, configured_axis_count, entries,
-    find_js_function_string, has_data_source, inner_title_duplicates, is_center_inner_title,
-    is_positioned_or_light_inner_title, is_valid_series_type,
+    BlockId, BlockKind, EchartsBlock, EchartsComponent, EchartsOptionView, chart_series, entries,
+    find_js_function_string, is_valid_series_type,
 };
 use serde_json::Value;
 
@@ -28,8 +27,11 @@ pub(crate) fn check(context: &LintContext<'_>) -> Vec<Finding> {
         let Some(option) = context.effective_option(index) else {
             continue;
         };
-        contract::check_inner_title(&mut engine, block, chart, option, index);
-        contract::check_chart(&mut engine, block, chart, option, index);
+        let Some(view) = context.chart_view(index) else {
+            continue;
+        };
+        contract::check_inner_title(&mut engine, block, chart, view, index);
+        contract::check_chart(&mut engine, block, chart, option, view, index);
     }
     colors::check_cross_chart_colors(context, &mut engine);
     engine.into_findings()

@@ -1,0 +1,1 @@
+Execute Python, JavaScript or Bash in this run's isolated remote sandbox. Files and installed dependencies persist across sandbox calls in the same run. The sandbox is created on first use and destroyed when the run ends.

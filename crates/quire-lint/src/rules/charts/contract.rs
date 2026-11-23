@@ -7,7 +7,7 @@ pub(super) fn check_inner_title(
     engine: &mut Engine,
     block: &quire_protocol::Block,
     chart: &EchartsBlock,
-    option: &Value,
+    option: &EchartsOptionView,
     index: usize,
 ) {
     let Some(outer_title) = chart
@@ -18,21 +18,15 @@ pub(super) fn check_inner_title(
     else {
         return;
     };
-    let Some(title) = option.get("title") else {
-        return;
-    };
-    let is_array = title.is_array();
-    let titles = title
-        .as_array()
-        .map(Vec::as_slice)
-        .unwrap_or_else(|| std::slice::from_ref(title));
-    let duplicate = titles
+    let duplicate = option
+        .title
         .iter()
-        .any(|entry| inner_title_duplicates(entry, outer_title));
-    let allowed = is_array
-        || titles
+        .any(|entry| entry.duplicates(outer_title));
+    let allowed = option.title.is_array
+        || option
+            .title
             .iter()
-            .all(|entry| is_center_inner_title(entry) || is_positioned_or_light_inner_title(entry));
+            .all(|entry| entry.is_center() || entry.is_positioned_or_light());
     if !duplicate && allowed {
         return;
     }
@@ -55,6 +49,7 @@ pub(super) fn check_chart(
     block: &quire_protocol::Block,
     chart: &EchartsBlock,
     option: &Value,
+    view: &EchartsOptionView,
     index: usize,
 ) {
     if chart.fallback_summary.trim().is_empty() {
@@ -125,14 +120,18 @@ pub(super) fn check_chart(
         }
     }
 
-    check_dense_labels(engine, block, option, index);
-    check_line_end_labels(engine, block, option, index);
+    check_dense_labels(engine, block, view, index);
+    check_line_end_labels(engine, block, view, index);
     check_integer_axis_interval(engine, block, option, index);
-    let has_matrix = option.get("matrix").is_some_and(|value| !value.is_null());
-    for (axis_key, axis_path) in [("xAxis", "xAxis"), ("yAxis", "yAxis")] {
-        let grid_count = i64::try_from(axis_count(option, "grid")).unwrap_or(i64::MAX);
-        for (axis_index, axis) in entries(option.get(axis_key)).iter().enumerate() {
-            let Some(grid_index) = axis.get("gridIndex").and_then(Value::as_i64) else {
+    let has_matrix = view.has_matrix();
+    for (component, axis_path) in [
+        (EchartsComponent::XAxis, "xAxis"),
+        (EchartsComponent::YAxis, "yAxis"),
+    ] {
+        let axis_key = component.key();
+        let grid_count = i64::try_from(view.axis_count(EchartsComponent::Grid)).unwrap_or(i64::MAX);
+        for (axis_index, axis) in view.axes(component).iter().enumerate() {
+            let Some(grid_index) = axis.grid_index else {
                 continue;
             };
             if grid_index < 0 || grid_index >= grid_count {
@@ -153,8 +152,8 @@ pub(super) fn check_chart(
             }
         }
     }
-    for (series_index, series) in chart_series(option).into_iter().enumerate() {
-        let kind = series.get("type").and_then(Value::as_str);
+    for (series_index, series) in view.series.iter().enumerate() {
+        let kind = series.kind.as_deref();
         match kind {
             Some(kind) if is_valid_series_type(kind) => {}
             Some(kind) => {
@@ -182,7 +181,7 @@ pub(super) fn check_chart(
                 );
             }
         }
-        if series.get("coordinateSystem").and_then(Value::as_str) == Some("matrix") && !has_matrix {
+        if series.coordinate_system.as_deref() == Some("matrix") && !has_matrix {
             engine.report(
                 RuleId::EchartsMatrixMissing,
                 format!(
@@ -194,16 +193,21 @@ pub(super) fn check_chart(
                 Some(format!("blocks[{index}].series[{series_index}].coordinateSystem")),
             );
         }
-        for (field, axis_key) in [
-            ("xAxisIndex", "xAxis"),
-            ("yAxisIndex", "yAxis"),
-            ("gridIndex", "grid"),
-            ("datasetIndex", "dataset"),
+        for (field, component, raw_index) in [
+            ("xAxisIndex", EchartsComponent::XAxis, &series.x_axis_index),
+            ("yAxisIndex", EchartsComponent::YAxis, &series.y_axis_index),
+            ("gridIndex", EchartsComponent::Grid, &series.grid_index),
+            (
+                "datasetIndex",
+                EchartsComponent::Dataset,
+                &series.dataset_index,
+            ),
         ] {
-            let Some(raw_index) = series.get(field).and_then(Value::as_i64) else {
+            let axis_key = component.key();
+            let Some(raw_index) = raw_index.as_ref().and_then(Value::as_i64) else {
                 continue;
             };
-            let count = i64::try_from(axis_count(option, axis_key)).unwrap_or(i64::MAX);
+            let count = i64::try_from(view.axis_count(component)).unwrap_or(i64::MAX);
             if raw_index < 0 || raw_index >= count {
                 engine.report(
                     RuleId::EchartsIndexOutOfRange,
@@ -222,45 +226,51 @@ pub(super) fn check_chart(
             }
         }
 
-        let coordinate_system = series.get("coordinateSystem").and_then(Value::as_str);
+        let coordinate_system = series.coordinate_system.as_deref();
         let needs_radar = kind == Some("radar")
-            || series.get("radarIndex").is_some()
+            || series.radar_index.is_some()
             || coordinate_system == Some("radar");
-        let needs_polar = series.get("polarIndex").is_some() || coordinate_system == Some("polar");
+        let needs_polar = series.polar_index.is_some() || coordinate_system == Some("polar");
         for (component, field, needed) in [
-            ("radar", "radarIndex", needs_radar),
-            ("polar", "polarIndex", needs_polar),
+            (EchartsComponent::Radar, "radarIndex", needs_radar),
+            (EchartsComponent::Polar, "polarIndex", needs_polar),
         ] {
             if !needed {
                 continue;
             }
-            let Some(count) = configured_axis_count(option, component) else {
+            let component_name = component.key();
+            let Some(count) = view.configured_count(component) else {
                 engine.report(
                     RuleId::EchartsCoordinateMissing,
                     format!(
-                        "chart `{}` series[{series_index}] uses `{component}` coordinates but has no top-level `{component}`",
+                        "chart `{}` series[{series_index}] uses `{component_name}` coordinates but has no top-level `{component_name}`",
                         block.id
                     ),
                     format!(
-                        "Add a `{component}` object/array to the option (for radar, include `indicator`), or remove the `{field}`/coordinateSystem usage."
+                        "Add a `{component_name}` object/array to the option (for radar, include `indicator`), or remove the `{field}`/coordinateSystem usage."
                     ),
                     Some(block.id.clone()),
-                    Some(format!("blocks[{index}].{component}")),
+                    Some(format!("blocks[{index}].{component_name}")),
                 );
                 continue;
             };
-            let raw_index = series.get(field).and_then(Value::as_i64).unwrap_or(0);
+            let index_value = match component {
+                EchartsComponent::Radar => series.radar_index.as_ref(),
+                EchartsComponent::Polar => series.polar_index.as_ref(),
+                _ => None,
+            };
+            let raw_index = index_value.and_then(Value::as_i64).unwrap_or(0);
             let count = i64::try_from(count).unwrap_or(i64::MAX);
             if raw_index < 0 || raw_index >= count {
                 engine.report(
                     RuleId::EchartsIndexOutOfRange,
                     format!(
-                        "chart `{}` series[{series_index}].{field} is {raw_index}, but only {count} `{component}` entr{} exist",
+                        "chart `{}` series[{series_index}].{field} is {raw_index}, but only {count} `{component_name}` entr{} exist",
                         block.id,
                         if count == 1 { "y" } else { "ies" }
                     ),
                     format!(
-                        "Use an index in 0..={}, or add another `{component}` configuration.",
+                        "Use an index in 0..={}, or add another `{component_name}` configuration.",
                         count.saturating_sub(1)
                     ),
                     Some(block.id.clone()),
@@ -269,7 +279,7 @@ pub(super) fn check_chart(
             }
         }
     }
-    if !has_data_source(option) {
+    if !view.has_data_source() {
         engine.report(
             RuleId::EchartsDataMissing,
             format!("chart `{}` has no non-empty data source", block.id),

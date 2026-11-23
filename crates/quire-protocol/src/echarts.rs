@@ -11,6 +11,7 @@ use serde_json::Value;
 
 use crate::{
     block::{EchartsBlock, format_number},
+    echarts_view::EchartsOptionView,
     text::truncate_chars,
 };
 
@@ -483,9 +484,10 @@ pub fn chart_data_tables(option: &Value) -> Vec<ChartDataTable> {
 }
 
 fn dataset_tables(option: &Value) -> Vec<ChartDataTable> {
+    let view = EchartsOptionView::from_value(option);
     let mut tables = Vec::new();
-    for (index, dataset) in entries(option.get("dataset")).iter().enumerate() {
-        let Some(source) = dataset.get("source") else {
+    for (index, dataset) in view.dataset.iter().enumerate() {
+        let Some(source) = dataset.source.as_ref() else {
             continue;
         };
         let rows: Vec<&Value> = match source {
@@ -501,9 +503,8 @@ fn dataset_tables(option: &Value) -> Vec<ChartDataTable> {
         }
         body.truncate(MAX_CHART_ROWS);
         let label = dataset
-            .get("id")
-            .and_then(Value::as_str)
-            .map(str::to_string)
+            .id
+            .clone()
             .unwrap_or_else(|| format!("Dataset {}", index + 1));
         tables.push(ChartDataTable {
             title: format!("{label} (dataset)"),

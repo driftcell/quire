@@ -14,7 +14,7 @@ use axum::{
     routing::{get, patch, post},
 };
 use futures::Stream;
-use quire_protocol::{CommentStatus, CommentThread, TextQuoteSelector, short_id};
+use quire_protocol::{ApiErrorEnvelope, CommentStatus, CommentThread, TextQuoteSelector, short_id};
 use quire_session_protocol::{
     AttachmentMeta, CreateSessionRequest, PendingQueueItem, QuestionAnswer, RunTraceSummary,
     SendMessageRequest, SessionCommentRef, SessionDetail, SessionEvent, SessionEventKind,
@@ -25,7 +25,6 @@ use rmcp::transport::streamable_http_server::{
 };
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
@@ -210,13 +209,12 @@ async fn runtime_auth(
     if expected.is_empty() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "error": {
-                    "code": "auth_not_configured",
-                    "message": "runtime API token is not configured",
-                    "hint": "Set RUNTIME_API_TOKEN before exposing quire-runtime."
-                }
-            })),
+            Json(ApiErrorEnvelope::<()>::new(
+                "auth_not_configured",
+                "runtime API token is not configured",
+                "Set RUNTIME_API_TOKEN before exposing quire-runtime.",
+                None,
+            )),
         )
             .into_response();
     }
@@ -233,13 +231,12 @@ async fn runtime_auth(
     if !matches {
         let mut response = (
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "error": {
-                    "code": "unauthorized",
-                    "message": "missing or invalid runtime bearer token",
-                    "hint": "Send `Authorization: Bearer $RUNTIME_API_TOKEN`."
-                }
-            })),
+            Json(ApiErrorEnvelope::<()>::new(
+                "unauthorized",
+                "missing or invalid runtime bearer token",
+                "Send `Authorization: Bearer $RUNTIME_API_TOKEN`.",
+                None,
+            )),
         )
             .into_response();
         response.headers_mut().insert(
@@ -273,13 +270,12 @@ async fn chart_preview_auth(
     {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "error": {
-                    "code": "auth_not_configured",
-                    "message": "chart preview auth is not configured",
-                    "hint": "Set QUIRE_RO_TOKEN, QUIRE_RW_TOKEN or RUNTIME_API_TOKEN."
-                }
-            })),
+            Json(ApiErrorEnvelope::<()>::new(
+                "auth_not_configured",
+                "chart preview auth is not configured",
+                "Set QUIRE_RO_TOKEN, QUIRE_RW_TOKEN or RUNTIME_API_TOKEN.",
+                None,
+            )),
         )
             .into_response();
     }
@@ -309,13 +305,12 @@ async fn chart_preview_auth(
     if !matches {
         let mut response = (
             StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "error": {
-                    "code": "unauthorized",
-                    "message": "missing or invalid chart preview token",
-                    "hint": "Send `Authorization: Bearer $QUIRE_RO_TOKEN`."
-                }
-            })),
+            Json(ApiErrorEnvelope::<()>::new(
+                "unauthorized",
+                "missing or invalid chart preview token",
+                "Send `Authorization: Bearer $QUIRE_RO_TOKEN`.",
+                None,
+            )),
         )
             .into_response();
         response.headers_mut().insert(
@@ -327,16 +322,34 @@ async fn chart_preview_auth(
     next.run(request).await
 }
 
+#[derive(Serialize)]
+struct RuntimeHealthOk {
+    status: &'static str,
+    service: &'static str,
+}
+
+#[derive(Serialize)]
+struct RuntimeHealthDegraded {
+    status: &'static str,
+    error: String,
+}
+
 async fn health(State(service): State<RuntimeService>) -> Response {
     match service.store().health().await {
         Ok(()) => (
             StatusCode::OK,
-            Json(json!({"status":"ok","service":"quire-runtime"})),
+            Json(RuntimeHealthOk {
+                status: "ok",
+                service: "quire-runtime",
+            }),
         )
             .into_response(),
         Err(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"status":"degraded","error":error.to_string()})),
+            Json(RuntimeHealthDegraded {
+                status: "degraded",
+                error: error.to_string(),
+            }),
         )
             .into_response(),
     }
@@ -522,13 +535,12 @@ impl IntoResponse for CommentProxyError {
     fn into_response(self) -> Response {
         (
             self.status,
-            Json(json!({
-                "error": {
-                    "code": self.code,
-                    "message": self.message,
-                    "hint": self.hint,
-                }
-            })),
+            Json(ApiErrorEnvelope::<()>::new(
+                self.code,
+                self.message,
+                self.hint,
+                None,
+            )),
         )
             .into_response()
     }

@@ -9,15 +9,15 @@ use quire_protocol::{
     chart_requirements, merge_chart_option_patch, short_id,
 };
 use quire_session_protocol::QuestionItem;
-#[cfg(test)]
-use rig::tool::Tool as _;
 use rig::tool::server::ToolServer;
 use rig::{
     message::{ImageMediaType, ToolResultContent},
     rig_tool,
-    tool::{ToolContext, ToolExecutionError, ToolOutput},
+    tool::{Tool, ToolContext, ToolExecutionError, ToolOutput},
 };
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use tracing::warn;
 
 use crate::{
@@ -32,6 +32,12 @@ use super::{
     AgentExecution, RigModelCore, SharedDocId, StreamEventSender,
     context::{AskUserRequestedMeta, QuireTurnMeta},
     subagents::RunSubagentsTool,
+    tool_schemas::{
+        AskUserReceipt, CommitChartReceipt, DescribeTaskReceipt, ListSubagentsReceipt,
+        PreviewEchartsReceipt, ReadSkillResourceReceipt, SandboxExecuteReceipt,
+        SandboxMountAttachmentReceipt, SandboxReadFileReceipt, SandboxWriteFileReceipt,
+        SetSessionTitleReceipt, SubagentSummaryView,
+    },
 };
 
 const REPORT_PREVIEW_CAPTION: &str = "Rendered screenshot from preview_report. Inspect visual layout, spacing, tables, and charts alongside the diagnostic JSON.";
@@ -146,6 +152,48 @@ fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
     })
 }
 
+pub(super) struct DescribedTool<T> {
+    inner: T,
+    description: &'static str,
+}
+
+impl<T> DescribedTool<T> {
+    fn new(inner: T, description: &'static str) -> Self {
+        Self { inner, description }
+    }
+}
+
+impl<T: Tool> Tool for DescribedTool<T> {
+    const NAME: &'static str = T::NAME;
+    type Args = T::Args;
+    type Output = T::Output;
+    type Error = T::Error;
+
+    fn description(&self) -> String {
+        self.description.to_string()
+    }
+
+    fn parameters(&self) -> Value {
+        self.inner.parameters()
+    }
+
+    fn annotations(&self) -> rig::completion::ToolAnnotations {
+        self.inner.annotations()
+    }
+
+    fn map_error(&self, error: Self::Error) -> ToolExecutionError {
+        self.inner.map_error(error)
+    }
+
+    fn call(
+        &self,
+        context: &mut ToolContext,
+        args: Self::Args,
+    ) -> impl Future<Output = Result<Self::Output, Self::Error>> + Send {
+        self.inner.call(context, args)
+    }
+}
+
 pub(super) struct ToolBuildContext {
     pub(super) execution: AgentExecution,
     pub(super) scope: StreamEventSender,
@@ -203,17 +251,14 @@ fn bounded_tool_text(text: String) -> (String, bool) {
     (text.get(..end).unwrap_or_default().to_string(), true)
 }
 
-#[rig_tool(
-    name = "sandbox_execute",
-    description = "Execute Python, JavaScript or Bash in this run's isolated remote sandbox. Files and installed dependencies persist across sandbox calls in the same run. The sandbox is created on first use and destroyed when the run ends."
-)]
+#[rig_tool(name = "sandbox_execute")]
 async fn sandbox_execute_tool(
     #[rig(context)] context: &mut ToolContext,
     language: String,
     code: String,
     cwd: Option<String>,
     timeout_seconds: Option<u64>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<SandboxExecuteReceipt, ToolExecutionError> {
     if code.len() > MAX_TOOL_CODE_BYTES {
         return Err(ToolExecutionError::invalid_args(format!(
             "code exceeds the {MAX_TOOL_CODE_BYTES}-byte tool limit"
@@ -232,24 +277,21 @@ async fn sandbox_execute_tool(
         .map_err(tool_other)?;
     let (stdout, stdout_bounded) = bounded_tool_text(result.stdout);
     let (stderr, stderr_bounded) = bounded_tool_text(result.stderr);
-    Ok(json!({
-        "sandbox_id": sandbox.id(),
-        "exit_code": result.exit_code,
-        "stdout": stdout,
-        "stderr": stderr,
-        "stdout_truncated": result.stdout_truncated || stdout_bounded,
-        "stderr_truncated": result.stderr_truncated || stderr_bounded,
-    }))
+    Ok(SandboxExecuteReceipt {
+        sandbox_id: sandbox.id().to_string(),
+        exit_code: result.exit_code,
+        stdout,
+        stderr,
+        stdout_truncated: result.stdout_truncated || stdout_bounded,
+        stderr_truncated: result.stderr_truncated || stderr_bounded,
+    })
 }
 
-#[rig_tool(
-    name = "sandbox_read_file",
-    description = "Read a file from this run's sandbox. UTF-8 text is returned directly; binary content is base64 encoded. Files larger than 256 KiB must be chunked with sandbox_execute."
-)]
+#[rig_tool(name = "sandbox_read_file")]
 async fn sandbox_read_file_tool(
     #[rig(context)] context: &mut ToolContext,
     path: String,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<SandboxReadFileReceipt, ToolExecutionError> {
     if path.trim().is_empty() {
         return Err(ToolExecutionError::invalid_args(
             "path cannot be empty".to_string(),
@@ -267,23 +309,20 @@ async fn sandbox_read_file_tool(
         Ok(text) => ("utf-8".to_string(), text),
         Err(error) => ("base64".to_string(), BASE64.encode(error.into_bytes())),
     };
-    Ok(json!({
-        "sandbox_id": sandbox.id(),
-        "path": path,
-        "encoding": encoding,
-        "content": content,
-    }))
+    Ok(SandboxReadFileReceipt {
+        sandbox_id: sandbox.id().to_string(),
+        path,
+        encoding,
+        content,
+    })
 }
 
-#[rig_tool(
-    name = "sandbox_write_file",
-    description = "Write a UTF-8 text file in this run's sandbox, creating missing parent directories when the provider supports it. The content limit is 256 KiB."
-)]
+#[rig_tool(name = "sandbox_write_file")]
 async fn sandbox_write_file_tool(
     #[rig(context)] context: &mut ToolContext,
     path: String,
     content: String,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<SandboxWriteFileReceipt, ToolExecutionError> {
     if path.trim().is_empty() {
         return Err(ToolExecutionError::invalid_args(
             "path cannot be empty".to_string(),
@@ -300,21 +339,18 @@ async fn sandbox_write_file_tool(
         .upload_file(&path, content.as_bytes())
         .await
         .map_err(tool_other)?;
-    Ok(json!({
-        "sandbox_id": sandbox.id(),
-        "path": path,
-        "bytes_written": content.len(),
-    }))
+    Ok(SandboxWriteFileReceipt {
+        sandbox_id: sandbox.id().to_string(),
+        path,
+        bytes_written: content.len(),
+    })
 }
 
-#[rig_tool(
-    name = "sandbox_mount_attachment",
-    description = "Mount an attachment uploaded to this session into the run's sandbox at /workspace/attachments/{attachment_id}/{filename}. Returns the sandbox path and attachment metadata. Download credentials, signed URLs and storage internals are never returned."
-)]
+#[rig_tool(name = "sandbox_mount_attachment")]
 async fn sandbox_mount_attachment_tool(
     #[rig(context)] context: &mut ToolContext,
     attachment_id: String,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<SandboxMountAttachmentReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
     let attachment_id = safe_attachment_id(&attachment_id).map_err(tool_other)?;
@@ -397,14 +433,14 @@ async fn sandbox_mount_attachment_tool(
         }
     }
 
-    Ok(json!({
-        "sandbox_id": sandbox.id(),
-        "attachment_id": attachment_id,
-        "path": target_path,
-        "filename": filename,
-        "mime_type": stored.mime_type,
-        "size_bytes": stored.size_bytes,
-    }))
+    Ok(SandboxMountAttachmentReceipt {
+        sandbox_id: sandbox.id().to_string(),
+        attachment_id: attachment_id.to_string(),
+        path: target_path,
+        filename: filename.to_string(),
+        mime_type: stored.mime_type,
+        size_bytes: stored.size_bytes,
+    })
 }
 
 fn shell_quote(value: &str) -> String {
@@ -497,10 +533,7 @@ fn redact_query_parameter(text: &str, parameter: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[rig_tool(
-    name = "preview_report",
-    description = "Render a report preview with layout diagnostics. Pass rev to inspect that exact committed revision; omit for latest. Vision-capable models also receive the screenshot."
-)]
+#[rig_tool(name = "preview_report")]
 async fn preview_report_tool(
     #[rig(context)] context: &mut ToolContext,
     doc_id: String,
@@ -526,7 +559,9 @@ async fn preview_report_tool(
     let result = crate::preview::execute_preview_report(&runtime.engine.config, input)
         .await
         .map_err(tool_other)?;
-    let mut content = vec![ToolResultContent::json(result.to_diagnostics_json())];
+    let mut content = vec![ToolResultContent::json(
+        result.to_diagnostics_json().map_err(tool_other)?,
+    )];
     if let (Some(base64), Some(mime_type)) = (result.image_base64, result.image_mime_type) {
         content.push(ToolResultContent::text(REPORT_PREVIEW_CAPTION));
         content.push(ToolResultContent::image_base64(
@@ -539,10 +574,7 @@ async fn preview_report_tool(
 }
 
 #[allow(clippy::too_many_arguments)]
-#[rig_tool(
-    name = "preview_echarts",
-    description = "Validate and render one ECharts chart before writing it. First call: send the complete native ECharts 6.0 `option`. Refinement calls: send `based_on_preview_id` plus a small `option_patch`; never resend the full option. Optionally supply `source_ids` and `source_note` so commit_chart binds source attribution atomically. Returns preview_id, lint_issues and preview_url. Vision models also receive a screenshot. Commit with commit_chart."
-)]
+#[rig_tool(name = "preview_echarts")]
 async fn preview_echarts_tool(
     #[rig(context)] context: &mut ToolContext,
     option: Option<Value>,
@@ -711,14 +743,15 @@ async fn preview_echarts_tool(
 
     let lint_issues = lint.diagnostics;
     let lint_summary = lint.summary;
-    let diagnostics = json!({
-        "preview_id": preview_id,
-        "preview_url": preview_url,
-        "lint_issues": lint_issues,
-        "lint_summary": lint_summary,
-        "image_included": image_included,
-        "preview_error": preview_error,
-    });
+    let diagnostics = serde_json::to_value(PreviewEchartsReceipt {
+        preview_id,
+        preview_url,
+        lint_issues,
+        lint_summary,
+        image_included,
+        preview_error,
+    })
+    .map_err(tool_other)?;
     let mut content = vec![ToolResultContent::json(diagnostics)];
     if let Some((base64, mime_type)) = preview_image {
         content.push(ToolResultContent::text(CHART_PREVIEW_CAPTION));
@@ -738,10 +771,7 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[rig_tool(
-    name = "commit_chart",
-    description = "Commit a chart that already passed preview_echarts into the report. Accepts preview_id, doc_id, block_id, an optional insertion anchor, and optional source_ids/source_note; never send the ECharts option again. When block_id already exists in the document as an ECharts block, updates it in place instead of inserting a duplicate. Omit expected_revision to read the current revision first."
-)]
+#[rig_tool(name = "commit_chart")]
 async fn commit_chart_tool(
     #[rig(context)] context: &mut ToolContext,
     preview_id: String,
@@ -754,7 +784,7 @@ async fn commit_chart_tool(
     summary: Option<String>,
     source_ids: Option<Vec<String>>,
     source_note: Option<String>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<CommitChartReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let req_ctx = in_process_request_context(context)?;
     let preview_id = preview_id.trim().to_string();
@@ -940,22 +970,18 @@ async fn commit_chart_tool(
         )
         .await
         .map_err(mcp_error_to_tool_error)?;
-    let mut payload = serde_json::to_value(receipt).map_err(tool_other)?;
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("preview_id".to_string(), json!(preview_id));
-        object.insert("block_id".to_string(), json!(target_id.as_str()));
-    }
-    Ok(payload)
+    Ok(CommitChartReceipt {
+        mutation: receipt,
+        preview_id,
+        block_id: target_id.to_string(),
+    })
 }
 
-#[rig_tool(
-    name = "load_skill",
-    description = "Load a skill definition from the session knowledge-base branch."
-)]
+#[rig_tool(name = "load_skill")]
 async fn load_skill_tool(
     #[rig(context)] context: &mut ToolContext,
     name: String,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<crate::kb::SkillDefinitionRecord, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
     let skill = runtime
@@ -965,18 +991,15 @@ async fn load_skill_tool(
         .await
         .map_err(tool_other)?
         .ok_or_else(|| ToolExecutionError::not_found(format!("skill `{name}`")))?;
-    serde_json::to_value(skill).map_err(tool_other)
+    Ok(skill)
 }
 
-#[rig_tool(
-    name = "read_skill_resource",
-    description = "Read one resource file bundled with a skill on the session branch."
-)]
+#[rig_tool(name = "read_skill_resource")]
 async fn read_skill_resource_tool(
     #[rig(context)] context: &mut ToolContext,
     skill: String,
     path: String,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<ReadSkillResourceReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
     let definition = runtime
@@ -991,16 +1014,15 @@ async fn read_skill_resource_tool(
         .iter()
         .find(|resource| resource.path == path)
         .ok_or_else(|| ToolExecutionError::not_found(format!("resource `{path}` in `{skill}`")))?;
-    Ok(json!({
-        "skill": skill,
-        "path": path,
-        "content": resource.content,
-    }))
+    Ok(ReadSkillResourceReceipt {
+        skill,
+        path,
+        content: resource.content.clone(),
+    })
 }
 
 #[rig_tool(
     name = "describe_task",
-    description = "Report the current work stage to the user interface. Use it when you want the user to see what you are working on, especially during longer multi-step tasks.",
     params(
         title = "Short Chinese status phrase, ideally at most 16 characters.",
         detail = "Optional clarification of the current focus or blocker.",
@@ -1012,7 +1034,7 @@ async fn describe_task_tool(
     title: String,
     detail: Option<String>,
     section_id: Option<String>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<DescribeTaskReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let title = title.trim().to_string();
     if title.is_empty() {
@@ -1028,21 +1050,18 @@ async fn describe_task_tool(
             section_id: section_id.clone(),
         })
         .await;
-    Ok(json!({
-        "title": title,
-        "detail": detail,
-        "section_id": section_id,
-    }))
+    Ok(DescribeTaskReceipt {
+        title,
+        detail,
+        section_id,
+    })
 }
 
-#[rig_tool(
-    name = "set_session_title",
-    description = "Set or refine the current chat session title once the user's topic is clear."
-)]
+#[rig_tool(name = "set_session_title")]
 async fn set_session_title_tool(
     #[rig(context)] context: &mut ToolContext,
     title: String,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<SetSessionTitleReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
     let title: String = title.trim().chars().take(60).collect();
@@ -1070,20 +1089,17 @@ async fn set_session_title_tool(
             title: title.clone(),
         })
         .await;
-    Ok(json!({
-        "session_id": turn.session_id,
-        "title": title,
-    }))
+    Ok(SetSessionTitleReceipt {
+        session_id: turn.session_id,
+        title,
+    })
 }
 
-#[rig_tool(
-    name = "ask_user",
-    description = "Emit a one-shot structured questionnaire and end the current turn. Any sibling tool calls in the same model turn are skipped without execution."
-)]
+#[rig_tool(name = "ask_user")]
 fn ask_user_tool(
     #[rig(context)] context: &mut ToolContext,
     questions: Vec<QuestionItem>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<AskUserReceipt, ToolExecutionError> {
     if questions.is_empty() {
         return Err(ToolExecutionError::invalid_args(
             "`ask_user` requires at least one question item",
@@ -1107,19 +1123,16 @@ fn ask_user_tool(
             questions: questions.clone(),
         })
         .map_err(|error| ToolExecutionError::other(error.to_string()))?;
-    Ok(json!({
-        "status": "awaiting_input",
-        "question_count": questions.len()
-    }))
+    Ok(AskUserReceipt {
+        status: "awaiting_input",
+        question_count: questions.len(),
+    })
 }
 
-#[rig_tool(
-    name = "list_subagents",
-    description = "List available subagent names and descriptions on this branch."
-)]
+#[rig_tool(name = "list_subagents")]
 async fn list_subagents_tool(
     #[rig(context)] context: &mut ToolContext,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<ListSubagentsReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
     let agents = runtime
@@ -1128,19 +1141,17 @@ async fn list_subagents_tool(
         .list_agents_on(turn.kb_branch.as_deref())
         .await
         .map_err(tool_other)?;
-    let subagents: Vec<Value> = agents
+    let subagents = agents
         .into_iter()
         .filter(|agent| agent.enabled && !agent.is_default && agent.name != turn.agent_id)
-        .map(|agent| {
-            json!({
-                "name": agent.name,
-                "description": agent.description,
-                "model": agent.model,
-                "allowed_tools": agent.allowed_tools,
-            })
+        .map(|agent| SubagentSummaryView {
+            name: agent.name,
+            description: agent.description,
+            model: agent.model,
+            allowed_tools: agent.allowed_tools,
         })
         .collect();
-    Ok(json!({ "subagents": subagents }))
+    Ok(ListSubagentsReceipt { subagents })
 }
 
 fn in_process_request_context(
@@ -1377,7 +1388,10 @@ impl RigModelCore {
             ($name:literal, $enabled:expr, $tool:expr) => {
                 if $enabled {
                     names.insert($name.to_string());
-                    server = server.tool($tool);
+                    server = server.tool(DescribedTool::new(
+                        $tool,
+                        quire_protocol::tool_description!($name),
+                    ));
                 }
             };
         }
@@ -1594,11 +1608,15 @@ mod tests {
 
     #[test]
     fn describe_task_schema_advertises_status_and_parameters() {
-        let description = DESCRIBE_TASK_TOOL.description();
+        let tool = DescribedTool::new(
+            DescribeTaskTool,
+            quire_protocol::tool_description!("describe_task"),
+        );
+        let description = tool.description();
         assert!(description.contains("current work stage"));
         assert!(description.contains("user interface"));
 
-        let parameters = DESCRIBE_TASK_TOOL.parameters();
+        let parameters = tool.parameters();
         let properties = parameters
             .get("properties")
             .and_then(Value::as_object)

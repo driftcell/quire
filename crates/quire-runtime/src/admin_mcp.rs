@@ -619,7 +619,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "preview_report",
-        description = "Render a Quire report preview via controlled Playwright MCP, returning an ImageContent screenshot plus structured layout diagnostics and the preview URL. Set include_image=false to skip the PNG."
+        description = quire_protocol::tool_description!("preview_report")
     )]
     pub async fn preview_report(
         &self,
@@ -633,7 +633,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_list_branches",
-        description = "List knowledge-base branches with status, base/head versions and the latest immutable snapshots."
+        description = quire_protocol::tool_description!("kb_list_branches")
     )]
     pub async fn kb_list_branches(
         &self,
@@ -677,7 +677,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_create_branch",
-        description = "Create an isolated draft branch by copying the active branch at its current version."
+        description = quire_protocol::tool_description!("kb_create_branch")
     )]
     pub async fn kb_create_branch(
         &self,
@@ -698,7 +698,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_diff_branch",
-        description = "Three-way diff of a draft branch against the active branch and its base snapshot, including conflicts."
+        description = quire_protocol::tool_description!("kb_diff_branch")
     )]
     pub async fn kb_diff_branch(
         &self,
@@ -722,7 +722,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_promote_branch",
-        description = "Promote a draft branch with Smart CAS: fast-forward, disjoint auto-merge, or a structured conflict error."
+        description = quire_protocol::tool_description!("kb_promote_branch")
     )]
     pub async fn kb_promote_branch(
         &self,
@@ -743,7 +743,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_rollback_active",
-        description = "Roll the active branch back to an immutable snapshot. Omit version for the latest earlier snapshot."
+        description = quire_protocol::tool_description!("kb_rollback_active")
     )]
     pub async fn kb_rollback_active(
         &self,
@@ -768,7 +768,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_list_items",
-        description = "List documents, agents and skills in a branch, optionally filtered by item kind."
+        description = quire_protocol::tool_description!("kb_list_items")
     )]
     pub async fn kb_list_items(
         &self,
@@ -793,7 +793,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_read_item",
-        description = "Read the full content of one document, agent or skill in a branch."
+        description = quire_protocol::tool_description!("kb_read_item")
     )]
     pub async fn kb_read_item(
         &self,
@@ -824,7 +824,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_upsert_doc",
-        description = "Create or update a knowledge-base document inside a branch."
+        description = quire_protocol::tool_description!("kb_upsert_doc")
     )]
     pub async fn kb_upsert_doc(
         &self,
@@ -853,7 +853,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_upsert_agent",
-        description = "Create or update an agent definition inside a branch."
+        description = quire_protocol::tool_description!("kb_upsert_agent")
     )]
     pub async fn kb_upsert_agent(
         &self,
@@ -883,7 +883,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_upsert_skill",
-        description = "Create or update a skill definition and its resources inside a branch."
+        description = quire_protocol::tool_description!("kb_upsert_skill")
     )]
     pub async fn kb_upsert_skill(
         &self,
@@ -916,7 +916,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "kb_delete_item",
-        description = "Delete a document, agent or skill from a KB branch (defaults to active branch)."
+        description = quire_protocol::tool_description!("kb_delete_item")
     )]
     pub async fn kb_delete_item(
         &self,
@@ -971,7 +971,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "models_list_providers",
-        description = "List LLM providers. API key references are always masked."
+        description = quire_protocol::tool_description!("models_list_providers")
     )]
     pub async fn models_list_providers(
         &self,
@@ -993,7 +993,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "models_upsert_provider",
-        description = "Create or update an LLM provider. Raw API keys are encrypted and never returned."
+        description = quire_protocol::tool_description!("models_upsert_provider")
     )]
     pub async fn models_upsert_provider(
         &self,
@@ -1023,7 +1023,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "models_list",
-        description = "List registered model routes with limits, capabilities and pricing."
+        description = quire_protocol::tool_description!("models_list")
     )]
     pub async fn models_list(
         &self,
@@ -1042,7 +1042,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "models_import_models_dev",
-        description = "Import models.dev catalog entries into an existing provider, using an inline payload or URL."
+        description = quire_protocol::tool_description!("models_import_models_dev")
     )]
     pub async fn models_import_models_dev(
         &self,
@@ -1079,7 +1079,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "models_upsert",
-        description = "Manually create or update a single model route configuration."
+        description = quire_protocol::tool_description!("models_upsert")
     )]
     pub async fn models_upsert(
         &self,
@@ -1110,7 +1110,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "models_delete",
-        description = "Delete a registered model route by ID."
+        description = quire_protocol::tool_description!("models_delete")
     )]
     pub async fn models_delete(
         &self,
@@ -1134,7 +1134,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "models_delete_provider",
-        description = "Delete a model provider and its associated model routes."
+        description = quire_protocol::tool_description!("models_delete_provider")
     )]
     pub async fn models_delete_provider(
         &self,
@@ -1162,7 +1162,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "mcp_list_servers",
-        description = "List registered MCP servers. Auth token references are always masked."
+        description = quire_protocol::tool_description!("mcp_list_servers")
     )]
     pub async fn mcp_list_servers(
         &self,
@@ -1182,7 +1182,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "mcp_upsert_server",
-        description = "Create or update an MCP server. Raw tokens are encrypted and never returned."
+        description = quire_protocol::tool_description!("mcp_upsert_server")
     )]
     pub async fn mcp_upsert_server(
         &self,
@@ -1203,7 +1203,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "mcp_sync_tools",
-        description = "Discover a server's tools and sync descriptions/schemas while preserving admin enable switches."
+        description = quire_protocol::tool_description!("mcp_sync_tools")
     )]
     pub async fn mcp_sync_tools(
         &self,
@@ -1224,7 +1224,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "mcp_list_tools",
-        description = "List synced MCP tools and their global enable switch."
+        description = quire_protocol::tool_description!("mcp_list_tools")
     )]
     pub async fn mcp_list_tools(
         &self,
@@ -1244,7 +1244,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "mcp_set_tool_enabled",
-        description = "Globally enable or disable one MCP tool. Disabled tools are filtered even when agent-allowed."
+        description = quire_protocol::tool_description!("mcp_set_tool_enabled")
     )]
     pub async fn mcp_set_tool_enabled(
         &self,
@@ -1267,7 +1267,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "mcp_delete_server",
-        description = "Delete a registered MCP server and its synced tool records."
+        description = quire_protocol::tool_description!("mcp_delete_server")
     )]
     pub async fn mcp_delete_server(
         &self,
@@ -1295,7 +1295,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "sessions_list",
-        description = "List agent sessions newest first, including status, active run status and KB branch."
+        description = quire_protocol::tool_description!("sessions_list")
     )]
     pub async fn sessions_list(
         &self,
@@ -1321,7 +1321,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "sessions_inspect",
-        description = "Inspect a session: full detail, latest run status and context usage."
+        description = quire_protocol::tool_description!("sessions_inspect")
     )]
     pub async fn sessions_inspect(
         &self,
@@ -1355,7 +1355,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "sessions_traces",
-        description = "List run trace summaries (thinking, tool calls, subagents, errors) for a session."
+        description = quire_protocol::tool_description!("sessions_traces")
     )]
     pub async fn sessions_traces(
         &self,
@@ -1381,7 +1381,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "sessions_get_tool_call",
-        description = "Fetch full untruncated input/output and error details for one tool_call_id."
+        description = quire_protocol::tool_description!("sessions_get_tool_call")
     )]
     pub async fn sessions_get_tool_call(
         &self,
@@ -1404,7 +1404,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "sessions_update",
-        description = "Update a session's title, status (active/archived) or pin state."
+        description = quire_protocol::tool_description!("sessions_update")
     )]
     pub async fn sessions_update(
         &self,
@@ -1428,7 +1428,7 @@ impl AdminMcpServer {
 
     #[tool(
         name = "sessions_action",
-        description = "Perform a control action on a session: interrupt, retry, compact or delete."
+        description = quire_protocol::tool_description!("sessions_action")
     )]
     pub async fn sessions_action(
         &self,
@@ -1484,6 +1484,24 @@ impl AdminMcpServer {
     }
 }
 
+#[derive(Serialize)]
+struct AdminErrorData<D> {
+    code: &'static str,
+    hint: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<D>,
+}
+
+fn serialize_admin_error_data<T: Serialize>(data: T) -> Option<Value> {
+    match serde_json::to_value(data) {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::warn!(%error, "failed to serialize admin MCP error data");
+            None
+        }
+    }
+}
+
 fn admin_error(error: RuntimeError) -> ErrorData {
     let code = error.code();
     let hint = error.hint();
@@ -1492,11 +1510,11 @@ fn admin_error(error: RuntimeError) -> ErrorData {
             let details = serde_json::to_value(report.as_ref()).ok();
             ErrorData::invalid_params(
                 "knowledge-base branch promotion conflict",
-                Some(serde_json::json!({
-                    "code": code,
-                    "hint": hint,
-                    "details": details,
-                })),
+                serialize_admin_error_data(AdminErrorData {
+                    code,
+                    hint,
+                    details,
+                }),
             )
         }
         RuntimeError::SessionNotFound(_)
@@ -1504,13 +1522,21 @@ fn admin_error(error: RuntimeError) -> ErrorData {
         | RuntimeError::ToolCallNotFound(_)
         | RuntimeError::InvalidRequest(_) => ErrorData::invalid_params(
             error.to_string(),
-            Some(serde_json::json!({"code": code, "hint": hint})),
+            serialize_admin_error_data(AdminErrorData::<()> {
+                code,
+                hint,
+                details: None,
+            }),
         ),
         other => {
             tracing::warn!(error = %other, "admin MCP operation failed");
             ErrorData::internal_error(
                 "internal runtime error; retry the request or inspect runtime logs",
-                Some(serde_json::json!({"code": code, "hint": hint})),
+                serialize_admin_error_data(AdminErrorData::<()> {
+                    code,
+                    hint,
+                    details: None,
+                }),
             )
         }
     }

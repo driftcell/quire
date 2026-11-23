@@ -7,10 +7,9 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use quire_protocol::{ProtocolError, SessionId};
+use quire_protocol::{ApiErrorEnvelope, ProtocolError, SessionId};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
-use serde_json::json;
 use subtle::ConstantTimeEq;
 
 use crate::state::AppState;
@@ -244,13 +243,7 @@ fn missing_token() -> Response {
 fn auth_error(status: StatusCode, code: &str, hint: &str) -> Response {
     (
         status,
-        Json(json!({
-            "error": {
-                "code": code,
-                "message": code,
-                "hint": hint,
-            }
-        })),
+        Json(ApiErrorEnvelope::<()>::new(code, code, hint, None)),
     )
         .into_response()
 }

@@ -11,7 +11,7 @@ use chrono::{DateTime, Utc};
 use moka::future::Cache;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sqlx::{PgConnection, Row};
 use tracing::warn;
 
@@ -242,6 +242,39 @@ struct KbConflictMark {
     branch_head_version: u64,
 }
 
+#[derive(Serialize)]
+struct KbDocumentContent<'a> {
+    doc_id: &'a str,
+    name: &'a str,
+    content: &'a str,
+}
+
+#[derive(Serialize)]
+struct KbAgentContent<'a> {
+    name: &'a str,
+    description: &'a str,
+    model: &'a str,
+    system_prompt: &'a str,
+    allowed_tools: &'a [String],
+    is_default: bool,
+    enabled: bool,
+}
+
+#[derive(Serialize)]
+struct KbSkillResourceContent<'a> {
+    path: &'a str,
+    content: &'a str,
+}
+
+#[derive(Serialize)]
+struct KbSkillContent<'a> {
+    name: &'a str,
+    description: &'a str,
+    body: &'a str,
+    enabled: bool,
+    resources: Vec<KbSkillResourceContent<'a>>,
+}
+
 #[derive(Debug, Clone)]
 enum KbItemEntry {
     Document(KbDocumentRecord),
@@ -267,32 +300,40 @@ impl KbItemEntry {
     }
 
     fn content(&self) -> Value {
-        match self {
-            Self::Document(record) => json!({
-                "doc_id": record.doc_id,
-                "name": record.name,
-                "content": record.content,
+        let serialized = match self {
+            Self::Document(record) => serde_json::to_value(KbDocumentContent {
+                doc_id: &record.doc_id,
+                name: &record.name,
+                content: &record.content,
             }),
-            Self::Agent(record) => json!({
-                "name": record.name,
-                "description": record.description,
-                "model": record.model,
-                "system_prompt": record.system_prompt,
-                "allowed_tools": record.allowed_tools,
-                "is_default": record.is_default,
-                "enabled": record.enabled,
+            Self::Agent(record) => serde_json::to_value(KbAgentContent {
+                name: &record.name,
+                description: &record.description,
+                model: &record.model,
+                system_prompt: &record.system_prompt,
+                allowed_tools: &record.allowed_tools,
+                is_default: record.is_default,
+                enabled: record.enabled,
             }),
-            Self::Skill(record) => json!({
-                "name": record.name,
-                "description": record.description,
-                "body": record.body,
-                "enabled": record.enabled,
-                "resources": record.resources.iter().map(|resource| json!({
-                    "path": resource.path,
-                    "content": resource.content,
-                })).collect::<Vec<_>>(),
+            Self::Skill(record) => serde_json::to_value(KbSkillContent {
+                name: &record.name,
+                description: &record.description,
+                body: &record.body,
+                enabled: record.enabled,
+                resources: record
+                    .resources
+                    .iter()
+                    .map(|resource| KbSkillResourceContent {
+                        path: &resource.path,
+                        content: &resource.content,
+                    })
+                    .collect(),
             }),
-        }
+        };
+        serialized.unwrap_or_else(|error| {
+            warn!(%error, "failed to serialize knowledge-base item content");
+            Value::Null
+        })
     }
 }
 

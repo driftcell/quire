@@ -27,7 +27,7 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -132,30 +132,45 @@ fn cors_layer(state: &AppState) -> CorsLayer {
     }
 }
 
+#[derive(Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    service: &'static str,
+    version: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
 async fn health(State(state): State<AppState>) -> Response {
     match state.store.health().await {
         Ok(()) => (
             StatusCode::OK,
-            Json(json!({
-                "status": "ok",
-                "service": "quire",
-                "version": env!("CARGO_PKG_VERSION"),
-                "database": "ok",
-                "redis": "ok"
-            })),
+            Json(HealthResponse {
+                status: "ok",
+                service: "quire",
+                version: env!("CARGO_PKG_VERSION"),
+                error: None,
+            }),
         )
             .into_response(),
         Err(error) => (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({
-                "status": "degraded",
-                "service": "quire",
-                "version": env!("CARGO_PKG_VERSION"),
-                "error": error.to_string(),
-            })),
+            Json(HealthResponse {
+                status: "degraded",
+                service: "quire",
+                version: env!("CARGO_PKG_VERSION"),
+                error: Some(error.to_string()),
+            }),
         )
             .into_response(),
     }
+}
+
+#[derive(Serialize)]
+struct PublishedResponse {
+    published: bool,
+    event: &'static str,
+    doc_id: DocId,
 }
 
 #[derive(Debug, Deserialize)]
@@ -582,7 +597,7 @@ async fn ephemeral(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
     body: Bytes,
-) -> Result<(StatusCode, Json<Value>), ApiError> {
+) -> Result<(StatusCode, Json<PublishedResponse>), ApiError> {
     if body.len() > MAX_EPHEMERAL_BYTES {
         return Err(ApiError(StoreError::InvalidRequest(format!(
             "ephemeral payload is {} bytes; limit is {MAX_EPHEMERAL_BYTES}",
@@ -605,10 +620,10 @@ async fn ephemeral(
         .await?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({
-            "published": true,
-            "event": payload.event_name(),
-            "doc_id": doc_id,
-        })),
+        Json(PublishedResponse {
+            published: true,
+            event: payload.event_name(),
+            doc_id,
+        }),
     ))
 }

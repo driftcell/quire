@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/fc_sandbox_provider.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/fc_sandbox_provider.md`, `../notes/quire_typed_json_boundaries.md`
 
 ## 1. Scope & Non-Goals
 
@@ -62,7 +62,10 @@ implicitly across user turns.
 
 ### Alibaba Cloud FC adapter
 
-`crates/quire-runtime/src/sandbox/fc.rs` keeps FC/E2B protocol details behind the port:
+`crates/quire-runtime/src/sandbox/fc.rs` keeps FC/E2B protocol details behind the port. Request bodies
+use concrete serde types (`EnvdStartProcessRequest` and `FcCreateSandboxRequest`), while built-in tool
+functions return `SandboxExecuteReceipt`, `SandboxReadFileReceipt`, `SandboxWriteFileReceipt` and
+`SandboxMountAttachmentReceipt` directly:
 
 - `POST /sandboxes` with `X-API-Key`, `secure: true`, `autoPause: false`, template, TTL and metadata.
 - `DELETE /sandboxes/{id}` for idempotent cleanup.

@@ -1,6 +1,7 @@
 //! Alibaba Cloud FC Agent Sandbox through the E2B-compatible platform/envd APIs.
 
 use std::{
+    collections::BTreeMap,
     fmt::{Debug, Formatter},
     sync::{
         Arc,
@@ -14,8 +15,10 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use futures::StreamExt;
 use reqwest::{Response, StatusCode};
 use secrecy::{ExposeSecret, SecretString};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 use super::{
     FcSandboxConfig, Sandbox, SandboxError, SandboxExecRequest, SandboxExecResult, SandboxProvider,
@@ -83,6 +86,34 @@ struct FcCreateResponse {
     envd_access_token: Option<String>,
 }
 
+#[derive(Serialize)]
+struct EnvdProcessConfig<'a> {
+    cmd: &'a str,
+    args: &'a [String],
+    envs: BTreeMap<String, String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cwd: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct EnvdStartProcessRequest<'a> {
+    process: EnvdProcessConfig<'a>,
+    stdin: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FcCreateSandboxRequest {
+    #[serde(rename = "templateID")]
+    template_id: String,
+    timeout: u64,
+    auto_pause: bool,
+    secure: bool,
+    metadata: BTreeMap<String, String>,
+    env_vars: BTreeMap<String, String>,
+    allow_internet_access: bool,
+}
+
 pub struct FcSandbox {
     id: String,
     api_key: SecretString,
@@ -130,21 +161,15 @@ impl FcSandbox {
         timeout_seconds: u64,
     ) -> Result<SandboxExecResult, SandboxError> {
         self.ensure_active()?;
-        let mut process = json!({
-            "cmd": program,
-            "args": args,
-            "envs": {},
-        });
-        if let Some(cwd) = cwd {
-            process
-                .as_object_mut()
-                .ok_or_else(|| SandboxError::Failed("failed to build process request".into()))?
-                .insert("cwd".into(), Value::String(cwd));
-        }
-        let request = encode_connect_frame(&json!({
-            "process": process,
-            "stdin": false,
-        }))?;
+        let request = encode_connect_frame(&EnvdStartProcessRequest {
+            process: EnvdProcessConfig {
+                cmd: &program,
+                args: &args,
+                envs: BTreeMap::new(),
+                cwd: cwd.as_deref(),
+            },
+            stdin: false,
+        })?;
         let response = self
             .envd(
                 self.http
@@ -179,15 +204,15 @@ impl SandboxProvider for FcSandboxProvider {
                 self.config.api_url.trim_end_matches('/')
             ))
             .header("X-API-Key", self.api_key()?.expose_secret())
-            .json(&json!({
-                "templateID": template,
-                "timeout": spec.timeout_seconds.clamp(60, 86_400),
-                "autoPause": false,
-                "secure": true,
-                "metadata": spec.metadata,
-                "envVars": {},
-                "allowInternetAccess": true,
-            }))
+            .json(&FcCreateSandboxRequest {
+                template_id: template,
+                timeout: spec.timeout_seconds.clamp(60, 86_400),
+                auto_pause: false,
+                secure: true,
+                metadata: spec.metadata,
+                env_vars: BTreeMap::new(),
+                allow_internet_access: true,
+            })
             .timeout(Duration::from_secs(60))
             .send()
             .await
@@ -360,7 +385,7 @@ enum ConnectFrame {
     EndStream(Value),
 }
 
-fn encode_connect_frame(message: &Value) -> Result<Vec<u8>, SandboxError> {
+fn encode_connect_frame<T: Serialize>(message: &T) -> Result<Vec<u8>, SandboxError> {
     let payload = serde_json::to_vec(message)
         .map_err(|_| SandboxError::Failed("failed to serialize Connect request".into()))?;
     let length = u32::try_from(payload.len())

@@ -19,7 +19,9 @@ use rig::streaming::parse_partial_arguments;
 #[cfg(test)]
 use rig::{message::ToolName, streaming::PartKind};
 use secrecy::{ExposeSecret, SecretString};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use tracing::warn;
 
 use crate::{
@@ -1224,7 +1226,11 @@ pub(super) fn inject_preview_ids(arguments: &mut Value, preview_ids: &[String]) 
             merged.push(preview_id.clone());
         }
     }
-    object.insert("preview_ids".to_string(), json!(merged));
+    let merged = serde_json::to_value(merged).unwrap_or_else(|error| {
+        warn!(%error, "failed to serialize merged preview IDs");
+        Value::Array(Vec::new())
+    });
+    object.insert("preview_ids".to_string(), merged);
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Runtime API errors.
 
 use axum::{Json, http::StatusCode, response::IntoResponse};
-use serde_json::json;
+use quire_protocol::ApiErrorEnvelope;
 
 use crate::kb::KbConflictReport;
 
@@ -123,23 +123,7 @@ impl IntoResponse for RuntimeError {
             Self::KbConflict(report) => serde_json::to_value(report.as_ref()).ok(),
             _ => None,
         };
-        let body = match details {
-            Some(details) => json!({
-                "error": {
-                    "code": self.code(),
-                    "message": message,
-                    "hint": self.hint(),
-                    "details": details,
-                }
-            }),
-            None => json!({
-                "error": {
-                    "code": self.code(),
-                    "message": message,
-                    "hint": self.hint(),
-                }
-            }),
-        };
+        let body = ApiErrorEnvelope::new(self.code(), message, self.hint(), details);
         (status, Json(body)).into_response()
     }
 }

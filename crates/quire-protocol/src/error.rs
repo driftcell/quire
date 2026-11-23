@@ -4,6 +4,49 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use thiserror::Error;
 
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ApiErrorEnvelope<D = ()> {
+    pub error: ApiErrorInfo<D>,
+}
+
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ApiErrorInfo<D = ()> {
+    pub code: String,
+    pub message: String,
+    pub hint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<D>,
+}
+
+impl<D> ApiErrorInfo<D> {
+    pub fn new(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        hint: impl Into<String>,
+        details: Option<D>,
+    ) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            hint: hint.into(),
+            details,
+        }
+    }
+}
+
+impl<D> ApiErrorEnvelope<D> {
+    pub fn new(
+        code: impl Into<String>,
+        message: impl Into<String>,
+        hint: impl Into<String>,
+        details: Option<D>,
+    ) -> Self {
+        Self {
+            error: ApiErrorInfo::new(code, message, hint, details),
+        }
+    }
+}
+
 /// Errors raised while constructing validated primitives or resolving protocol constraints.
 #[derive(Debug, Clone, PartialEq, Eq, Error, Serialize, JsonSchema)]
 #[serde(tag = "code", rename_all = "snake_case")]

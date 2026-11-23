@@ -1,0 +1,1 @@
+Configure A4 paged header/footer slots (left/center/right) with template placeholders ({page}, {total}, {title}, {subtitle}, {date}, {kicker}, {authors}), first-page visibility and automatic heading page breaks (none/h1/h1_and_h2).

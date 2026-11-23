@@ -52,10 +52,7 @@ pub(super) struct SubagentParent {
     cancellation: tokio_util::sync::CancellationToken,
 }
 
-#[rig_tool(
-    name = "spawn_subagents",
-    description = "Run multiple subagents concurrently with a JoinSet. Call list_subagents first to get valid subagent names."
-)]
+#[rig_tool(name = "spawn_subagents")]
 pub(super) async fn run_subagents_tool(
     #[rig(context)] context: &mut ToolContext,
     tasks: Vec<SubagentTask>,
