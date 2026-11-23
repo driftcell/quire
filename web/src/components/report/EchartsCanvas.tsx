@@ -48,12 +48,71 @@ function chartFallbackSummary(chart: EchartsBlock): string {
     : "";
 }
 
+const ELEMENT_MERGE_ARRAY_KEYS = new Set([
+  "series",
+  "xAxis",
+  "yAxis",
+  "grid",
+  "dataset",
+  "radar",
+  "polar",
+  "visualMap",
+  "dataZoom",
+  "graphic",
+]);
+
+const NUMERIC_AXIS_ONLY_KEYS = [
+  "min",
+  "max",
+  "interval",
+  "minInterval",
+  "maxInterval",
+  "scale",
+];
+
 function deepMerge(base: JsonObject, patch: JsonObject): JsonObject {
   const result: JsonObject = { ...base };
+  if (patch.type === "category" && base.type !== "category") {
+    for (const staleKey of NUMERIC_AXIS_ONLY_KEYS) {
+      if (!(staleKey in patch)) {
+        delete result[staleKey];
+      }
+    }
+  }
   for (const [key, value] of Object.entries(patch)) {
     const existing = result[key];
     if (isPlainObject(existing) && isPlainObject(value)) {
       result[key] = deepMerge(existing, value);
+    } else if (
+      ELEMENT_MERGE_ARRAY_KEYS.has(key) &&
+      Array.isArray(existing) &&
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.length <= existing.length &&
+      existing.every(isPlainObject) &&
+      value.every(isPlainObject)
+    ) {
+      result[key] = existing.map((item, idx) =>
+        idx < value.length && isPlainObject(value[idx])
+          ? deepMerge(item, value[idx])
+          : item,
+      );
+    } else if (
+      ELEMENT_MERGE_ARRAY_KEYS.has(key) &&
+      Array.isArray(existing) &&
+      existing.length === 1 &&
+      isPlainObject(existing[0]) &&
+      isPlainObject(value)
+    ) {
+      result[key] = [deepMerge(existing[0], value)];
+    } else if (
+      ELEMENT_MERGE_ARRAY_KEYS.has(key) &&
+      isPlainObject(existing) &&
+      Array.isArray(value) &&
+      value.length === 1 &&
+      isPlainObject(value[0])
+    ) {
+      result[key] = deepMerge(existing, value[0]);
     } else {
       result[key] = value;
     }

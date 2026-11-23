@@ -16,7 +16,6 @@ use crate::{
     echarts::{MAX_CHART_ROWS, chart_data_tables},
     ids::{BlockId, SourceId},
     inline::{InlineNode, parse_inline},
-    json::merge_optional_json,
     model::{CitationStyle, ReportDocument},
     normalize::strip_duplicate_inner_title,
     table::{TableError, compute_column_decimals, display_cell_aligned, validate_table},
@@ -500,10 +499,7 @@ impl<'a> MarkdownProjector<'a> {
 /// Compute the effective ECharts option agents describe. The native `option` is the single
 /// source of truth and `option_patch` is merged here so reviewers can inspect the result.
 fn markdown_chart_option(chart: &EchartsBlock) -> serde_json::Value {
-    let mut value = chart.option.clone();
-    if let Some(patch) = &chart.option_patch {
-        value = merge_optional_json(Some(&value), patch);
-    }
+    let mut value = crate::echarts::merged_option(chart);
     let _ = strip_duplicate_inner_title(&mut value, chart.title.as_deref());
     value
 }

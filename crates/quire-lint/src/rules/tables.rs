@@ -1,6 +1,6 @@
 //! Table layout risk checks: narrow CJK headers, empty/constant columns, A4 overflow and units.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use quire_protocol::{
     BlockKind, CellValue, ColumnDataType, LeafColumn, ReportDocument, TableBlock, TableShape,
@@ -11,6 +11,7 @@ use crate::{engine::Engine, registry::RuleId};
 
 const A4_CONTENT_WIDTH_PX: f64 = 640.0;
 const MIN_CELL_PADDING_PX: f64 = 24.0;
+const COMPACT_CELL_PADDING_PX: f64 = 16.0;
 const PX_PER_WIDTH_UNIT: f64 = 8.0;
 
 pub(crate) fn check(document: &ReportDocument, engine: &mut Engine<'_>) {
@@ -44,8 +45,20 @@ fn check_column_width(
     let mut widest_implicit: Option<(&str, &str, f64)> = None;
     let mut total_required = 0.0;
     let mut has_implicit = false;
+    let cell_padding = if shape.leaves.len() >= 6 {
+        COMPACT_CELL_PADDING_PX
+    } else {
+        MIN_CELL_PADDING_PX
+    };
     for leaf in &shape.leaves {
         let header_units = display_width(&leaf.label).max(1) as f64;
+        // Headers with <= 4 CJK chars (<= 8 width units) stay on one line in TableBlockView;
+        // longer headers wrap across two balanced lines.
+        let effective_header_units = if header_units <= 8.0 {
+            header_units
+        } else {
+            (header_units * 0.6).ceil().max(6.0)
+        };
         let body_units = max_body_width_units(table, &leaf.key, leaf.data_type) as f64;
         let body_has_text = table
             .rows
@@ -62,17 +75,18 @@ fn check_column_width(
             .max()
             .unwrap_or(0);
         let body_required = if leaf.data_type.is_numeric() {
-            body_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX
+            body_units * PX_PER_WIDTH_UNIT + cell_padding
         } else if max_cjk_chars >= 3 {
             // CJK entity names (3+ CJK characters) need 3–4 characters before they become a
             // one-character vertical strip, regardless of an explicit width.
             76.0
         } else if body_has_text {
-            (body_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX).min(64.0)
+            (body_units * PX_PER_WIDTH_UNIT + cell_padding).min(64.0)
         } else {
             0.0
         };
-        let required = (header_units * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX).max(body_required);
+        let required =
+            (effective_header_units * PX_PER_WIDTH_UNIT + cell_padding).max(body_required);
         total_required += required;
         let explicit = widths
             .and_then(|widths| widths.get(&leaf.key))
@@ -201,9 +215,20 @@ fn check_a4_width(
     shape: &TableShape,
     index: usize,
 ) {
+    let col_count = shape.leaves.len();
+    let cell_padding = if (6..=7).contains(&col_count) {
+        COMPACT_CELL_PADDING_PX
+    } else {
+        MIN_CELL_PADDING_PX
+    };
     let mut natural_width = 0.0;
     for leaf in &shape.leaves {
         let header = display_width(&leaf.label) as f64;
+        let effective_header = if col_count <= 7 && header > 8.0 {
+            (header * 0.65).ceil().max(6.0)
+        } else {
+            header
+        };
         let row_count = table.rows.len() + table.summary_rows.len();
         let body_total: usize = table
             .rows
@@ -217,19 +242,22 @@ fn check_a4_width(
         } else {
             body_total as f64 / row_count as f64
         };
-        let effective_body =
-            if shape.leaves.len() <= 5 && matches!(leaf.data_type, ColumnDataType::Text) {
-                // In 2-to-5 column qualitative comparison tables, text columns wrap
-                // naturally across 2 lines in A4 portrait CSS, whereas headers and
-                // numeric columns stay on a single line.
-                (body_average * 0.6).min(22.0)
-            } else {
-                body_average
-            };
-        let widest = header.max(effective_body);
-        natural_width += widest * PX_PER_WIDTH_UNIT + MIN_CELL_PADDING_PX;
+        let effective_body = if col_count <= 5 && matches!(leaf.data_type, ColumnDataType::Text) {
+            // In 2-to-5 column qualitative comparison tables, text columns wrap
+            // naturally across 2–3 lines in A4 portrait CSS, whereas headers and
+            // numeric columns stay on 1–2 lines.
+            (body_average * 0.55).min(20.0)
+        } else if col_count <= 7 && matches!(leaf.data_type, ColumnDataType::Text) {
+            // In 6-to-7 column benchmark matrices, parenthetical annotations such as
+            // `B+档（第14）` or `轻工B+、生工B+` wrap cleanly across 2 lines.
+            (body_average * 0.65).min(16.0)
+        } else {
+            body_average
+        };
+        let widest = effective_header.max(effective_body);
+        natural_width += widest * PX_PER_WIDTH_UNIT + cell_padding;
     }
-    if shape.leaves.len() <= 9 && natural_width <= A4_CONTENT_WIDTH_PX * 1.18 {
+    if col_count <= 9 && natural_width <= A4_CONTENT_WIDTH_PX * 1.18 {
         return;
     }
     engine.report(
@@ -278,93 +306,62 @@ fn check_numeric_units(
                             "百分",
                             "增长率",
                             "费率",
-                            "比重",
-                            "契合度",
-                            "得分",
-                            "均值",
+                            "命中率",
                             "年均",
-                            "人均",
-                            "生师比",
+                            "均值",
+                            "平均",
+                            "折合",
+                            "契合度",
+                            "贡献度",
+                            "集中度",
+                            "覆盖率",
+                            "转化率",
+                            "就业率",
+                            "深造率",
+                            "升学率",
+                            "留存率",
+                            "比率",
+                            "比值",
+                            "系数",
+                            "指数",
+                            "得分",
+                            "评分",
+                            "分值",
+                            "权重",
+                            "强度",
+                            "密度",
                         ]
                         .iter()
                         .any(|marker| label.contains(marker));
-                        let has_percent_unit = label.contains("（%）") || label.contains("(%)");
-                        has_percent_unit
-                            || (has_ratio_label && (value.contains('%') || value.contains('.')))
+                        has_ratio_label
+                            || (label.ends_with("率") && !label.ends_with("效率"))
+                            || label.contains("率（")
+                            || label.contains("率(")
+                            || label.contains("比（")
+                            || label.contains("比(")
+                            || label.contains("（%）")
+                            || label.contains("(%)")
                     })
             });
-            if !explicit_ratio_or_rate_row {
-                values.push(value);
+            if explicit_ratio_or_rate_row {
+                continue;
             }
+            values.push(value);
         }
-        if values.len() < 2 {
+        if values.len() < 3 {
             continue;
         }
-        let mut has_percent = false;
-        let mut has_plain_number = false;
-        let mut currencies = BTreeSet::new();
-        let mut decimals = BTreeSet::new();
-        for value in &values {
-            let trimmed = value.trim();
-            if trimmed.contains('%') {
-                has_percent = true;
-            }
-            for symbol in ['¥', '$', '€', '£', '￥'] {
-                if trimmed.contains(symbol) {
-                    currencies.insert(symbol);
-                }
-            }
-            let normalized = trimmed.trim_matches(|ch: char| {
-                ch.is_whitespace() || matches!(ch, '%' | '¥' | '$' | '€' | '£' | '￥' | ',' | '，')
-            });
-            if normalized.parse::<f64>().is_ok() {
-                if !trimmed.contains('%') {
-                    has_plain_number = true;
-                }
-                let decimals_for_value = trimmed
-                    .split_once('.')
-                    .map(|(_, fraction)| fraction.chars().take_while(char::is_ascii_digit).count())
-                    .unwrap_or(0);
-                decimals.insert(decimals_for_value);
-            }
-        }
-        let mixed_percent = has_percent && has_plain_number;
-        let mixed_currency = currencies.len() > 1;
-        let spread_decimals = decimals
-            .iter()
-            .next_back()
-            .zip(decimals.iter().next())
-            .is_some_and(|(max, min)| max.saturating_sub(*min) >= 2);
-        if !(mixed_percent || mixed_currency || spread_decimals) {
+        let Some((dominant, outlier)) = unit_inconsistency(&leaf.label, leaf.data_type, &values)
+        else {
             continue;
-        }
-        let mut reasons = Vec::new();
-        if mixed_percent {
-            reasons.push("mixes percentages with plain numbers".to_string());
-        }
-        if mixed_currency {
-            reasons.push(format!(
-                "mixes currency symbols {}",
-                currencies
-                    .into_iter()
-                    .map(|symbol| symbol.to_string())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            ));
-        }
-        if spread_decimals {
-            reasons.push("mixes very different decimal precision".to_string());
-        }
+        };
         engine.report(
             RuleId::TableNumericUnitInconsistent,
             format!(
-                "table `{}` column `{}` (`{}`) {}",
-                block.id,
-                leaf.key,
-                leaf.label,
-                reasons.join("; ")
+                "table `{}` column `{}` (`{}`) mixes `{dominant}` cells with `{outlier}`",
+                block.id, leaf.key, leaf.label
             ),
-            "normalize the unit and decimal precision inside one numeric column, or split mixed units into separate columns.",
+            "use one unit per column and put the unit in the column header or table note.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].rows.{}", leaf.key)),
         );
@@ -711,90 +708,167 @@ fn max_body_width_units(table: &TableBlock, key: &str, data_type: ColumnDataType
         .iter()
         .chain(table.summary_rows.iter())
         .filter_map(|row| row.get(key))
-        .map(|cell| display_width(&display_cell(cell, data_type)))
+        .map(|cell| {
+            let formatted = display_cell(cell, data_type);
+            let trimmed = formatted.trim();
+            if data_type.is_numeric() || is_short_unbreakable_token(trimmed) {
+                display_width(trimmed)
+            } else {
+                display_width(trimmed).min(8)
+            }
+        })
         .max()
         .unwrap_or(0)
 }
 
+fn is_short_unbreakable_token(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().count() <= 10
+        && text.chars().all(|ch| {
+            ch.is_ascii_digit() || matches!(ch, '+' | '-' | '.' | ',' | '%' | '/' | '／' | '·')
+        })
+}
+
 fn display_width(text: &str) -> usize {
-    text.chars().map(|ch| if is_wide(ch) { 2 } else { 1 }).sum()
+    text.chars()
+        .map(|ch| if is_wide_char(ch) { 2 } else { 1 })
+        .sum()
 }
 
 fn cjk_char_count(text: &str) -> usize {
-    text.chars().filter(|ch| is_cjk_letter(*ch)).count()
+    text.chars().filter(|ch| is_wide_char(*ch)).count()
 }
 
-fn is_cjk_letter(ch: char) -> bool {
+fn is_wide_char(ch: char) -> bool {
     matches!(
-        ch as u32,
-        0x1100..=0x115F
-            | 0x2E80..=0x2FFF
-            | 0x3041..=0x33FF
-            | 0x3400..=0x4DBF
-            | 0x4E00..=0x9FFF
-            | 0xA000..=0xA4CF
-            | 0xAC00..=0xD7A3
-            | 0xF900..=0xFAFF
+        ch,
+        '\u{1100}'..='\u{115f}'
+            | '\u{2e80}'..='\u{a4cf}'
+            | '\u{ac00}'..='\u{d7a3}'
+            | '\u{f900}'..='\u{faff}'
+            | '\u{fe10}'..='\u{fe6f}'
+            | '\u{ff00}'..='\u{ff60}'
+            | '\u{ffe0}'..='\u{ffe6}'
     )
-}
-
-fn is_wide(ch: char) -> bool {
-    matches!(
-        ch as u32,
-        0x1100..=0x115F
-            | 0x2E80..=0x303E
-            | 0x3041..=0x33FF
-            | 0x3400..=0x4DBF
-            | 0x4E00..=0x9FFF
-            | 0xA000..=0xA4CF
-            | 0xAC00..=0xD7A3
-            | 0xF900..=0xFAFF
-            | 0xFE30..=0xFE4F
-            | 0xFF00..=0xFF60
-            | 0xFFE0..=0xFFE6
-    )
-}
-
-fn is_placeholder_empty(value: &str) -> bool {
-    let value = value.trim();
-    value.is_empty()
-        || matches!(
-            value.to_ascii_lowercase().as_str(),
-            "-" | "--" | "—" | "–" | "/" | "n/a" | "na"
-        )
-        || matches!(value, "暂无" | "无")
 }
 
 fn parse_css_px(raw: &str) -> Option<f64> {
-    let value = raw.trim().to_ascii_lowercase();
-    if value.is_empty() || value.len() > 32 {
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if let Some(px) = trimmed.strip_suffix("px") {
+        let value: f64 = px.trim().parse().ok()?;
+        return (value.is_finite() && value > 0.0).then_some(value);
+    }
+    if let Some(percent) = trimmed.strip_suffix('%') {
+        let value: f64 = percent.trim().parse().ok()?;
+        return (value.is_finite() && value > 0.0).then_some(A4_CONTENT_WIDTH_PX * (value / 100.0));
+    }
+    None
+}
+
+fn is_placeholder_empty(text: &str) -> bool {
+    let trimmed = text.trim();
+    trimmed.is_empty()
+        || matches!(
+            trimmed,
+            "-" | "—" | "——" | "–" | "/" | "N/A" | "n/a" | "NA" | "无" | "暂无"
+        )
+}
+
+fn parse_plain_number(raw: &str) -> Option<f64> {
+    let trimmed = raw.trim().trim_end_matches('%').replace(',', "");
+    let value: f64 = trimmed.parse().ok()?;
+    value.is_finite().then_some(value)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum UnitKind {
+    Percent,
+    Currency,
+    Wan,
+    Yi,
+    PlainNumber,
+}
+
+impl UnitKind {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Percent => "%",
+            Self::Currency => "currency",
+            Self::Wan => "万",
+            Self::Yi => "亿",
+            Self::PlainNumber => "plain number",
+        }
+    }
+}
+
+fn unit_inconsistency(
+    label: &str,
+    data_type: ColumnDataType,
+    values: &[String],
+) -> Option<(&'static str, &'static str)> {
+    let mut counts: BTreeMap<UnitKind, usize> = BTreeMap::new();
+    for value in values {
+        let Some(kind) = classify_unit(value) else {
+            continue;
+        };
+        *counts.entry(kind).or_default() += 1;
+    }
+    if counts.len() <= 1 {
         return None;
     }
-    if let Some(number) = value.strip_suffix('%') {
-        let pct = number.trim().parse::<f64>().ok()?;
-        return pct.is_finite().then_some(A4_CONTENT_WIDTH_PX * pct / 100.0);
-    }
-    let unit_start = value
-        .find(|ch: char| ch.is_ascii_alphabetic())
-        .unwrap_or(value.len());
-    let number = value.get(..unit_start)?;
-    let unit = value.get(unit_start..)?;
-    let number = number.parse::<f64>().ok()?;
-    if !number.is_finite() || number < 0.0 {
+    let total: usize = counts.values().sum();
+    let (&dominant_kind, &dominant_count) = counts.iter().max_by_key(|(_, count)| *count)?;
+    if dominant_count * 2 <= total {
         return None;
     }
-    let px = match unit {
-        "" => number,
-        "px" => number,
-        "pt" => number * 96.0 / 72.0,
-        "pc" => number * 16.0,
-        "in" => number * 96.0,
-        "cm" => number * 96.0 / 2.54,
-        "mm" => number * 96.0 / 25.4,
-        "em" | "rem" => number * 16.0,
-        "ch" => number * 8.0,
-        "vw" => number * A4_CONTENT_WIDTH_PX / 100.0,
-        _ => return None,
-    };
-    Some(px)
+    let (&outlier_kind, _) = counts.iter().find(|(kind, _)| **kind != dominant_kind)?;
+    let header_declares_percent =
+        matches!(data_type, ColumnDataType::Percent) || label.contains('%') || label.contains("率");
+    if dominant_kind == UnitKind::Percent
+        && outlier_kind == UnitKind::PlainNumber
+        && !header_declares_percent
+    {
+        return Some((dominant_kind.label(), outlier_kind.label()));
+    }
+    if dominant_kind != UnitKind::PlainNumber || header_declares_percent {
+        return Some((dominant_kind.label(), outlier_kind.label()));
+    }
+    if matches!(
+        outlier_kind,
+        UnitKind::Percent | UnitKind::Currency | UnitKind::Wan | UnitKind::Yi
+    ) {
+        return Some((dominant_kind.label(), outlier_kind.label()));
+    }
+    None
+}
+
+fn classify_unit(raw: &str) -> Option<UnitKind> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.ends_with('%') && parse_plain_number(trimmed).is_some() {
+        return Some(UnitKind::Percent);
+    }
+    if (trimmed.starts_with('$') || trimmed.starts_with('¥') || trimmed.starts_with('￥'))
+        && parse_plain_number(&trimmed[trimmed.chars().next()?.len_utf8()..]).is_some()
+    {
+        return Some(UnitKind::Currency);
+    }
+    for (suffix, kind) in [
+        ("万元", UnitKind::Wan),
+        ("万", UnitKind::Wan),
+        ("亿元", UnitKind::Yi),
+        ("亿", UnitKind::Yi),
+    ] {
+        if let Some(number) = trimmed.strip_suffix(suffix)
+            && parse_plain_number(number).is_some()
+        {
+            return Some(kind);
+        }
+    }
+    if parse_plain_number(trimmed).is_some() {
+        return Some(UnitKind::PlainNumber);
+    }
+    None
 }

@@ -549,7 +549,11 @@ export interface PageChromeSlots1 {
  * A citation source. Source IDs live in the key of [`ReportDocument::sources`].
  */
 export interface SourceEntry {
-  title: string;
+  /**
+   * Source title. Required when registering a new source; may be omitted when partially
+   * updating an already-registered source by `id` via `upsert_sources`.
+   */
+  title?: string;
   url?: string | null;
   authors?: string[];
   publisher?: string | null;

@@ -92,7 +92,7 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
    - Register citations with `upsert_sources`, or pass an inline `sources` map to `apply_operations` so registration commits atomically with the blocks. Inline syntax is `[^source_id]`.
 
 4. VERIFY
-   - `lint_document(doc_id)` returns diagnostics that carry `code`, `rule`, `hint` and `suppressible`. Fix every `error` and review every `warning`.
+   - `lint_document(doc_id)` returns diagnostics (`code`, `rule`, `hint`, `suppressible`) plus `suppressed_blocks` (`block_id -> [ignored codes]`). Fix every `error` and review every `warning`.
    - Only when a diagnostic has `suppressible: true` and the rule genuinely does not apply may you ignore it through `PatchBlock.lint_ignore`. Never use ignore to hide a real problem; core contract and safety rules are never suppressible.
    - `read_as_markdown(doc_id)` gives block anchors, flattened tables and expanded chart data for review.
    - On the delivery revision check digest `prose_char_count`, `target_prose_chars`, and `prose_char_delta` (actual minus agreed). If under the agreed length, add substantive analysis or disclose the gap; do not treat clean lint as meeting the target.
@@ -222,7 +222,7 @@ Rules:
   `{"matrix":{"x":{"data":["A","B"]},"y":{"data":["C","D"]}},"series":[{"type":"custom","coordinateSystem":"matrix","data":[1,2]}]}`.
   A series with `coordinateSystem: "matrix"` requires a top-level `matrix` object; radar/polar series require their matching top-level component.
 - Every chart needs a real data source: `series[*].data`, `series[*].links`/`edges`, or a non-empty `dataset.source`, otherwise reviewers cannot verify the chart.
-- Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge an incremental change. The same patch can update `height`, `title`, `numbering`, `note` and `fallback_summary`.
+- Patch chart options with `{"type":"patch_block","patch":{"option":{...}}}` to replace the base option, or `option_patch` to deep-merge an incremental change (object arrays under `series`/`xAxis`/`yAxis`/`grid` merge element-by-element when `overlay.len() <= base.len()`, and switching an axis `type` to `"category"` automatically clears stale numeric `min`/`max`/`interval`). The same patch can update `height`, `title`, `numbering`, `note` and `fallback_summary`.
 - `read_as_markdown(include_chart_data=true)` expands dataset, Cartesian, relation, radar and hierarchy data into tables for reviewers.
 
 COMPOSITE / MULTI-PANEL CHARTS
@@ -257,7 +257,7 @@ fn citations_and_css() -> GuideReceipt {
 SOURCES
 - Register with `upsert_sources(doc_id, sources)`:
   [{ "id":"sec10", "title":"Annual filing 10-K", "url":"https://...", "authors":["Jane Smith"], "date":"2025-02-01" }]
-- Dedup key: URL first (normalized), otherwise normalized title. The response's `canonical_id_map` tells you which source_id to cite.
+- Dedup key: URL first (normalized), otherwise normalized title. The response's `canonical_id_map` tells you which source_id to cite. Already-registered sources can also be partially updated by `id` (e.g. `[{"id":"sec10","excerpt":"..."}]`) without repeating `title`.
 - Call `list_sources(doc_id)` to inspect every registered source, or `list_sources(doc_id, source_ids=[...])` for exact records and verbatim evidence excerpts. Never guess a source ID from its name.
 - Search-result snippets are leads, not verified evidence. Read the original page and match a specific claim to the source before citing it; never attach a source only to satisfy a source-count target or clear a diagnostic.
 - Citations: inline `[^sec10]`, or block-level `source_ids:["sec10"]`.

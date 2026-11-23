@@ -95,9 +95,13 @@ composites separated by `/`, `／` or `·` remain supported. Each mismatched sum
 path into `rows` or `summary_rows`, and the hint carries the exact expected value.
 
 `QR205` still rejects mixed percentages/plain numbers, currencies and extreme decimal precision inside
-an ordinary numeric column. In row-oriented indicator tables, however, percentage cells whose leading
-metric label explicitly contains `占比`, `比例`, `百分`, `增长率` or `费率` are excluded from that
-column's unit mixture check. Count rows and clearly labelled percentage rows can therefore coexist in
+an ordinary numeric column. In row-oriented indicator tables, however, ratio and score cells whose
+leading metric label identifies a ratio, rate, index, coefficient, weight, intensity or density are
+excluded from that column's unit mixture check. Recognized labels include `占比`, `比例`, `百分`,
+`增长率`, `费率`, `命中率`, `年均`, `均值`, `平均`, `折合`, `契合度`, `贡献度`, `集中度`, `覆盖率`,
+`转化率`, `就业率`, `深造率`, `升学率`, `留存率`, `比率`, `比值`, `系数`, `指数`, `得分`, `评分`,
+`分值`, `权重`, `强度` and `密度`, as well as labels ending in `率` (excluding `效率`) or carrying a
+parenthesized `率`/`比`/`%` unit. Count rows and clearly labelled ratio rows can therefore coexist in
 the same school/entity columns without suppression.
 
 `QR203` compares formatted cell display values across tables with at least three body rows. A non-empty
@@ -107,12 +111,15 @@ placeholder-only columns remain owned by `QR202`. An all-zero entity column stil
 suppression is legitimate when the zero record is itself the comparison's key evidence and the note
 explicitly distinguishes verified zeroes from missing data.
 
-`QR201` checks every explicit column width against the single-line header and a readable body floor;
-numeric and summary cells retain their widest-cell requirement, and CJK entity text has a 76px
-minimum. Explicit `column_widths` cannot exempt narrow columns. `QR204` reports any table with more
-than nine leaf columns or a natural width above 1.18× the 640px A4 content width. Both hints direct
-the writer to remove all-`—` columns, reduce to 6–8 columns (hard maximum 9), or split by topic
-instead of hiding overflow with manual widths.
+`QR201` checks every explicit column width against the header and a readable body floor. Headers of
+up to four CJK characters stay on one line; longer headers are modeled as two balanced lines at about
+60% of their measured width, matching the frontend's `text-wrap: balance` rendering. Tables with six
+or more leaf columns use 16px cell padding instead of 24px. Numeric and summary cells retain their
+widest-cell requirement, and CJK entity text has a 76px minimum. Explicit `column_widths` cannot
+exempt narrow columns. `QR204` reports any table with more than nine leaf columns or a natural width
+above 1.18× the 640px A4 content width, using the same two-line header model. Both hints direct the
+writer to remove all-`—` columns, reduce to 6–8 columns (hard maximum 9), or split by topic instead
+of hiding overflow with manual widths.
 
 ### Structure and placeholder integrity
 
@@ -184,9 +191,10 @@ complementary visuals remain allowed.
 
 `QR417` measures prose after replacing Markdown links with their anchor text and removing citations
 and code markers. Without a newline-delimited list, it reports a single paragraph with 360+ visible
-characters, or 300+ visible characters split across at least six sentences. The combined signal targets
-multi-idea walls rather than relying on one easily gamed character threshold. Cross-paragraph density is
-owned exclusively by `QR419`.
+characters, or 300+ visible characters split across at least six sentences. Semicolons and full-width
+semicolons join clauses within one sentence and do not increment the sentence count. The combined
+signal targets multi-idea walls rather than relying on one easily gamed character threshold.
+Cross-paragraph density is owned exclusively by `QR419`.
 
 `QR418` only inspects headings at level 2 or deeper. It strips common manual numbering and
 punctuation, then flags exact generic headings (`概述`, `行动建议`, `Overview`, etc.) and counting
@@ -351,7 +359,8 @@ repair action, and an anti-cheat guardrail (no synonym replacement; no invented 
   `Source`/`Reference` labels. `QR426` detects editorial meta-labels without banning legitimate
   method notes, and `QR103` accepts inline citations, block source IDs or a real block source note.
 - `QR108` matches hosts exactly or as subdomains, so lookalike domains do not report; `QR205` permits
-  explicit percentage indicator rows without permitting mixed units in an ordinary numeric column;
+  explicitly labelled ratio/rate/index/score indicator rows without permitting mixed units in an
+  ordinary numeric column;
   `QR206` distinguishes metric time-window totals from table summaries, reports at most once per
   mismatched summary cell and carries the expected sum in its hint.
 - Hint groups are deterministic, merged by block, capped at five expanded groups, and preserve tier

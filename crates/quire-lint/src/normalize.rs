@@ -1,7 +1,7 @@
 //! Diagnostic-producing write-time normalization for chart chrome.
 
 use quire_protocol::{
-    Block, BlockKind, Diagnostic, ReportDocument, merge_optional_json,
+    Block, BlockKind, Diagnostic, ReportDocument, effective_chart_option,
     normalize::{strip_chart_toolbox, strip_duplicate_inner_title},
 };
 
@@ -25,10 +25,7 @@ pub fn normalize_block(block: &mut Block) -> Vec<Diagnostic> {
         .title
         .as_deref()
         .is_some_and(|title| !title.trim().is_empty());
-    let mut effective = chart.option.clone();
-    if let Some(patch) = &chart.option_patch {
-        effective = merge_optional_json(Some(&effective), patch);
-    }
+    let mut effective = effective_chart_option(chart);
     let mut stripped_title = false;
     let mut stripped_toolbox = false;
     if has_outer_title {

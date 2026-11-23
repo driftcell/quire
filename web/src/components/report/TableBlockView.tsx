@@ -122,6 +122,8 @@ export const TableBlockView = memo(function TableBlockView({
     );
   }
 
+  const cellPaddingClass = leafCols.length >= 6 ? "px-2.5 py-2" : "px-3 py-2";
+
   return (
     <div ref={containerRef} className="w-full overflow-x-auto">
       <table
@@ -158,7 +160,7 @@ export const TableBlockView = memo(function TableBlockView({
                   colSpan={cell.colspan}
                   rowSpan={cell.rowspan}
                   style={{ textAlign: cell.align }}
-                  className={`px-3 py-2 text-[13px] font-semibold ${keepHeaderOnOneLine(cell.label) ? "whitespace-nowrap" : "break-words"}`}
+                  className={`${cellPaddingClass} text-[13px] font-semibold ${keepHeaderOnOneLine(cell.label) ? "whitespace-nowrap" : "break-words [text-wrap:balance]"}`}
                 >
                   {cell.label}
                 </th>
@@ -195,7 +197,7 @@ export const TableBlockView = memo(function TableBlockView({
                       key={col.key}
                       title={formatted.tooltip}
                       style={{ textAlign: formatted.align ?? col.align }}
-                      className={`px-3 py-2 text-[13px] leading-5 tabular-nums text-slate-700 ${keepTogether ? "whitespace-nowrap" : "break-words"} ${formatted.className ?? ""}`}
+                      className={`${cellPaddingClass} text-[13px] leading-5 tabular-nums text-slate-700 ${keepTogether ? "whitespace-nowrap" : "break-words"} ${formatted.className ?? ""}`}
                     >
                       {col.data_type === "badge" && formatted.text ? (
                         <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap">
@@ -245,7 +247,7 @@ export const TableBlockView = memo(function TableBlockView({
                       <td
                         key={col.key}
                         style={{ textAlign: formatted.align ?? col.align }}
-                        className={`px-3 py-2 text-[13px] leading-5 tabular-nums text-slate-900 ${keepTogether ? "whitespace-nowrap" : "break-words"}`}
+                        className={`${cellPaddingClass} text-[13px] leading-5 tabular-nums text-slate-900 ${keepTogether ? "whitespace-nowrap" : "break-words"}`}
                       >
                         {formatted.text}
                       </td>

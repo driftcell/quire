@@ -30,6 +30,7 @@ const ATOMIC_SAFETY_RECLAIM_PX =
 const BADGE_EXTRA_PX = 18;
 const SHORT_HEADER_SINGLE_LINE_PX = 92;
 const WRAPPED_HEADER_FLOOR_PX = 78;
+const COMPACT_NUMERIC_WRAPPED_HEADER_FLOOR_PX = 68;
 const TEXT_COMPRESSION_FLOOR_PX = 78;
 const FIRST_TEXT_COLUMN_FLOOR_PX = 84;
 const ATOMIC_TYPES = new Set<ColumnDataType>([
@@ -219,10 +220,6 @@ export function computeTableColumnWidths(
 
     const headerPx =
       measureMultilineMaxPx(col.label, headerFont) + CELL_HORIZONTAL_CHROME_PX;
-    const headerFloorPx =
-      headerPx <= SHORT_HEADER_SINGLE_LINE_PX
-        ? headerPx
-        : Math.max(WRAPPED_HEADER_FLOOR_PX, Math.ceil(headerPx * 0.56));
 
     const decimals = columnDecimals.get(col.key) ?? 0;
     const cellWidths: number[] = [];
@@ -245,6 +242,15 @@ export function computeTableColumnWidths(
         if (tokW > maxUnbreakablePx) maxUnbreakablePx = tokW;
       }
     }
+
+    const wrappedFloor =
+      leafCols.length >= 6 && isAtomic && maxAtomicPx <= 64
+        ? COMPACT_NUMERIC_WRAPPED_HEADER_FLOOR_PX
+        : WRAPPED_HEADER_FLOOR_PX;
+    const headerFloorPx =
+      headerPx <= SHORT_HEADER_SINGLE_LINE_PX
+        ? headerPx
+        : Math.max(wrappedFloor, Math.ceil(headerPx * 0.56));
 
     cellWidths.sort((a, b) => a - b);
     const p90CellPx = percentile(cellWidths, 0.9);
@@ -434,24 +440,42 @@ export function computeTableColumnWidths(
     }
   } else if (surplus < 0) {
     // Squeeze non-atomic text columns first before touching atomic numeric/badge columns.
-    // Keep a readable floor so medium/short text columns never collapse into a
-    // one-character vertical strip.
+    // Higher column weights resist compression via inverse-sqrt weighting.
     const textFloorPx = (b: ColumnBounds) =>
       Math.min(b.minPx, compressionFloorPx(b));
     let deficit = -surplus;
     const textCols = flexBounds.filter((b) => !b.atomic);
-    const totalShrinkable = textCols.reduce(
-      (sum, b) => sum + Math.max(0, b.minPx - textFloorPx(b)),
-      0,
-    );
-    if (totalShrinkable > 0) {
-      const shrinkRatio = Math.min(1, deficit / totalShrinkable);
+    const shrinkables = new Set(textCols.map((b) => b.index));
+    while (deficit > 0.1 && shrinkables.size > 0) {
+      let weightedRoomSum = 0;
       for (const b of textCols) {
-        const room = Math.max(0, b.minPx - textFloorPx(b));
-        const cut = room * shrinkRatio;
-        alloc.set(b.index, b.minPx - cut);
-        deficit -= cut;
+        if (!shrinkables.has(b.index)) continue;
+        const curr = alloc.get(b.index) ?? b.minPx;
+        const room = Math.max(0, curr - textFloorPx(b));
+        if (room <= 0.1) {
+          shrinkables.delete(b.index);
+          continue;
+        }
+        weightedRoomSum += room / Math.sqrt(Math.max(0.25, b.weight));
       }
+      if (weightedRoomSum <= 0 || shrinkables.size === 0) break;
+
+      let cutSum = 0;
+      for (const b of textCols) {
+        if (!shrinkables.has(b.index)) continue;
+        const curr = alloc.get(b.index) ?? b.minPx;
+        const room = Math.max(0, curr - textFloorPx(b));
+        const invWeight = 1 / Math.sqrt(Math.max(0.25, b.weight));
+        const share = deficit * ((room * invWeight) / weightedRoomSum);
+        const cut = Math.min(room, share);
+        alloc.set(b.index, curr - cut);
+        cutSum += cut;
+        if (curr - cut <= textFloorPx(b) + 0.1) {
+          shrinkables.delete(b.index);
+        }
+      }
+      if (cutSum <= 0.01) break;
+      deficit -= cutSum;
     }
     // Reclaim the optional rendering slack before allowing a dense table to
     // overflow. The real 24px padding and 56px atomic floor remain intact.

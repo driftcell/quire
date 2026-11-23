@@ -622,6 +622,9 @@ pub struct LintReceipt {
     /// Error, warning and info counts (omitted when clean).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<LintSummary>,
+    /// Blocks with non-empty `lint_ignore` lists (`block_id -> ignored codes`), omitted when empty.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub suppressed_blocks: BTreeMap<String, Vec<String>>,
     /// Diagnostics (omitted when clean).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<Diagnostic>,

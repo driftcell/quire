@@ -392,7 +392,9 @@
       "type": "object",
       "properties": {
         "title": {
-          "type": "string"
+          "description": "Source title. Required when registering a new source; may be omitted when partially\nupdating an already-registered source by `id` via `upsert_sources`.",
+          "type": "string",
+          "default": ""
         },
         "url": {
           "type": [
@@ -438,10 +440,7 @@
             "null"
           ]
         }
-      },
-      "required": [
-        "title"
-      ]
+      }
     },
     "Block": {
       "description": "A report block with common metadata shared by all variants.",

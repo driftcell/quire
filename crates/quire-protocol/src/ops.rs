@@ -14,8 +14,8 @@ use crate::{
     block::{
         Block, BlockKind, BlockStyle, CellValue, ColumnNode, NumberingKind, is_semantic_block_id,
     },
+    echarts::merge_chart_option_patch,
     ids::{BlockId, SourceId},
-    json::merge_optional_json,
     lint::LintConfig,
     model::{CoverConfig, ReferencesConfig, ReportDocument, SourceEntry, ThemeConfig, TocConfig},
     table::validate_table,
@@ -154,6 +154,256 @@ impl BlockPatch {
             && self.append_rows.is_empty()
             && self.update_cell.is_none()
     }
+
+    fn merge_with(mut self, nested: Option<Self>) -> Self {
+        let Some(nested) = nested else {
+            return self;
+        };
+        if nested.text.is_some() {
+            self.text = nested.text;
+        }
+        if nested.level.is_some() {
+            self.level = nested.level;
+        }
+        if nested.class_name.is_some() {
+            self.class_name = nested.class_name;
+        }
+        if nested.source_ids.is_some() {
+            self.source_ids = nested.source_ids;
+        }
+        if nested.source_note.is_some() {
+            self.source_note = nested.source_note;
+        }
+        if nested.lint_ignore.is_some() {
+            self.lint_ignore = nested.lint_ignore;
+        }
+        if nested.style.is_some() {
+            self.style = nested.style;
+        }
+        if nested.option.is_some() {
+            self.option = nested.option;
+        }
+        if nested.option_patch.is_some() {
+            self.option_patch = nested.option_patch;
+        }
+        if nested.height.is_some() {
+            self.height = nested.height;
+        }
+        if nested.fallback_summary.is_some() {
+            self.fallback_summary = nested.fallback_summary;
+        }
+        if nested.title.is_some() {
+            self.title = nested.title;
+        }
+        if nested.numbering.is_some() {
+            self.numbering = nested.numbering;
+        }
+        if nested.note.is_some() {
+            self.note = nested.note;
+        }
+        if nested.fallback_text.is_some() {
+            self.fallback_text = nested.fallback_text;
+        }
+        if nested.columns.is_some() {
+            self.columns = nested.columns;
+        }
+        if nested.rows.is_some() {
+            self.rows = nested.rows;
+        }
+        if nested.summary_rows.is_some() {
+            self.summary_rows = nested.summary_rows;
+        }
+        if !nested.append_rows.is_empty() {
+            self.append_rows.extend(nested.append_rows);
+        }
+        if nested.update_cell.is_some() {
+            self.update_cell = nested.update_cell;
+        }
+        self
+    }
+}
+
+/// Forgiving wire format for `PatchOp` that accepts `PatchBlock` fields either nested under
+/// `"patch": {...}`, flattened directly at the top level of `"type": "patch_block"`, or both.
+#[allow(clippy::large_enum_variant)]
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum RawPatchOp {
+    InsertAfter {
+        target_id: BlockId,
+        blocks: Vec<Block>,
+    },
+    InsertBefore {
+        target_id: BlockId,
+        blocks: Vec<Block>,
+    },
+    Append {
+        blocks: Vec<Block>,
+    },
+    AppendToSection {
+        section_id: BlockId,
+        blocks: Vec<Block>,
+    },
+    PatchBlock {
+        block_id: BlockId,
+        #[serde(default)]
+        patch: Option<BlockPatch>,
+        #[serde(default)]
+        text: Option<String>,
+        #[serde(default)]
+        level: Option<u8>,
+        #[serde(default)]
+        class_name: Option<String>,
+        #[serde(default)]
+        source_ids: Option<Vec<SourceId>>,
+        #[serde(default)]
+        source_note: Option<String>,
+        #[serde(default)]
+        lint_ignore: Option<Vec<String>>,
+        #[serde(default)]
+        style: Option<BlockStylePatch>,
+        #[serde(default)]
+        option: Option<serde_json::Value>,
+        #[serde(default)]
+        option_patch: Option<serde_json::Value>,
+        #[serde(default)]
+        height: Option<u32>,
+        #[serde(default)]
+        fallback_summary: Option<String>,
+        #[serde(default, alias = "caption")]
+        title: Option<String>,
+        #[serde(default)]
+        numbering: Option<NumberingKind>,
+        #[serde(default)]
+        note: Option<String>,
+        #[serde(default)]
+        fallback_text: Option<String>,
+        #[serde(default)]
+        columns: Option<Vec<ColumnNode>>,
+        #[serde(default)]
+        rows: Option<Vec<BTreeMap<String, CellValue>>>,
+        #[serde(default)]
+        summary_rows: Option<Vec<BTreeMap<String, CellValue>>>,
+        #[serde(default)]
+        append_rows: Vec<BTreeMap<String, CellValue>>,
+        #[serde(default)]
+        update_cell: Option<CellUpdate>,
+    },
+    ReplaceRange {
+        start_id: BlockId,
+        end_id: BlockId,
+        blocks: Vec<Block>,
+    },
+    DeleteBlocks {
+        block_ids: Vec<BlockId>,
+    },
+    MoveBlock {
+        block_id: BlockId,
+        after_id: Option<BlockId>,
+    },
+    SetCover {
+        cover: CoverConfig,
+    },
+    SetToc {
+        toc: TocConfig,
+    },
+    SetReferences {
+        references: ReferencesConfig,
+    },
+    SetLint {
+        lint: LintConfig,
+    },
+    SetTheme {
+        theme: ThemeConfig,
+    },
+    SetSources {
+        sources: IndexMap<SourceId, SourceEntry>,
+    },
+}
+
+impl From<RawPatchOp> for PatchOp {
+    fn from(raw: RawPatchOp) -> Self {
+        match raw {
+            RawPatchOp::InsertAfter { target_id, blocks } => {
+                Self::InsertAfter { target_id, blocks }
+            }
+            RawPatchOp::InsertBefore { target_id, blocks } => {
+                Self::InsertBefore { target_id, blocks }
+            }
+            RawPatchOp::Append { blocks } => Self::Append { blocks },
+            RawPatchOp::AppendToSection { section_id, blocks } => {
+                Self::AppendToSection { section_id, blocks }
+            }
+            RawPatchOp::PatchBlock {
+                block_id,
+                patch,
+                text,
+                level,
+                class_name,
+                source_ids,
+                source_note,
+                lint_ignore,
+                style,
+                option,
+                option_patch,
+                height,
+                fallback_summary,
+                title,
+                numbering,
+                note,
+                fallback_text,
+                columns,
+                rows,
+                summary_rows,
+                append_rows,
+                update_cell,
+            } => {
+                let inline = BlockPatch {
+                    text,
+                    level,
+                    class_name,
+                    source_ids,
+                    source_note,
+                    lint_ignore,
+                    style,
+                    option,
+                    option_patch,
+                    height,
+                    fallback_summary,
+                    title,
+                    numbering,
+                    note,
+                    fallback_text,
+                    columns,
+                    rows,
+                    summary_rows,
+                    append_rows,
+                    update_cell,
+                };
+                Self::PatchBlock {
+                    block_id,
+                    patch: inline.merge_with(patch),
+                }
+            }
+            RawPatchOp::ReplaceRange {
+                start_id,
+                end_id,
+                blocks,
+            } => Self::ReplaceRange {
+                start_id,
+                end_id,
+                blocks,
+            },
+            RawPatchOp::DeleteBlocks { block_ids } => Self::DeleteBlocks { block_ids },
+            RawPatchOp::MoveBlock { block_id, after_id } => Self::MoveBlock { block_id, after_id },
+            RawPatchOp::SetCover { cover } => Self::SetCover { cover },
+            RawPatchOp::SetToc { toc } => Self::SetToc { toc },
+            RawPatchOp::SetReferences { references } => Self::SetReferences { references },
+            RawPatchOp::SetLint { lint } => Self::SetLint { lint },
+            RawPatchOp::SetTheme { theme } => Self::SetTheme { theme },
+            RawPatchOp::SetSources { sources } => Self::SetSources { sources },
+        }
+    }
 }
 
 /// A declarative mutation. Deserialized with a `type` discriminator.
@@ -161,7 +411,7 @@ impl BlockPatch {
 /// The large `PatchBlock` variant is intentional: boxing it would force every JSON caller and
 /// store adapter to unwrap an extra pointer for a cold error path.
 #[allow(clippy::large_enum_variant)]
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PatchOp {
     /// Insert blocks immediately after an existing anchor block.
@@ -248,6 +498,15 @@ pub enum PatchOp {
         #[schemars(with = "std::collections::BTreeMap<SourceId, SourceEntry>")]
         sources: IndexMap<SourceId, SourceEntry>,
     },
+}
+
+impl<'de> Deserialize<'de> for PatchOp {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        RawPatchOp::deserialize(deserializer).map(Into::into)
+    }
 }
 
 impl PatchOp {
@@ -930,7 +1189,7 @@ fn apply_block_patch(block: &mut Block, patch: &BlockPatch) -> Result<(), PatchE
                 chart.height = height;
             }
             if let Some(option_patch) = &patch.option_patch {
-                chart.option_patch = Some(merge_optional_json(
+                chart.option_patch = Some(merge_chart_option_patch(
                     chart.option_patch.as_ref(),
                     option_patch,
                 ));
@@ -1258,6 +1517,36 @@ mod tests {
     }
 
     #[test]
+    fn patch_block_accepts_flattened_and_hybrid_fields() {
+        let flattened: PatchOp = serde_json::from_value(serde_json::json!({
+            "type": "patch_block",
+            "block_id": "v1-overview",
+            "title": "Flattened title",
+            "lint_ignore": ["QR201"]
+        }))
+        .expect("flattened patch_block must deserialize");
+        let PatchOp::PatchBlock { block_id, patch } = flattened else {
+            panic!("expected PatchBlock");
+        };
+        assert_eq!(block_id.as_str(), "v1-overview");
+        assert_eq!(patch.title.as_deref(), Some("Flattened title"));
+        assert_eq!(patch.lint_ignore, Some(vec!["QR201".to_string()]));
+
+        let hybrid: PatchOp = serde_json::from_value(serde_json::json!({
+            "type": "patch_block",
+            "block_id": "v8-industry-map",
+            "lint_ignore": ["QR204"],
+            "patch": {"note": "Updated note"}
+        }))
+        .expect("hybrid patch_block must merge top-level and nested patch fields");
+        let PatchOp::PatchBlock { patch, .. } = hybrid else {
+            panic!("expected PatchBlock");
+        };
+        assert_eq!(patch.lint_ignore, Some(vec!["QR204".to_string()]));
+        assert_eq!(patch.note.as_deref(), Some("Updated note"));
+    }
+
+    #[test]
     fn table_append_update_cell_and_in_place_columns_rows_patch() {
         let mut doc = ReportDocument::new(doc_id("doc"));
         doc.blocks.push(Block::table(
@@ -1352,6 +1641,10 @@ mod tests {
         assert_eq!(
             chart.option_patch.as_ref().unwrap()["series"][0]["data"],
             serde_json::json!([1, 2])
+        );
+        assert_eq!(
+            chart.option_patch.as_ref().unwrap()["series"][0]["type"],
+            serde_json::json!("bar")
         );
     }
 

@@ -793,8 +793,34 @@ impl PgReportStore {
         let mut db_updates: BTreeMap<SourceId, (String, SourceEntry)> = BTreeMap::new();
 
         for upsert in upserts {
-            let normalized = normalized_source_key(&upsert.source);
-            let canonical_id = if let Some(existing_id) = key_to_id.get(&normalized) {
+            let has_explicit_url = upsert
+                .source
+                .url
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|url| !url.is_empty());
+            let has_explicit_title = !upsert.source.title.trim().is_empty();
+            if !has_explicit_title && !has_explicit_url && !sources.contains_key(&upsert.source_id)
+            {
+                return Err(StoreError::InvalidRequest(format!(
+                    "source `{}` requires a non-empty `title` when registering a new source",
+                    upsert.source_id
+                )));
+            }
+            let normalized = if !has_explicit_title
+                && !has_explicit_url
+                && let Some(existing) = sources.get(&upsert.source_id)
+            {
+                normalized_source_key(existing)
+            } else {
+                normalized_source_key(&upsert.source)
+            };
+            let canonical_id = if !has_explicit_title
+                && !has_explicit_url
+                && sources.contains_key(&upsert.source_id)
+            {
+                upsert.source_id.clone()
+            } else if let Some(existing_id) = key_to_id.get(&normalized) {
                 existing_id.clone()
             } else if sources.contains_key(&upsert.source_id) {
                 // The source ID exists under another normalized key; replace its metadata/key.
@@ -2361,8 +2387,33 @@ fn merge_source_upserts(
         .collect();
     let mut canonical_map = BTreeMap::new();
     for upsert in upserts {
-        let normalized = normalized_source_key(&upsert.source);
-        let canonical_id = if let Some(existing_id) = key_to_id.get(&normalized) {
+        let has_explicit_url = upsert
+            .source
+            .url
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|url| !url.is_empty());
+        let has_explicit_title = !upsert.source.title.trim().is_empty();
+        if !has_explicit_title && !has_explicit_url && !sources.contains_key(&upsert.source_id) {
+            return Err(StoreError::InvalidRequest(format!(
+                "source `{}` requires a non-empty `title` when registering a new source",
+                upsert.source_id
+            )));
+        }
+        let normalized = if !has_explicit_title
+            && !has_explicit_url
+            && let Some(existing) = sources.get(&upsert.source_id)
+        {
+            normalized_source_key(existing)
+        } else {
+            normalized_source_key(&upsert.source)
+        };
+        let canonical_id = if !has_explicit_title
+            && !has_explicit_url
+            && sources.contains_key(&upsert.source_id)
+        {
+            upsert.source_id.clone()
+        } else if let Some(existing_id) = key_to_id.get(&normalized) {
             existing_id.clone()
         } else {
             upsert.source_id.clone()

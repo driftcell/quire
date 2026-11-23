@@ -385,7 +385,7 @@ fn check_low_evidence(document: &ReportDocument, engine: &mut Engine<'_>) {
                 "block `{}` has {length} prose characters but no number, year, metric or citation",
                 block.id
             ),
-            "In this Paragraph via apply_operations, add a real number or `[^source_id]` already retrieved by tools, or cut the unsupported prose; never invent figures or citations to satisfy the check.",
+            "In this Paragraph via apply_operations, add a real metric paired with its `[^source_id]` already retrieved by tools, or cite an official policy title (`《...》`), or cut the unsupported prose; never convert a Chinese numeral (`五项`) to an uncited Arabic digit (`5项`, which triggers QR103) and never invent figures or citations to satisfy the check.",
             Some(block.id.clone()),
             Some(format!("blocks[{index}].text")),
         );
@@ -661,6 +661,7 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
 
     let mut parent_h1_exempt = false;
     let mut exempt = false;
+    let mut section_visual_count = 0usize;
     let mut prose_blocks = 0usize;
     let mut prose_chars = 0usize;
     let mut reported = false;
@@ -673,9 +674,10 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 if *level == 1 {
                     parent_h1_exempt = action_or_closing_section_exempt(text);
                 }
+                section_visual_count = section_visual_totals.get(index).copied().unwrap_or(0);
                 exempt = parent_h1_exempt
                     || dense_prose_section_exempt(text)
-                    || section_visual_totals.get(index).copied().unwrap_or(0) >= 2;
+                    || section_visual_count >= 2;
             }
             BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_) => {
                 prose_blocks = 0;
@@ -686,7 +688,12 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 if !exempt {
                     prose_blocks = prose_blocks.saturating_add(1);
                     prose_chars = prose_chars.saturating_add(wall_of_text_char_count(text));
-                    if !reported && prose_blocks >= 4 && prose_chars >= 1500 {
+                    let max_prose_chars = if section_visual_count >= 1 {
+                        1550
+                    } else {
+                        1500
+                    };
+                    if !reported && prose_blocks >= 4 && prose_chars >= max_prose_chars {
                         reported = true;
                         engine.report(
                             RuleId::DenseProseRunNeedsVisual,
@@ -705,7 +712,12 @@ fn check_dense_prose_section(document: &ReportDocument, engine: &mut Engine<'_>)
                 if !exempt {
                     prose_blocks = prose_blocks.saturating_add(1);
                     prose_chars = prose_chars.saturating_add(wall_of_text_char_count(text));
-                    if !reported && prose_blocks >= 4 && prose_chars >= 1500 {
+                    let max_prose_chars = if section_visual_count >= 1 {
+                        1550
+                    } else {
+                        1500
+                    };
+                    if !reported && prose_blocks >= 4 && prose_chars >= max_prose_chars {
                         reported = true;
                         engine.report(
                             RuleId::DenseProseRunNeedsVisual,
@@ -861,7 +873,7 @@ fn wall_of_text_char_count(text: &str) -> usize {
 
 fn wall_of_text_sentence_count(text: &str) -> usize {
     strip_wall_markup(text)
-        .split(['。', '！', '？', '；', '!', '?', ';', '\n'])
+        .split(['。', '！', '？', '!', '?', '\n'])
         .filter(|sentence| !sentence.trim().is_empty())
         .count()
 }

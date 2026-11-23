@@ -436,6 +436,21 @@ async fn wait_for_idle(store: &RuntimeStore, session_id: &str) {
     panic!("session {session_id} never became idle");
 }
 
+async fn wait_for_run_trace(
+    store: &RuntimeStore,
+    session_id: &str,
+    predicate: impl Fn(&RunTraceSummary) -> bool,
+) -> RunTraceSummary {
+    for _ in 0..250 {
+        let traces = store.list_run_traces(session_id).await.unwrap();
+        if let Some(trace) = traces.iter().find(|trace| predicate(trace)) {
+            return trace.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("session {session_id} never materialized the expected run trace");
+}
+
 async fn wait_for_running(store: &RuntimeStore, session_id: &str) {
     for _ in 0..200 {
         let session = store.get_session_summary(session_id).await.unwrap();
@@ -4467,10 +4482,16 @@ async fn tool_boundary_supersedes_run_and_starts_queued_turn() {
         RunTraceSegment::Execution { tools, .. }
             if tools.iter().any(|tool| tool.tool_name == "set_session_title")
     )));
-    let completed = traces
-        .iter()
-        .find(|trace| trace.status == "completed")
-        .unwrap_or_else(|| panic!("queued turn trace missing: {traces:?}"));
+    let completed = wait_for_run_trace(&store, &session.session_id, |trace| {
+        trace.status == "completed"
+            && trace.segments.iter().any(|segment| {
+                matches!(
+                    segment,
+                    RunTraceSegment::Text { text } if text == "已完成排队消息。"
+                )
+            })
+    })
+    .await;
     assert!(completed.segments.iter().any(|segment| matches!(
         segment,
         RunTraceSegment::Text { text } if text == "已完成排队消息。"
@@ -6405,12 +6426,20 @@ async fn completed_run_trace_is_materialized_on_terminal_transition() {
     };
     wait_for_idle(&store, &session.session_id).await;
 
-    let stored: Option<Value> =
-        sqlx::query_scalar("SELECT trace_summary FROM agent_runs WHERE run_id = $1")
-            .bind(&run_id)
-            .fetch_optional(store.pool())
-            .await
-            .unwrap();
+    let mut stored: Option<Value> = None;
+    for _ in 0..250 {
+        stored = sqlx::query_scalar(
+            "SELECT trace_summary FROM agent_runs WHERE run_id = $1 AND trace_summary IS NOT NULL",
+        )
+        .bind(&run_id)
+        .fetch_optional(store.pool())
+        .await
+        .unwrap();
+        if stored.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     let stored = stored.expect("the terminal transition must materialize the trace");
     let stored_trace: RunTraceSummary = serde_json::from_value(stored).unwrap();
     assert_eq!(stored_trace.status, "completed");

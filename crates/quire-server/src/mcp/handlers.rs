@@ -1,7 +1,7 @@
 //! MCP tool implementations, Smart CAS reload helpers and document projections.
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     num::NonZeroU32,
 };
 
@@ -494,11 +494,21 @@ impl QuireMcpServer {
             },
         );
         let rev = document.revision.get();
-        if report.diagnostics.is_empty() && report.summary.suppressed == 0 {
+        let suppressed_blocks: BTreeMap<String, Vec<String>> = document
+            .blocks
+            .iter()
+            .filter(|block| !block.lint_ignore.is_empty())
+            .map(|block| (block.id.to_string(), block.lint_ignore.clone()))
+            .collect();
+        if report.diagnostics.is_empty()
+            && report.summary.suppressed == 0
+            && suppressed_blocks.is_empty()
+        {
             return Ok(Json(LintReceipt {
                 ok: true,
                 rev,
                 summary: None,
+                suppressed_blocks: BTreeMap::new(),
                 diagnostics: Vec::new(),
                 _next_hint: None,
             }));
@@ -509,6 +519,7 @@ impl QuireMcpServer {
             ok,
             rev,
             summary: Some(report.summary),
+            suppressed_blocks,
             diagnostics: report.diagnostics,
             _next_hint: Some(_next_hint),
         }))
@@ -904,8 +915,13 @@ impl QuireMcpServer {
         }
         let touched = touched_blocks(&request.ops, &result.outcome.assigned_ids);
         let suppress_empty_heading = is_heading_only_batch(&request.ops);
-        let (blocking_errors, inline_warnings) =
-            split_scoped_diagnostics(result.inline_warnings, &touched, suppress_empty_heading);
+        let suppress_consecutive_visuals = is_visual_only_batch(&request.ops);
+        let (blocking_errors, inline_warnings) = split_scoped_diagnostics(
+            result.inline_warnings,
+            &touched,
+            suppress_empty_heading,
+            suppress_consecutive_visuals,
+        );
         let _next_hint = lint_hint::apply_operations_next_hint(
             result.new_revision.get(),
             &blocking_errors,
@@ -1484,10 +1500,53 @@ fn is_heading_only_batch(ops: &[PatchOp]) -> bool {
         })
 }
 
+/// Returns `true` when every operation in `ops` only creates or patches visual blocks (`Table`,
+/// `Echarts`, `CustomHtml`), such as Step 4 when `analyst` subagents commit visual blocks into the
+/// heading skeleton before `writer` subagents insert intervening analytical prose in Step 5.
+fn is_visual_only_batch(ops: &[PatchOp]) -> bool {
+    !ops.is_empty()
+        && ops.iter().all(|op| match op {
+            PatchOp::InsertAfter { blocks, .. }
+            | PatchOp::InsertBefore { blocks, .. }
+            | PatchOp::Append { blocks }
+            | PatchOp::AppendToSection { blocks, .. } => {
+                !blocks.is_empty()
+                    && blocks.iter().all(|block| {
+                        matches!(
+                            &block.body,
+                            BlockKind::Table(_) | BlockKind::Echarts(_) | BlockKind::CustomHtml(_)
+                        )
+                    })
+            }
+            PatchOp::PatchBlock { patch, .. } => {
+                patch.text.is_none()
+                    && patch.level.is_none()
+                    && (patch.title.is_some()
+                        || patch.note.is_some()
+                        || patch.option.is_some()
+                        || patch.option_patch.is_some()
+                        || patch.columns.is_some()
+                        || patch.rows.is_some()
+                        || patch.summary_rows.is_some()
+                        || !patch.append_rows.is_empty()
+                        || patch.update_cell.is_some()
+                        || patch.height.is_some()
+                        || patch.fallback_summary.is_some()
+                        || patch.fallback_text.is_some()
+                        || patch.lint_ignore.is_some()
+                        || patch.style.is_some()
+                        || patch.source_ids.is_some()
+                        || patch.source_note.is_some())
+            }
+            _ => false,
+        })
+}
+
 fn split_scoped_diagnostics(
     diagnostics: Vec<Diagnostic>,
     touched: &BTreeSet<BlockId>,
     suppress_empty_heading: bool,
+    suppress_consecutive_visuals: bool,
 ) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
     let scoped: Vec<Diagnostic> = if touched.is_empty() {
         diagnostics
@@ -1496,6 +1555,9 @@ fn split_scoped_diagnostics(
             .into_iter()
             .filter(|diagnostic| {
                 if suppress_empty_heading && diagnostic.code == "QR403" {
+                    return false;
+                }
+                if suppress_consecutive_visuals && diagnostic.code == "QR416" {
                     return false;
                 }
                 diagnostic

@@ -287,6 +287,9 @@ impl Default for ReferencesConfig {
 /// A citation source. Source IDs live in the key of [`ReportDocument::sources`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceEntry {
+    /// Source title. Required when registering a new source; may be omitted when partially
+    /// updating an already-registered source by `id` via `upsert_sources`.
+    #[serde(default)]
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,

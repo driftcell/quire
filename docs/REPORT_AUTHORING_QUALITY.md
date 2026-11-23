@@ -45,6 +45,23 @@ not count toward a user's source requirement. `list_sources(doc_id)` returns eve
 `list_sources(doc_id, source_ids=[...])` returns exact records and evidence excerpts in request order.
 Unknown IDs fail with `INVALID_PARAMS` and the valid-ID list instead of disappearing silently.
 
+### Tool receipts and merge semantics
+
+`lint_document` returns `suppressed_blocks` (`block_id -> ignored codes`) whenever any block carries a
+non-empty `lint_ignore`, even when there are no visible diagnostics. The final suppression audit reads
+this map and clears stale entries instead of relying on a clean diagnostic list. A batch that only
+writes Table/ECharts/CustomHtml blocks suppresses `QR416` in that immediate `apply_operations` receipt,
+and a heading-only skeleton batch suppresses `QR403`: those conditions are transient until writers add
+intervening prose or section bodies, while a full `lint_document` still reports them.
+
+`upsert_sources` treats `title` and `url` as optional for an update to an existing `source_id`; a new
+source still needs at least a non-empty title or URL. `patch_block` accepts patch fields either nested
+under `patch` or flattened beside `block_id` (nested values win), which keeps model-produced hybrid
+payloads self-healing. ECharts `option_patch` merges component arrays (`series`, `xAxis`, `yAxis`,
+`grid`, `dataset`, `radar`, `polar`, `visualMap`, `dataZoom`, `graphic`) element by element, so an
+agent can patch one series without resending the full option; switching an axis to `category` removes
+stale numeric-axis keys (`min`, `max`, `interval`, and related fields) unless the patch supplies them.
+
 The analyst is the single owner of derived values and visual blocks. Every target, ratio, difference,
 slope and milestone records its baseline, time window, stock/flow/total/net-change semantics, formula,
 reference entity, source and assumptions. A changed assumption requires recomputing every downstream

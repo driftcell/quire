@@ -4316,3 +4316,69 @@ fn qr426_catches_section_boundary_meta_narration() {
         );
     }
 }
+
+#[test]
+fn qr201_and_qr204_accept_seven_column_benchmark_tables_with_two_line_headers() {
+    let mut document = doc();
+    document.blocks.push(table(
+        "v1-overview",
+        Some("核心竞争力基线"),
+        vec![
+            ColumnNode::leaf("school", "高校"),
+            ColumnNode::leaf("chem", "化学工程与技术"),
+            ColumnNode::leaf("safety", "安全科学与工程"),
+            ColumnNode::leaf("lab", "全国重点实验室").with_type(ColumnDataType::Number),
+            ColumnNode::leaf("talent", "高层次人才").with_type(ColumnDataType::Number),
+            ColumnNode::leaf("nsfc", "国自然年均").with_type(ColumnDataType::Number),
+            ColumnNode::leaf("award", "国家科技奖").with_type(ColumnDataType::Number),
+        ],
+        vec![
+            row(&[
+                ("school", CellValue::text("南京工业大学")),
+                ("chem", CellValue::text("B+档（第14）")),
+                ("safety", CellValue::text("B+档（第5）")),
+                ("lab", CellValue::Integer(1)),
+                ("talent", CellValue::Integer(165)),
+                ("nsfc", CellValue::Float(157.8)),
+                ("award", CellValue::Integer(2)),
+            ]),
+            row(&[
+                ("school", CellValue::text("南京信息工程大学")),
+                ("chem", CellValue::text("—")),
+                ("safety", CellValue::text("—")),
+                ("lab", CellValue::Integer(1)),
+                ("talent", CellValue::Integer(188)),
+                ("nsfc", CellValue::Float(234.4)),
+                ("award", CellValue::Integer(0)),
+            ]),
+        ],
+    ));
+    let report = lint_document(&document);
+    assert!(
+        !has_code(&report, "QR201") && !has_code(&report, "QR204"),
+        "7-column benchmark table with 2-line wrapped headers must fit A4 portrait without QR201/QR204: {:?}",
+        report.diagnostics
+    );
+}
+
+#[test]
+fn qr417_does_not_split_sentences_on_semicolons() {
+    let mut document = doc();
+    // 4 full sentences separated by `。`, with 2 semicolons `；` inside (304 chars total)
+    let para = format!(
+        "{}；{}。{}。{}；{}。{}。",
+        "甲".repeat(50),
+        "乙".repeat(50),
+        "丙".repeat(50),
+        "丁".repeat(50),
+        "戊".repeat(50),
+        "己".repeat(48),
+    );
+    document.blocks.push(paragraph("c3p07", &para));
+    let report = lint_document(&document);
+    assert!(
+        !has_code(&report, "QR417"),
+        "a 4-sentence 304-char paragraph with semicolons must not be miscounted as 6 sentences: {:?}",
+        report.diagnostics
+    );
+}
