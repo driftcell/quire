@@ -6,6 +6,7 @@ pub mod auth;
 pub mod config;
 pub mod error;
 pub mod guide;
+pub mod jwt;
 pub mod mcp;
 pub mod routes;
 pub mod sse;

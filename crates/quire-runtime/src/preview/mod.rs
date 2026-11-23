@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use quire_protocol::{ChartDataTable, ChartRequirements, EchartsBlock};
 use rmcp::model::{CallToolResult, ContentBlock};
 use schemars::JsonSchema;
-use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 #[cfg(test)]
@@ -290,7 +289,9 @@ fn percent_encode(input: &str) -> String {
 pub fn build_preview_url(config: &Config, input: &PreviewReportInput) -> String {
     build_preview_url_for_base(
         &config.preview_base_url,
-        config.quire_ro_token.expose_secret(),
+        crate::auth::issue_preview_jwt(config)
+            .unwrap_or_default()
+            .as_str(),
         input,
         true,
     )
@@ -299,7 +300,9 @@ pub fn build_preview_url(config: &Config, input: &PreviewReportInput) -> String 
 fn build_public_preview_url(config: &Config, input: &PreviewReportInput) -> String {
     build_preview_url_for_base(
         &config.preview_public_url,
-        config.quire_ro_token.expose_secret(),
+        crate::auth::issue_preview_jwt(config)
+            .unwrap_or_default()
+            .as_str(),
         input,
         false,
     )
@@ -367,11 +370,11 @@ fn chart_preview_path(preview_id: &str) -> String {
 /// Internal URL opened by Playwright MCP. The read-only token stays in the hash fragment.
 pub fn build_chart_preview_url(config: &Config, preview_id: &str) -> String {
     let base = config.preview_base_url.trim_end_matches('/');
-    let ro_token = config.quire_ro_token.expose_secret().trim();
+    let ro_token = crate::auth::issue_preview_jwt(config).unwrap_or_default();
     let hash = if ro_token.is_empty() {
         String::new()
     } else {
-        format!("#ro_token={}", percent_encode(ro_token))
+        format!("#ro_token={}", percent_encode(ro_token.trim()))
     };
     format!("{base}{}{hash}", chart_preview_path(preview_id))
 }

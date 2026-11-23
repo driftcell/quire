@@ -6,7 +6,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { CompassIcon, SparklesIcon } from "lucide-react";
+import { ChevronDownIcon, CompassIcon } from "lucide-react";
+import { cn } from "cn";
+import { AgentAvatar } from "@/components/chat/agentAvatar";
 import {
   HistoricalRunTrace,
   LiveTraceSegments,
@@ -40,10 +42,11 @@ import type {
 } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
-function LiveRunHeader({
+function LiveRunStatusBar({
   title,
   detail,
   sectionId,
+  isStreaming,
   progress,
   elapsedLabel,
   detailsOpen,
@@ -54,6 +57,7 @@ function LiveRunHeader({
   title: string;
   detail?: string;
   sectionId?: string;
+  isStreaming: boolean;
   progress: ReturnType<typeof summarizeLiveProgress>;
   elapsedLabel: string;
   detailsOpen: boolean;
@@ -64,7 +68,12 @@ function LiveRunHeader({
   return (
     <div
       data-live-header="true"
-      className="sticky top-0 z-10 flex min-h-7 w-full items-center justify-between gap-1 bg-background/95 py-1 text-xs leading-5 text-muted-foreground backdrop-blur-xs"
+      className={cn(
+        "sticky top-0 z-10 flex min-h-8 w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1 text-xs leading-5 backdrop-blur-xs transition-colors",
+        isStreaming
+          ? "border-border/80 bg-background/95 text-foreground shadow-2xs"
+          : "border-border/50 bg-muted/35 text-muted-foreground",
+      )}
     >
       <button
         type="button"
@@ -74,19 +83,26 @@ function LiveRunHeader({
         onClick={onToggleDetails}
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
       >
+        <ChevronDownIcon
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150",
+            !detailsOpen && "-rotate-90",
+          )}
+        />
         <span
-          data-live-header-icon="sparkles"
-          className="flex size-4 shrink-0 items-center justify-center"
+          className={cn(
+            "min-w-0 truncate font-medium",
+            isStreaming && "shimmer",
+          )}
         >
-          <SparklesIcon className="size-3.5 text-primary" />
+          {title}
         </span>
-        <span className="shimmer min-w-0 truncate font-medium">{title}</span>
         {detail && (
-          <span className="min-w-0 truncate text-[11px] opacity-75">
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
             — {detail}
           </span>
         )}
-        <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground/75">
+        <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
           {progress.toolCount > 0 && (
             <span data-live-progress-tools="true">
               {`工具 ${progress.completedToolCount}/${progress.toolCount}`}
@@ -112,7 +128,7 @@ function LiveRunHeader({
           <CompassIcon className="size-3.5" aria-hidden="true" />
         </button>
       )}
-      {onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
+      {isStreaming && onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
     </div>
   );
 }
@@ -152,48 +168,32 @@ function LiveRunSection({
 
   const progress = summarizeLiveProgress(trace, subagents);
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
-  const renderLiveHeader = trace.isStreaming
-    ? () => (
-        <LiveRunHeader
-          title={trace.taskFocus?.title ?? "正在处理"}
-          detail={trace.taskFocus?.detail}
-          sectionId={trace.taskFocus?.sectionId}
-          progress={progress}
-          elapsedLabel={formatLiveElapsed(elapsed)}
-          detailsOpen={detailsOpen}
-          onToggleDetails={() => setDetailsOpen((open) => !open)}
-          onJumpToSection={onJumpToSection}
-          onInterrupt={onInterrupt}
-        />
-      )
-    : undefined;
 
   return (
-    <>
-      {!trace.isStreaming && trace.taskFocus && (
-        <button
-          type="button"
-          onClick={() => {
-            if (trace.taskFocus?.sectionId) {
-              onJumpToSection?.(trace.taskFocus.sectionId);
-            }
-          }}
-          className="flex w-fit items-center gap-1.5 rounded-full border bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <CompassIcon className="size-3.5 text-primary" />
-          <span className="font-medium">{trace.taskFocus.title}</span>
-        </button>
-      )}
+    <div className="w-full space-y-2.5">
+      <LiveRunStatusBar
+        title={
+          trace.taskFocus?.title ??
+          (trace.isStreaming ? "正在处理" : "本轮执行已完成")
+        }
+        detail={trace.taskFocus?.detail}
+        sectionId={trace.taskFocus?.sectionId}
+        isStreaming={trace.isStreaming}
+        progress={progress}
+        elapsedLabel={formatLiveElapsed(elapsed)}
+        detailsOpen={detailsOpen}
+        onToggleDetails={() => setDetailsOpen((open) => !open)}
+        onJumpToSection={onJumpToSection}
+        onInterrupt={onInterrupt}
+      />
 
       <LiveTraceSegments
         sessionId={sessionId}
         segments={segments}
         questionSlots={questionSlots}
         showActiveDetails={detailsOpen}
-        renderLiveHeader={renderLiveHeader}
-        liveStreaming={trace.isStreaming}
       />
-    </>
+    </div>
   );
 }
 
@@ -201,12 +201,12 @@ function CompactionDivider({ summary }: { summary: string }) {
   return (
     <details
       data-slot="compaction-divider"
-      className="group my-2 rounded-md border border-dashed border-border/70 bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground"
+      className="group my-1 rounded-lg border border-dashed border-border/70 bg-muted/25 px-3 py-2 text-[11px] text-muted-foreground"
     >
-      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
+      <summary className="cursor-pointer list-none font-medium [&::-webkit-details-marker]:hidden">
         上下文已压缩
       </summary>
-      <div className="mt-2 border-t pt-2 text-xs leading-5 whitespace-pre-wrap">
+      <div className="mt-2 border-t border-border/50 pt-2 text-xs leading-5 whitespace-pre-wrap">
         {summary}
       </div>
     </details>
@@ -273,15 +273,6 @@ export function SessionStreamView({
     }
     return map;
   }, [attachments]);
-  const pendingEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (pendingQueue.length > 0) {
-      pendingEndRef.current?.scrollIntoView({
-        behavior: "smooth",
-        block: "end",
-      });
-    }
-  }, [pendingQueue.length]);
 
   const traceByRunId = useMemo(() => {
     const map = new Map<string, RunTraceSummary>();
@@ -407,9 +398,6 @@ export function SessionStreamView({
   const orphanQuestions = useMemo(
     () =>
       allQuestionCards.filter((entry) => {
-        // Every new question carries its ask_user tool-call ID. Rendering it at
-        // the bottom while its trace is being fetched causes a visible jump, so
-        // wait for the trace instead. Only legacy rows without an ID fall back.
         return !entry.question.tool_call_id;
       }),
     [allQuestionCards],
@@ -424,7 +412,7 @@ export function SessionStreamView({
     >
       <MessageScroller className="h-full">
         <MessageScrollerViewport className="px-4 data-[pending-scroll]:opacity-0">
-          <MessageScrollerContent className={`${contentClassName} py-4`}>
+          <MessageScrollerContent className={`${contentClassName} gap-5 py-5`}>
             {visibleMessages.map((msg) => {
               const trace = msg.run_id
                 ? traceByRunId.get(msg.run_id)
@@ -448,11 +436,16 @@ export function SessionStreamView({
                     key={msg.message_id}
                     messageId={msg.message_id}
                   >
-                    <HistoricalRunTrace
-                      sessionId={sessionId}
-                      trace={trace}
-                      questionSlots={questionSlots}
-                    />
+                    <Message align="start" className="items-start gap-2.5">
+                      <AgentAvatar actor="main" size="sm" className="mt-0.5" />
+                      <MessageContent className="min-w-0 flex-1">
+                        <HistoricalRunTrace
+                          sessionId={sessionId}
+                          trace={trace}
+                          questionSlots={questionSlots}
+                        />
+                      </MessageContent>
+                    </Message>
                   </MessageScrollerItem>
                 );
               }
@@ -486,8 +479,14 @@ export function SessionStreamView({
                 )) && (
                 <MessageScrollerItem messageId="live-main">
                   <MessageGroup>
-                    <Message align="start">
-                      <MessageContent className="w-full gap-1">
+                    <Message align="start" className="items-start gap-2.5">
+                      <AgentAvatar
+                        actor="main"
+                        size="sm"
+                        active={liveMain.isStreaming}
+                        className="mt-1"
+                      />
+                      <MessageContent className="min-w-0 flex-1 gap-2">
                         <LiveRunSection
                           key={liveMain.runId ?? "live-main"}
                           sessionId={sessionId}
@@ -522,7 +521,6 @@ export function SessionStreamView({
                 />
               </MessageScrollerItem>
             ))}
-            {pendingQueue.length > 0 && <div ref={pendingEndRef} />}
 
             {orphanQuestions.map((entry) => (
               <MessageScrollerItem

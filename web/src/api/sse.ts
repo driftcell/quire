@@ -8,7 +8,7 @@ import type {
   SyncRequiredDelta,
 } from "@/contracts/report-protocol";
 import type { SessionEvent } from "@/contracts/session-protocol";
-import { bearerHeaders, getAuthTokens } from "@/lib/auth";
+import { bearerHeaders, getAccessToken } from "@/lib/auth";
 import { isRecord, isStringArray } from "@/lib/guards";
 
 function isSessionEvent(value: unknown): value is SessionEvent {
@@ -67,7 +67,7 @@ export function subscribeSessionEvents(
   const controller = new AbortController();
   let closed = false;
   let attempt = 0;
-  const { runtimeToken } = getAuthTokens();
+  const runtimeToken = getAccessToken();
 
   const connect = async () => {
     for (;;) {
@@ -154,8 +154,7 @@ export function subscribeDocumentEvents(
   const controller = new AbortController();
   let closed = false;
   let attempt = 0;
-  const { quireRoToken, quireRwToken } = getAuthTokens();
-  const token = quireRoToken || quireRwToken;
+  const token = getAccessToken();
   const getSinceRev =
     typeof sinceRevOrGetter === "function"
       ? sinceRevOrGetter

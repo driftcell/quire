@@ -196,15 +196,32 @@ async fn test_service() -> (RuntimeService, RuntimeStore) {
     test_service_with_quire_base("http://127.0.0.1:1").await
 }
 
+fn test_admin_jwt() -> String {
+    let now = chrono::Utc::now().timestamp();
+    quire_server::jwt::sign_jwt(
+        b"test-jwt-secret",
+        &quire_server::jwt::JwtClaims {
+            sub: "usr_test_admin".into(),
+            username: "admin".into(),
+            role: "admin".into(),
+            iat: now,
+            exp: now + 3600,
+        },
+    )
+    .expect("sign test admin jwt")
+}
+
 fn test_config(base_url: &str) -> Config {
     Config {
         database_url: database_url(),
         redis_url: redis_url(),
         bind_addr: "127.0.0.1:0".into(),
         quire_base_url: base_url.into(),
-        quire_rw_token: SecretString::from("test-token"),
-        quire_ro_token: SecretString::from("test-token"),
-        api_token: SecretString::from("runtime-test-token"),
+        jwt_secret: SecretString::from("test-jwt-secret"),
+        jwt_ttl_secs: 3600,
+        admin_username: "admin".into(),
+        admin_email: None,
+        admin_password: SecretString::from("admin123456"),
         model_api_key: None,
         model_provider: "mock".into(),
         model_base_url: None,
@@ -337,7 +354,7 @@ async fn post_json(app: &axum::Router, uri: &str, body: Value) -> (axum::http::S
             axum::http::Request::builder()
                 .method("POST")
                 .uri(uri)
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(body.to_string()))
                 .unwrap(),
@@ -1486,7 +1503,7 @@ async fn event_stream_replays_a_small_gap_without_disconnecting() {
             "http://{address}/api/sessions/{}/events?afterSeq=3",
             session.session_id
         ))
-        .bearer_auth("runtime-test-token")
+        .bearer_auth(test_admin_jwt())
         .send()
         .await
         .unwrap();
@@ -2215,7 +2232,7 @@ async fn runtime_bearer_auth_protects_api_routes() {
         .oneshot(
             axum::http::Request::builder()
                 .uri("/api/sessions")
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -2226,7 +2243,7 @@ async fn runtime_bearer_auth_protects_api_routes() {
         .oneshot(
             axum::http::Request::builder()
                 .uri("/api/models/providers")
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -2783,7 +2800,7 @@ async fn branch_edits_are_isolated_and_sessions_use_the_selected_branch() {
         &app,
         axum::http::Method::POST,
         "/api/sessions",
-        "runtime-test-token",
+        &test_admin_jwt(),
         Some(json!({
             "title": unique("branch-session"),
             "doc_id": "runtime-doc",
@@ -3054,7 +3071,7 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
         &app,
         axum::http::Method::GET,
         "/api/kb/branches",
-        "runtime-test-token",
+        &test_admin_jwt(),
         None,
     )
     .await;
@@ -3069,7 +3086,7 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
         &app,
         axum::http::Method::POST,
         "/api/kb/branches",
-        "runtime-test-token",
+        &test_admin_jwt(),
         Some(json!({
             "name": branch_name,
             "description": "Admin MCP end-to-end branch"
@@ -3083,14 +3100,14 @@ async fn admin_mcp_exposes_branch_model_and_session_tools_end_to_end() {
         &app,
         axum::http::Method::GET,
         &format!("/api/kb/branches/{branch_name}/diff"),
-        "runtime-test-token",
+        &test_admin_jwt(),
         None,
     )
     .await;
     assert_eq!(status, axum::http::StatusCode::OK);
     assert_eq!(diff["branch"], branch_name);
 
-    let client = AdminMcpClient::connect(app, "runtime-test-token").await;
+    let client = AdminMcpClient::connect(app, &test_admin_jwt()).await;
     let tool_names = client.tool_names().await;
     for expected in [
         "kb_list_branches",
@@ -3566,7 +3583,7 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
             "/api/sessions/{}/questions/{}/answer",
             session.session_id, pending.question_id
         ),
-        "runtime-test-token",
+        &test_admin_jwt(),
         Some(json!({
             "answers": [{
                 "question_id": "scope",
@@ -3685,7 +3702,7 @@ async fn ask_user_skip_marks_skipped_and_continues() {
             "/api/sessions/{}/questions/{}/answer",
             session.session_id, pending.question_id
         ),
-        "runtime-test-token",
+        &test_admin_jwt(),
         Some(json!({"answers": [], "skipped": true})),
     )
     .await;
@@ -3766,7 +3783,7 @@ async fn new_message_dismisses_pending_question_and_starts_a_new_turn() {
         &app,
         axum::http::Method::POST,
         &format!("/api/sessions/{}/messages", session.session_id),
-        "runtime-test-token",
+        &test_admin_jwt(),
         Some(json!({
             "client_msg_id": unique("ask-user-dismiss-next"),
             "content": "Ignore the card and answer this instead"
@@ -4029,7 +4046,7 @@ async fn mcp_auth_token_is_masked_in_http_and_admin_receipts() {
         &app,
         axum::http::Method::POST,
         "/api/mcp/servers",
-        "runtime-test-token",
+        &test_admin_jwt(),
         Some(json!({
             "server_id": server_id,
             "name": "Secret registry test",
@@ -4043,7 +4060,7 @@ async fn mcp_auth_token_is_masked_in_http_and_admin_receipts() {
     assert_eq!(created["auth_token_masked"], "enc:***");
     assert!(!created.to_string().contains(secret));
 
-    let client = AdminMcpClient::connect(app, "runtime-test-token").await;
+    let client = AdminMcpClient::connect(app, &test_admin_jwt()).await;
     let listed = client.call_tool("mcp_list_servers", json!({})).await;
     assert!(!listed.to_string().contains(secret));
     assert!(
@@ -4178,7 +4195,7 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri(format!("/api/sessions/{}/comments", session.session_id))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({"block_id": "b_proxy", "body": "Tighten"}).to_string(),
@@ -4203,7 +4220,7 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
                     "/api/sessions/{}/comments/{}/replies",
                     session.session_id, thread.thread_id
                 ))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(json!({"body": "Done"}).to_string()))
                 .unwrap(),
@@ -4226,7 +4243,7 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
                     "/api/sessions/{}/comments/{}",
                     session.session_id, thread.thread_id
                 ))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({"status": "archived"}).to_string(),
@@ -4243,7 +4260,7 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
             axum::http::Request::builder()
                 .method("GET")
                 .uri(format!("/api/docs/{}", doc_id.as_str()))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -4260,7 +4277,7 @@ async fn session_comment_proxy_requires_a_bound_report_and_forwards_rw_token() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri(format!("/api/sessions/{}/comments", unbound.session_id))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({"block_id": "b_proxy", "body": "Tighten"}).to_string(),
@@ -4814,7 +4831,7 @@ async fn comment_creation_auto_triggers_a_turn() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri(format!("/api/sessions/{}/comments", session.session_id))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({"block_id": "b_proxy", "body": "Please tighten this paragraph."})
@@ -4896,7 +4913,7 @@ async fn addressed_comment_reply_auto_triggers_agent() {
                     "/api/sessions/{}/comments/{}/replies",
                     session.session_id, created_thread.thread_id
                 ))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({"body": "Use a different chart"}).to_string(),
@@ -4960,7 +4977,7 @@ async fn open_comment_reply_also_triggers_agent() {
                     "/api/sessions/{}/comments/{}/replies",
                     session.session_id, created_thread.thread_id
                 ))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({"body": "More context while the agent is working"}).to_string(),
@@ -5020,7 +5037,7 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
             axum::http::Request::builder()
                 .method("POST")
                 .uri(format!("/api/sessions/{}/comments", session.session_id))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .header("content-type", "application/json")
                 .body(axum::body::Body::from(
                     json!({"block_id": "b_proxy", "body": "Tighten while busy"}).to_string(),
@@ -5056,7 +5073,7 @@ async fn running_session_queues_comment_and_queue_delete_removes_thread() {
                     "/api/sessions/{}/queue/{}",
                     session.session_id, queue_id
                 ))
-                .header("authorization", "Bearer runtime-test-token")
+                .header("authorization", &format!("Bearer {}", test_admin_jwt()))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -5259,7 +5276,7 @@ async fn repeated_comment_follow_ups_update_the_pending_item() {
 }
 
 #[tokio::test]
-async fn chart_preview_endpoint_accepts_ro_token_and_hides_expired_previews() {
+async fn chart_preview_endpoint_accepts_preview_jwt_and_hides_expired_previews() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
     let preview_id = unique("chart-preview");
@@ -5283,13 +5300,14 @@ async fn chart_preview_endpoint_accepts_ro_token_and_hides_expired_previews() {
         source_note: None,
     };
     store.bus().store_chart_preview(&record).await.unwrap();
+    let preview_token = quire_runtime::auth::issue_preview_jwt(service.config()).unwrap();
     let app = quire_runtime::http::router(service);
     let authorized = app
         .clone()
         .oneshot(
             axum::http::Request::builder()
                 .uri(format!("/api/chart-previews/{preview_id}"))
-                .header("authorization", "Bearer test-token")
+                .header("authorization", format!("Bearer {preview_token}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -5319,7 +5337,7 @@ async fn chart_preview_endpoint_accepts_ro_token_and_hides_expired_previews() {
         .oneshot(
             axum::http::Request::builder()
                 .uri(format!("/api/chart-previews/{}", unique("missing-chart")))
-                .header("authorization", "Bearer test-token")
+                .header("authorization", format!("Bearer {preview_token}"))
                 .body(axum::body::Body::empty())
                 .unwrap(),
         )
@@ -6173,7 +6191,7 @@ async fn unknown_events_are_forwarded_and_skipped_by_projection() {
             "http://{address}/api/sessions/{}/events?afterSeq=1",
             session.session_id
         ))
-        .bearer_auth("runtime-test-token")
+        .bearer_auth(test_admin_jwt())
         .send()
         .await
         .unwrap();
@@ -6229,7 +6247,7 @@ async fn cursor_ahead_of_the_server_returns_sync_required() {
             "http://{address}/api/sessions/{}/events?afterSeq=99",
             session.session_id
         ))
-        .bearer_auth("runtime-test-token")
+        .bearer_auth(test_admin_jwt())
         .send()
         .await
         .unwrap();
@@ -6282,7 +6300,7 @@ async fn heartbeat_reconcile_repairs_a_missing_publish() {
             "http://{address}/api/sessions/{}/events?afterSeq=1",
             session.session_id
         ))
-        .bearer_auth("runtime-test-token")
+        .bearer_auth(test_admin_jwt())
         .send()
         .await
         .unwrap();
@@ -6554,7 +6572,7 @@ async fn pruning_preserves_materialized_history_and_enforces_the_retained_cursor
             session.session_id,
             expected_min - 2
         ))
-        .bearer_auth("runtime-test-token")
+        .bearer_auth(test_admin_jwt())
         .send()
         .await
         .unwrap();

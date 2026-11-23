@@ -87,12 +87,14 @@ fn chart_preview_urls_keep_the_token_in_the_hash_only() {
     let mut config = Config::from_env();
     config.preview_base_url = "http://127.0.0.1:5173".into();
     config.preview_public_url = "http://localhost:5173".into();
-    config.quire_ro_token = secrecy::SecretString::from("secret".to_string());
+    config.jwt_secret = secrecy::SecretString::from("secret".to_string());
     let internal = build_chart_preview_url(&config, "chart_abc");
-    assert_eq!(
-        internal,
-        "http://127.0.0.1:5173/charts/chart_abc/preview#ro_token=secret"
-    );
+    let token = internal
+        .strip_prefix("http://127.0.0.1:5173/charts/chart_abc/preview#ro_token=")
+        .unwrap_or_default();
+    assert!(!token.is_empty());
+    let claims = crate::auth::verify_token(&config, token).unwrap();
+    assert_eq!(claims.role, "preview");
     let public = build_public_chart_preview_url(&config, "chart_abc");
     assert_eq!(public, "http://localhost:5173/charts/chart_abc/preview");
     assert!(!public.contains("secret"));

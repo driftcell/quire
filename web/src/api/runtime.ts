@@ -24,7 +24,7 @@ import type {
   PendingQueueItem,
   SessionCommentRef,
 } from "@/contracts/session-protocol";
-import { bearerHeaders, getAuthTokens } from "@/lib/auth";
+import { bearerHeaders, clearAuthSession, getAccessToken } from "@/lib/auth";
 import type { EchartsBlock } from "@/lib/document";
 import { isRecord } from "@/lib/guards";
 
@@ -71,12 +71,15 @@ async function runtimeFetch<T>(
   init: RequestInit = {},
   tokenOverride?: string,
 ): Promise<T> {
-  const { runtimeToken } = getAuthTokens();
+  const accessToken = getAccessToken();
   const response = await fetch(path, {
     ...init,
-    headers: buildHeaders(tokenOverride ?? runtimeToken, init.headers),
+    headers: buildHeaders(tokenOverride ?? accessToken, init.headers),
   });
   if (!response.ok) {
+    if (response.status === 401 && !tokenOverride) {
+      clearAuthSession();
+    }
     let code = `HTTP_${response.status}`;
     let message = response.statusText || "Request failed";
     let hint: string | undefined;

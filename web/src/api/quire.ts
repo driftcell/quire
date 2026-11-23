@@ -4,7 +4,7 @@ import type {
   DocumentDiffReport,
   DocumentSyncDelta,
 } from "@/contracts/report-protocol";
-import { bearerHeaders, getAuthTokens } from "@/lib/auth";
+import { bearerHeaders, clearAuthSession, getAccessToken } from "@/lib/auth";
 import {
   normalizeDocumentResponse,
   normalizeDocumentSyncDelta,
@@ -30,20 +30,20 @@ function buildHeaders(
 
 async function quireFetch<T>(
   path: string,
-  mode: "ro" | "rw",
+  _mode: "ro" | "rw",
   decode: (raw: unknown) => T,
   init: RequestInit = {},
   tokenOverride?: string,
 ): Promise<T> {
-  const { quireRoToken, quireRwToken } = getAuthTokens();
-  const token =
-    tokenOverride ??
-    (mode === "rw" ? quireRwToken : quireRoToken || quireRwToken);
+  const token = tokenOverride ?? getAccessToken();
   const response = await fetch(path, {
     ...init,
     headers: buildHeaders(token, init.headers),
   });
   if (!response.ok) {
+    if (response.status === 401 && !tokenOverride) {
+      clearAuthSession();
+    }
     const text = await response.text().catch(() => response.statusText);
     throw new Error(text || `Quire HTTP ${response.status}`);
   }

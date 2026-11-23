@@ -261,19 +261,13 @@ impl RuntimeService {
             .bind_addr
             .parse()
             .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 8081)));
-        let non_empty = |token: &secrecy::SecretString| {
-            (!token.expose_secret().trim().is_empty()).then(|| token.clone())
-        };
-        let rw_token =
-            non_empty(&self.config.quire_rw_token).or_else(|| non_empty(&self.config.api_token));
-        let ro_token = non_empty(&self.config.quire_ro_token).or_else(|| rw_token.clone());
         let server_config = quire_server::Config {
             bind_addr,
             database_url: secrecy::SecretString::from(self.config.database_url.clone()),
             redis_url: secrecy::SecretString::from(self.config.redis_url.clone()),
-            rw_token,
-            ro_token,
-            extra_rw_token: non_empty(&self.config.api_token),
+            rw_token: None,
+            ro_token: None,
+            jwt_secret: Some(self.config.jwt_secret.clone()),
             allowed_hosts: self.config.mcp_allowed_hosts(),
             cors_allowed_origins: Vec::new(),
             sse_heartbeat: Duration::from_millis(self.config.sse_heartbeat_ms),

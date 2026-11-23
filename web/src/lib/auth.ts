@@ -1,54 +1,101 @@
 import { isRecord } from "@/lib/guards";
 
-export interface AuthTokens {
-  runtimeToken: string;
-  quireRoToken: string;
-  quireRwToken: string;
+export type UserRole = "admin" | "user";
+
+export interface AuthUser {
+  user_id: string;
+  username: string;
+  email?: string | null;
+  display_name: string;
+  role: UserRole;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-const TOKEN_STORAGE_KEY = "quire.dev.tokens.v1";
+export interface AuthSession {
+  token: string;
+  user: AuthUser;
+}
 
-function nonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
+const AUTH_STORAGE_KEY = "quire.auth.session.v1";
+const listeners = new Set<() => void>();
+
+function notifyAuthListeners(): void {
+  for (const listener of listeners) {
+    listener();
   }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function getAuthTokens(): AuthTokens {
-  let stored: Partial<AuthTokens> = {};
+export function subscribeAuthSession(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+export function isAuthUser(value: unknown): value is AuthUser {
+  return (
+    isRecord(value) &&
+    typeof value.user_id === "string" &&
+    typeof value.username === "string" &&
+    typeof value.display_name === "string" &&
+    (value.role === "admin" || value.role === "user")
+  );
+}
+
+export function getAuthSession(): AuthSession | null {
   try {
-    const raw = window.localStorage.getItem(TOKEN_STORAGE_KEY);
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw);
-      if (isRecord(parsed)) {
-        stored = {
-          runtimeToken: nonEmptyString(parsed.runtimeToken),
-          quireRoToken: nonEmptyString(parsed.quireRoToken),
-          quireRwToken: nonEmptyString(parsed.quireRwToken),
-        };
-      }
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      isRecord(parsed) &&
+      typeof parsed.token === "string" &&
+      parsed.token.trim().length > 0 &&
+      isAuthUser(parsed.user)
+    ) {
+      return {
+        token: parsed.token.trim(),
+        user: parsed.user,
+      };
     }
   } catch {
-    // Ignore invalid storage entries.
+    // Ignore malformed storage entries.
   }
-  const env = import.meta.env as Record<string, string | undefined>;
-  const runtimeToken =
-    stored.runtimeToken ?? nonEmptyString(env.VITE_RUNTIME_API_TOKEN) ?? "";
-  const quireRwToken =
-    stored.quireRwToken ??
-    nonEmptyString(env.VITE_QUIRE_RW_TOKEN) ??
-    runtimeToken;
-  const quireRoToken =
-    stored.quireRoToken ??
-    nonEmptyString(env.VITE_QUIRE_RO_TOKEN) ??
-    quireRwToken;
-  return {
-    runtimeToken,
-    quireRoToken,
-    quireRwToken,
-  };
+  return null;
+}
+
+export function getAccessToken(): string {
+  return getAuthSession()?.token ?? "";
+}
+
+export function setAuthSession(session: AuthSession): void {
+  try {
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+  } catch {
+    // Ignore storage quota failures.
+  }
+  notifyAuthListeners();
+}
+
+export function updateStoredUser(user: AuthUser): void {
+  const current = getAuthSession();
+  if (!current) {
+    return;
+  }
+  setAuthSession({ token: current.token, user });
+}
+
+export function clearAuthSession(): void {
+  try {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // Ignore storage errors.
+  }
+  notifyAuthListeners();
 }
 
 export function bearerHeaders(token: string): Record<string, string> {

@@ -1,17 +1,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getToolMeta } from "@/components/chat/toolMeta";
+import { ChevronRightIcon } from "lucide-react";
+import { cn } from "cn";
 import { getToolCall } from "@/api/runtime";
-import {
-  Trace,
-  TraceCollapsible,
-  TraceCollapsibleContent,
-  TraceCollapsibleTrigger,
-  TraceDescription,
-  TraceIcon,
-  TraceLine,
-  TraceTitle,
-} from "@/components/ui/trace";
+import { getToolMeta } from "@/components/chat/toolMeta";
 
 export interface ToolCallTraceItem {
   toolCallId: string;
@@ -125,64 +117,73 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
   const inlineSummary = useMemo(() => extractToolInlineSummary(item), [item]);
   const durationBadge = formatDurationBadge(item.durationMs);
 
-  const lineStatus =
-    item.status === "running"
-      ? "running"
-      : item.status === "failed"
-        ? "error"
-        : undefined;
-
   return (
-    <Trace
+    <div
       data-tool-name={item.toolName}
       data-tool-status={item.status}
       data-slot="tool-trace"
+      className="w-full min-w-0"
     >
-      <TraceCollapsible open={open} onOpenChange={setOpen}>
-        <TraceCollapsibleTrigger showChevron={false}>
-          <TraceLine status={lineStatus} className="h-6 text-xs leading-5">
-            <TraceIcon>
-              <Icon
-                className={
-                  item.status === "running"
-                    ? "size-3.5 text-primary"
-                    : item.status === "failed"
-                      ? "size-3.5 text-destructive"
-                      : "size-3.5 text-muted-foreground"
-                }
-              />
-            </TraceIcon>
-            <TraceTitle className="text-xs">{meta.label}</TraceTitle>
-            {inlineSummary && (
-              <TraceDescription className="max-w-[210px] truncate text-[11px] text-muted-foreground/85">
-                {inlineSummary}
-              </TraceDescription>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+        className={cn(
+          "group/tool flex min-h-6 w-full max-w-full items-center gap-2 rounded-md px-1.5 py-0.5 text-left text-xs transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+          item.status === "running"
+            ? "text-foreground"
+            : item.status === "failed"
+              ? "text-destructive"
+              : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          <Icon
+            className={cn(
+              "size-3.5",
+              item.status === "running"
+                ? "text-primary"
+                : item.status === "failed"
+                  ? "text-destructive"
+                  : "text-muted-foreground",
             )}
-            {item.status === "running" && (
-              <span
-                data-slot="tool-running-dot"
-                aria-hidden="true"
-                className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary/80"
-              />
+          />
+        </span>
+        <span className="shrink-0 font-medium">{meta.label}</span>
+        {inlineSummary && (
+          <span className="max-w-[230px] truncate rounded bg-muted/70 px-1.5 py-0.2 font-mono text-[10.5px] text-muted-foreground">
+            {inlineSummary}
+          </span>
+        )}
+        <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground/75">
+          {item.status === "running" && (
+            <span
+              data-slot="tool-running-dot"
+              aria-hidden="true"
+              className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary/80"
+            />
+          )}
+          {item.status === "skipped" && <span>已跳过</span>}
+          {item.status === "failed" && (
+            <span className="text-destructive">失败</span>
+          )}
+          {durationBadge && <span>{durationBadge}</span>}
+          <ChevronRightIcon
+            className={cn(
+              "size-3 opacity-0 transition-all group-hover/tool:opacity-70",
+              open && "rotate-90 opacity-70",
             )}
-            {item.status === "skipped" && (
-              <TraceDescription className="text-[11px]">
-                已跳过
-              </TraceDescription>
-            )}
-            {item.status === "failed" && (
-              <TraceDescription className="text-[11px] text-destructive">
-                失败
-              </TraceDescription>
-            )}
-            {durationBadge && (
-              <TraceDescription className="text-[11px] tabular-nums">
-                {durationBadge}
-              </TraceDescription>
-            )}
-          </TraceLine>
-        </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent className="mt-1.5 pl-5">
+          />
+        </span>
+      </button>
+
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-150 ease-out",
+          open ? "mt-1 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden pl-6">
           <div className="space-y-2 rounded-lg border bg-muted/30 p-2.5 text-xs">
             <div className="font-mono text-[11px] text-muted-foreground">
               {item.toolName}
@@ -191,7 +192,7 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
               <div className="mb-1 text-[11px] font-medium text-muted-foreground">
                 Input
               </div>
-              <pre className="no-scrollbar max-h-40 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
+              <pre className="no-scrollbar max-h-40 overflow-auto rounded bg-background/80 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
                 {detailQuery.data
                   ? JSON.stringify(detailQuery.data.input, null, 2)
                   : item.inputPreview}
@@ -202,7 +203,7 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
                 <div className="mb-1 text-[11px] font-medium text-muted-foreground">
                   Output
                 </div>
-                <pre className="no-scrollbar max-h-48 overflow-auto rounded bg-background/70 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
+                <pre className="no-scrollbar max-h-48 overflow-auto rounded bg-background/80 p-2 font-mono text-[11px] whitespace-pre-wrap break-all">
                   {detailQuery.data
                     ? JSON.stringify(detailQuery.data.output, null, 2)
                     : item.outputPreview}
@@ -215,8 +216,8 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
               </div>
             )}
           </div>
-        </TraceCollapsibleContent>
-      </TraceCollapsible>
-    </Trace>
+        </div>
+      </div>
+    </div>
   );
 }

@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 pub mod admin_mcp;
+pub mod auth;
 pub mod bus;
 pub mod comment_refs;
 pub mod compaction;

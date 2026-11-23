@@ -1,5 +1,6 @@
-import { Fragment, memo, useState, type ReactNode } from "react";
-import { SparklesIcon } from "lucide-react";
+import { memo, useState, type ReactNode } from "react";
+import { ChevronRightIcon, SparklesIcon } from "lucide-react";
+import { cn } from "cn";
 import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
 import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import { SubagentTrace } from "@/components/chat/SubagentTrace";
@@ -16,16 +17,6 @@ import {
   type ExecutionSubagent,
   type RenderSegment,
 } from "@/components/chat/traceSegments";
-import {
-  Trace,
-  TraceCollapsible,
-  TraceCollapsibleContent,
-  TraceCollapsibleTrigger,
-  TraceDescription,
-  TraceIcon,
-  TraceLine,
-  TraceTitle,
-} from "@/components/ui/trace";
 import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveSubagentRun } from "@/lib/liveTrace";
 
@@ -54,7 +45,7 @@ function ActivityItems({
     );
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2 border-l border-border/70 pl-3">
       {items.map((item) => {
         if (item.kind === "thinking") {
           return (
@@ -90,33 +81,34 @@ function ActivitySegment({
   segment,
   questionSlots,
   showActiveDetails = true,
-  liveHeader,
 }: {
   sessionId: string;
   segment: ActivityRenderSegment;
   questionSlots?: Map<string, ReactNode>;
   showActiveDetails?: boolean;
-  liveHeader?: ReactNode;
 }) {
   const hasQuestion = activityHasQuestion(segment.items, questionSlots);
   const [userOpen, setUserOpen] = useState<boolean | undefined>(undefined);
   const summary = summarizeActivity(segment.items);
 
   if (segment.isActive) {
+    const visible = showActiveDetails || hasQuestion;
     return (
       <div
         data-slot="execution-activity"
         data-state="active"
-        className="w-full space-y-1.5"
+        className={cn(
+          "grid w-full transition-[grid-template-rows,opacity] duration-200 ease-out",
+          visible ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
       >
-        {liveHeader}
-        {(showActiveDetails || hasQuestion) && (
+        <div className="min-h-0 overflow-hidden">
           <ActivityItems
             sessionId={sessionId}
             items={segment.items}
             questionSlots={questionSlots}
           />
-        )}
+        </div>
       </div>
     );
   }
@@ -124,7 +116,7 @@ function ActivitySegment({
   const open = hasQuestion ? true : (userOpen ?? false);
   const summaryParts: string[] = [];
   if (summary.toolCount > 0) {
-    summaryParts.push(`${summary.toolCount} 次工具调用`);
+    summaryParts.push(`${summary.toolCount} 次工具`);
   }
   if (summary.subagentCount > 0) {
     summaryParts.push(`${summary.subagentCount} 个子代理`);
@@ -132,30 +124,48 @@ function ActivitySegment({
   const summaryText = summaryParts.join(" · ");
 
   return (
-    <Trace
+    <div
       data-slot="execution-activity"
       data-state="settled"
-      className="w-full"
+      className="w-full min-w-0"
     >
-      <TraceCollapsible open={open} onOpenChange={setUserOpen}>
-        <TraceCollapsibleTrigger data-activity-trigger="true">
-          <TraceLine className="h-6 text-xs leading-5">
-            <TraceIcon>
-              <SparklesIcon className="size-3.5 text-muted-foreground" />
-            </TraceIcon>
-            <TraceTitle>思考与执行过程</TraceTitle>
-            {summaryText && <TraceDescription>{summaryText}</TraceDescription>}
-          </TraceLine>
-        </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent>
+      <button
+        type="button"
+        data-activity-trigger="true"
+        aria-expanded={open}
+        onClick={() => setUserOpen((prev) => !(prev ?? open))}
+        className="inline-flex h-6 max-w-full items-center gap-1.5 rounded-md px-1 text-left text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <SparklesIcon className="size-3.5 shrink-0 text-muted-foreground/80" />
+        <span className="font-medium">思考与执行过程</span>
+        {summaryText && (
+          <span className="text-[11px] tabular-nums text-muted-foreground/75">
+            · {summaryText}
+          </span>
+        )}
+        <ChevronRightIcon
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+          open ? "mt-1.5 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
           <ActivityItems
             sessionId={sessionId}
             items={segment.items}
             questionSlots={questionSlots}
           />
-        </TraceCollapsibleContent>
-      </TraceCollapsible>
-    </Trace>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -164,58 +174,35 @@ const RenderSegments = memo(function RenderSegments({
   segments,
   questionSlots,
   showActiveDetails = true,
-  renderLiveHeader,
-  liveStreaming = false,
 }: {
   sessionId: string;
   segments: RenderSegment[];
   questionSlots?: Map<string, ReactNode>;
   showActiveDetails?: boolean;
-  renderLiveHeader?: () => ReactNode;
-  liveStreaming?: boolean;
 }) {
-  const activeIndex = segments.findLastIndex(
-    (segment) => segment.kind === "activity" && segment.isActive,
-  );
-  const lastSegment = segments[segments.length - 1];
-  const headerIndex =
-    activeIndex === -1 && renderLiveHeader && liveStreaming
-      ? lastSegment?.kind === "text" && lastSegment.isStreaming
-        ? segments.length - 1
-        : segments.length
-      : -1;
-
   return (
-    <div className="w-full space-y-1">
-      {segments.map((segment, index) => {
+    <div className="w-full space-y-2.5">
+      {segments.map((segment) => {
         if (segment.kind === "text") {
           return (
-            <Fragment key={segment.key}>
-              {headerIndex === index && renderLiveHeader?.()}
-              <SmoothStreamdown
-                text={segment.text}
-                isStreaming={segment.isStreaming}
-                className={`${CHAT_PROSE} pt-1`}
-              />
-            </Fragment>
+            <SmoothStreamdown
+              key={segment.key}
+              text={segment.text}
+              isStreaming={segment.isStreaming}
+              className={CHAT_PROSE}
+            />
           );
         }
         return (
-          <Fragment key={segment.key}>
-            {headerIndex === index && renderLiveHeader?.()}
-            <ActivitySegment
-              sessionId={sessionId}
-              segment={segment}
-              questionSlots={questionSlots}
-              showActiveDetails={showActiveDetails}
-              liveHeader={
-                index === activeIndex ? renderLiveHeader?.() : undefined
-              }
-            />
-          </Fragment>
+          <ActivitySegment
+            key={segment.key}
+            sessionId={sessionId}
+            segment={segment}
+            questionSlots={questionSlots}
+            showActiveDetails={showActiveDetails}
+          />
         );
       })}
-      {headerIndex === segments.length && renderLiveHeader?.()}
     </div>
   );
 });
@@ -285,15 +272,11 @@ export function LiveTraceSegments({
   segments,
   questionSlots,
   showActiveDetails = true,
-  renderLiveHeader,
-  liveStreaming = false,
 }: {
   sessionId: string;
   segments: RenderSegment[];
   questionSlots?: Map<string, ReactNode>;
   showActiveDetails?: boolean;
-  renderLiveHeader?: () => ReactNode;
-  liveStreaming?: boolean;
 }) {
   return (
     <RenderSegments
@@ -301,8 +284,6 @@ export function LiveTraceSegments({
       segments={segments}
       questionSlots={questionSlots}
       showActiveDetails={showActiveDetails}
-      renderLiveHeader={renderLiveHeader}
-      liveStreaming={liveStreaming}
     />
   );
 }

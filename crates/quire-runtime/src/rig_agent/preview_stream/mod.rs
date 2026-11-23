@@ -422,7 +422,7 @@ impl PreviewState {
             doc_id: Arc::clone(&execution.doc_id),
             report_store,
             base_url: config.quire_base_url.clone(),
-            token: config.quire_rw_token.clone(),
+            token: SecretString::from(String::new()),
             actor: execution.agent_id.clone(),
             throttle_ms: config.preview_throttle_ms,
             streams: HashMap::new(),

@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 import { deleteSession, listSessions, updateSession } from "@/api/runtime";
 import { ProductBrand } from "@/components/layout/ProductBrand";
+import { SidebarUserFooter } from "@/components/layout/SidebarUserFooter";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -354,6 +355,7 @@ export function AppSidebar() {
           </div>
         )}
       </SidebarContent>
+      <SidebarUserFooter />
     </Sidebar>
   );
 }

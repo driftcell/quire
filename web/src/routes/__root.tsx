@@ -1,14 +1,18 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   createRootRoute,
   Link,
   Outlet,
+  useNavigate,
   useRouterState,
 } from "@tanstack/react-router";
+import { LoaderCircleIcon } from "lucide-react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { updatePreferences, useUiPreferences } from "@/lib/preferences";
 
 const queryClient = new QueryClient({
@@ -25,21 +29,58 @@ export const Route = createRootRoute({
   notFoundComponent: NotFoundPage,
 });
 
-function RootLayout() {
+function isStandalonePublicRoute(pathname: string): boolean {
+  return (
+    pathname === "/login" ||
+    pathname === "/register" ||
+    pathname.endsWith("/print") ||
+    pathname.endsWith("/preview")
+  );
+}
+
+function isAuthRoute(pathname: string): boolean {
+  return pathname === "/login" || pathname === "/register";
+}
+
+function RootShell() {
   const pathname = useRouterState({
     select: (state) => state.location.pathname,
   });
-  const isPrintRoute = pathname.endsWith("/print");
-
+  const navigate = useNavigate();
+  const { isAuthenticated, isInitializing } = useAuth();
   const prefs = useUiPreferences();
+
+  const publicRoute = isStandalonePublicRoute(pathname);
+  const authRoute = isAuthRoute(pathname);
+
+  useEffect(() => {
+    if (isInitializing) {
+      return;
+    }
+    if (!isAuthenticated && !publicRoute) {
+      void navigate({ to: "/login", replace: true });
+    } else if (isAuthenticated && authRoute) {
+      void navigate({ to: "/", replace: true });
+    }
+  }, [authRoute, isAuthenticated, isInitializing, navigate, publicRoute]);
 
   const handleLeftOpenChange = (open: boolean) => {
     updatePreferences({ leftSidebarOpen: open });
   };
 
-  const content = isPrintRoute ? (
-    <Outlet />
-  ) : (
+  if (publicRoute) {
+    return <Outlet />;
+  }
+
+  if (isInitializing || !isAuthenticated) {
+    return (
+      <div className="flex h-svh items-center justify-center bg-background">
+        <LoaderCircleIcon className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
     <SidebarProvider
       open={prefs.leftSidebarOpen}
       onOpenChange={handleLeftOpenChange}
@@ -50,13 +91,17 @@ function RootLayout() {
       </SidebarInset>
     </SidebarProvider>
   );
+}
 
+function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        {content}
-        <Toaster />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <RootShell />
+          <Toaster />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

@@ -137,8 +137,8 @@ export function SessionChatPane({
       <div
         className={
           hasReportData
-            ? "shrink-0 bg-background/95 px-3 pt-1 pb-3"
-            : "shrink-0 bg-background/95 px-4 pt-1 pb-5"
+            ? "shrink-0 border-t border-border/40 bg-gradient-to-t from-background via-background to-background/85 px-3 pt-2 pb-3"
+            : "shrink-0 border-t border-border/40 bg-gradient-to-t from-background via-background to-background/85 px-4 pt-2 pb-5"
         }
       >
         <div

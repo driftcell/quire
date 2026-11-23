@@ -1,22 +1,6 @@
-import { memo, useEffect, useState } from "react";
-import { BrainIcon } from "lucide-react";
-import {
-  MessageScroller,
-  MessageScrollerContent,
-  MessageScrollerItem,
-  MessageScrollerProvider,
-  MessageScrollerViewport,
-} from "@/components/ui/message-scroller";
-import {
-  Trace,
-  TraceCollapsible,
-  TraceCollapsibleContent,
-  TraceCollapsibleTrigger,
-  TraceDescription,
-  TraceIcon,
-  TraceLine,
-  TraceTitle,
-} from "@/components/ui/trace";
+import { memo, useEffect, useRef, useState } from "react";
+import { BrainIcon, ChevronRightIcon } from "lucide-react";
+import { cn } from "cn";
 import { useSmoothStreamText } from "@/hooks/useSmoothStreamText";
 
 export interface ThinkingTraceProps {
@@ -51,9 +35,12 @@ export const ThinkingTrace = memo(function ThinkingTrace({
   startedAtMs,
   durationMs,
 }: ThinkingTraceProps) {
-  const [open, setOpen] = useState<boolean | undefined>(undefined);
+  const [userOpen, setUserOpen] = useState<boolean | undefined>(undefined);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const expanded = open ?? (autoExpand && (isStreaming || isActive));
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+
+  const expanded = userOpen ?? (autoExpand && (isStreaming || isActive));
   const { text: smoothedContent } = useSmoothStreamText(
     content,
     isStreaming && expanded,
@@ -72,7 +59,7 @@ export const ThinkingTrace = memo(function ThinkingTrace({
   const shownSeconds = isStreaming ? elapsedSeconds : settledSeconds;
   const hasDuration = shownSeconds > 0;
   const title = isStreaming
-    ? "正在思考"
+    ? "正在深度思考"
     : hasDuration
       ? "思考用时"
       : "思考过程";
@@ -87,55 +74,84 @@ export const ThinkingTrace = memo(function ThinkingTrace({
     return () => window.clearInterval(timer);
   }, [isStreaming, startedAtMs]);
 
+  useEffect(() => {
+    if (!expanded || !isStreaming || !stickToBottomRef.current) {
+      return;
+    }
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [expanded, isStreaming, smoothedContent]);
+
   if (!hasContent) {
     return null;
   }
 
   return (
-    <Trace data-slot="thinking-trace" data-duration-ms={durationMs}>
-      <TraceCollapsible open={expanded} onOpenChange={setOpen}>
-        <TraceCollapsibleTrigger>
-          <TraceLine
-            status={isStreaming ? "running" : undefined}
-            className="h-6 text-xs leading-5"
-          >
-            <TraceIcon>
-              <BrainIcon
-                className={
-                  isStreaming
-                    ? "size-3.5 text-primary"
-                    : "size-3.5 text-muted-foreground"
-                }
-              />
-            </TraceIcon>
-            <TraceTitle>{title}</TraceTitle>
-            {hasDuration && (
-              <TraceDescription className="tabular-nums">
-                {formatDurationSeconds(shownSeconds)}
-              </TraceDescription>
+    <div
+      data-slot="thinking-trace"
+      data-duration-ms={durationMs}
+      className="w-full min-w-0"
+    >
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => setUserOpen((prev) => !(prev ?? expanded))}
+        className="group/thinking inline-flex h-6 max-w-full items-center gap-2 rounded-md text-left text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <span className="flex size-4 shrink-0 items-center justify-center">
+          <BrainIcon
+            className={cn(
+              "size-3.5",
+              isStreaming ? "text-primary animate-pulse" : "text-muted-foreground",
             )}
-          </TraceLine>
-        </TraceCollapsibleTrigger>
-        <TraceCollapsibleContent className="mt-1 pl-6">
-          <MessageScrollerProvider
-            autoScroll
-            defaultScrollPosition="end"
-            scrollEdgeThreshold={24}
+          />
+        </span>
+        <span
+          className={cn(
+            "font-medium",
+            isStreaming && "text-foreground",
+          )}
+        >
+          {title}
+        </span>
+        {hasDuration && (
+          <span className="tabular-nums text-[11px] text-muted-foreground/75">
+            {formatDurationSeconds(shownSeconds)}
+          </span>
+        )}
+        <ChevronRightIcon
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-200",
+            expanded && "rotate-90",
+          )}
+        />
+      </button>
+
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+          expanded ? "mt-1.5 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div
+            ref={scrollRef}
+            onScroll={(event) => {
+              const el = event.currentTarget;
+              const distanceToBottom =
+                el.scrollHeight - el.scrollTop - el.clientHeight;
+              stickToBottomRef.current = distanceToBottom < 24;
+            }}
+            className="no-scrollbar max-h-36 overflow-y-auto rounded-r-lg border-l-2 border-primary/25 bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground"
           >
-            <MessageScroller className="max-h-32">
-              <MessageScrollerViewport className="scroll-fade pr-2 text-xs leading-5 text-muted-foreground">
-                <MessageScrollerContent className="gap-0">
-                  <MessageScrollerItem messageId="thinking-content">
-                    <div className="whitespace-pre-wrap break-words">
-                      {smoothedContent}
-                    </div>
-                  </MessageScrollerItem>
-                </MessageScrollerContent>
-              </MessageScrollerViewport>
-            </MessageScroller>
-          </MessageScrollerProvider>
-        </TraceCollapsibleContent>
-      </TraceCollapsible>
-    </Trace>
+            <div className="whitespace-pre-wrap break-words">
+              {smoothedContent}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 });

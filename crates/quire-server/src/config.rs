@@ -10,12 +10,12 @@ pub struct Config {
     pub bind_addr: SocketAddr,
     pub database_url: SecretString,
     pub redis_url: SecretString,
-    /// Token allowed to call MCP and mutating admin routes.
+    /// Optional token allowed to call MCP and mutating routes (standalone mode).
     pub rw_token: Option<SecretString>,
-    /// Token allowed to call read-only frontend routes. RW tokens are also accepted.
+    /// Optional token allowed to call read-only routes (standalone mode).
     pub ro_token: Option<SecretString>,
-    /// Optional unified runtime API token accepted when mounted inside `quire-runtime`.
-    pub extra_rw_token: Option<SecretString>,
+    /// Shared HS256 JWT secret used to verify SaaS user & preview tokens.
+    pub jwt_secret: Option<SecretString>,
     /// Allowed Host headers for the MCP Streamable HTTP endpoint.
     pub allowed_hosts: Vec<String>,
     /// Browser origins allowed to call the read-only API. Empty means permissive (dev default).
@@ -57,6 +57,10 @@ impl Config {
             .ok()
             .filter(|value| !value.trim().is_empty())
             .map(SecretString::from);
+        let jwt_secret = env::var("JWT_SECRET")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(SecretString::from);
         let allowed_hosts = env::var("MCP_ALLOWED_HOSTS")
             .ok()
             .map(|value| split_csv(&value))
@@ -92,7 +96,7 @@ impl Config {
             redis_url,
             rw_token,
             ro_token,
-            extra_rw_token: None,
+            jwt_secret,
             allowed_hosts,
             cors_allowed_origins,
             sse_heartbeat,

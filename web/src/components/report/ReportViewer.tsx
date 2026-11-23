@@ -540,7 +540,12 @@ export function ReportViewer({
           {continuousItems.map((item: MixedRenderItem) => (
             <div key={item.key}>
               {item.kind === "preview" ? (
-                <EphemeralPreviewCard preview={item.preview} />
+                <EphemeralPreviewCard
+                  preview={item.preview}
+                  citationMap={computed.citation_map}
+                  bibliographyById={bibliographyById}
+                  onCitationClick={scrollToSource}
+                />
               ) : (
                 <ReportBlockItem
                   slice={item.slice}

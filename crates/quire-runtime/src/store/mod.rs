@@ -199,5 +199,6 @@ mod sessions;
 mod tests;
 #[cfg(test)]
 mod trace_tests;
+mod users;
 
 pub(crate) use helpers::*;

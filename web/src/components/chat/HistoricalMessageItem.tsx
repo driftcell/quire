@@ -2,8 +2,8 @@ import { memo, type ReactNode } from "react";
 import { CopyIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
+import { AgentAvatar } from "@/components/chat/agentAvatar";
 import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
-// Shared inline and transcript messages use UserMessageBubble.
 import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import {
   CHAT_PROSE,
@@ -21,7 +21,6 @@ import type {
   RunTraceSummary,
   SessionMessage,
 } from "@/contracts/session-protocol";
-// Structured user metadata stays separate from content.
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
   month: "numeric",
@@ -131,22 +130,20 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
     msg.content.trim().length > 0 ? msg.content : textSegmentContent;
 
   if (msg.role === "user") {
-    const userRefs = userCommentRefs;
-    const userBody = msg.content;
     return (
-      <MessageGroup className="gap-1">
+      <MessageGroup className="group/user gap-1">
         {sentAt && (
           <time
             dateTime={msg.created_at}
             title={sentAt.full}
-            className="self-end px-1 text-[11px] leading-none text-muted-foreground/70 tabular-nums"
+            className="self-end px-1 text-[10.5px] leading-none text-muted-foreground/60 tabular-nums opacity-0 transition-opacity group-hover/user:opacity-100"
           >
             {sentAt.label}
           </time>
         )}
         <UserMessageBubble
-          body={userBody}
-          commentRefs={userRefs}
+          body={msg.content}
+          commentRefs={userCommentRefs}
           attachmentIds={msgAttachmentIds}
           attachmentMap={attachmentMap}
           onJumpToSection={onJumpToSection}
@@ -157,40 +154,43 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
 
   return (
     <MessageGroup className="group/assistant">
-      <Message align="start" className="flex-col items-start">
-        {trace && (
-          <HistoricalRunTrace
-            sessionId={sessionId}
-            trace={trace}
-            questionSlots={questionSlots}
-          />
-        )}
-        {!hasTextSegment && (
-          <MessageContent className={CHAT_PROSE}>
-            <Streamdown
-              mode="static"
-              isAnimating={false}
-              animated={false}
-              controls={STREAMDOWN_CONTROLS}
-            >
-              {msg.content}
-            </Streamdown>
-          </MessageContent>
-        )}
-        <div className="-mt-1 flex w-full items-center gap-2">
-          {sentAt && (
-            <time
-              dateTime={msg.created_at}
-              title={sentAt.full}
-              className="px-1 text-[11px] text-muted-foreground/60 tabular-nums"
-            >
-              {sentAt.label}
-            </time>
+      <Message align="start" className="items-start gap-2.5">
+        <AgentAvatar actor="main" size="sm" className="mt-0.5" />
+        <MessageContent className="min-w-0 flex-1 gap-2">
+          {trace && (
+            <HistoricalRunTrace
+              sessionId={sessionId}
+              trace={trace}
+              questionSlots={questionSlots}
+            />
           )}
-          <div className="ml-auto flex items-center gap-1">
-            <CopyMessageButton content={copyContent} />
+          {!hasTextSegment && msg.content.trim().length > 0 && (
+            <div className={CHAT_PROSE}>
+              <Streamdown
+                mode="static"
+                isAnimating={false}
+                animated={false}
+                controls={STREAMDOWN_CONTROLS}
+              >
+                {msg.content}
+              </Streamdown>
+            </div>
+          )}
+          <div className="flex w-full items-center gap-2 pt-0.5">
+            {sentAt && (
+              <time
+                dateTime={msg.created_at}
+                title={sentAt.full}
+                className="text-[11px] text-muted-foreground/60 tabular-nums"
+              >
+                {sentAt.label}
+              </time>
+            )}
+            <div className="ml-auto flex items-center gap-1 opacity-70 transition-opacity group-hover/assistant:opacity-100">
+              <CopyMessageButton content={copyContent} />
+            </div>
           </div>
-        </div>
+        </MessageContent>
       </Message>
     </MessageGroup>
   );

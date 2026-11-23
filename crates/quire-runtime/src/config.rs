@@ -16,9 +16,11 @@ pub struct Config {
     pub redis_url: String,
     pub bind_addr: String,
     pub quire_base_url: String,
-    pub quire_rw_token: SecretString,
-    pub quire_ro_token: SecretString,
-    pub api_token: SecretString,
+    pub jwt_secret: SecretString,
+    pub jwt_ttl_secs: u64,
+    pub admin_username: String,
+    pub admin_email: Option<String>,
+    pub admin_password: SecretString,
     pub model_api_key: Option<SecretString>,
     pub model_provider: String,
     pub model_base_url: Option<String>,
@@ -44,9 +46,11 @@ impl Debug for Config {
             .field("redis_url", &"[REDACTED]")
             .field("bind_addr", &self.bind_addr)
             .field("quire_base_url", &self.quire_base_url)
-            .field("quire_rw_token", &"[REDACTED]")
-            .field("quire_ro_token", &"[REDACTED]")
-            .field("api_token", &"[REDACTED]")
+            .field("jwt_secret", &"[REDACTED]")
+            .field("jwt_ttl_secs", &self.jwt_ttl_secs)
+            .field("admin_username", &self.admin_username)
+            .field("admin_email", &self.admin_email)
+            .field("admin_password", &"[REDACTED]")
             .field(
                 "model_api_key",
                 &self.model_api_key.as_ref().map(|_| "[REDACTED]"),
@@ -80,9 +84,40 @@ impl Config {
         let bind_addr = env::var("RUNTIME_BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:8081".into());
         let quire_base_url =
             env::var("QUIRE_BASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
-        let quire_rw_token = SecretString::from(env::var("QUIRE_RW_TOKEN").unwrap_or_default());
-        let quire_ro_token = SecretString::from(env::var("QUIRE_RO_TOKEN").unwrap_or_default());
-        let api_token = SecretString::from(env::var("RUNTIME_API_TOKEN").unwrap_or_default());
+        let master_key = env::var("RUNTIME_MASTER_KEY")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(SecretString::from);
+        let jwt_secret_raw = env::var("JWT_SECRET")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| {
+                env::var("RUNTIME_MASTER_KEY")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+            })
+            .unwrap_or_else(|| "quire-dev-jwt-secret-change-in-production".into());
+        let jwt_secret = SecretString::from(jwt_secret_raw);
+        let jwt_ttl_secs = env::var("JWT_TTL_SECS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(604_800)
+            .clamp(300, 31_536_000);
+        let admin_username = env::var("ADMIN_USERNAME")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "admin".into());
+        let admin_email = env::var("ADMIN_EMAIL")
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty());
+        let admin_password = SecretString::from(
+            env::var("ADMIN_PASSWORD")
+                .ok()
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "admin123456".into()),
+        );
         let model_api_key = env::var("MODEL_API_KEY")
             .ok()
             .filter(|value| !value.trim().is_empty())
@@ -90,10 +125,6 @@ impl Config {
         let model_provider =
             env::var("RUNTIME_MODEL_PROVIDER").unwrap_or_else(|_| "mock".to_string());
         let model_base_url = env::var("MODEL_BASE_URL").ok();
-        let master_key = env::var("RUNTIME_MASTER_KEY")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .map(SecretString::from);
         let models_dev_url = env::var("MODELS_DEV_URL")
             .unwrap_or_else(|_| "https://models.dev/api.json".to_string());
         let workspace_dir = env::var("QUIRE_RUNTIME_WORKSPACE")
@@ -129,9 +160,11 @@ impl Config {
             redis_url,
             bind_addr,
             quire_base_url,
-            quire_rw_token,
-            quire_ro_token,
-            api_token,
+            jwt_secret,
+            jwt_ttl_secs,
+            admin_username,
+            admin_email,
+            admin_password,
             model_api_key,
             model_provider,
             model_base_url,
@@ -192,9 +225,11 @@ mod tests {
             redis_url: "redis://:secret@cache".into(),
             bind_addr: "127.0.0.1:8081".into(),
             quire_base_url: "http://localhost:8080".into(),
-            quire_rw_token: SecretString::from("rw-secret"),
-            quire_ro_token: SecretString::from("ro-secret"),
-            api_token: SecretString::from("api-secret"),
+            jwt_secret: SecretString::from("jwt-secret-value"),
+            jwt_ttl_secs: 604_800,
+            admin_username: "admin".into(),
+            admin_email: None,
+            admin_password: SecretString::from("admin-secret-value"),
             model_api_key: Some(SecretString::from("model-secret")),
             model_provider: "mock".into(),
             model_base_url: None,
@@ -213,7 +248,8 @@ mod tests {
         };
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[REDACTED]"));
-        assert!(!rendered.contains("rw-secret"));
+        assert!(!rendered.contains("jwt-secret-value"));
+        assert!(!rendered.contains("admin-secret-value"));
         assert!(!rendered.contains("model-secret"));
         assert!(!rendered.contains("master-secret"));
         assert!(!rendered.contains("sandbox-secret"));

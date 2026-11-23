@@ -31,6 +31,12 @@ pub enum RuntimeError {
     PendingQueueItemNotFound(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+    #[error("forbidden: {0}")]
+    Forbidden(String),
+    #[error("conflict: {0}")]
+    Conflict(String),
     #[error("compaction conflict: {0}")]
     CompactionConflict(String),
     #[error("knowledge-base branch promotion conflict")]
@@ -49,6 +55,9 @@ impl RuntimeError {
             Self::ChartPreviewNotFound(_) => "CHART_PREVIEW_NOT_FOUND",
             Self::PendingQueueItemNotFound(_) => "QUEUE_ITEM_NOT_FOUND",
             Self::InvalidRequest(_) => "INVALID_REQUEST",
+            Self::Unauthorized(_) => "UNAUTHORIZED",
+            Self::Forbidden(_) => "FORBIDDEN",
+            Self::Conflict(_) => "CONFLICT",
             Self::CompactionConflict(_) => "COMPACTION_CONFLICT",
             Self::KbConflict(_) => "KB_BRANCH_CONFLICT",
             Self::Database(_)
@@ -79,6 +88,11 @@ impl RuntimeError {
             Self::InvalidRequest(_) => {
                 "Check the request body against the session protocol schema."
             }
+            Self::Unauthorized(_) => "Sign in again or provide a valid Bearer JWT.",
+            Self::Forbidden(_) => "This action requires administrator privileges.",
+            Self::Conflict(_) => {
+                "Use a different username/email or retry after resolving the conflict."
+            }
             Self::CompactionConflict(_) => {
                 "Wait for the active run to finish, then retry compaction."
             }
@@ -100,6 +114,9 @@ impl IntoResponse for RuntimeError {
             | Self::ChartPreviewNotFound(_)
             | Self::PendingQueueItemNotFound(_) => StatusCode::NOT_FOUND,
             Self::InvalidRequest(_) => StatusCode::BAD_REQUEST,
+            Self::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            Self::Forbidden(_) => StatusCode::FORBIDDEN,
+            Self::Conflict(_) => StatusCode::CONFLICT,
             Self::CompactionConflict(_) => StatusCode::CONFLICT,
             Self::KbConflict(_) => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
@@ -112,6 +129,9 @@ impl IntoResponse for RuntimeError {
             | Self::ChartPreviewNotFound(_)
             | Self::PendingQueueItemNotFound(_)
             | Self::InvalidRequest(_)
+            | Self::Unauthorized(_)
+            | Self::Forbidden(_)
+            | Self::Conflict(_)
             | Self::CompactionConflict(_)
             | Self::KbConflict(_) => self.to_string(),
             _ => {

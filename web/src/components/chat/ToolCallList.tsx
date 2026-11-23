@@ -34,12 +34,12 @@ export const ToolCallList = memo(function ToolCallList({
 
   if (tools.length <= COLLAPSE_THRESHOLD || expanded) {
     return (
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         {tools.length > COLLAPSE_THRESHOLD && (
           <button
             type="button"
             onClick={() => setExpanded(false)}
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground"
+            className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-0.5 text-[11px] text-muted-foreground tabular-nums transition-colors hover:bg-muted hover:text-foreground"
           >
             <ChevronUpIcon className="size-3" />
             <span>
@@ -65,16 +65,16 @@ export const ToolCallList = memo(function ToolCallList({
   const runningHidden = restHidden.filter((t) => t.status === "running");
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
       {restHidden.length > 0 && (
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground tabular-nums hover:bg-muted hover:text-foreground"
+          className="mb-1 inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-muted/40 px-2.5 py-0.5 text-[11px] text-muted-foreground tabular-nums transition-colors hover:bg-muted hover:text-foreground"
         >
           <ChevronDownIcon className="size-3" />
           <span>
-            显示更早的 {restHidden.length} 个调用（共 {tools.length} 个）
+            展开更早的 {restHidden.length} 个步骤（共 {tools.length} 步）
           </span>
         </button>
       )}

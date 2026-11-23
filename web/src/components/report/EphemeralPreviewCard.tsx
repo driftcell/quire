@@ -1,60 +1,96 @@
+import { memo, type ReactNode } from "react";
+import {
+  AgentAvatar,
+  resolveAgentIdentity,
+} from "@/components/chat/agentAvatar";
+import { InlineMarkdown } from "@/components/report/InlineMarkdown";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { useSmoothStreamText } from "@/hooks/useSmoothStreamText";
 import type {
+  BibliographyEntry,
+  CitationMapEntry,
   EphemeralPreviewEvent,
   PreviewAnchor,
 } from "@/contracts/report-protocol";
 
-function headingPreviewClass(level: number | null | undefined): string {
-  switch (level) {
-    case 1:
-      return "text-xl font-bold tracking-tight";
-    case 2:
-      return "text-[17px] font-semibold";
-    case 3:
-      return "text-[15px] font-semibold";
-    case 4:
-      return "text-[14px] font-semibold";
-    default:
-      return "text-[13px] font-semibold";
-  }
-}
-
-function blockTypeBadgeLabel(
+function blockTypeLabel(
   blockType: string,
   level: number | null | undefined,
 ): string {
   switch (blockType) {
     case "heading":
-      return level ? `章节标题 H${level}` : "章节标题";
+      return level ? `H${level} 标题` : "章节标题";
     case "paragraph":
-      return "正文撰写";
+      return "正文段落";
     case "quote":
-      return "核心引述";
+      return "引用块";
     case "table":
       return "数据表格";
     case "echarts":
-      return "图表可视化";
+      return "ECharts 图表";
     case "custom_html":
-      return "定制版式";
+      return "自定义版式";
     default:
-      return "内容块";
+      return "报告块";
   }
 }
 
-function anchorBadgeLabel(anchor: PreviewAnchor): string | null {
+function anchorSummaryLabel(anchor: PreviewAnchor): string | null {
   switch (anchor.type) {
     case "replace_block":
-      return anchor.block_id !== "pending" ? `修订 #${anchor.block_id}` : null;
+      return anchor.block_id !== "pending" ? `更新 #${anchor.block_id}` : null;
     case "after_block":
-      return `插入于 #${anchor.block_id} 后`;
+      return `插入于 #${anchor.block_id} 之后`;
     case "before_block":
-      return `插入于 #${anchor.block_id} 前`;
+      return `插入于 #${anchor.block_id} 之前`;
     case "append_to_section":
       return `追加至章节 #${anchor.section_id}`;
     case "append_to_doc":
-      return "追加至文末";
+      return "追加至报告末尾";
     default:
       return null;
+  }
+}
+
+function renderHeadingTag(
+  level: number,
+  content: ReactNode,
+) {
+  switch (level) {
+    case 1:
+      return (
+        <h1 className="mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-[var(--rpt-ink)]">
+          {content}
+        </h1>
+      );
+    case 2:
+      return (
+        <h2 className="mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-[var(--rpt-ink)]">
+          {content}
+        </h2>
+      );
+    case 3:
+      return (
+        <h3 className="mt-5 mb-2 text-[15px] font-semibold text-[var(--rpt-ink)]">
+          {content}
+        </h3>
+      );
+    case 4:
+      return (
+        <h4 className="mt-4 mb-1.5 text-[14px] font-semibold text-[var(--rpt-ink)]">
+          {content}
+        </h4>
+      );
+    default:
+      return (
+        <h5 className="mt-3 mb-1 text-[13px] font-semibold text-[var(--rpt-ink)]">
+          {content}
+        </h5>
+      );
   }
 }
 
@@ -96,184 +132,267 @@ function parseStreamingTableText(
   return { headers, rows, footerNote };
 }
 
+function StreamingCursor() {
+  return (
+    <span
+      aria-hidden="true"
+      className="ml-0.5 inline-block h-[1em] w-[1.5px] translate-y-[0.12em] animate-pulse rounded-full bg-[var(--rpt-accent,#1E3A5F)]/80"
+    />
+  );
+}
+
+const ReportAuthorMarginBadge = memo(function ReportAuthorMarginBadge({
+  actor,
+  blockType,
+  level,
+  blockId,
+  anchor,
+}: {
+  actor: string;
+  blockType: string;
+  level: number | null | undefined;
+  blockId?: string | null;
+  anchor: PreviewAnchor;
+}) {
+  const identity = resolveAgentIdentity(actor);
+  const typeText = blockTypeLabel(blockType, level);
+  const anchorText = anchorSummaryLabel(anchor);
+  const cleanBlockId =
+    blockId && blockId !== "pending" && !blockId.startsWith("preview")
+      ? blockId
+      : null;
+
+  return (
+    <HoverCard>
+      <HoverCardTrigger
+        render={
+          <button
+            type="button"
+            aria-label={`${identity.label} 正在编写${typeText}`}
+            className="inline-flex size-6 items-center justify-center rounded-full bg-background/95 shadow-xs ring-1 ring-border/70 transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          />
+        }
+      >
+        <AgentAvatar actor={actor} size="xs" active />
+      </HoverCardTrigger>
+      <HoverCardContent side="left" align="start" sideOffset={8} className="w-60 p-3">
+        <div className="flex items-start gap-2.5">
+          <AgentAvatar actor={actor} size="md" active />
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate text-xs font-semibold text-foreground">
+                {identity.label}
+              </span>
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
+                编写中
+              </span>
+            </div>
+            <div className="text-[11px] text-muted-foreground">
+              {identity.role}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10.5px] text-muted-foreground">
+              <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground/80">
+                {typeText}
+              </span>
+              {cleanBlockId && (
+                <span className="font-mono text-[10px] text-muted-foreground/80">
+                  #{cleanBlockId}
+                </span>
+              )}
+            </div>
+            {anchorText && (
+              <div className="text-[10.5px] text-muted-foreground/80">
+                {anchorText}
+              </div>
+            )}
+          </div>
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  );
+});
+
+export interface EphemeralPreviewCardProps {
+  preview: EphemeralPreviewEvent;
+  citationMap?: Record<string, CitationMapEntry>;
+  bibliographyById?: Map<string, BibliographyEntry>;
+  onCitationClick?: (sourceId: string) => void;
+}
+
+/**
+ * WYSIWYG streaming block renderer: renders the exact report block element
+ * (heading, paragraph, quote, table, figure) with matching typography and
+ * inline Markdown so the streaming tail transitions seamlessly into the
+ * committed `ReportBlockItem`, while placing the active author's avatar in
+ * the left margin with hover details.
+ */
 export function EphemeralPreviewCard({
   preview,
-}: {
-  preview: EphemeralPreviewEvent;
-}) {
+  citationMap,
+  bibliographyById,
+  onCitationClick,
+}: EphemeralPreviewCardProps) {
   const { block } = preview;
   const { text: smoothedText } = useSmoothStreamText(block.text ?? "", true);
-  const cursor = (
-    <span className="ml-0.5 inline-block h-[1.05em] w-[2px] animate-pulse bg-[var(--rpt-accent,#1E3A5F)]/75 align-text-bottom" />
-  );
-  const paragraphClass =
-    "m-0 whitespace-pre-wrap text-[14.5px] leading-[1.82] text-[var(--rpt-ink,#1F2937)]";
 
-  let body: React.ReactNode;
+  const renderInline = (text: string) => (
+    <InlineMarkdown
+      text={text}
+      citationMap={citationMap}
+      bibliographyById={bibliographyById}
+      onCitationClick={onCitationClick}
+    />
+  );
+
+  let body: ReactNode = null;
   if (block.block_type === "heading") {
-    body = (
-      <div
-        className={`font-[family-name:var(--rpt-font-heading)] text-[var(--rpt-ink,#1F2937)] ${headingPreviewClass(block.level)}`}
-      >
-        {smoothedText}
-        {cursor}
-      </div>
+    body = renderHeadingTag(
+      block.level ?? 2,
+      <>
+        {renderInline(smoothedText)}
+        <StreamingCursor />
+      </>,
     );
   } else if (block.block_type === "quote") {
     body = (
-      <blockquote className="m-0 rounded-r-md border-l-2 border-[var(--rpt-accent,#1E3A5F)]/50 bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700">
-        {smoothedText}
-        {cursor}
+      <blockquote className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700">
+        {renderInline(smoothedText)}
+        <StreamingCursor />
       </blockquote>
     );
   } else if (block.block_type === "table") {
     const parsedTable = parseStreamingTableText(block.text);
+    const titleText = block.title?.trim();
     if (parsedTable && parsedTable.headers.length > 0) {
       body = (
-        <div className="overflow-hidden rounded-lg border border-slate-200/90 bg-white/90 shadow-2xs">
+        <figure className="my-5 space-y-2">
+          {titleText && (
+            <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+              {titleText}
+            </figcaption>
+          )}
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left text-[12.5px]">
+            <table className="w-full border-collapse border-y-[1.5px] border-slate-800 text-left text-[12.5px]">
               <thead>
-                <tr className="border-b border-slate-200/80 bg-slate-50/90 text-slate-600">
+                <tr className="border-b border-slate-300 bg-slate-50/80 text-slate-700">
                   {parsedTable.headers.map((header, idx) => (
                     <th
                       key={`${header}-${idx}`}
-                      className="px-3 py-2 font-semibold whitespace-nowrap"
+                      className="px-2.5 py-2 font-semibold whitespace-nowrap"
                     >
                       {header}
                     </th>
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-200/80">
                 {parsedTable.rows.map((cells, rIdx) => (
-                  <tr key={`row-${rIdx}`} className="bg-white/70">
+                  <tr key={`row-${rIdx}`}>
                     {parsedTable.headers.map((_, cIdx) => (
                       <td
                         key={`cell-${rIdx}-${cIdx}`}
-                        className="px-3 py-1.5 text-slate-700"
+                        className="px-2.5 py-1.5 text-slate-700"
                       >
                         {cells[cIdx] ?? ""}
                         {rIdx === parsedTable.rows.length - 1 &&
-                          cIdx === parsedTable.headers.length - 1 &&
-                          cursor}
+                          cIdx === parsedTable.headers.length - 1 && (
+                            <StreamingCursor />
+                          )}
                       </td>
                     ))}
                   </tr>
                 ))}
-                <tr className="bg-slate-50/40" aria-hidden="true">
-                  {parsedTable.headers.map((_, idx) => (
-                    <td key={`skel-${idx}`} className="px-3 py-2">
-                      <span className="sr-only">加载中</span>
-                      <div className="h-2.5 w-3/4 animate-pulse rounded bg-slate-200/70" />
-                    </td>
-                  ))}
-                </tr>
               </tbody>
             </table>
           </div>
           {parsedTable.footerNote && (
-            <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-1.5 text-[11px] text-slate-500">
+            <div className="pt-0.5 text-[11.5px] text-slate-500">
               {parsedTable.footerNote}
             </div>
           )}
-        </div>
-      );
-    } else if (block.text) {
-      body = (
-        <p className={paragraphClass}>
-          {smoothedText}
-          {cursor}
-        </p>
+        </figure>
       );
     } else {
       body = (
-        <div className="space-y-1.5 rounded-lg border border-slate-200/80 bg-slate-100/80 p-2.5">
-          <div className="grid grid-cols-3 gap-2">
-            <div className="h-4 animate-pulse rounded bg-slate-200/80" />
-            <div className="h-4 animate-pulse rounded bg-slate-200/80" />
-            <div className="h-4 animate-pulse rounded bg-slate-200/80" />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="h-3.5 animate-pulse rounded bg-slate-200/60" />
-            <div className="h-3.5 animate-pulse rounded bg-slate-200/60" />
-            <div className="h-3.5 animate-pulse rounded bg-slate-200/60" />
-          </div>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="h-3.5 animate-pulse rounded bg-slate-200/40" />
-            <div className="h-3.5 animate-pulse rounded bg-slate-200/40" />
-            <div className="h-3.5 animate-pulse rounded bg-slate-200/40" />
-          </div>
-        </div>
+        <figure className="my-5 space-y-2">
+          {titleText && (
+            <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+              {titleText}
+              <StreamingCursor />
+            </figcaption>
+          )}
+          {block.text ? (
+            <p className="my-2 text-[13.5px] leading-[1.7] text-slate-600">
+              {renderInline(smoothedText)}
+              <StreamingCursor />
+            </p>
+          ) : (
+            <div className="h-24 rounded border border-dashed border-slate-200 bg-slate-50/50" />
+          )}
+        </figure>
       );
     }
-  } else if (block.block_type === "echarts") {
+  } else if (block.block_type === "echarts" || block.block_type === "custom_html") {
+    const titleText = block.title?.trim();
     body = (
-      <div className="space-y-2 rounded-lg border border-slate-200/80 bg-slate-50/80 p-3.5">
-        <div className="flex h-36 items-end justify-around gap-3 px-2 pt-2">
-          <div className="h-1/2 w-8 animate-pulse rounded-t bg-slate-200/80" />
-          <div className="h-4/5 w-8 animate-pulse rounded-t bg-slate-300/70" />
-          <div className="h-2/3 w-8 animate-pulse rounded-t bg-slate-200/70" />
-          <div className="h-full w-8 animate-pulse rounded-t bg-slate-300/60" />
-          <div className="h-3/5 w-8 animate-pulse rounded-t bg-slate-200/60" />
-        </div>
-        {block.text && (
-          <div className="border-t border-slate-200/60 pt-2 text-[12px] leading-relaxed text-slate-600">
-            {smoothedText}
-            {cursor}
+      <figure className="my-5 space-y-2">
+        <div className="flex min-h-[220px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/40 px-6 py-8 text-center">
+          <div className="flex items-end gap-2.5 opacity-45">
+            <div className="h-8 w-4 rounded-t bg-slate-300" />
+            <div className="h-14 w-4 rounded-t bg-slate-400" />
+            <div className="h-11 w-4 rounded-t bg-slate-300" />
+            <div className="h-16 w-4 rounded-t bg-slate-400" />
+            <div className="h-10 w-4 rounded-t bg-slate-300" />
           </div>
+          {block.text && (
+            <p className="mt-4 max-w-md text-[12.5px] leading-relaxed text-slate-600">
+              {renderInline(smoothedText)}
+              <StreamingCursor />
+            </p>
+          )}
+        </div>
+        {titleText && (
+          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+            {titleText}
+          </figcaption>
         )}
-      </div>
-    );
-  } else if (block.text) {
-    body = (
-      <p className={paragraphClass}>
-        {smoothedText}
-        {cursor}
-      </p>
+      </figure>
     );
   } else {
-    body = <div className="h-20 animate-pulse rounded-lg bg-slate-100/80" />;
+    body = (
+      <p className="my-3 text-[14.5px] leading-[1.82] tracking-[0.01em] text-[var(--rpt-ink)]">
+        {renderInline(smoothedText)}
+        <StreamingCursor />
+      </p>
+    );
   }
-
-  const actorLabel = preview.actor === "main" ? "主笔 Agent" : preview.actor;
-  const typeLabel = blockTypeBadgeLabel(block.block_type, block.level);
-  const anchorLabel = anchorBadgeLabel(preview.anchor);
-  const showBlockId =
-    block.block_id &&
-    block.block_id !== "pending" &&
-    !block.block_id.startsWith("preview");
 
   return (
     <div
       data-preview-id={preview.preview_id}
       data-block-id={block.block_id ?? undefined}
-      className="my-3 rounded-r-lg border-l-2 border-[var(--rpt-accent,#1E3A5F)]/55 bg-slate-50/45 py-2.5 pr-3 pl-3.5 transition-all duration-200"
+      data-block-kind={block.block_type}
+      className="group/preview relative"
     >
-      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="inline-flex items-center gap-1.5 font-medium text-[var(--rpt-accent,#1E3A5F)]">
-            <span className="size-1.5 animate-pulse rounded-full bg-[var(--rpt-accent,#1E3A5F)]" />
-            {actorLabel}
-          </span>
-          <span className="rounded bg-slate-200/70 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
-            {typeLabel}
-          </span>
-          {anchorLabel && (
-            <span className="text-[10.5px] text-slate-400">{anchorLabel}</span>
-          )}
-        </div>
-        {showBlockId && (
-          <span className="font-mono text-[10px] text-slate-400">
-            #{block.block_id}
-          </span>
-        )}
+      <div className="pointer-events-auto absolute top-0.5 right-full z-10 mr-2.5 hidden sm:flex print:hidden">
+        <ReportAuthorMarginBadge
+          actor={preview.actor}
+          blockType={block.block_type}
+          level={block.level}
+          blockId={block.block_id}
+          anchor={preview.anchor}
+        />
       </div>
-      {block.title && (
-        <div className="mb-1.5 font-[family-name:var(--rpt-font-heading)] text-[14.5px] font-semibold text-[var(--rpt-ink,#1F2937)]">
-          {block.title}
-        </div>
-      )}
+      <div className="mb-1 flex items-center gap-1.5 sm:hidden print:hidden">
+        <ReportAuthorMarginBadge
+          actor={preview.actor}
+          blockType={block.block_type}
+          level={block.level}
+          blockId={block.block_id}
+          anchor={preview.anchor}
+        />
+      </div>
       {body}
     </div>
   );

@@ -23,9 +23,7 @@ use quire_session_protocol::{
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
-use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
-use subtle::ConstantTimeEq;
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::warn;
@@ -62,6 +60,7 @@ pub fn router(service: RuntimeService) -> Router {
         );
     let admin_mcp = Router::new()
         .nest_service("/admin/mcp", admin_mcp)
+        .route_layer(middleware::from_fn(admin_auth))
         .route_layer(middleware::from_fn_with_state(
             service.clone(),
             runtime_auth,
@@ -72,7 +71,13 @@ pub fn router(service: RuntimeService) -> Router {
             service.clone(),
             chart_preview_auth,
         ));
-    let protected = Router::new()
+    let public_auth = Router::new()
+        .route("/api/auth/register", post(register))
+        .route("/api/auth/login", post(login));
+    let user_protected = Router::new()
+        .route("/api/auth/me", get(me))
+        .route("/api/auth/change-password", post(change_password))
+        .route("/api/auth/profile", patch(update_profile))
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{session_id}",
@@ -127,6 +132,13 @@ pub fn router(service: RuntimeService) -> Router {
             "/api/sessions/{session_id}/tool-calls/{tool_call_id}",
             get(get_tool_call),
         )
+        .route_layer(middleware::from_fn_with_state(
+            service.clone(),
+            runtime_auth,
+        ));
+    let admin_protected = Router::new()
+        .route("/api/admin/users", get(admin_list_users))
+        .route("/api/admin/users/{user_id}", patch(admin_update_user))
         .route("/api/kb/docs", get(list_kb_docs).post(create_kb_doc))
         .route(
             "/api/kb/docs/{doc_id}",
@@ -177,6 +189,7 @@ pub fn router(service: RuntimeService) -> Router {
             "/api/mcp/servers/{server_id}/tools/{tool_name}",
             patch(set_mcp_tool_enabled),
         )
+        .route_layer(middleware::from_fn(admin_auth))
         .route_layer(middleware::from_fn_with_state(
             service.clone(),
             runtime_auth,
@@ -184,8 +197,10 @@ pub fn router(service: RuntimeService) -> Router {
     let document_router = quire_server::build_document_router(service.report_app_state());
     Router::new()
         .route("/health", get(health))
+        .merge(public_auth)
         .merge(chart_previews)
-        .merge(protected)
+        .merge(user_protected)
+        .merge(admin_protected)
         .merge(admin_mcp)
         .with_state(service)
         .merge(document_router)
@@ -198,12 +213,14 @@ pub fn router(service: RuntimeService) -> Router {
 }
 
 pub(crate) use auth::*;
+pub(crate) use auth_routes::*;
 pub(crate) use kb::*;
 pub(crate) use registry::*;
 pub(crate) use session_events::*;
 pub(crate) use sessions::*;
 
 mod auth;
+mod auth_routes;
 mod kb;
 mod registry;
 mod session_events;

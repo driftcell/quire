@@ -16,7 +16,6 @@ use quire_session_protocol::{
     SessionCommentRef, SessionDetail, SessionEvent, SessionEventKind, SessionMessage,
     SessionStatus, SessionSummary, ToolCallDetail,
 };
-use secrecy::ExposeSecret;
 use serde::Serialize;
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
@@ -342,6 +341,7 @@ impl RuntimeService {
     }
 
     pub async fn boot(&self) -> RuntimeResult<usize> {
+        self.seed_initial_admin().await?;
         let _handle = self.kb.spawn_invalidation_listener();
         let _models = self.models.spawn_invalidation_listener();
         let _mcp = self.mcp.spawn_invalidation_listener();
@@ -452,6 +452,7 @@ impl RuntimeService {
 pub(crate) use execute::{safe_attachment_filename, safe_attachment_id, validate_question_answers};
 
 mod attachments;
+mod auth;
 mod control;
 mod execute;
 mod messages;
