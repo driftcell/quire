@@ -41,10 +41,7 @@ function uniqueBlocksByDocumentOrder(blocks: HTMLElement[]): HTMLElement[] {
   return result;
 }
 
-function selectionBlocks(
-  container: HTMLElement,
-  range: Range,
-): HTMLElement[] {
+function selectionBlocks(container: HTMLElement, range: Range): HTMLElement[] {
   const candidates = visibleBlockElements(container);
   const startBlock = findBlockElement(range.startContainer);
   const endBlock = findBlockElement(range.endContainer);
@@ -180,7 +177,8 @@ export function useTextSelectionQuote({
         blockSummaryPart(
           block,
           range,
-          startSelector?.exact ?? (isTextualBlock(startBlock) ? null : quote.exact),
+          startSelector?.exact ??
+            (isTextualBlock(startBlock) ? null : quote.exact),
           endQuote?.exact ?? null,
           startBlockId,
           endBlockId,
@@ -192,8 +190,7 @@ export function useTextSelectionQuote({
     );
     const rect = range.getBoundingClientRect();
     const fallbackRect = startBlock.getBoundingClientRect();
-    const usableRect =
-      rect.width > 0 || rect.height > 0 ? rect : fallbackRect;
+    const usableRect = rect.width > 0 || rect.height > 0 ? rect : fallbackRect;
 
     setQuoteAction({
       blockId: startBlockId,
@@ -204,12 +201,7 @@ export function useTextSelectionQuote({
       anchorSnapshot,
       viewportRect: toViewportRect(usableRect),
     });
-  }, [
-    containerRef,
-    enabled,
-    onOpenCommentForBlock,
-    onAskAgentWithQuote,
-  ]);
+  }, [containerRef, enabled, onOpenCommentForBlock, onAskAgentWithQuote]);
 
   useEffect(() => {
     window.document.addEventListener("mouseup", handleMouseUp);

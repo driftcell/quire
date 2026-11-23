@@ -39,7 +39,8 @@ export function visibleBlockElements(container: HTMLElement): HTMLElement[] {
     container.querySelectorAll<HTMLElement>("[data-block-id]"),
   );
   return elements.filter(
-    (element) => element.dataset.blockId && !element.closest("[data-measure-root]"),
+    (element) =>
+      element.dataset.blockId && !element.closest("[data-measure-root]"),
   );
 }
 
@@ -111,7 +112,11 @@ function textNodes(root: Node): TextNodeEntry[] {
     if (current.nodeType === 3) {
       const value = current.textContent ?? "";
       if (value.length > 0) {
-        entries.push({ node: current, start: offset, end: offset + value.length });
+        entries.push({
+          node: current,
+          start: offset,
+          end: offset + value.length,
+        });
         offset += value.length;
       }
     }
@@ -128,7 +133,10 @@ function boundaryAt(
     if (offset <= entry.end) {
       return {
         node: entry.node,
-        offset: Math.max(0, Math.min(offset - entry.start, entry.end - entry.start)),
+        offset: Math.max(
+          0,
+          Math.min(offset - entry.start, entry.end - entry.start),
+        ),
       };
     }
   }
@@ -161,14 +169,17 @@ export function locateQuoteRange(
     let score = 0;
     if (
       prefix &&
-      combined.slice(Math.max(0, candidate - prefix.length), candidate) === prefix
+      combined.slice(Math.max(0, candidate - prefix.length), candidate) ===
+        prefix
     ) {
       score += 2;
     }
     if (
       suffix &&
-      combined.slice(candidate + exact.length, candidate + exact.length + suffix.length) ===
-        suffix
+      combined.slice(
+        candidate + exact.length,
+        candidate + exact.length + suffix.length,
+      ) === suffix
     ) {
       score += 1;
     }

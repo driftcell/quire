@@ -171,7 +171,10 @@ async (page) => {
 
   const compactButton = page.locator('[data-slot="compact-context-button"]');
   await compactButton.waitFor({ state: "visible", timeout: 15000 });
-  assert(await compactButton.isDisabled(), "compact button must be disabled while running");
+  assert(
+    await compactButton.isDisabled(),
+    "compact button must be disabled while running",
+  );
   await compactButton.locator("..").hover();
   await page
     .getByText("Agent 运行中暂不可压缩", { exact: true })
@@ -183,13 +186,19 @@ async (page) => {
   await idleContext.waitFor({ state: "visible", timeout: 15000 });
   await idleContext.hover();
   await compactButton.waitFor({ state: "visible", timeout: 15000 });
-  assert(await compactButton.isEnabled(), "compact button must be enabled while idle");
+  assert(
+    await compactButton.isEnabled(),
+    "compact button must be enabled while idle",
+  );
 
   await compactButton.click();
   await page
     .getByRole("button", { name: "10%" })
     .waitFor({ state: "visible", timeout: 15000 });
-  assert(state.compactRequests === 1, `unexpected compact request count ${state.compactRequests}`);
+  assert(
+    state.compactRequests === 1,
+    `unexpected compact request count ${state.compactRequests}`,
+  );
 
   const divider = page.locator('[data-slot="compaction-divider"]');
   await divider.waitFor({ state: "visible", timeout: 15000 });
@@ -243,4 +252,4 @@ async (page) => {
       sseFinishedRecovered: true,
     },
   };
-}
+};

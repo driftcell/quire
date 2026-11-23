@@ -197,4 +197,4 @@ async (page) => {
       })
       .catch(() => undefined);
   }
-}
+};

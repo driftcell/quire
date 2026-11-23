@@ -66,11 +66,7 @@ describe("buildMixedItems preview anchors", () => {
     });
     const items = build([slice("sec2_h1"), slice("sec2_p1")], [after]);
 
-    expect(itemIds(items)).toEqual([
-      "sec2_h1",
-      "preview:p-after",
-      "sec2_p1",
-    ]);
+    expect(itemIds(items)).toEqual(["sec2_h1", "preview:p-after", "sec2_p1"]);
   });
 
   test("replace_block keeps the streaming card at the committed block position", () => {
@@ -95,10 +91,7 @@ describe("buildMixedItems preview anchors", () => {
       type: "after_block",
       block_id: "sec2_preview_first",
     });
-    const items = build(
-      [slice("sec2_h1"), slice("sec2_p1")],
-      [first, second],
-    );
+    const items = build([slice("sec2_h1"), slice("sec2_p1")], [first, second]);
 
     expect(itemIds(items)).toEqual([
       "sec2_h1",
@@ -117,10 +110,7 @@ describe("buildMixedItems preview anchors", () => {
       type: "before_block",
       block_id: "sec2_preview_first",
     });
-    const items = build(
-      [slice("sec2_h1"), slice("sec2_p1")],
-      [first, second],
-    );
+    const items = build([slice("sec2_h1"), slice("sec2_p1")], [first, second]);
 
     expect(itemIds(items)).toEqual([
       "sec2_h1",
@@ -161,10 +151,7 @@ describe("buildMixedItems preview anchors", () => {
       type: "after_block",
       block_id: "ch2_p_update",
     });
-    const items = build(
-      [headingSlice("ch2", 1), slice("ch2_p1")],
-      [pending],
-    );
+    const items = build([headingSlice("ch2", 1), slice("ch2_p1")], [pending]);
 
     expect(itemIds(items)).toEqual(["ch2", "ch2_p1"]);
   });

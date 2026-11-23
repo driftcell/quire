@@ -124,7 +124,9 @@ async (page) => {
     before.loading !== 1 ||
     before.blocks !== 0
   ) {
-    throw new Error(`chat-only frame appeared before the document: ${JSON.stringify(before)}`);
+    throw new Error(
+      `chat-only frame appeared before the document: ${JSON.stringify(before)}`,
+    );
   }
 
   releaseSession();
@@ -141,8 +143,10 @@ async (page) => {
     text: document.querySelector("[data-block-id=p1]")?.textContent,
   }));
   if (after.blocks !== 1 || after.loading !== 0) {
-    throw new Error(`report did not replace its loading skeleton: ${JSON.stringify(after)}`);
+    throw new Error(
+      `report did not replace its loading skeleton: ${JSON.stringify(after)}`,
+    );
   }
 
   return { before, after };
-}
+};

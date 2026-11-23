@@ -5,8 +5,7 @@ async (page) => {
   const server = env.E2E_SERVER_URL || "http://127.0.0.1:8082";
   const rwToken = env.E2E_QUIRE_RW_TOKEN || "dev-rw-token-change-me";
   const roToken = env.E2E_QUIRE_RO_TOKEN || "dev-ro-token-change-me";
-  const runtimeToken =
-    env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
+  const runtimeToken = env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
   const docId = "e2e-lint-workflow";
   const xSessionId = `e2e_lint_${Date.now()}`;
   const protocolVersion = "2025-11-25";
@@ -95,7 +94,9 @@ async (page) => {
     const result = body.result;
     assert(result !== undefined, `tool ${name} returned no result`);
     if (result.isError === true) {
-      throw new Error(`tool ${name} returned isError: ${JSON.stringify(result)}`);
+      throw new Error(
+        `tool ${name} returned isError: ${JSON.stringify(result)}`,
+      );
     }
     if (result.structuredContent !== undefined) {
       return result.structuredContent;
@@ -122,7 +123,10 @@ async (page) => {
     enable_toc: true,
   });
   let revision = created.revision;
-  assert(revision === 1, `new report must start at revision 1, got ${revision}`);
+  assert(
+    revision === 1,
+    `new report must start at revision 1, got ${revision}`,
+  );
 
   const receipt = await callTool("apply_operations", {
     doc_id: docId,
@@ -170,7 +174,10 @@ async (page) => {
   const first = await lint();
   assert(first.ok === false, "fixture report must start with errors");
   for (const code of ["QR101", "QR201", "QR202", "QR401", "QR403"]) {
-    assert(codeSet(first).has(code), `missing ${code}: ${JSON.stringify(first)}`);
+    assert(
+      codeSet(first).has(code),
+      `missing ${code}: ${JSON.stringify(first)}`,
+    );
   }
   const dangling = first.diagnostics.find(
     (diagnostic) => diagnostic.code === "QR101",
@@ -235,7 +242,10 @@ async (page) => {
   assert(fixReceipt.committed === true, "fix operations must commit");
 
   const fixed = await lint();
-  assert(fixed.ok === true, `report must have zero errors: ${JSON.stringify(fixed)}`);
+  assert(
+    fixed.ok === true,
+    `report must have zero errors: ${JSON.stringify(fixed)}`,
+  );
   assert(!codeSet(fixed).has("QR101"), "QR101 must be gone after fixing");
   assert(!codeSet(fixed).has("QR401"), "QR401 must be gone after fixing");
 
@@ -332,4 +342,4 @@ async (page) => {
       consoleErrors: 0,
     },
   };
-}
+};

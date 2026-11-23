@@ -195,4 +195,4 @@ async (page) => {
     clipped: 0,
     pageNumberMismatches: 0,
   };
-}
+};

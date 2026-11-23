@@ -3,8 +3,7 @@ async (page) => {
   const env = globalThis.process?.env ?? {};
   const web = env.E2E_WEB_URL || "http://localhost:5173";
   const runtime = env.E2E_RUNTIME_URL || "http://127.0.0.1:8081";
-  const runtimeToken =
-    env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
+  const runtimeToken = env.E2E_RUNTIME_TOKEN || "dev-runtime-token-change-me";
   const auth = (token) => ({ Authorization: `Bearer ${token}` });
   const prefsKey = "quire.ui.preferences.v1";
   const title = `E2E 置顶会话 ${Date.now()}`;
@@ -38,9 +37,7 @@ async (page) => {
     const row = sessionRow();
     await row.waitFor({ state: "visible", timeout: 15000 });
     await row.hover();
-    await page
-      .getByRole("button", { name: `会话操作 ${title}` })
-      .click();
+    await page.getByRole("button", { name: `会话操作 ${title}` }).click();
   };
 
   const groupLabels = async () =>
@@ -164,4 +161,4 @@ async (page) => {
       })
       .catch(() => undefined);
   }
-}
+};
