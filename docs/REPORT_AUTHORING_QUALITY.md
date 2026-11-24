@@ -67,10 +67,15 @@ slope and milestone records its baseline, time window, stock/flow/total/net-chan
 reference entity, source and assumptions. A changed assumption requires recomputing every downstream
 value rather than patching isolated prose numbers.
 
-### Nine-step long-report workflow
+### Ten-step long-report workflow
 
-1. Record hard requirements, collect original evidence and partition shared facts by state.
-2. Build the elastic outline and assign each evidence set one primary chapter.
+1. Record hard requirements and create the report container, then dispatch two to four researchers across
+   discipline/degree, faculty/talent, research/platform/award, and policy/industry tracks. Researchers
+   drill into trends, structural distributions and named entities, fetch original external pages,
+   register domain-scoped sources and return four-part evidence dossiers.
+2. The lead reconciles the dossiers and registered excerpts, locks the primary statistical scope,
+   partitions shared facts by state, builds the elastic outline and assigns each evidence set one
+   primary chapter.
 3. Have analysts verify high-risk facts, centralize derived data and build question-driven visuals with
    one shared entity palette/style contract.
 4. Complete and calibrate one representative pilot chapter before starting the remaining writers in
@@ -80,23 +85,29 @@ value rather than patching isolated prose numbers.
    digest, checks requirements,
    repetition, methods, titles and readability, asks analysts to consolidate visuals when needed, and
    personally writes or rewrites the whole-report conclusion after every body chapter is complete.
-6. An independent reviewer checks facts, original citations, derived methods, prose/visual redundancy,
+6. One humanizer reads the complete report and directly polishes body paragraphs in place before
+   independent review. It preserves facts, uncertainty, author voice, block IDs, headings, visuals,
+   citations, sources and suppression metadata, rereads every changed chapter and runs lint. The lead
+   does not edit concurrently and passes the resulting revision to the reviewer.
+7. An independent reviewer checks facts, original citations, derived methods, prose/visual redundancy,
    publication readability and actual A4 rendering, leaving anchored comments.
-7. The lead resolves every comment or records a reason for not accepting it, recomputes downstream data
+8. The lead resolves every comment or records a reason for not accepting it, recomputes downstream data
    when assumptions change, and finalizes all headings before approval.
-8. The same reviewer resumes for continuity and returns `CHANGES_REQUESTED rev=N` or
+9. The same reviewer resumes for continuity and returns `CHANGES_REQUESTED rev=N` or
    `APPROVED rev=N`. Approval covers the current text, visuals, citations and derived data only; any
    later change to those requires another review.
-9. Apply layout-only changes after content approval. Recheck lint, hard requirements and actual
-   rendering; return to independent review if content still needs changes.
+10. Apply layout-only changes after content approval. Recheck lint, hard requirements and actual
+    rendering; return to independent review if content still needs changes.
 
 ### Role and tool boundaries
 
 | Role | Required read/verify tools | Mutation tools | Deliberate boundary |
 | --- | --- | --- | --- |
-| `main` | Full native/tool catalog as needed, including `read_as_markdown`, `list_sources`, digest, preview and web evidence tools | Report orchestration, source registration, block patches and comments | Owns requirements, fact states, evidence ownership, full read, global edits and revision-bound delivery |
+| `main` | Full native/tool catalog as needed, including `read_as_markdown`, `list_sources`, digest, preview and web evidence tools | Report orchestration, source registration, block patches and comments | Owns requirements, research-track delegation, fact states, evidence ownership, full read, global edits and revision-bound delivery |
+| `researcher` | Research skill resources, digest, `list_sources`, `deepseek_search`, `deepseek_fetch`, assigned internal data and attachment tools | `upsert_sources` | Track-scoped deep research, original evidence collection and canonical source registration; returns evidence dossiers without editing report blocks |
 | `analyst` | `get_protocol_guide`, digest, `read_as_markdown`, `read_blocks`, `list_sources`, `preview_echarts`, `preview_report`, `deepseek_fetch`, internal data tools | `apply_operations`, `commit_chart`, `upsert_sources` | Sole owner of derived data, tables and charts; must inspect actual table rendering before layout suppression |
 | `writer` | Skill resources, digest, `read_as_markdown`, `read_blocks`, `list_sources`, `lint_document`, assigned internal data tools | `apply_operations` for assigned prose/headings | No source registration, visual creation/moves, invented derived targets or premature whole-report conclusion; reports evidence and visual gaps |
+| `humanizer` | Protocol guide, digest, `read_as_markdown`, `read_blocks`, `list_sources`, `lint_document` | `apply_operations` for in-place `Paragraph.text` patches | Pre-review prose polishing with the upstream contextual rules and examples; preserves non-paragraph blocks, citations, facts and document metadata |
 | `reviewer` | `read_as_markdown`, `read_blocks`, `list_sources`, `lint_document`, `preview_report`, `deepseek_search`, `deepseek_fetch` | `add_comment`, `reply_comment` | Independent fact/method/source/readability/layout review; no direct report-content edits |
 | `designer` | Digest, `list_sources`, `lint_document`, `preview_report` | Cover, TOC, references, page chrome and theme tools | Layout and bibliography presentation only; never repairs content by changing citation ownership |
 
@@ -106,6 +117,10 @@ agent prompts do not duplicate the complete lint catalog.
 
 ### Publication and review invariants
 
+- Researchers own domain-scoped evidence acquisition and canonical source registration across parallel
+  tracks; the lead owns cross-track scope arbitration and fact-state classification. External sources
+  require original-page fetches and verbatim excerpts, while internal records preserve exact values,
+  units, time windows and statistical scope.
 - One paragraph has one main job; evidence, mechanism and recommendation paragraphs are not forced into
   the same numeric template.
 - A visual replaces detailed prose instead of licensing its repetition. Agents never insert duplicate
@@ -115,6 +130,9 @@ agent prompts do not duplicate the complete lint catalog.
 - The whole-report conclusion is written or rewritten by the lead only after every body chapter and the
   full read-through are complete; chapter writers may close their own section but never conclude the
   whole report in parallel.
+- The humanizer definition retains the upstream 31 contextual editing checks, before/after examples,
+  preservation boundaries and reference links. Its Quire workflow limits writes to existing paragraph
+  text and requires semantic, citation and lint verification before the reviewer receives the revision.
 - Source count, visual count, zero lint warnings and zero page overflow are necessary checks where
   applicable, but none independently proves publication quality.
 - Final suppression review covers the complete block list, not only blocks edited in the latest round.

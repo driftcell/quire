@@ -3,16 +3,16 @@ name: higher-education-writing
 description: Drafts and reviews Chinese higher-education institutional reports (discipline planning, benchmarking, degree-program applications, construction summaries, and official university documents). Use when authoring or editing formal higher-ed reports or running editorial QA.
 ---
 
-# 高等教育研报写作与 9 步集群工作流
+# 高等教育研报写作与 10 步集群工作流
 
-服务对象为高校校领导、发展规划处、学科建设办及评审专家。核心目标是交付**高信息密度、证据可追溯、可直接用于决策汇报**的正式材料。不要先写正文再找数据装饰，而要先锁定指标、形成图表证据，再写结构归因。
+服务对象为高校校领导、发展规划处、学科建设办及评审专家。核心目标是交付**高信息密度、证据可追溯、可直接用于决策汇报**的正式材料。不要先写正文再找数据装饰，而要先通过并行 `researcher` 深度取证锁定指标、形成图表证据，再写结构归因。
 
 ## 出版级表达与证据补充
 
 - **结论先行**：每个 H2 小节首段首句直接给出带量化锚点与对比坐标的核心判断；严禁以“本章先看……”“本节围绕三个维度展开”等报幕套话开篇（触发 `QR412`）。
 - **两级标题原创结论化（严禁套用示范标题）**：H1 与 H2 均采用 `<分析对象或切面>：<基于本节证据得出的具体比较结论或结构性判断>` 的抽象语法结构，让目录本身成为管理层摘要；**所有标题必须根据当前报告的真实数据与独有论证原创提炼，严禁照抄任何提示词或参考文件里的句式或标题**。无判断的裸话题短语或仅报数量的计数空壳标题一律触发 `QR418`。
 - **四维对标坐标**：指标不孤立报数，必须落入纵向跨期、省内同类、全国行业特色院校或政策申报门槛之一；多源口径差异（全口径/专任、平台含共建与否等）在总编阶段先裁定，首次出现处用一句业务中文交代。
-- **`excerpt` 原文闭环与双体系隔离**：`SourceEntry.excerpt` 必须完整包含正文与图表将引用的数字、年份和口径；严禁把 `excerpt` 中不存在的数字硬挂在某条 `[^source_id]` 下，也严禁伪造单一笼统的“公开数据大汇编”口袋信源或根据 `note` 脑补编造 `excerpt`。外部网页来源必须经 `deepseek_fetch` 读取原文后登记真实摘录；内部平台数据库按业务数据域分别登记权责清晰的来源条目。`subjectcloud` 的 `moe`（学科评估折算口径）与 `index`（年度学科指数口径）两套体系必须严格隔离，主编在 Step 1 锁定唯一主口径后，`sc-discipline` 的 `excerpt` 与下发给子代理的 `shared_facts` 必须完全一致。
+- **`excerpt` 原文闭环与双体系隔离**：`SourceEntry.excerpt` 必须完整包含正文与图表将引用的数字、年份和口径；严禁把 `excerpt` 中不存在的数字硬挂在某条 `[^source_id]` 下，也严禁伪造单一笼统的“公开数据大汇编”口袋信源或根据 `note` 脑补编造 `excerpt`。外部网页来源必须经 `deepseek_fetch` 读取原文后登记真实摘录；内部平台数据库由 `researcher` 按业务数据域分别登记权责清晰的来源条目。`subjectcloud` 的 `moe`（学科评估折算口径）与 `index`（年度学科指数口径）两套体系必须严格隔离，主编在 Step 2 锁定唯一主口径后，`sc-discipline` 的 `excerpt` 与下发给子代理的 `shared_facts` 必须完全一致。
 - **跨分析师校名、表头单位与实体配色统一**：行向对标表（高校作为行维度，列数≤7）首列统一使用高校**官方全称**；列向多校矩阵表（高校作为列维度，7–9列）及多校横向柱线图 X 轴统一使用 2–4 字**官方简称**，严禁前半篇表格用简称、后半篇同构表格用全称。数值型百分比列（`data_type: "percent"`）必须在叶表头或父级分组表头显式标注 `（%）`（如 `青年占比（%）`）。同一高校在全篇所有 ECharts 图表中的 `itemStyle.color` 与系列色必须锁定同一十六进制色值（防 `QR314`）。
 - **视觉穿插与无锁锚定**：图表不堆在节首后拖十余段纯文。标准结构是“1–2 段核心判断引出问题 → 表格/图表 → 4–6 段围绕图表的结构拆解、机制归因与建设抓手”（`analyst` 在 Step 3 将视觉块 `vis_id` 插入小节 `section_id` 后，`writer` 在 Step 4 使用 `InsertBefore(target_id=vis_id)` 在视觉块前插入 1–2 段开篇判断，使用 `InsertAfter(target_id=vis_id)` 在视觉块后插入 4–6 段纵深分析，既避免 `QR419` 纯文墙，又彻底消除主代理代写导语段的死锁）。
 - **段段有据与语言纯净**：凡自然段内出现具体统计数字、年份、位次或分差（含机制/建议段回指基线数字），该段必须在句中直接附带对应的 `[^source_id]`（防 `QR103`）；若遇 `QR413` 缺证据提示，应补入真实指标+`[^source_id]` 或引用政策文件 `《...》`（切勿将中文数词“五项”改成无引用的阿拉伯数字“5项”而触发 `QR103`）。正文、表头、单元格与注释不得出现 `指标库口径`、`指标库记录`、`FacultyInfo`、`includeSub=true`、`local:4.1.1`（`QR424`），不得使用 `不是…而是…`、`不再是…而是…`、`并非…而是…`、`需要说明的是`、`值得注意的是` 等二元对比与缓冲套式（`QR415`），也不得出现“本节只确认……”“在行动路径章统一处理”“是基于学科名称的推断”等审稿元话语或章节分工自白（`QR426`）。
@@ -21,14 +21,15 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 
 | 文件 | 适用场景 | 谁来读 |
 | :--- | :--- | :--- |
+| **`higher-education-research`** + `references/track-playbooks.md` | Step 1 并行深度调研：按学科、人才、科研平台、双优与外部政策赛道下钻取证并分域登记信源 | `main` / `researcher` |
 | `references/examples.md` | 首次起草正文或撰写四层结语时对齐段落节奏与论证结构 | `main` / `writer` |
 | `references/showcase-and-cases.md` | 撰写或审校“成效展示、亮点总结、典型案例”章节 | `writer` / `reviewer` |
 | `references/gov-documents.md` | 撰写或审校正式政府/校级红头公文 | `writer` / `reviewer` |
-| `references/review-rubric.md` | 成稿后的独立事实核对、结构审查与套话清洗 | **仅 `reviewer`** |
+| `references/review-rubric.md` | 成稿后的独立事实核对、结构审查与残余表达问题审校 | **仅 `reviewer`** |
 
 ## 报告类型 ↔ 指标与信源映射矩阵
 
-先判定报告类型，再决定必查指标组合。内部数据源按 `panorama_report_*`（全景指标，注意 `panorama_report_universities` 参数为单数 `keyword`）、`shuangyou_*`（双优建设）、`subjectcloud_*`（学科评估，注意 `subjectcloud_overview` 的 `subject_ids` 单次上限 10 个）、`subjectcloud_talent_*`（人才数据）取用；外部权威信源只使用 `.gov.cn` / `.edu.cn`、基金委正式公告、ESI 公报或学校正式文件，不使用自媒体补齐核心结论。
+先判定报告类型，再决定并行 `researcher` 的赛道分工与必查指标组合。内部数据源按 `panorama_report_*`（全景指标，注意 `panorama_report_universities` 参数为单数 `keyword`）、`shuangyou_*`（双优建设）、`subjectcloud_*`（学科评估，注意 `subjectcloud_overview` 的 `subject_ids` 单次上限 10 个）、`subjectcloud_talent_*`（人才数据）取用；外部权威信源只使用 `.gov.cn` / `.edu.cn`、基金委正式公告、ESI 公报或学校正式文件，不使用自媒体补齐核心结论。
 
 | 报告类型 | 必查核心指标组合 | 首选信源 |
 | :--- | :--- | :--- |
@@ -38,19 +39,20 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 | 年度科研竞争力对标 | 立项总量与结构、经费与增长率、重大重点项目、平台成果、人才与团队、学科排名变化 | `panorama_report_*`、`subjectcloud_*`、`subjectcloud_talent_*`；基金委、ESI 公报、学校科研年报 |
 | 成效案例/红头公文 | 建设任务、量化成效、典型项目、机制创新、可复制经验 | `panorama_report_*`、`shuangyou_*`；学校/政府正式文件、官方媒体、项目验收材料 |
 
-## 9 步弹性写作与批注审校工作流（4+ 章报告必须启动集群）
+## 10 步弹性写作、正文润色与批注审校工作流（4+ 章报告必须启动集群）
 
-### Step 1 硬要求、资料收集与事实分层
+### Step 1 立项锚定与并行 `researcher` 深度调研
 
-- 先记录用户的篇幅（`target_prose_chars`）、来源数、对标组、时间窗、测算和版式等硬要求，在独立审校前逐项核对；总篇幅不得机械拆成每章最低字数。
-- 按上表判定报告类型并明确对标高校组、时间窗口与统计口径；无法从上下文推断时用 `ask_user` 一次确认。
-- 用 `upsert_sources` 登记实际读取的来源（支持按 `id` 对已登记信源做 `excerpt`/`note` 增量更新），用 `list_sources` 核对来源与证据摘录。不得按数量给各章分配引用，也不得为了让每个来源都出现而挂到近似段落。
-- 数据探查先于章节骨架。`shared_facts` 必须区分已核实、存在冲突与分析假设：已核实项记录值、口径、时间窗和来源；冲突项只并列原值，未经证据不得解释成因；假设不得进入事实锁。
+- 先记录用户的篇幅（`target_prose_chars`）、来源数、对标组、时间窗、测算和版式等硬要求，在全文润色前逐项核对；总篇幅不得机械拆成每章最低字数。
+- 按上表判定报告类型并明确对标高校组、时间窗口与统计口径；无法从上下文推断时用 `ask_user` 一次确认。先调用 `create_report` 初始化报告容器取得 `doc_id`，使并行调研员能够向同一文档登记信源。
+- `main` 调用 `spawn_subagents` 并行派发 **2—4 位 `researcher`**，按学科与学位点、师资与高层次人才、纵向科研与平台奖励、双优产教与外部权威政策原文分赛道下钻，不以主编单线程浅层查询代替调研集群。
+- 每位 `researcher` 加载 `higher-education-research`，内部数据下钻到分年趋势、结构分布与标志性实体，外部网页必须 `deepseek_fetch` 读取原文；随后按业务数据域调用 `upsert_sources` 登记精确原值、单位、时间窗和统计口径，并返回四段式《调研证据卷宗》。不得按数量给各章分配引用，也不得为了让每个来源都出现而挂到近似段落。
 
-### Step 2 动态章节骨架与足额小节容量规划
+### Step 2 跨源口径裁定、动态章节骨架与足额小节容量规划
 
-- 依据用户核心命题与实际探查到的数据维度动态设计章节骨架：有数据支撑才设章，综合研报一级章节控制在 **5—7 章**，**严禁套用任何预设的固定章节名模板**。
-- **H2 小节数量前置测算公式（严禁审阅批准后再补节）**：每个配 1 张视觉块的 H2 小节在不触发 `QR419` 的前提下最佳容量为 **6–8 个自然段（约 1,650–1,850 字）**。当约定 `target_prose_chars` 时，必须在 Step 2 按 `ceil(target_prose_chars / 1750)` 一次性规划足额 H2 小节（例如 2.5 万字报告在 Step 2 直接规划 **14–15 个 H2 小节**），并在 Step 5 进入独立审校前核对 `prose_char_delta` 达标。追加新 H2 子节时务必使用 `AppendToSection`，切勿使用 `InsertAfter(target_id=视觉块ID)`。
+- 汇总全部 `researcher` 证据卷宗，调用 `list_sources` 核对已入库信源与 `excerpt`，裁定跨源差异并锁定 `subjectcloud` 的 `moe` 或 `index` 唯一主口径。`shared_facts` 必须区分已核实、存在冲突与分析假设：已核实项记录值、口径、时间窗和来源；冲突项只并列原值，未经证据不得解释成因；假设不得进入事实锁。
+- 依据用户核心命题与 `researcher` 实际深挖到的数据维度动态设计章节骨架：有数据支撑才设章，综合研报一级章节控制在 **5—7 章**，**严禁套用任何预设的固定章节名模板**。
+- **H2 小节数量前置测算公式（严禁审阅批准后再补节）**：每个配 1 张视觉块的 H2 小节在不触发 `QR419` 的前提下最佳容量为 **6–8 个自然段（约 1,650–1,850 字）**。当约定 `target_prose_chars` 时，必须在 Step 2 按 `ceil(target_prose_chars / 1750)` 一次性规划足额 H2 小节（例如 2.5 万字报告在 Step 2 直接规划 **14–15 个 H2 小节**），并在 Step 5 进入全文润色前核对 `prose_char_delta` 达标。追加新 H2 子节时务必使用 `AppendToSection`，切勿使用 `InsertAfter(target_id=视觉块ID)`。
 - 为每组核心证据指定唯一主讲章，其他章节只回指结论，不复制完整数字与论证；不得按总字数预设图表数量。
 - **若设置《结语》，必须是全篇最后一个一级章节**；也可在最终行动章末尾自然收束，不为单设结语而重复全文。严禁在收束之后或报告中间单设《数据口径与说明》等统计口径章节。口径仅在导论首段用 1 句话及各图表 `note` 中随表交代。
 - **严禁自创没有官方依据的复杂主观加权综合打分公式**；多维对比使用客观原值总览表或单维最高值归一化雷达图。
@@ -60,7 +62,7 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 ### Step 3 派发 `analyst` 集群完成数据与视觉编排先行
 
 - **主代理不得越权单干**：在 4+ 章综合研报中，主代理必须调用 `spawn_subagents` 派发 `analyst` 子代理（可按章节分组并行派 1—2 个 `analyst`）完成全部三线表与 ECharts 图表落库，**严禁主代理自己调用 `preview_echarts` / `commit_chart` 包办图表**。
-- `analyst` 先复核高风险共享事实，再按阅读问题设计视觉：定量对比落为学术三线表（`Table`），趋势与结构分化落为原生 ECharts 6 图。没有新增信息时不建图，不为打断正文或消除 lint 添加重复视觉。
+- `analyst` 基于 `researcher` 已入库的分域信源先复核高风险共享事实，再按阅读问题设计视觉：定量对比落为学术三线表（`Table`），趋势与结构分化落为原生 ECharts 6 图。没有新增信息时不建图，不为打断正文或消除 lint 添加重复视觉。
 - 所有目标值、差值、比率、斜率和阶段节点由 analyst 单一维护，记录基线、时间窗、存量/流量/合计/净增属性、公式、参照对象、来源与假设；不同性质的数据不得直接比较，核心假设变化时重算全部下游块。
 - 所有 analyst 使用主编下发的同一实体配色（精确锁定目标校与对标校十六进制色值）、高校全称/简称映射与样式合同。8 列及以内表格默认完全省略 `style.column_widths`，交由前端 Water-Filling 自动分配。每张图执行 `preview_echarts` 后再 `commit_chart`，并在两步之一直接绑定 `source_ids` / `source_note`；修改已有图表时用原 `block_id` 原地更新。表格用 `preview_report` 实际检查，`fallback_summary` 写出核心发现；修订已有表格的列定义或行数据时使用 `PatchBlock`（`columns` / `rows` / `summary_rows` / `update_cell`）原地更新，保留 `block_id` 与评论锚点。
 - **先行落入小节 `section_id`**：在 Step 3，`analyst` 将每张表格与 ECharts 直接插入对应小节 `section_id`（如 `c2-1`），并向主编返回每个视觉块的 `block_id`。
@@ -81,23 +83,29 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 - 需要视觉归并时续接 analyst：先压缩正文明细，再删除低价值重复视觉；不得为消 lint 补图。核心假设变化时由 analyst 重算全部下游值，不能只替换正文数字。
 - 全部主体章节完成后，由 main 亲自撰写或重写全篇结语，不能沿用 writer 在其他章节未完成时提前生成的收束。
 
-### Step 6 独立审校与锚定批注（`reviewer` Round 1）
+### Step 6 全文正文润色（`humanizer`）
 
-- `reviewer` 逐章检查事实、口径、引用原文、派生方法、文表一致性和 A4 版式，并独立进行读者审校：长段、过短干瘪段、图表复述、编辑自我标签、同音错字、套路化标题与免责声明堆叠都必须检查。
+- `main` 只派 **1 位 `humanizer`** 串行逐章处理全稿，简报提供 `doc_id`、最新 `expected_revision`、用户硬要求、`shared_facts`、高校全称/简称映射与合法 `source_ids`；润色期间不并发改稿。
+- `humanizer` 按自身编辑指南直接修改正文，清理空话、重复和模板化表达，保留事实、确定程度、作者声音、引用与文档结构；没有问题的段落可以不改。
+- 每章写入后回读核对语义和引用，全稿完成后运行 `lint_document`，将最新 revision 与未解决的事实、资料或跨段结构问题返回 `main`。
+
+### Step 7 独立审校与锚定批注（`reviewer` Round 1）
+
+- `reviewer` 以 `humanizer` 完成后的最新 revision 为审校基线，逐章检查事实、口径、引用原文、派生方法、文表一致性和 A4 版式，并独立进行读者审校：长段、过短干瘪段、图表复述、编辑自我标签、同音错字、套路化标题与免责声明堆叠都必须检查。
 - 每个核心引用用 `list_sources` 和必要的 `deepseek_fetch` 核对具体支撑句；搜索摘要不等于已核实，无关挂靠不计入有效来源。
 - 发现问题必须 `add_comment` 锚定到块，标注 `[Blocker]` / `[Major]` / `[Minor]` 并给出可替换建议；返回 `subagent_run_id` 和 `CHANGES_REQUESTED rev=N`。
 
-### Step 7 主编全局高效改稿与标题终定
+### Step 8 主编全局高效改稿与标题终定
 
 - `main` 调用 `list_comments(doc_id, status="open")`，逐项修复或说明不采纳理由。对于正文段落及表格/图表的纯文本字段微调（`title`、`note`、`source_note`、`fallback_summary`、`columns` 列标签或单个 `update_cell`），由 `main` 直接在一次 `apply_operations` 批处理中使用 `PatchBlock` 原地完成（保留原 `block_id` 与评论锚点），无需为 1 个字段或标点反复串行唤醒 `analyst`；仅在需要重算多表派生数据或重绘 ECharts `option` 时唤醒 `analyst`。
 - 统揽全篇内容与图表，最终敲定各级标题：不得残留 `[待拟标题]`、套路化口号或不自然比喻。
 
-### Step 8 Continue 同一个 `reviewer` 复核与版本绑定
+### Step 9 Continue 同一个 `reviewer` 复核与版本绑定
 
 - `main` 用 `resume_run_id` 续接同一个 reviewer，检查 addressed 批注及最新全稿，直到 `APPROVED rev=N`（上限 2~3 轮）。
 - 批准只对当前正文、图表、引用和派生数据版本有效。一旦获得 `APPROVED rev=N`，严禁再追加新章节或修改正文/图表数据。
 
-### Step 9 按需样式与定稿交付
+### Step 10 按需样式与定稿交付
 
 - **克制调用 `designer`**：内容批准后再做纯版式调整。用户没有特殊样式、封面或版式要求时，直接使用 `create_report` 默认的庄重学术样式，无需调用样式 skill 或派发 `designer`。
 - **禁止擅自开启章节强制分页**：除非用户明确要求“每章另起一页”，严禁调用 `configure_page_chrome` 将 `heading_page_break` 设为 `"h1"` 或 `"h1_and_h2"`，也严禁在 Heading 块上设置 `page_break_before: true`。

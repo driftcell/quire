@@ -32,7 +32,8 @@ pub struct SubagentTask {
     /// Optional registered model route ID override (defaults to the subagent's configured model).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Self-contained task brief including `doc_id`, `expected_revision`, assigned `block_id` prefix, verified `source_ids`, and visual anchor IDs. Subagents cannot call `ask_user` or `spawn_subagents`.
+    /// Non-empty, actionable work brief including `doc_id`, `expected_revision`, assigned `block_id` prefix, verified `source_ids`, and visual anchor IDs. Subagents cannot call `ask_user` or `spawn_subagents`.
+    /// Do not use placeholder or non-execution instructions such as "placeholder", "backup", "not enabled", or "do not execute".
     pub task: String,
     /// Optional Heading `block_id` (e.g. `"ch2"`) linking the UI subagent card directly to that report chapter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
