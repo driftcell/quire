@@ -167,7 +167,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
           data-activity-trigger="true"
           aria-expanded={detailsOpen}
           onClick={onToggleDetails}
-          className="group/canvas flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none"
+          className="group/canvas flex min-w-0 flex-1 items-center gap-2 rounded-md text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <span
             data-slot="agent-status"

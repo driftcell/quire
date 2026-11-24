@@ -250,13 +250,15 @@ export function TocOutline({
         render={
           <Button
             type="button"
-            size="icon-sm"
+            size="sm"
             variant={open ? "secondary" : "ghost"}
             aria-label="文档目录大纲"
+            className="h-7 gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/85 hover:bg-secondary hover:text-foreground"
           />
         }
       >
-        <ListTreeIcon className="size-4" />
+        <ListTreeIcon className="size-3.5 text-muted-foreground" />
+        <span className="hidden @min-[540px]:inline">大纲</span>
       </PopoverTrigger>
       <PopoverContent
         side={placement === "top" ? "top" : "bottom"}

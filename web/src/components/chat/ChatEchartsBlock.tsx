@@ -79,7 +79,7 @@ export const ChatEchartsBlock = memo(function ChatEchartsBlock({
         className="my-2.5 flex h-56 w-full items-center justify-center gap-2 rounded-xl border border-border/70 bg-muted/20 text-xs text-muted-foreground"
       >
         <LoaderCircleIcon className="size-4 animate-spin text-primary" />
-        <span>正在加载图表 {cleanId}...</span>
+        <span>正在加载图表 {cleanId}…</span>
       </div>
     );
   }

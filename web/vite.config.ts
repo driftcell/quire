@@ -21,6 +21,10 @@ export default defineConfig({
     },
   },
   server: {
+    watch: {
+      ignored: ["**/node_modules/**", "**/.git/**", "**/target/**"],
+      usePolling: false,
+    },
     // Bind all interfaces so the dev server is reachable from the LAN and from
     // the Playwright MCP container via host.docker.internal.
     host: "0.0.0.0",

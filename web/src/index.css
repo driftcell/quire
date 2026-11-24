@@ -14,7 +14,7 @@
 }
 
 /* ------------------------------------------------------------------------- */
-/* Mobile form controls                                                      */
+/* Mobile & Touch Interaction Rules (Vercel web-design-guidelines)           */
 /* ------------------------------------------------------------------------- */
 /* iOS Safari auto-zooms focused form controls whose font-size is below 16px. */
 @media (max-width: 767px), (hover: none) and (pointer: coarse) {
@@ -25,15 +25,21 @@
   }
 }
 
+@media (pointer: fine) {
+  html {
+    overscroll-behavior: none;
+  }
+}
+
 /* ------------------------------------------------------------------------- */
 /* Report body isolation boundary                                            */
 /* ------------------------------------------------------------------------- */
 .report-root {
   --rpt-accent: #1e3a5f;
-  --rpt-ink: #1f2937;
-  --rpt-muted: #64748b;
-  --rpt-border: #cbd5e1;
-  --rpt-surface: #f8fafc;
+  --rpt-ink: #18181b;
+  --rpt-muted: #575651;
+  --rpt-border: #d6d4cd;
+  --rpt-surface: #f7f6f2;
   --rpt-font-heading:
     "Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
   --rpt-font-body:
@@ -58,6 +64,7 @@
 .report-root h4,
 .report-root h5 {
   font-family: var(--rpt-font-heading);
+  scroll-margin-top: 3.5rem;
 }
 
 /* Media must never receive the browser's native blue selection film. */
@@ -156,8 +163,10 @@
 }
 
 @theme inline {
-  --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-heading: "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+  --font-serif: "Noto Serif SC", "Songti SC", "STSong", Georgia, serif;
+  --font-sans:
+    "Geist Variable", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -200,39 +209,41 @@
 
 :root {
   color-scheme: light;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  /* Quire Editorial Folio Palette (4–6 intentional tokens, distinct from generic AI cream/terracotta) */
+  --background: #fbfbf9;
+  --foreground: #141413;
+  --card: #ffffff;
+  --card-foreground: #141413;
+  --popover: #ffffff;
+  --popover-foreground: #141413;
+  --primary: #141413;
+  --primary-foreground: #faf9f6;
+  --secondary: #f4f3ee;
+  --secondary-foreground: #141413;
+  --muted: #f3f2ed;
+  --muted-foreground: #615f59;
+  --accent: #efeee8;
+  --accent-foreground: #141413;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --brand-blue: #0a66ff;
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --border: #e5e3dc;
+  --input: #dcdad2;
+  --ring: #1d4ed8;
+  --chart-1: #1d4ed8;
+  --chart-2: #0f766e;
+  --chart-3: #334155;
+  --chart-4: #b45309;
+  --chart-5: #4f46e5;
+  --brand-blue: #1d4ed8;
+  --desk-canvas: #f2f0ea;
+  --radius: 0.5rem;
+  --sidebar: #f5f4ef;
+  --sidebar-foreground: #141413;
+  --sidebar-primary: #141413;
+  --sidebar-primary-foreground: #faf9f6;
+  --sidebar-accent: #eae8e1;
+  --sidebar-accent-foreground: #141413;
+  --sidebar-border: #e5e3dc;
+  --sidebar-ring: #1d4ed8;
 }
 
 @layer base {
@@ -240,7 +251,13 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
+    -webkit-tap-highlight-color: rgba(29, 78, 216, 0.08);
+  }
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
   }
   button:not(:disabled),
   [role="button"]:not(:disabled) {
@@ -331,86 +348,6 @@
   }
 }
 
-/* ------------------------------------------------------------------------- */
-/* Brand sigil, sidebar grid-loader & home suggestion marquee                */
-/* ------------------------------------------------------------------------- */
-.brand-lockup {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.brand-sigil {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 120px;
-  height: 120px;
-}
-
-.brand-sigil-glow {
-  position: absolute;
-  inset: -44px;
-  background: radial-gradient(
-    circle at 50% 48%,
-    color-mix(in oklab, var(--brand-blue) 18%, transparent),
-    color-mix(in oklab, var(--brand-blue) 0%, transparent) 68%
-  );
-  pointer-events: none;
-}
-
-.brand-sigil-mark {
-  width: 88px;
-  height: 88px;
-  filter: drop-shadow(
-    0 16px 28px color-mix(in oklab, var(--brand-blue) 26%, transparent)
-  );
-}
-
-.brand-mark-face {
-  fill: var(--brand-blue);
-  stroke: #fff;
-  stroke-width: 2.4;
-  stroke-linejoin: round;
-}
-
-.brand-mark-bars {
-  stroke: #fff;
-  stroke-width: 2.4;
-  stroke-linecap: round;
-}
-
-.brand-tagline {
-  display: flex;
-  align-items: center;
-  gap: 0.85rem;
-  margin: 1.5rem 0 0;
-  color: color-mix(in oklab, var(--brand-blue) 32%, var(--muted-foreground));
-  font-size: 0.6875rem;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-}
-
-.brand-tagline::before,
-.brand-tagline::after {
-  content: "";
-  width: 34px;
-  height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent,
-    color-mix(in oklab, var(--brand-blue) 45%, transparent)
-  );
-}
-
-.brand-tagline::after {
-  background: linear-gradient(
-    to left,
-    transparent,
-    color-mix(in oklab, var(--brand-blue) 45%, transparent)
-  );
-}
-
 .grid-loader-cell {
   animation: grid-loader 1.4s ease-in-out infinite;
 }
@@ -427,36 +364,14 @@
   }
 }
 
-.suggestion-fade-x {
-  -webkit-mask-image: linear-gradient(
-    to right,
-    transparent 0,
-    black 24px,
-    black calc(100% - 24px),
-    transparent 100%
+/* Desk paper texture & subtle architectural grid for report viewport */
+.quire-desk-surface {
+  background-color: var(--desk-canvas);
+  background-image: radial-gradient(
+    rgba(20, 20, 19, 0.055) 1px,
+    transparent 1px
   );
-  mask-image: linear-gradient(
-    to right,
-    transparent 0,
-    black 24px,
-    black calc(100% - 24px),
-    transparent 100%
-  );
-}
-
-.suggestion-marquee {
-  animation: suggestion-marquee 96s linear infinite;
-  will-change: transform;
-}
-
-@keyframes suggestion-marquee {
-  from {
-    transform: translateX(0);
-  }
-
-  to {
-    transform: translateX(-50%);
-  }
+  background-size: 20px 20px;
 }
 
 .shimmer-bg {

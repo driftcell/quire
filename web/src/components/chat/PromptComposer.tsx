@@ -569,7 +569,7 @@ export function PromptComposer({
                           <Minimize2Icon className="size-3" />
                           <span>
                             {compacting || compactingRequest
-                              ? "正在压缩上下文..."
+                              ? "正在压缩上下文…"
                               : "压缩上下文 (/compact)"}
                           </span>
                         </Button>

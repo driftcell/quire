@@ -242,8 +242,19 @@ export function CommentsPanel({
 
         <div className="no-scrollbar min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain p-3">
           {filtered.length === 0 ? (
-            <div className="py-12 text-center text-xs text-muted-foreground">
-              {filter === "open" ? "暂无待处理批注" : "暂无已解决批注"}
+            <div className="mx-1 my-8 rounded-xl border border-dashed border-border/90 bg-secondary/40 px-4 py-7 text-center">
+              <MessageSquareIcon
+                className="mx-auto mb-2 size-4 text-muted-foreground/60"
+                aria-hidden="true"
+              />
+              <p className="text-xs font-medium text-foreground/85">
+                {filter === "open" ? "暂无待处理批注" : "暂无已解决批注"}
+              </p>
+              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                {filter === "open"
+                  ? "在左侧报告画布中划选任意段落、指标或图表，即可添加审校批注或引用至对话。"
+                  : "审阅完成的批注归档后将保存在此处，方便随时回溯版本差异。"}
+              </p>
             </div>
           ) : (
             filtered.map((thread) => {
@@ -364,7 +375,7 @@ export function CommentsPanel({
                           rows={1}
                           disabled={isThreadBusy}
                           className="min-h-7 resize-none border-0 bg-transparent px-0 py-0 text-xs shadow-none focus-visible:ring-0 disabled:opacity-60"
-                          placeholder="回复..."
+                          placeholder="回复…"
                           value={replyDraft}
                           onClick={(event) => event.stopPropagation()}
                           onChange={(event) =>
@@ -497,7 +508,7 @@ export function CommentsPanel({
           <div className="no-scrollbar max-h-[60vh] space-y-3 overflow-y-auto text-xs">
             {diffQuery.isLoading && (
               <div className="py-8 text-center text-muted-foreground">
-                正在加载版本差异...
+                正在加载版本差异…
               </div>
             )}
             {diffQuery.data && diffQuery.data.blocks.length === 0 && (

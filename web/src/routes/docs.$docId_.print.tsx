@@ -122,7 +122,7 @@ function DocumentPrintPage() {
 
       {docQuery.isLoading && (
         <div className="mx-auto max-w-[794px] py-12 text-center text-sm text-muted-foreground print:hidden">
-          正在排版 A4 打印视图...
+          正在排版 A4 打印视图…
         </div>
       )}
       {docQuery.data && (

@@ -1,10 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-  <path d="M24 3 42.19 13.5v21L24 45 5.81 34.5v-21Z" fill="#0a66ff" stroke="#fff" stroke-width="2.4" stroke-linejoin="round"/>
-  <g fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
-    <path d="M15.5 19v10"/>
-    <path d="M20 14v20"/>
-    <path d="M24.5 10v28"/>
-    <path d="M29 14v20"/>
-    <path d="M33.5 19v10"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" fill="none">
+  <!-- Quire Editorial Folio Mark: Folded Manuscript Quire + PrecisionNib -->
+  <rect x="4" y="4" width="40" height="40" rx="10" fill="#141413"/>
+  <!-- Outer folio sheet -->
+  <path d="M13 14.5C13 13.6716 13.6716 13 14.5 13H25.5C27.9853 13 30 15.0147 30 17.5V33.5C30 32.1193 28.8807 31 27.5 31H14.5C13.6716 31 13 30.3284 13 29.5V14.5Z" fill="#FAF9F6"/>
+  <!-- Second layered folio page -->
+  <path d="M30 17.5C30 15.8431 31.3431 14.5 33 14.5H34.5C35.3284 14.5 36 15.1716 36 16V30.5C36 31.3284 35.3284 32 34.5 32H31.5C30.6716 32 30 32.6716 30 33.5V17.5Z" fill="#D6D3CD"/>
+  <!-- Editorial lines on left page -->
+  <path d="M17 18.5H25.5" stroke="#141413" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M17 22.5H25.5" stroke="#141413" stroke-width="1.8" stroke-linecap="round"/>
+  <path d="M17 26.5H22.5" stroke="#141413" stroke-width="1.8" stroke-linecap="round"/>
+  <!-- Signature Q tail / editorial seal accent -->
+  <path d="M27.5 28.5L34.5 35.5" stroke="#1D4ED8" stroke-width="2.6" stroke-linecap="round"/>
+  <circle cx="34.5" cy="35.5" r="1.8" fill="#1D4ED8"/>
 </svg>

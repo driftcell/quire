@@ -38,9 +38,9 @@ export function SessionWorkspaceLayout({
   onMobileTabChange,
 }: SessionWorkspaceLayoutProps) {
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-hidden">
+    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
       {(!hasReportData || isMobile) && (
-        <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b bg-background px-3">
+        <header className="flex h-11 shrink-0 items-center justify-between gap-2 border-b border-border/90 bg-card/95 px-3.5">
           <div className="flex min-w-0 items-center gap-2">
             <Button
               type="button"
@@ -51,18 +51,14 @@ export function SessionWorkspaceLayout({
             >
               <PanelLeftIcon className="size-4" />
             </Button>
-            <span className="truncate text-sm font-medium">{sessionTitle}</span>
+            <span className="truncate font-serif text-sm font-semibold text-foreground">
+              {sessionTitle}
+            </span>
           </div>
         </header>
       )}
 
-      <div
-        className={
-          hasReportData && !isMobile
-            ? "relative min-h-0 min-w-0 flex-1 overflow-hidden p-2"
-            : "relative min-h-0 min-w-0 flex-1 overflow-hidden"
-        }
-      >
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {!isMobile && (
           <SidebarEdgeHandle
             side="left"
@@ -88,7 +84,7 @@ export function SessionWorkspaceLayout({
             }}
             className="flex h-full min-h-0 flex-col"
           >
-            <div className="shrink-0 border-b bg-background px-3 py-1.5">
+            <div className="shrink-0 border-b border-border/80 bg-card px-3 py-1.5">
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="report">报告</TabsTrigger>
                 <TabsTrigger value="chat">对话</TabsTrigger>
@@ -106,14 +102,16 @@ export function SessionWorkspaceLayout({
             </TabsContent>
           </Tabs>
         ) : (
-          <div className="flex h-full min-h-0 min-w-0">
+          <div className="flex h-full min-h-0 min-w-0 divide-x divide-border/90">
             <div className="min-h-0 min-w-0 flex-1">{reportPane}</div>
             <div
               data-slot="session-right-panel"
               data-state={rightSidebarOpen ? "expanded" : "collapsed"}
               aria-hidden={!rightSidebarOpen}
               className={`h-full min-h-0 min-w-0 shrink-0 overflow-hidden ${
-                rightSidebarOpen ? "" : "pointer-events-none invisible"
+                rightSidebarOpen
+                  ? ""
+                  : "pointer-events-none invisible border-l-0"
               }`}
               style={{ width: rightSidebarOpen ? `${rightPanelPct}%` : "0%" }}
             >

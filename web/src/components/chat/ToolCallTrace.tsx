@@ -170,7 +170,7 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
           {durationBadge && <span>{durationBadge}</span>}
           <ChevronRightIcon
             className={cn(
-              "size-3 opacity-0 transition-all group-hover/tool:opacity-70",
+              "size-3 opacity-0 transition-opacity group-hover/tool:opacity-70",
               open && "rotate-90 opacity-70",
             )}
           />
@@ -212,7 +212,7 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
             )}
             {detailQuery.isLoading && (
               <div className="text-[11px] text-muted-foreground">
-                正在加载完整参数与返回值...
+                正在加载完整参数与返回值…
               </div>
             )}
           </div>

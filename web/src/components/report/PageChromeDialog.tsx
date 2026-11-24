@@ -114,15 +114,17 @@ export function PageChromeDialog({
         render={
           <Button
             type="button"
-            size="icon-sm"
+            size="sm"
             variant="ghost"
             aria-label="页眉与页脚设置"
+            className="h-7 gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/85 hover:bg-secondary hover:text-foreground"
           />
         }
       >
-        <Settings2Icon className="size-4" />
+        <Settings2Icon className="size-3.5 text-muted-foreground" />
+        <span className="hidden @min-[540px]:inline">版式</span>
       </DialogTrigger>
-      <DialogContent className="no-scrollbar max-h-[88vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="no-scrollbar max-h-[88vh] overflow-y-auto overscroll-contain sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>分页页眉与页脚</DialogTitle>
           <DialogDescription>

@@ -98,7 +98,7 @@ function ChartPreviewPage() {
       <div className="mx-auto w-[680px] max-w-full bg-white px-10 py-8 shadow-sm">
         {previewQuery.isLoading && (
           <div className="py-12 text-center text-sm text-muted-foreground">
-            正在渲染图表预览...
+            正在渲染图表预览…
           </div>
         )}
         {errorMessage && (

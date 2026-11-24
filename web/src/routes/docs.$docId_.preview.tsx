@@ -177,7 +177,7 @@ function DocumentPreviewPage() {
     >
       {docQuery.isLoading && (
         <div className="p-12 text-center text-sm text-muted-foreground">
-          正在渲染预览页面...
+          正在渲染预览页面…
         </div>
       )}
       {docQuery.error && (

@@ -264,7 +264,7 @@ function SubagentTaskCardItem({
             open={timelineOpen}
             onOpenChange={setTimelineOpen}
             restingLabel={`查看 ${steps.length} 项工具调用`}
-            activeLabel={`正在执行 (${steps.length})...`}
+            activeLabel={`正在执行 (${steps.length})…`}
             stats={[]}
             className="max-w-none"
           />
@@ -377,7 +377,7 @@ function MilestoneStageCard({
           open={toolTimelineOpen}
           onOpenChange={setToolTimelineOpen}
           restingLabel={`查看 ${timelineSteps.length} 项底层调用`}
-          activeLabel={`正在执行 (${timelineSteps.length})...`}
+          activeLabel={`正在执行 (${timelineSteps.length})…`}
           stats={[]}
           className="max-w-none"
         />

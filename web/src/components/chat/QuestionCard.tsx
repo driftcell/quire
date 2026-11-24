@@ -314,7 +314,7 @@ export function QuestionCard({
                     )}
                     <QuestionnaireInput
                       aria-label={`${question.title} 补充说明`}
-                      placeholder="自由补充说明（可选）..."
+                      placeholder="自由补充说明（可选）…"
                       value={freeform}
                       onChange={(event) => {
                         const value = event.target.value;
@@ -335,7 +335,7 @@ export function QuestionCard({
                       </QuestionnaireSkip>
                       <QuestionnaireNext />
                       <QuestionnaireSubmit disabled={isSubmitting}>
-                        {isSubmitting ? "提交中..." : "提交回答"}
+                        {isSubmitting ? "提交中…" : "提交回答"}
                       </QuestionnaireSubmit>
                     </QuestionnaireActions>
                   </QuestionnaireItem>

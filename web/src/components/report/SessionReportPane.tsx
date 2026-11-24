@@ -100,13 +100,7 @@ export const SessionReportPane = memo(function SessionReportPane({
   }, [onJumpToSection, onViewModeChange, streamingPreviews, viewMode]);
 
   return (
-    <div
-      className={
-        isMobile
-          ? "@container relative flex h-full min-w-0 flex-col overflow-hidden bg-background"
-          : "@container relative flex h-full min-w-0 flex-col overflow-hidden rounded-xl border bg-background shadow-2xs"
-      }
-    >
+    <div className="@container relative flex h-full min-w-0 flex-col overflow-hidden bg-background">
       {!isMobile && (
         <ReportPaneToolbar
           className="h-11"
@@ -141,7 +135,7 @@ export const SessionReportPane = memo(function SessionReportPane({
 
       <div
         ref={scrollContainerRef}
-        className="no-scrollbar flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+        className="quire-desk-surface no-scrollbar flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
       >
         <ReportViewer
           document={document}

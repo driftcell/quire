@@ -117,7 +117,7 @@ export const TableBlockView = memo(function TableBlockView({
   if (leafCols.length === 0) {
     return (
       <div className="rounded border p-3 text-xs text-muted-foreground">
-        表格结构尚在生成中...
+        表格结构尚在生成中…
       </div>
     );
   }
