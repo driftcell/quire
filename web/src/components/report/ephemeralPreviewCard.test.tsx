@@ -58,6 +58,15 @@ describe("EphemeralPreviewCard WYSIWYG rendering", () => {
     expect(html).toContain('data-slot="agent-avatar"');
     expect(html).toContain('data-actor="analyst"');
     expect(html).toContain('aria-label="analyst 正在编写正文段落"');
+    expect(html).not.toContain('data-slot="hover-card"');
+  });
+
+  it("can hide subsequent author badges in a consecutive prose run", () => {
+    const html = renderToStaticMarkup(
+      <EphemeralPreviewCard preview={makePreview({})} showAuthor={false} />,
+    );
+    expect(html).not.toContain('data-slot="report-author-badge"');
+    expect(html).not.toContain('data-slot="agent-avatar"');
   });
 
   it("renders streaming table without a skeleton loading row", () => {
@@ -71,8 +80,12 @@ describe("EphemeralPreviewCard WYSIWYG rendering", () => {
       />,
     );
     expect(html).toContain("<table");
+    expect(html).toContain("table-fixed");
+    expect(html).toContain("text-sm");
+    expect(html).toContain("bg-slate-100/80");
     expect(html).toContain("表 1 营收对比");
     expect(html).toContain("120 亿元");
+    expect(html).not.toContain("text-left text-[12.5px]");
     expect(html).not.toContain("加载中");
   });
 });

@@ -4,6 +4,7 @@ import { EphemeralPreviewCard } from "@/components/report/EphemeralPreviewCard";
 import type { FloatingCommentAnchor } from "@/components/report/FloatingCommentPopover";
 import {
   buildMixedItems,
+  shouldShowPreviewAuthor,
   type MixedRenderItem,
 } from "@/components/report/ephemeralPreviewMix";
 import { ReportBibliography } from "@/components/report/ReportBibliography";
@@ -537,11 +538,18 @@ export function ReportViewer({
             <ReportCover cover={document.cover} isPaged={false} />
           )}
           {renderToc(blockPageMap)}
-          {continuousItems.map((item: MixedRenderItem) => (
+          {continuousItems.map((item: MixedRenderItem, index) => (
             <div key={item.key}>
               {item.kind === "preview" ? (
                 <EphemeralPreviewCard
                   preview={item.preview}
+                  showAuthor={shouldShowPreviewAuthor(continuousItems, index)}
+                  framing={
+                    computed.block_framing[item.preview.block.block_id ?? ""]
+                  }
+                  tableLayout={
+                    computed.table_layouts[item.preview.block.block_id ?? ""]
+                  }
                   citationMap={computed.citation_map}
                   bibliographyById={bibliographyById}
                   onCitationClick={scrollToSource}

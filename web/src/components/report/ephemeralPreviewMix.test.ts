@@ -3,7 +3,11 @@ import type {
   EphemeralPreviewEvent,
   PreviewAnchor,
 } from "@/contracts/report-protocol";
-import { buildMixedItems, type MixedRenderItem } from "./ephemeralPreviewMix";
+import {
+  buildMixedItems,
+  shouldShowPreviewAuthor,
+  type MixedRenderItem,
+} from "./ephemeralPreviewMix";
 import type { PageSlice } from "./pagination";
 
 function slice(id: string): PageSlice {
@@ -173,5 +177,26 @@ describe("buildMixedItems preview anchors", () => {
     const items = build([slice("ch2_p1")], [appended]);
 
     expect(itemIds(items)).toEqual(["ch2_p1", "preview:p-tail"]);
+  });
+
+  test("shows one author badge per same-actor prose run", () => {
+    const first = preview("p-first", "p1", { type: "append_to_doc" });
+    const second = preview("p-second", "p2", { type: "append_to_doc" });
+    const third = preview("p-third", "p3", { type: "append_to_doc" });
+    const items = build([], [first, second, third]);
+
+    expect(
+      items.map((_, index) => shouldShowPreviewAuthor(items, index)),
+    ).toEqual([true, false, false]);
+
+    second.block.block_type = "heading";
+    expect(
+      items.map((_, index) => shouldShowPreviewAuthor(items, index)),
+    ).toEqual([true, true, true]);
+
+    second.actor = "another-agent";
+    expect(
+      items.map((_, index) => shouldShowPreviewAuthor(items, index)),
+    ).toEqual([true, true, true]);
   });
 });

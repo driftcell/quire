@@ -173,3 +173,33 @@ export function buildMixedItems(
   }
   return out;
 }
+
+function isProsePreview(
+  item: MixedRenderItem,
+): item is Extract<MixedRenderItem, { kind: "preview" }> {
+  return (
+    item.kind === "preview" &&
+    (item.preview.block.block_type === "paragraph" ||
+      item.preview.block.block_type === "quote")
+  );
+}
+
+/** Show one author badge per consecutive same-actor prose run. */
+export function shouldShowPreviewAuthor(
+  items: MixedRenderItem[],
+  index: number,
+): boolean {
+  const item = items[index];
+  if (!item || item.kind !== "preview") {
+    return false;
+  }
+  if (!isProsePreview(item)) {
+    return true;
+  }
+  const previous = items[index - 1];
+  return !(
+    previous &&
+    isProsePreview(previous) &&
+    previous.preview.actor === item.preview.actor
+  );
+}

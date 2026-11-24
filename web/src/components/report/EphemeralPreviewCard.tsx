@@ -4,17 +4,16 @@ import {
   resolveAgentIdentity,
 } from "@/components/chat/agentAvatar";
 import { InlineMarkdown } from "@/components/report/InlineMarkdown";
-import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
+import { TableBlockView } from "@/components/report/TableBlockView";
 import { useSmoothStreamText } from "@/hooks/useSmoothStreamText";
 import type {
   BibliographyEntry,
+  BlockFraming,
   CitationMapEntry,
+  ColumnDataType,
   EphemeralPreviewEvent,
-  PreviewAnchor,
+  TableBlock,
+  TableLayout,
 } from "@/contracts/report-protocol";
 
 function blockTypeLabel(
@@ -39,27 +38,7 @@ function blockTypeLabel(
   }
 }
 
-function anchorSummaryLabel(anchor: PreviewAnchor): string | null {
-  switch (anchor.type) {
-    case "replace_block":
-      return anchor.block_id !== "pending" ? `更新 #${anchor.block_id}` : null;
-    case "after_block":
-      return `插入于 #${anchor.block_id} 之后`;
-    case "before_block":
-      return `插入于 #${anchor.block_id} 之前`;
-    case "append_to_section":
-      return `追加至章节 #${anchor.section_id}`;
-    case "append_to_doc":
-      return "追加至报告末尾";
-    default:
-      return null;
-  }
-}
-
-function renderHeadingTag(
-  level: number,
-  content: ReactNode,
-) {
+function renderHeadingTag(level: number, content: ReactNode) {
   switch (level) {
     case 1:
       return (
@@ -132,6 +111,106 @@ function parseStreamingTableText(
   return { headers, rows, footerNote };
 }
 
+interface PreviewTableModel {
+  table: TableBlock;
+  layout: TableLayout;
+}
+
+const PREVIEW_NUMERIC_CELL =
+  /^[+-]?\d[\d,，]*(?:\.\d+)?(?:%|亿元|万元|元|项|所|个|人|篇|年|次|门|家|倍|分|名)?$/;
+const PREVIEW_MISSING_CELL = /^[—–-]$/;
+
+function previewColumnDataType(
+  header: string,
+  rows: string[][],
+  columnIndex: number,
+): ColumnDataType {
+  const values = rows
+    .map((row) => row[columnIndex]?.trim() ?? "")
+    .filter((value) => value && !PREVIEW_MISSING_CELL.test(value));
+  if (
+    values.length === 0 ||
+    !values.every((value) => PREVIEW_NUMERIC_CELL.test(value))
+  ) {
+    return "text";
+  }
+  if (header.includes("%") || values.every((value) => value.endsWith("%"))) {
+    return "percent";
+  }
+  if (values.some((value) => /(?:亿元|万元|元)$/.test(value))) {
+    return "currency";
+  }
+  return "number";
+}
+
+function committedLayoutMatches(
+  layout: TableLayout | undefined,
+  headers: string[],
+): layout is TableLayout {
+  return Boolean(
+    layout &&
+    layout.leaf_columns.length === headers.length &&
+    layout.leaf_columns.every(
+      (column, index) => column.label === headers[index],
+    ),
+  );
+}
+
+function buildPreviewTableModel(
+  parsed: ParsedTablePreview,
+  blockId: string,
+  committedLayout?: TableLayout,
+): PreviewTableModel {
+  const table: TableBlock = {
+    type: "table",
+    headers: parsed.headers,
+    rows: parsed.rows,
+  };
+  if (committedLayoutMatches(committedLayout, parsed.headers)) {
+    return { table, layout: committedLayout };
+  }
+
+  const widthPct = 100 / parsed.headers.length;
+  const leafColumns = parsed.headers.map((label, index) => {
+    const dataType = previewColumnDataType(label, parsed.rows, index);
+    const align = dataType === "text" ? ("left" as const) : ("right" as const);
+    return {
+      key: `column_${index}`,
+      label,
+      path: [label],
+      data_type: dataType,
+      sizing: "grow" as const,
+      weight: 1,
+      align,
+      header_align: align,
+      index,
+      width_pct: widthPct,
+      width_css: `${widthPct}%`,
+    };
+  });
+
+  return {
+    table,
+    layout: {
+      table_block_id: blockId,
+      header_rows: [
+        leafColumns.map((column) => ({
+          key: column.key,
+          label: column.label,
+          colspan: 1,
+          rowspan: 1,
+          data_type: column.data_type,
+          align: column.header_align,
+          is_group: false,
+        })),
+      ],
+      leaf_columns: leafColumns,
+      header_depth: 1,
+      total_width_pct: 100,
+    },
+  };
+}
+
 function StreamingCursor() {
   return (
     <span
@@ -145,71 +224,22 @@ const ReportAuthorMarginBadge = memo(function ReportAuthorMarginBadge({
   actor,
   blockType,
   level,
-  blockId,
-  anchor,
 }: {
   actor: string;
   blockType: string;
   level: number | null | undefined;
-  blockId?: string | null;
-  anchor: PreviewAnchor;
 }) {
   const identity = resolveAgentIdentity(actor);
   const typeText = blockTypeLabel(blockType, level);
-  const anchorText = anchorSummaryLabel(anchor);
-  const cleanBlockId =
-    blockId && blockId !== "pending" && !blockId.startsWith("preview")
-      ? blockId
-      : null;
 
   return (
-    <HoverCard>
-      <HoverCardTrigger
-        render={
-          <button
-            type="button"
-            aria-label={`${identity.label} 正在编写${typeText}`}
-            className="inline-flex size-6 items-center justify-center rounded-full bg-background/95 shadow-xs ring-1 ring-border/70 transition-transform hover:scale-105 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          />
-        }
-      >
-        <AgentAvatar actor={actor} size="xs" active />
-      </HoverCardTrigger>
-      <HoverCardContent side="left" align="start" sideOffset={8} className="w-60 p-3">
-        <div className="flex items-start gap-2.5">
-          <AgentAvatar actor={actor} size="md" active />
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <span className="truncate text-xs font-semibold text-foreground">
-                {identity.label}
-              </span>
-              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
-                编写中
-              </span>
-            </div>
-            <div className="text-[11px] text-muted-foreground">
-              {identity.role}
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10.5px] text-muted-foreground">
-              <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground/80">
-                {typeText}
-              </span>
-              {cleanBlockId && (
-                <span className="font-mono text-[10px] text-muted-foreground/80">
-                  #{cleanBlockId}
-                </span>
-              )}
-            </div>
-            {anchorText && (
-              <div className="text-[10.5px] text-muted-foreground/80">
-                {anchorText}
-              </div>
-            )}
-          </div>
-        </div>
-      </HoverCardContent>
-    </HoverCard>
+    <span
+      data-slot="report-author-badge"
+      aria-label={`${identity.label} 正在编写${typeText}`}
+      className="inline-flex size-6 items-center justify-center rounded-full bg-background/95 shadow-xs ring-1 ring-border/70"
+    >
+      <AgentAvatar actor={actor} size="xs" active />
+    </span>
   );
 });
 
@@ -218,6 +248,10 @@ export interface EphemeralPreviewCardProps {
   citationMap?: Record<string, CitationMapEntry>;
   bibliographyById?: Map<string, BibliographyEntry>;
   onCitationClick?: (sourceId: string) => void;
+  framing?: BlockFraming;
+  tableLayout?: TableLayout;
+  /** Only the first block in a consecutive prose run shows the author badge. */
+  showAuthor?: boolean;
 }
 
 /**
@@ -232,6 +266,9 @@ export function EphemeralPreviewCard({
   citationMap,
   bibliographyById,
   onCitationClick,
+  framing,
+  tableLayout,
+  showAuthor = true,
 }: EphemeralPreviewCardProps) {
   const { block } = preview;
   const { text: smoothedText } = useSmoothStreamText(block.text ?? "", true);
@@ -264,48 +301,28 @@ export function EphemeralPreviewCard({
   } else if (block.block_type === "table") {
     const parsedTable = parseStreamingTableText(block.text);
     const titleText = block.title?.trim();
-    if (parsedTable && parsedTable.headers.length > 0) {
+    const captionText = [framing?.label ?? "", titleText]
+      .filter((part): part is string => Boolean(part))
+      .join("  ");
+    const previewTable = parsedTable
+      ? buildPreviewTableModel(
+          parsedTable,
+          block.block_id ?? preview.preview_id,
+          tableLayout,
+        )
+      : null;
+    if (previewTable && parsedTable) {
       body = (
         <figure className="my-5 space-y-2">
-          {titleText && (
+          {captionText && (
             <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
-              {titleText}
+              {captionText}
             </figcaption>
           )}
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse border-y-[1.5px] border-slate-800 text-left text-[12.5px]">
-              <thead>
-                <tr className="border-b border-slate-300 bg-slate-50/80 text-slate-700">
-                  {parsedTable.headers.map((header, idx) => (
-                    <th
-                      key={`${header}-${idx}`}
-                      className="px-2.5 py-2 font-semibold whitespace-nowrap"
-                    >
-                      {header}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200/80">
-                {parsedTable.rows.map((cells, rIdx) => (
-                  <tr key={`row-${rIdx}`}>
-                    {parsedTable.headers.map((_, cIdx) => (
-                      <td
-                        key={`cell-${rIdx}-${cIdx}`}
-                        className="px-2.5 py-1.5 text-slate-700"
-                      >
-                        {cells[cIdx] ?? ""}
-                        {rIdx === parsedTable.rows.length - 1 &&
-                          cIdx === parsedTable.headers.length - 1 && (
-                            <StreamingCursor />
-                          )}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <TableBlockView
+            table={previewTable.table}
+            layout={previewTable.layout}
+          />
           {parsedTable.footerNote && (
             <div className="pt-0.5 text-[11.5px] text-slate-500">
               {parsedTable.footerNote}
@@ -316,9 +333,9 @@ export function EphemeralPreviewCard({
     } else {
       body = (
         <figure className="my-5 space-y-2">
-          {titleText && (
+          {captionText && (
             <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
-              {titleText}
+              {captionText}
               <StreamingCursor />
             </figcaption>
           )}
@@ -333,7 +350,10 @@ export function EphemeralPreviewCard({
         </figure>
       );
     }
-  } else if (block.block_type === "echarts" || block.block_type === "custom_html") {
+  } else if (
+    block.block_type === "echarts" ||
+    block.block_type === "custom_html"
+  ) {
     const titleText = block.title?.trim();
     body = (
       <figure className="my-5 space-y-2">
@@ -375,24 +395,24 @@ export function EphemeralPreviewCard({
       data-block-kind={block.block_type}
       className="group/preview relative"
     >
-      <div className="pointer-events-auto absolute top-0.5 right-full z-10 mr-2.5 hidden sm:flex print:hidden">
-        <ReportAuthorMarginBadge
-          actor={preview.actor}
-          blockType={block.block_type}
-          level={block.level}
-          blockId={block.block_id}
-          anchor={preview.anchor}
-        />
-      </div>
-      <div className="mb-1 flex items-center gap-1.5 sm:hidden print:hidden">
-        <ReportAuthorMarginBadge
-          actor={preview.actor}
-          blockType={block.block_type}
-          level={block.level}
-          blockId={block.block_id}
-          anchor={preview.anchor}
-        />
-      </div>
+      {showAuthor && (
+        <>
+          <div className="pointer-events-auto absolute top-0.5 right-full z-10 mr-2.5 hidden sm:flex print:hidden">
+            <ReportAuthorMarginBadge
+              actor={preview.actor}
+              blockType={block.block_type}
+              level={block.level}
+            />
+          </div>
+          <div className="mb-1 flex items-center gap-1.5 sm:hidden print:hidden">
+            <ReportAuthorMarginBadge
+              actor={preview.actor}
+              blockType={block.block_type}
+              level={block.level}
+            />
+          </div>
+        </>
+      )}
       {body}
     </div>
   );
