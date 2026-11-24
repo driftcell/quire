@@ -1,13 +1,13 @@
 ---
 name: higher-education-research
-description: Orchestrates parallel multi-track higher-education deep research across internal data warehouses (panorama_report, subjectcloud, shuangyou) and authoritative external web sources (.gov.cn, .edu.cn, NSFC, MOE communiqués), enforcing domain-scoped source registration and verbatim evidence excerpts.
+description: Orchestrates parallel multi-track higher-education deep research across internal data warehouses (panorama_report, subjectcloud, shuangyou) and authoritative external web sources (.gov.cn, .edu.cn, NSFC, MOE communiqués), enforcing domain-scoped provenance and optional human-readable evidence excerpts.
 ---
 
 # 高等教育多维深度调研与并行取证规范（Parallel Research Swarm Skill）
 
 本技能专为 Quire **Step 1 并行深度调研阶段**设计，供首席主编（`main`）拆解调研赛道，并由并行派发的 **2—4 位深度调研专员（`researcher` 子代理集群）** 加载执行。
 
-核心理念：**严禁由主代理单线程浅尝辄止地查几个表层总数就草率建章立论**。复杂的高校发展规划、学科竞争力对标、博硕士点申报与“双一流/双优”研报，必须通过并行 `researcher` 子代理集群对**四条正交调研赛道**展开下钻式深潜（Drill-Down），将“总量指标 → 分年趋势 → 院系/学科结构分布 → 标志性成果明细 → 官方政策原文摘录”全部取齐并分域登记为可溯源的 `SourceEntry`。
+核心理念：**严禁由主代理单线程浅尝辄止地查几个表层总数就草率建章立论**。复杂的高校发展规划、学科竞争力对标、博硕士点申报与“双一流/双优”研报，必须通过并行 `researcher` 子代理集群对**四条正交调研赛道**展开下钻式深潜（Drill-Down），将“总量指标 → 分年趋势 → 院系/学科结构分布 → 标志性成果明细 → 官方政策原文”全部取齐并分域登记为可溯源的 `SourceEntry`。
 
 ## 按需加载参考文件
 
@@ -38,26 +38,26 @@ description: Orchestrates parallel multi-track higher-education deep research ac
 
 ### 1. 外部网页必须 `deepseek_fetch` 读取原文后方可入库
 - 网页搜索（`deepseek_search`）返回的 snippet 只是残缺预览，**严禁仅凭搜索摘要脑补数字或直接把 snippet 当作已核实摘录写入 `upsert_sources`**。
-- 凡准备采信并注册为 `SourceEntry` 的外部网页，**必须调用 `deepseek_fetch(url)` 读取网页正文**，并将包含核心统计数字、时间窗、政策条款或机构定性的**原句逐字复制到 `SourceEntry.excerpt`** 中。
+- 凡准备采信并注册为 `SourceEntry` 的外部网页，**必须调用 `deepseek_fetch(url)` 读取网页正文**。只有当一个简短原文片段能直接帮助读者理解或核验引用时才填写 `SourceEntry.excerpt`，且必须逐字来自同一文档；没有值得展示的原文就留空。不得拼接多篇文章、加入分析与编辑备注，或用摘录承载整份数据表。
 - **权威信源白名单**：只采信政府主管部门（`.gov.cn`，如教育部、科技部、省教育厅、省政府）、高校官方网站与信息公开网（`.edu.cn`）、国家自然科学基金委/全国哲社办正式公告、Clarivate ESI 官方公报或权威学术统计年鉴。**严禁采信百家号、搜狐号、网易号、头条号、知乎、百度百科、个人博客或第三方自媒体汇总帖**。
 
 ### 2. 内部数据库分域注册与“反口袋信源”铁律
 - 严禁把所有内部数据库查出来的学科、人才、科研、平台数据全部塞进一个名为“高校公开数据大汇编”或“青塔数据库综合记录”的单一口袋信源！
-- 每个 `researcher` 必须按自身负责的**业务数据域**分别调用 `upsert_sources` 注册权责清晰、颗粒度适中的独立信源（如 `sc-discipline-eval`、`sc-talent-leading`、`pr-nsfc-2021-2025`、`pr-platform-national`、`sy-industry-match`），并在每条信源的 `excerpt` 中完整列出该数据域核实到的**各校分年/分项精确原值与统计口径**，确保后续 `analyst`、`writer`、`humanizer` 与 `reviewer` 随时调用 `list_sources` 都能在 `excerpt` 中逐字核对每一个引用数字！
+- 每个 `researcher` 必须按自身负责的**业务数据域**分别调用 `upsert_sources` 注册权责清晰、颗粒度适中的独立信源（如 `sc-discipline-eval`、`sc-talent-leading`、`pr-nsfc-2021-2025`、`pr-platform-national`、`sy-industry-match`）。结构化数据库和工具记录默认不写 `excerpt`；精确原值与统计口径保留在调研卷宗和结构化数据中，`note` 仅用自然中文简要说明范围与必要限制。后续核验必须回到原始记录，不得要求 `excerpt` 覆盖所有引用数字。
 - **并发入库零冲突**：`upsert_sources` 在后端持有文档级行锁并支持 URL/标题自动去重合并，多位并行 `researcher` 可直接并发调用 `upsert_sources` 将各赛道信源实时写入报告。
 
 ### 3. `subjectcloud` 双评价体系严格隔离（`moe` vs `index`）
 - `subjectcloud` 中同时包含两套截然不同的学科数据口径：
   1. **`moe`（教育部学科评估公开/折算档位口径）**：对应第四轮/第五轮学科评估的 A+/A/A-/B+/B/B-/C+/C/C- 档位；
   2. **`index`（年度学科发展指数口径）**：基于年度公开纵向指标计算的连续得分、全国位次与百分位档位。
-- `researcher` 在取数和写入 `SourceEntry.excerpt` 时，**必须显式标明每组数字属于 `教育部学科评估口径` 还是 `年度学科发展指数口径`**，绝不能将两套体系的档位或排名混为一谈！
+- `researcher` 在取数和登记信源时，**必须显式标明每组数字属于 `教育部学科评估口径` 还是 `年度学科发展指数口径`**，绝不能将两套体系的档位或排名混为一谈！
 
 ### 4. 下钻到底（Drill-Down Depth），拒绝只报表面总数
 - 发现某高校某项总量指标突出或滞后时（如“国自然立项总数高，但重大重点少”或“省级平台多，但国家级平台为零”），`researcher` 必须主动调用 `panorama_report_drill`、`subjectcloud_detail` 或 `subjectcloud_talent_detail` 下钻一层，查清：
   - **结构分布**：具体集中在哪些优势学科或头部学院？哪些主干学科处于空白？
   - **跨期拐点**：2021—2025 年哪一年出现了跃升或滑坡？
   - **标志性实体**：具体的国家级平台名称、重大项目或领军学者所属方向是什么？
-- 只有把这些下钻明细写进 `SourceEntry.excerpt` 和调研卷宗，后续 `analyst` 才能画出有信息量的结构分化图表，`writer` 才能写出“判断 → 结构拆解 → 机制归因 → 制度抓手”的四层深度论证！
+- 只有把这些下钻明细写入调研卷宗和相应的结构化数据，后续 `analyst` 才能画出有信息量的结构分化图表，`writer` 才能写出“判断 → 结构拆解 → 机制归因 → 制度抓手”的四层深度论证；不得把它们改写成大段 `excerpt`。
 
 ---
 

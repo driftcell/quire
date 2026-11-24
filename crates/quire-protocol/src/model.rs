@@ -302,9 +302,14 @@ pub struct SourceEntry {
     pub date: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accessed: Option<String>,
+    /// Optional concise human-readable provenance note for scope, time windows, statistical calibers
+    /// and material limitations. Do not use it for raw query parameters, internal IDs or full datasets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// Short verbatim evidence excerpt used by reviewers and agents.
+    /// Optional short verbatim passage from one original document, included only when it helps a
+    /// human reader understand or verify a specific claim. Omit it for structured database/API
+    /// records or whenever no meaningful original passage exists; never fill it with full query
+    /// results, derived analysis, editorial notes, or a synthetic verification dossier.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
 }

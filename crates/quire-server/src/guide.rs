@@ -258,8 +258,9 @@ SOURCES
 - Register with `upsert_sources(doc_id, sources)`:
   [{ "id":"sec10", "title":"Annual filing 10-K", "url":"https://...", "authors":["Jane Smith"], "date":"2025-02-01" }]
 - Dedup key: URL first (normalized), otherwise normalized title. The response's `canonical_id_map` tells you which source_id to cite. Already-registered sources can also be partially updated by `id` (e.g. `[{"id":"sec10","excerpt":"..."}]`) without repeating `title`.
-- Call `list_sources(doc_id)` to inspect every registered source, or `list_sources(doc_id, source_ids=[...])` for exact records and verbatim evidence excerpts. Never guess a source ID from its name.
-- Search-result snippets are leads, not verified evidence. Read the original page and match a specific claim to the source before citing it; never attach a source only to satisfy a source-count target or clear a diagnostic.
+- Call `list_sources(doc_id)` to inspect every registered source, or `list_sources(doc_id, source_ids=[...])` for exact records and optional evidence excerpts. Never guess a source ID from its name.
+- `excerpt` is an optional short verbatim passage for human readers. Use it only when one original document has a meaningful passage that directly supports a claim; it need not cover every claim from that source. Omit it for structured database/API/tool records instead of filling it with query results or synthetic dossiers. Keep `note` concise and human-readable for scope, time windows and statistical calibers.
+- Search-result snippets are leads, not verified evidence. Read the original page and match a specific claim to the source before citing it; never attach a source only to satisfy a source-count target or clear a diagnostic. Missing excerpts are valid.
 - Citations: inline `[^sec10]`, or block-level `source_ids:["sec10"]`.
 - Inline citations are numbered by first appearance. Bibliography order follows that numbering.
 - `configure_references(doc_id, enabled=true, style="author_year")` switches labels to (Smith, 2025).
@@ -358,7 +359,7 @@ FRONTEND CONTRACT
 - Frontend is read-only. It consumes GET /api/docs/{doc_id} canonical JSON + computed metadata and SSE revision deltas.
 - GET /api/docs/{doc_id}/diff?fromRev=A&toRev=B returns structured block-level Added/Removed/Modified entries plus metadata flags.
 - GET /api/docs/{doc_id}/sync?fromRev=A returns an applied snapshot delta through the current revision: exact target block order, only added/modified blocks, removed IDs, changed document configuration and canonical computed metadata. Read-only frontends use it for incremental live sync; the full document endpoint remains the initial-load and gap-recovery contract.
-- SourceEntry.excerpt carries verbatim evidence; computed.chart_tables carries renderer-ready ECharts data tables grouped by block ID.
+- SourceEntry.excerpt optionally carries a short human-readable verbatim passage and may be absent for structured records; computed.chart_tables carries renderer-ready ECharts data tables grouped by block ID.
 - SSE events: revision, ephemeral_preview, agent_presence, ephemeral_clear, comment_updated, sync_required, plus heartbeat comments.
 - Do not send cursor/presence edits other than optional ephemeral previews. When a previewed block is committed, pass its preview IDs as preview_ids to apply_operations so revision.cleared_preview_ids clears the placeholder atomically. A no-op commit emits ephemeral_clear immediately instead of creating a revision.
 "##.into(),

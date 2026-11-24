@@ -1046,7 +1046,7 @@ async fn comments_survive_block_deletion_without_touching_revisions() {
 }
 
 #[tokio::test]
-async fn source_excerpt_roundtrips_through_storage() {
+async fn source_excerpt_is_optional_and_roundtrips_through_storage() {
     let store = test_store().await;
     let doc_id = unique("it-excerpt");
     let doc = document(&doc_id, None, vec![paragraph("intro", "Hello")]);
@@ -1056,13 +1056,19 @@ async fn source_excerpt_roundtrips_through_storage() {
         .upsert_sources(
             &as_doc_id(&doc_id),
             "agent",
-            vec![SourceUpsert {
-                source_id: as_source_id("src_excerpt"),
-                source: SourceEntry {
-                    excerpt: Some("Verbatim evidence from the source.".into()),
-                    ..SourceEntry::new("Evidence report")
+            vec![
+                SourceUpsert {
+                    source_id: as_source_id("src_excerpt"),
+                    source: SourceEntry {
+                        excerpt: Some("Verbatim evidence from the source.".into()),
+                        ..SourceEntry::new("Evidence report")
+                    },
                 },
-            }],
+                SourceUpsert {
+                    source_id: as_source_id("src_structured"),
+                    source: SourceEntry::new("Structured database record"),
+                },
+            ],
         )
         .await
         .unwrap();
@@ -1074,6 +1080,13 @@ async fn source_excerpt_roundtrips_through_storage() {
             .get(&as_source_id("src_excerpt"))
             .and_then(|source| source.excerpt.as_deref()),
         Some("Verbatim evidence from the source.")
+    );
+    assert_eq!(
+        loaded
+            .sources
+            .get(&as_source_id("src_structured"))
+            .and_then(|source| source.excerpt.as_deref()),
+        None
     );
 
     cleanup(&store, &doc_id).await;

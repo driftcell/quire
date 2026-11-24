@@ -109,7 +109,8 @@ pub struct BibliographyEntry {
     pub source: SourceEntry,
     /// Plain-text citation line, useful for LLM digests and non-HTML consumers.
     pub plain_text: String,
-    /// Optional verbatim evidence excerpt supplied with the source.
+    /// Optional short verbatim passage from the source, shown only when it is useful to a human
+    /// reader. Missing excerpts are valid and are not a citation-quality defect by themselves.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
 }

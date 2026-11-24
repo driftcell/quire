@@ -562,9 +562,16 @@ export interface SourceEntry {
    */
   date?: string | null;
   accessed?: string | null;
+  /**
+   * Optional concise human-readable provenance note for scope, time windows, statistical calibers
+   * and material limitations. Do not use it for raw query parameters, internal IDs or full datasets.
+   */
   note?: string | null;
   /**
-   * Short verbatim evidence excerpt used by reviewers and agents.
+   * Optional short verbatim passage from one original document, included only when it helps a
+   * human reader understand or verify a specific claim. Omit it for structured database/API
+   * records or whenever no meaningful original passage exists; never fill it with full query
+   * results, derived analysis, editorial notes, or a synthetic verification dossier.
    */
   excerpt?: string | null;
   [k: string]: unknown;
@@ -812,7 +819,8 @@ export interface BibliographyEntry {
    */
   plain_text: string;
   /**
-   * Optional verbatim evidence excerpt supplied with the source.
+   * Optional short verbatim passage from the source, shown only when it is useful to a human
+   * reader. Missing excerpts are valid and are not a citation-quality defect by themselves.
    */
   excerpt?: string | null;
   [k: string]: unknown;

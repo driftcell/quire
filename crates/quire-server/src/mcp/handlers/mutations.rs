@@ -51,7 +51,8 @@ impl QuireMcpServer {
     ///
     /// Citation integrity rules:
     /// - Register ONLY real sources that you actually retrieved and read during research; never fabricate URLs, DOIs, authors, or evidence excerpts.
-    /// - Include a verbatim `evidence` excerpt from the source so reviewers and `lint_document` can verify claim-to-source alignment.
+    /// - `excerpt` is optional and intended for human readers. For a natural-language document, include only a short verbatim passage from that same document when it directly supports a cited claim; it does not need to cover every claim made from the source.
+    /// - Omit `excerpt` for structured database/API/tool records or when no meaningful original passage exists. Never replace it with full query results, multi-document compilations, derived analysis, rankings, internal IDs, or editorial notes. Use `note` for a concise human-readable scope, time window, and statistical caliber.
     /// - Always inspect `canonical_id_map` in the receipt: if a duplicate URL or title merged into an existing source ID, cite the mapped canonical ID in your prose (`[^id]`) and block `source_ids`.
     /// - You can also register sources atomically alongside block edits via the `sources` map on `apply_operations`.
     /// - In chat replies, place `<citation id="SOURCE_ID"/>` immediately after the claim it supports to render an interactive citation badge and a collapsible Sources drawer.
@@ -68,9 +69,9 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     // Tool 10: list sources
     // ---------------------------------------------------------------------
-    /// List registered bibliography sources and their `evidence` excerpts for a report.
+    /// List registered bibliography sources, including optional human-readable evidence excerpts.
     ///
-    /// Call this before authoring citations in a shared report to reuse existing canonical `SourceId`s and verify stored evidence excerpts.
+    /// Call this before authoring citations in a shared report to reuse existing canonical `SourceId`s and inspect provenance. When an excerpt is present, verify it against the cited claim; when it is absent, use the original document or structured source data instead. Missing excerpts are valid.
     /// Passing any unregistered ID in `source_ids` returns an error listing all valid registered source IDs.
     #[tool(name = "list_sources", annotations(read_only_hint = true))]
     pub async fn list_sources(
@@ -114,7 +115,7 @@ impl QuireMcpServer {
             "No sources are registered. Add only sources actually read and used with upsert_sources."
                 .to_string()
         } else {
-            "Match each citation to a specific claim and its evidence excerpt; fetch the original page before relying on a search-result snippet.".to_string()
+            "Match each citation to a specific claim. Use an excerpt only when a short original passage is useful; otherwise verify the original document or structured source data. Fetch original pages before relying on search-result snippets.".to_string()
         };
         Ok(Json(ListSourcesReceipt {
             doc_id: document.doc_id.to_string(),

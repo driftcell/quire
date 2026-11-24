@@ -27,7 +27,7 @@
      - ESI 全球前 1% 学科数、前 1‰ 学科数及具体学科名称。
 2. **第二步：学科评估与学科指数分档下钻**
    - 调用 `subjectcloud_overview`（每批 ≤10 个学科）与 `subjectcloud_result`、`subjectcloud_detail`，获取主干对比学科的档位分布（A类 / B+ / B / B- / C类）与年度学科指数位次。
-   - **双口径隔离铁律**：在登记信源 `excerpt` 时，将 `moe`（教育部学科评估口径）与 `index`（年度学科发展指数口径）分条或分表写明，严禁混写。
+   - **双口径隔离铁律**：登记信源时，将 `moe`（教育部学科评估口径）与 `index`（年度学科发展指数口径）分条或分表写明，严禁混写。
 3. **第三步：分域登记信源**
    - `sc-discipline-eval`：教育部学科评估档位与参评学科结构核实记录；
    - `sc-discipline-index`：年度学科发展指数与横向位次核实记录；
@@ -71,4 +71,4 @@
    - **必做动作**：对命中的每一条权威网页 URL，立即调用 `deepseek_fetch(url)` 读取完整正文，提取包含准确数字、日期和政策硬约束的原文段落。
 3. **第三步：分域登记信源**
    - `sy-industry-profile`：双优建设画像与区域产业契合度核实记录；
-   - `gov-policy-*` / `edu-official-*`：附带真实 `url`、`publisher`、`date` 与**原文逐字 `excerpt`** 的外部权威政策/公报信源。
+   - `gov-policy-*` / `edu-official-*`：附带真实 `url`、`publisher`、`date` 的外部权威政策/公报信源；仅在短原文片段对读者有实际帮助时附逐字 `excerpt`，否则留空。

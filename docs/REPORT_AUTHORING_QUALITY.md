@@ -42,8 +42,17 @@ Shared facts have three states:
 
 Search snippets are leads only. A citation must support its specific claim, and an unrelated source does
 not count toward a user's source requirement. `list_sources(doc_id)` returns every registered source;
-`list_sources(doc_id, source_ids=[...])` returns exact records and evidence excerpts in request order.
-Unknown IDs fail with `INVALID_PARAMS` and the valid-ID list instead of disappearing silently.
+`list_sources(doc_id, source_ids=[...])` returns exact records and optional evidence excerpts in request
+order. Unknown IDs fail with `INVALID_PARAMS` and the valid-ID list instead of disappearing silently.
+
+`SourceEntry.excerpt` is an optional, human-readable, short verbatim passage from one original document.
+It is included only when that passage directly helps a reader understand or verify a claim; it never has
+to cover every claim or number drawn from the source. Different documents are never combined into one
+excerpt, and full query results, derived analysis, internal identifiers, editorial notes and synthetic
+verification dossiers are not valid excerpts. Structured database/API/tool records normally leave the
+field empty and use `note` for a concise natural-language scope, time window and statistical caliber.
+Missing excerpts are valid: reviewers return to the original document or structured source data instead
+of treating absence as a defect.
 
 ### Tool receipts and merge semantics
 
@@ -73,7 +82,7 @@ value rather than patching isolated prose numbers.
    discipline/degree, faculty/talent, research/platform/award, and policy/industry tracks. Researchers
    drill into trends, structural distributions and named entities, fetch original external pages,
    register domain-scoped sources and return four-part evidence dossiers.
-2. The lead reconciles the dossiers and registered excerpts, locks the primary statistical scope,
+2. The lead reconciles the dossiers and original evidence, locks the primary statistical scope,
    partitions shared facts by state, builds the elastic outline and assigns each evidence set one
    primary chapter.
 3. Have analysts verify high-risk facts, centralize derived data and build question-driven visuals with
@@ -119,8 +128,9 @@ agent prompts do not duplicate the complete lint catalog.
 
 - Researchers own domain-scoped evidence acquisition and canonical source registration across parallel
   tracks; the lead owns cross-track scope arbitration and fact-state classification. External sources
-  require original-page fetches and verbatim excerpts, while internal records preserve exact values,
-  units, time windows and statistical scope.
+  require original-page fetches, with short same-document excerpts added only when useful to readers.
+  Internal records preserve exact values, units, time windows and statistical scope in research dossiers
+  and structured data; their excerpts stay empty by default and their notes remain concise and readable.
 - One paragraph has one main job; evidence, mechanism and recommendation paragraphs are not forced into
   the same numeric template.
 - A visual replaces detailed prose instead of licensing its repetition. Agents never insert duplicate
@@ -149,8 +159,9 @@ agent prompts do not duplicate the complete lint catalog.
   evidence for a different revision. The same pinning applies to `GET /api/docs/{doc_id}?rev=N`.
 - `prose_char_count` excludes citation markers and markup, and `prose_char_delta` is computed against
   the persisted `target_prose_chars` so every reviewer sees the same agreement.
-- `list_sources` preserves request order for exact-ID queries, returns evidence excerpts and rejects
-  unknown IDs with valid IDs in the error details.
+- `list_sources` preserves request order for exact-ID queries, returns optional evidence excerpts and
+  rejects unknown IDs with valid IDs in the error details. Sources without excerpts register, load and
+  support citations normally.
 - Digest aggregates describe the whole document even when `query` filters the returned block list.
 - Native/server tool catalogs have matching 19-tool sets, and the multi-agent workflow E2E covers
   `list_sources`, digest aggregates, Smart CAS and review tools.

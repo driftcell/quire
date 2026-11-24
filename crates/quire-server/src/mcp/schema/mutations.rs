@@ -92,7 +92,7 @@ pub struct UpsertSourcesParams {
     /// Target report `doc_id` that owns the bibliography registry (optional in chat sessions; if omitted, uses or auto-creates the session's bound document).
     #[serde(default)]
     pub doc_id: String,
-    /// Non-empty list of real sources actually read during research. Include `title`, optional `url`/`author`/`published_at`/`publisher`/`note`, and a verbatim `evidence` excerpt supporting the cited claim. Duplicate URLs or normalized titles coalesce into one canonical source ID returned in `canonical_id_map`.
+    /// Non-empty list of real sources actually read during research. Include `title`, optional `url`/`author`/`published_at`/`publisher`/`note`, and an optional short verbatim `excerpt` only when it is useful to a human reader. Omit excerpts for structured records; never substitute full query results or synthetic dossiers. Duplicate URLs or normalized titles coalesce into one canonical source ID returned in `canonical_id_map`.
     pub sources: Vec<SourceInput>,
 }
 
@@ -123,7 +123,7 @@ pub struct ListSourcesParams {
     pub source_ids: Option<Vec<String>>,
 }
 
-/// Output for `list_sources`, including evidence excerpts needed for claim-level review.
+/// Output for `list_sources`, including optional evidence excerpts for claim-level review. Missing excerpts are valid.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ListSourcesReceipt {
     pub doc_id: String,
