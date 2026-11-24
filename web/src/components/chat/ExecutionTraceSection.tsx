@@ -3,9 +3,7 @@ import {
   AlertCircleIcon,
   CheckIcon,
   CompassIcon,
-  Loader2Icon,
   MinusIcon,
-  SparklesIcon,
 } from "lucide-react";
 import { cn } from "cn";
 import { mono, paper } from "@/components/assistant-ui/elements/surfaces";
@@ -58,8 +56,8 @@ function collectQuestionNodes(
 
 /**
  * Clean, domain-level semantic action tags (e.g., "查询高教全景数据 · 浙江大学",
- * "登记数据来源", "写入报告内容") without raw `×N` tool repeat multipliers or
- * `#block_id` strings.
+ * "登记数据来源", "写入报告内容") with calm static indicators (no spinning
+ * loader icons).
  */
 function SemanticPillBar({ pills }: { pills: SemanticActionPill[] }) {
   if (pills.length === 0) {
@@ -77,16 +75,16 @@ function SemanticPillBar({ pills }: { pills: SemanticActionPill[] }) {
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
             pill.status === "running"
-              ? "border-foreground/25 bg-foreground/[0.06] text-foreground"
+              ? "border-[#1D4ED8]/30 bg-[#1D4ED8]/[0.06] text-foreground"
               : pill.status === "failed"
                 ? "border-destructive/35 bg-destructive/10 text-destructive"
                 : "border-border/65 bg-foreground/[0.03] text-foreground/85",
           )}
         >
           {pill.status === "running" ? (
-            <Loader2Icon
+            <span
               aria-hidden
-              className="size-3 shrink-0 animate-spin text-foreground"
+              className="size-1.5 shrink-0 rounded-full bg-[#1D4ED8]"
             />
           ) : pill.status === "failed" ? (
             <AlertCircleIcon
@@ -154,7 +152,10 @@ function SubagentTaskCardItem({
                   ) : done ? (
                     <CheckIcon className="size-3 shrink-0 text-emerald-500" />
                   ) : active ? (
-                    <Loader2Icon className="size-3 shrink-0 animate-spin text-foreground" />
+                    <span
+                      aria-hidden
+                      className="mx-0.5 size-1.5 shrink-0 rounded-full bg-[#1D4ED8]"
+                    />
                   ) : (
                     <span className="mx-0.5 size-1.5 shrink-0 rounded-full border border-foreground/30" />
                   )}
@@ -242,6 +243,11 @@ function SubagentTaskCardItem({
   );
 }
 
+/**
+ * MilestoneStageCard shows the stage title, semantic domain actions, and
+ * specialist team deliverables—without exposing internal chain-of-thought
+ * (`rawThinking`) or raw JSON tool logs.
+ */
 function MilestoneStageCard({
   milestone,
   showStageIndex,
@@ -251,6 +257,14 @@ function MilestoneStageCard({
   showStageIndex: boolean;
   onJumpToSection?: (sectionId: string) => void;
 }) {
+  if (
+    !showStageIndex &&
+    milestone.semanticPills.length === 0 &&
+    milestone.subagents.length === 0
+  ) {
+    return null;
+  }
+
   return (
     <div
       data-slot="describe-task-milestone"
@@ -312,18 +326,6 @@ function MilestoneStageCard({
             />
           ))}
         </div>
-      )}
-
-      {milestone.rawThinking && (
-        <details className="group/thinking text-xs text-muted-foreground">
-          <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md py-0.5 text-xs text-muted-foreground/80 transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
-            <SparklesIcon className="size-3 shrink-0" aria-hidden />
-            <span>查看分析思路</span>
-          </summary>
-          <div className="mt-1.5 rounded-lg border border-border/50 bg-foreground/[0.02] p-2.5 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
-            {milestone.rawThinking}
-          </div>
-        </details>
       )}
     </div>
   );
@@ -402,7 +404,7 @@ export function HistoricalRunTrace({
   }
 
   return (
-    <div className="w-full space-y-2">
+    <div className="w-full space-y-2.5">
       <RunActivityHeader
         model={headerModel}
         isStreaming={false}

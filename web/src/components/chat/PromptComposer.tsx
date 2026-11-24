@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpIcon,
+  CoinsIcon,
   FileIcon,
   Minimize2Icon,
   PlusIcon,
@@ -99,6 +100,79 @@ export function formatSessionCostRmb(costRmb: number): string {
   return `¥${safe.toFixed(3)}`;
 }
 
+/**
+ * Smooth "gas-pump odometer" interpolation hook. When the session's cumulative
+ * cost increases (from main agent or subagent turns), it smoothly rolls the
+ * displayed value at 60fps over ~560ms with cubic ease-out, respecting
+ * `prefers-reduced-motion`.
+ */
+function useGasPumpCostOdometer(targetCostRmb: number | null | undefined): {
+  displayedCost: number;
+  isRolling: boolean;
+} {
+  const target =
+    typeof targetCostRmb === "number" &&
+    Number.isFinite(targetCostRmb) &&
+    targetCostRmb >= 0
+      ? targetCostRmb
+      : 0;
+  const [displayedCost, setDisplayedCost] = useState(target);
+  const [isRolling, setIsRolling] = useState(false);
+  const currentRef = useRef(target);
+
+  useEffect(() => {
+    const startValue = currentRef.current;
+    const diff = target - startValue;
+    if (Math.abs(diff) < 1e-8) {
+      currentRef.current = target;
+      return undefined;
+    }
+    const reducedMotion =
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (
+      reducedMotion ||
+      typeof window === "undefined" ||
+      typeof window.requestAnimationFrame !== "function"
+    ) {
+      currentRef.current = target;
+      // oxlint-disable-next-line react/set-state-in-effect -- SSR/reduced-motion immediate sync
+      setDisplayedCost(target);
+      return undefined;
+    }
+
+    const durationMs = 560;
+    const startedAt = window.performance.now();
+    let frameId = 0;
+    setIsRolling(true);
+
+    const step = (now: number) => {
+      const elapsed = Math.max(0, now - startedAt);
+      const progress = Math.min(1, elapsed / durationMs);
+      const eased = 1 - (1 - progress) ** 3;
+      const nextValue = startValue + diff * eased;
+      currentRef.current = nextValue;
+      setDisplayedCost(nextValue);
+      if (progress < 1) {
+        frameId = window.requestAnimationFrame(step);
+      } else {
+        currentRef.current = target;
+        setDisplayedCost(target);
+        setIsRolling(false);
+      }
+    };
+
+    frameId = window.requestAnimationFrame(step);
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      setIsRolling(false);
+    };
+  }, [target]);
+
+  return { displayedCost, isRolling };
+}
+
 function ContextRing({ pct }: { pct: number }) {
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
@@ -129,7 +203,7 @@ function ContextRing({ pct }: { pct: number }) {
             ? "text-destructive"
             : pct >= 65
               ? "text-amber-500"
-              : "text-primary"
+              : "text-[#1D4ED8]"
         }
       />
     </svg>
@@ -181,6 +255,12 @@ export function PromptComposer({
   const used = contextUsage?.context_used ?? 0;
   const limit = contextUsage?.context_limit ?? 0;
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
+  const rawCostRmb = contextUsage?.cost_rmb;
+  const hasCost =
+    rawCostRmb !== undefined &&
+    rawCostRmb !== null &&
+    Number.isFinite(rawCostRmb);
+  const { displayedCost, isRolling } = useGasPumpCostOdometer(rawCostRmb);
 
   const submit = async () => {
     const trimmed = text.trim();
@@ -386,7 +466,7 @@ export function PromptComposer({
               <PlusIcon className="size-4" />
             </InputGroupButton>
 
-            {contextUsage && limit > 0 && used > 0 && (
+            {contextUsage && (limit > 0 || hasCost) && (
               <HoverCard>
                 <HoverCardTrigger
                   render={
@@ -395,24 +475,81 @@ export function PromptComposer({
                       size="xs"
                       variant="ghost"
                       data-slot="context-usage-trigger"
-                      className="gap-1.5 text-xs text-muted-foreground tabular-nums"
+                      className="gap-1.5 rounded-lg px-2 text-xs text-muted-foreground tabular-nums hover:bg-secondary/80 hover:text-foreground"
                     />
                   }
                 >
-                  <ContextRing pct={pct} />
-                  <span>{pct}%</span>
-                </HoverCardTrigger>
-                <HoverCardContent className="w-64 space-y-2.5">
-                  <div className="flex items-center justify-between text-xs font-medium">
-                    <span>对话上下文容量</span>
-                    <span className="tabular-nums">
-                      {formatTokens(used)} / {formatTokens(limit)}
+                  {limit > 0 && (
+                    <span className="inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums">
+                      <ContextRing pct={pct} />
+                      <span>{pct}%</span>
                     </span>
+                  )}
+                  {(hasCost || used > 0) && (
+                    <>
+                      {limit > 0 && (
+                        <span className="text-border" aria-hidden="true">
+                          ·
+                        </span>
+                      )}
+                      <span
+                        data-slot="session-cost-odometer"
+                        data-rolling={isRolling ? "true" : "false"}
+                        className={`inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums transition-colors duration-200 ${
+                          isRolling
+                            ? "font-medium text-emerald-600 dark:text-emerald-400"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        <CoinsIcon className="size-3 shrink-0 opacity-75" />
+                        <span>{formatSessionCostRmb(displayedCost)}</span>
+                      </span>
+                    </>
+                  )}
+                </HoverCardTrigger>
+                <HoverCardContent className="w-72 space-y-3 rounded-xl border border-border/90 bg-card p-3.5 shadow-md">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs font-medium text-foreground">
+                      <span>上下文容量</span>
+                      <span className="font-mono text-[11px] text-muted-foreground tabular-nums">
+                        {formatTokens(used)} / {formatTokens(limit)} ({pct}%)
+                      </span>
+                    </div>
+                    <Progress value={pct} aria-label="Context used" />
                   </div>
-                  <Progress value={pct} aria-label="Context used" />
-                  <p className="text-[11px] leading-relaxed text-muted-foreground">
-                    长对话或大体量报告编写过程中，可随时压缩历史记录以释放上下文空间。
-                  </p>
+
+                  <div className="grid grid-cols-3 gap-2 rounded-lg border border-border/70 bg-secondary/40 px-2.5 py-2 text-[11px]">
+                    <div>
+                      <div className="text-muted-foreground">输入 Token</div>
+                      <div className="mt-0.5 font-mono font-medium text-foreground tabular-nums">
+                        {formatTokens(contextUsage.input_tokens)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">输出 Token</div>
+                      <div className="mt-0.5 font-mono font-medium text-foreground tabular-nums">
+                        {formatTokens(contextUsage.output_tokens)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">缓存命中</div>
+                      <div className="mt-0.5 font-mono font-medium text-emerald-600 tabular-nums dark:text-emerald-400">
+                        {formatTokens(contextUsage.cached_tokens)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {(hasCost || used > 0) && (
+                    <div className="flex items-center justify-between border-t border-border/60 pt-2 text-xs">
+                      <span className="text-muted-foreground">
+                        本会话累计消耗
+                      </span>
+                      <span className="font-mono font-semibold text-foreground tabular-nums">
+                        {formatSessionCostRmb(displayedCost)}
+                      </span>
+                    </div>
+                  )}
+
                   {onCompact && (
                     <Tooltip>
                       <TooltipTrigger
@@ -451,8 +588,8 @@ export function PromptComposer({
                           <Minimize2Icon className="size-3" />
                           <span>
                             {compacting || compactingRequest
-                              ? "正在整理上下文…"
-                              : "整理并压缩上下文"}
+                              ? "正在压缩上下文…"
+                              : "压缩上下文 (/compact)"}
                           </span>
                         </Button>
                       </TooltipTrigger>
@@ -460,8 +597,10 @@ export function PromptComposer({
                         {isRunning
                           ? "任务执行中暂不可压缩"
                           : compacting
-                            ? "正在整理历史上下文"
-                            : "压缩早期对话记录并保留核心结论"}
+                            ? "服务端正在压缩上下文"
+                            : compactingRequest
+                              ? "正在生成结构化交接摘要"
+                              : "压缩早期对话历史并释放上下文空间"}
                       </TooltipContent>
                     </Tooltip>
                   )}

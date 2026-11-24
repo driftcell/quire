@@ -5,7 +5,6 @@ import {
   Ban,
   CheckIcon,
   ChevronRightIcon,
-  Loader2Icon,
   XIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -40,7 +39,7 @@ export function TaskStateIcon({
     return (
       <XIcon
         aria-hidden
-        className={cn("text-destructive size-3.5 shrink-0", className)}
+        className={cn("size-3.5 shrink-0 text-destructive", className)}
       />
     );
   }
@@ -48,16 +47,16 @@ export function TaskStateIcon({
     return (
       <Ban
         aria-hidden
-        className={cn("text-muted-foreground size-3.5 shrink-0", className)}
+        className={cn("size-3.5 shrink-0 text-muted-foreground", className)}
       />
     );
   }
   if (state === "working") {
     return (
-      <Loader2Icon
+      <span
         aria-hidden
         className={cn(
-          "text-muted-foreground size-3.5 shrink-0 animate-spin motion-reduce:animate-none",
+          "m-0.5 size-2 shrink-0 rounded-full bg-[#1D4ED8] ring-2 ring-[#1D4ED8]/20",
           className,
         )}
       />
@@ -67,7 +66,7 @@ export function TaskStateIcon({
     <span
       aria-hidden
       className={cn(
-        "border-foreground/35 m-1 size-1.5 shrink-0 rounded-full border",
+        "m-1 size-1.5 shrink-0 rounded-full border border-foreground/35",
         className,
       )}
     />
@@ -126,16 +125,18 @@ export function TaskCard({
         aria-expanded={hasTranscript ? isOpen : undefined}
         disabled={!hasTranscript || inert}
         onClick={toggle}
-        className="hover:enabled:bg-foreground/[0.03] flex items-center gap-2.5 px-3.5 py-2.5 text-start transition-colors disabled:cursor-default"
+        className="flex items-center gap-2.5 px-3.5 py-2.5 text-start transition-colors hover:enabled:bg-foreground/[0.03] disabled:cursor-default"
       >
         <TaskStateIcon state={state} />
         <span className="sr-only">{state}</span>
-        <span className="min-w-0 flex-1 truncate text-[13.5px]">{label}</span>
+        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+          {label}
+        </span>
         {meta !== undefined && (
           <span
             className={cn(
               mono,
-              "text-muted-foreground max-w-24 shrink-0 truncate",
+              "max-w-28 shrink-0 truncate text-muted-foreground",
             )}
           >
             {meta}
@@ -143,7 +144,7 @@ export function TaskCard({
         )}
         {elapsed !== undefined && (
           <span
-            className={cn(mono, "text-muted-foreground shrink-0 tabular-nums")}
+            className={cn(mono, "shrink-0 text-muted-foreground tabular-nums")}
           >
             {elapsed}
           </span>
@@ -152,7 +153,7 @@ export function TaskCard({
           <ChevronRightIcon
             aria-hidden
             className={cn(
-              "text-muted-foreground size-3 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
+              "size-3 shrink-0 text-muted-foreground transition-transform duration-200 motion-reduce:transition-none",
               isOpen && "rotate-90",
             )}
           />
@@ -161,7 +162,7 @@ export function TaskCard({
       {isRenderable(actions) && (
         <div
           data-slot="task-card-actions"
-          className="border-border/60 border-t px-3.5 py-2.5"
+          className="border-t border-border/60 px-3.5 py-2.5"
         >
           {actions}
         </div>
@@ -169,7 +170,7 @@ export function TaskCard({
       {hasTranscript && isOpen && (
         <div
           data-slot="task-card-transcript"
-          className="border-border/60 flex flex-col gap-2 border-t px-3.5 py-2.5"
+          className="flex flex-col gap-2 border-t border-border/60 px-3.5 py-2.5"
         >
           {children}
         </div>
@@ -177,7 +178,7 @@ export function TaskCard({
       {isRenderable(result) && (
         <div
           data-slot="task-card-result"
-          className="border-border/60 text-foreground/70 border-t px-3.5 py-2 text-xs leading-relaxed"
+          className="border-t border-border/60 px-3.5 py-2 text-xs leading-relaxed text-foreground/75"
         >
           {result}
         </div>

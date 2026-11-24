@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { CheckIcon, Loader2Icon, MinusIcon } from "lucide-react";
+import { CheckIcon, MinusIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mono } from "./surfaces";
 import { announced, pct, progressOf } from "../utils/range";
@@ -69,7 +69,7 @@ export function AgentPlan({
   return (
     <div
       data-slot="agent-plan"
-      className={cn("flex w-full flex-col gap-2.5", className)}
+      className={cn("flex w-full flex-col gap-2", className)}
       {...props}
     >
       {title ? (
@@ -89,13 +89,13 @@ export function AgentPlan({
       <div
         data-slot="agent-plan-progress"
         aria-label={`Plan progress: ${announced(progress)}%`}
-        className="bg-foreground/[0.06] h-[2px] w-full overflow-hidden rounded-full"
+        className="h-[2px] w-full overflow-hidden rounded-full bg-foreground/[0.06]"
       >
         <span
           aria-hidden
           className={cn(
             "block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none",
-            allDone ? "bg-emerald-500/80" : "bg-foreground/80",
+            allDone ? "bg-emerald-500/80" : "bg-[#1D4ED8]",
           )}
           style={{ width: `${progress}%` }}
         />
@@ -131,7 +131,7 @@ export function AgentPlan({
                       : "pending"
               }
               className={cn(
-                "flex gap-2 text-[13px] leading-5",
+                "flex gap-2 text-[12.5px] leading-5",
                 active && item.description ? "items-start" : "items-center",
               )}
             >
@@ -147,14 +147,14 @@ export function AgentPlan({
                     className="size-3.5 text-emerald-500"
                   />
                 ) : active ? (
-                  <Loader2Icon
+                  <span
                     aria-hidden
-                    className="size-3.5 animate-spin text-foreground motion-reduce:animate-none"
+                    className="size-2 rounded-full bg-[#1D4ED8] ring-2 ring-[#1D4ED8]/20"
                   />
                 ) : (
                   <span
                     aria-hidden
-                    className="size-1.5 rounded-full border border-foreground/30"
+                    className="size-1.5 rounded-full border border-foreground/25"
                   />
                 )}
               </span>
@@ -164,7 +164,7 @@ export function AgentPlan({
                     skipped && "text-muted-foreground/50 line-through",
                     done && "text-muted-foreground",
                     active && "font-medium text-foreground",
-                    !done && !active && !skipped && "text-muted-foreground/80",
+                    !done && !active && !skipped && "text-muted-foreground/75",
                   )}
                 >
                   {item.label}

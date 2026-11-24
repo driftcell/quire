@@ -1,7 +1,7 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { AlertCircleIcon, CheckIcon, Loader2Icon, MinusIcon } from "lucide-react";
+import { AlertCircleIcon, CheckIcon, MinusIcon } from "lucide-react";
 import { AgentAvatar } from "@/components/chat/agentAvatar";
 import { cn } from "@/lib/utils";
 import type { AgentPlanStep } from "./agent-plan";
@@ -64,7 +64,7 @@ export function SubagentList({
             data-status={agent.status ?? (done ? "completed" : "running")}
             className={cn(
               paper,
-              "flex flex-col gap-2 rounded-xl px-3 py-2.5",
+              "flex flex-col gap-1.5 rounded-xl px-3 py-2.5",
               failed && "border-destructive/40 bg-destructive/5",
             )}
           >
@@ -73,21 +73,24 @@ export function SubagentList({
                 actor={agent.actor ?? agent.name}
                 size="xs"
               />
-              <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground">
+              <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground">
                 {agent.name}
               </span>
               <span
                 className={cn(
                   mono,
-                  "inline-flex shrink-0 items-center gap-1 text-muted-foreground tabular-nums",
+                  "inline-flex shrink-0 items-center gap-1.5 text-muted-foreground tabular-nums",
                 )}
               >
                 {failed ? (
-                  <AlertCircleIcon className="text-destructive size-3 shrink-0" />
+                  <AlertCircleIcon className="size-3 shrink-0 text-destructive" />
                 ) : done ? (
                   <CheckIcon className="size-3 shrink-0 text-emerald-500" />
                 ) : (
-                  <Loader2Icon className="size-3 shrink-0 animate-spin text-muted-foreground motion-reduce:animate-none" />
+                  <span
+                    aria-hidden
+                    className="size-1.5 shrink-0 rounded-full bg-[#1D4ED8]"
+                  />
                 )}
                 <span>{agent.model}</span>
               </span>
@@ -114,9 +117,12 @@ export function SubagentList({
                       ) : tDone ? (
                         <CheckIcon className="size-3 shrink-0 text-emerald-500" />
                       ) : tActive ? (
-                        <Loader2Icon className="size-3 shrink-0 animate-spin text-foreground" />
+                        <span
+                          aria-hidden
+                          className="mx-0.5 size-1.5 shrink-0 rounded-full bg-[#1D4ED8]"
+                        />
                       ) : (
-                        <span className="mx-0.5 size-1.5 shrink-0 rounded-full border border-foreground/30" />
+                        <span className="mx-0.5 size-1.5 shrink-0 rounded-full border border-foreground/25" />
                       )}
                       <span
                         className={cn(
@@ -147,7 +153,7 @@ export function SubagentList({
             <span
               data-slot="subagent-progress"
               aria-label={`${agent.name} progress: ${percentage}%`}
-              className="bg-foreground/[0.06] h-[2px] w-full overflow-hidden rounded-full"
+              className="h-[2px] w-full overflow-hidden rounded-full bg-foreground/[0.06]"
             >
               <span
                 className={cn(
@@ -156,7 +162,7 @@ export function SubagentList({
                     ? "bg-destructive/80"
                     : done
                       ? "bg-emerald-500/75"
-                      : "bg-foreground/65",
+                      : "bg-[#1D4ED8]/75",
                 )}
                 style={{ width: `${percentage}%` }}
               />
@@ -168,25 +174,21 @@ export function SubagentList({
         <div
           className={cn(
             paper,
-            "fade-in slide-in-from-bottom-1 animate-in flex flex-col gap-2 rounded-xl px-3 py-2.5 duration-200",
+            "flex flex-col gap-1.5 rounded-xl px-3 py-2",
           )}
         >
           <div className="flex items-center gap-2">
-            <Loader2Icon className="text-muted-foreground size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
-            <span className="flex-1 truncate text-[13px] font-medium text-foreground">
+            <span
+              aria-hidden
+              className="size-1.5 shrink-0 rounded-full bg-[#1D4ED8]"
+            />
+            <span className="flex-1 truncate text-[12.5px] font-medium text-foreground">
               {summaryAgent.name}
             </span>
             <span className={cn(mono, "text-muted-foreground")}>
               {summaryAgent.model}
             </span>
           </div>
-          <span
-            data-slot="subagent-summary-progress"
-            aria-label={`${summaryAgent.name} progress`}
-            className="bg-foreground/[0.06] h-[2px] w-full overflow-hidden rounded-full"
-          >
-            <span className="shimmer shimmer-bg block h-full w-full rounded-full motion-reduce:animate-none" />
-          </span>
         </div>
       )}
     </div>

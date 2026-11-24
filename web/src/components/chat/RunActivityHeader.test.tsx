@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentAvatar } from "@/components/chat/agentAvatar";
 import { buildChatRichContext } from "@/components/chat/chatRichContext";
-import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
+import {
+  HistoricalRunTrace,
+  LiveTraceSegments,
+} from "@/components/chat/ExecutionTraceSection";
 import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
 import {
   buildHistoricalMilestones,
@@ -12,12 +15,13 @@ import {
 import {
   buildHistoricalRunStatusModel,
   buildLiveRunStatusModel,
+  buildLiveSegments,
 } from "@/components/chat/traceSegments";
 import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
 describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
-  test("buildLiveRunStatusModel tracks main agent and subagent Todo Lists without duplicate timers or fake buttons", () => {
+  test("buildLiveRunStatusModel tracks main agent and subagent Todo Lists without sticky occlusion, duplicate spinners, or shimmer", () => {
     const liveMain: LiveAgentTrace = {
       runId: "run_1",
       agentId: "main",
@@ -37,6 +41,10 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
         ],
       },
       segments: [
+        {
+          kind: "thinking",
+          text: "内部推理过程不应在用户聊天界面中暴露",
+        },
         {
           kind: "execution",
           tools: [
@@ -130,7 +138,7 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
       <RunActivityHeader
         model={model}
         isStreaming={true}
-        detailsOpen={false}
+        detailsOpen={true}
         onToggleDetails={() => {}}
       />,
     );
@@ -145,8 +153,27 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     expect(html).toContain("1 of 3");
     expect(html).toContain('data-subagent-pill="sub_1"');
     expect(html).toContain("检索国自然立项数据");
+    // Never sticky (prevents occluding QuestionCard on scroll)
+    expect(html).not.toContain("sticky");
+    // Zero spinning loader icons or shimmer text in the header, plan, or subagent cards
+    expect(html).not.toContain("animate-spin");
+    expect(html).not.toContain("shimmer");
     // Elapsed time must appear only ONCE in the header
     expect(html.split("14秒").length - 1).toBe(1);
+
+    const liveSegments = buildLiveSegments(liveMain, subagents);
+    const detailsHtml = renderToStaticMarkup(
+      <LiveTraceSegments
+        sessionId="sess_1"
+        trace={liveMain}
+        subagents={subagents}
+        segments={liveSegments}
+        detailsOpen={true}
+      />,
+    );
+    // Raw chain-of-thought thinking must never leak into the user-facing UI
+    expect(detailsHtml).not.toContain("内部推理过程不应在用户聊天界面中暴露");
+    expect(detailsHtml).not.toContain("animate-spin");
   });
 
   test("buildHistoricalRunStatusModel preserves structure after completion and supports chat-only upsert_sources", () => {
@@ -156,6 +183,10 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
       duration_ms: 14_200,
       task_focus: { title: "已完成双优建设报告", section_id: "sec_1" },
       segments: [
+        {
+          kind: "thinking",
+          text: "历史内部思考文本同样不向终端用户展示",
+        },
         {
           kind: "execution",
           tools: [
@@ -265,6 +296,7 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     );
     expect(traceHtml).toContain('data-slot="agent-plan"');
     expect(traceHtml).toContain("阶段一：采集经费来源");
+    expect(traceHtml).not.toContain("历史内部思考文本同样不向终端用户展示");
 
     // Verify pure chat-session source extraction without a report document
     const richCtx = buildChatRichContext(null, [trace], null, []);

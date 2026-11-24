@@ -4,7 +4,6 @@ import {
   CheckIcon,
   ChevronDownIcon,
   CompassIcon,
-  Loader2Icon,
 } from "lucide-react";
 import { cn } from "cn";
 import {
@@ -30,11 +29,10 @@ export interface RunActivityHeaderProps {
 }
 
 /**
- * User-Centric Agent Activity Header:
- * - Highlights WHAT the Agent is currently doing (`model.title` and `model.detail`)
- * - Shows macro research & writing progress via `AgentPlan` Todo checklist
- * - Displays parallel specialist progress (`SubagentList`) in a clean full-width stack so titles and Todos never get cramped
- * - Keeps raw tool call counts (`工具 3/5`, `N 次工具`) hidden from visual UI (`sr-only` for test compatibility)
+ * Disciplined, User-Centric Agent Activity Card:
+ * 1. NEVER sticky (`sticky top-0` removed): scrolls naturally in the document flow so it never occludes `QuestionCard` or streaming answers.
+ * 2. Single restrained motion indicator: uses ONE subtle breathing blue dot (`animate-pulse`) when running—no `shimmer` text paired with spinning `Loader2Icon`, and zero multiple spinners on screen.
+ * 3. Clear focus on WHAT the Agent is doing right now (`model.title` & `model.detail`), the research checklist (`AgentPlan`), and parallel specialist tasks (`SubagentList`).
  */
 export const RunActivityHeader = memo(function RunActivityHeader({
   model,
@@ -141,6 +139,11 @@ export const RunActivityHeader = memo(function RunActivityHeader({
     return sub.status === "running" ? 45 : 100;
   });
 
+  const hasExpandableStages =
+    model.milestones.some(
+      (ms) => ms.semanticPills.length > 0 || ms.subagents.length > 0,
+    ) || model.milestones.length > 1;
+
   return (
     <div
       data-live-header="true"
@@ -149,12 +152,11 @@ export const RunActivityHeader = memo(function RunActivityHeader({
       className={cn(
         paper,
         "relative flex w-full flex-col gap-2.5 overflow-hidden rounded-xl px-3.5 py-2.5 text-xs leading-5 transition-colors",
-        isStreaming &&
-          "sticky top-0 z-10 border-foreground/15 bg-background/95 shadow-2xs backdrop-blur-md",
+        isStreaming && "border-foreground/15 bg-card shadow-2xs",
         isFailed && "border-destructive/35 bg-destructive/5",
       )}
     >
-      {/* Top Bar: What the Agent is currently doing + clean elapsed time */}
+      {/* Top Bar: Single Restrained Status Indicator + Current Agent Action + Elapsed Time */}
       <div className="flex min-h-6 w-full items-center gap-2">
         <button
           type="button"
@@ -162,16 +164,16 @@ export const RunActivityHeader = memo(function RunActivityHeader({
           data-activity-trigger="true"
           aria-expanded={detailsOpen}
           onClick={onToggleDetails}
-          className="group/canvas flex min-w-0 flex-1 items-center gap-2 rounded-md text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="group/canvas flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <span
             data-slot="agent-status"
             className="flex size-4 shrink-0 items-center justify-center"
           >
             {isStreaming ? (
-              <Loader2Icon
+              <span
                 aria-hidden
-                className="size-3.5 animate-spin text-foreground motion-reduce:animate-none"
+                className="size-2 rounded-full bg-[#1D4ED8] ring-4 ring-[#1D4ED8]/15 animate-pulse motion-reduce:animate-none"
               />
             ) : isFailed ? (
               <AlertCircleIcon
@@ -185,10 +187,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
 
           <div className="flex min-w-0 flex-1 flex-col">
             <span
-              className={cn(
-                "min-w-0 truncate text-[13px] font-medium text-foreground",
-                isStreaming && "shimmer",
-              )}
+              className="min-w-0 truncate text-[13px] font-medium text-foreground"
               title={model.title}
             >
               {model.title}
@@ -226,13 +225,15 @@ export const RunActivityHeader = memo(function RunActivityHeader({
             {model.elapsedLabel && (
               <span data-live-elapsed="true">{model.elapsedLabel}</span>
             )}
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-200 group-hover/canvas:text-foreground",
-                detailsOpen && "rotate-180",
-              )}
-            />
+            {hasExpandableStages && (
+              <ChevronDownIcon
+                aria-hidden
+                className={cn(
+                  "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-200 group-hover/canvas:text-foreground",
+                  detailsOpen && "rotate-180",
+                )}
+              />
+            )}
           </span>
         </button>
 
@@ -273,7 +274,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         />
       </div>
 
-      {/* Parallel Subagent Workstation Roster (Full-width stack so specialist titles & Todos never truncate in the right sidebar) */}
+      {/* Parallel Subagent Workstation Roster */}
       {subCount > 0 && (
         <div
           data-slot="subagent-activity-strip"
