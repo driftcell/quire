@@ -1046,7 +1046,7 @@ fn question_items() -> Vec<QuestionItem> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn restart_recovery_marks_running_runs_interrupted_and_appends_failure() {
+async fn restart_recovery_returns_main_runs_and_interrupts_orphaned_subagents() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
     let session = service
@@ -1057,14 +1057,38 @@ async fn restart_recovery_marks_running_runs_interrupted_and_appends_failure() {
         .create_run(&session.session_id, None, "main", "stub/echo")
         .await
         .unwrap();
-    let recovered = service.boot().await.unwrap();
-    assert!(recovered >= 1);
-    let run = store.get_run(&run.run_id).await.unwrap();
-    assert_eq!(run.status, "interrupted");
-    let detail = service.session_detail(&session.session_id).await.unwrap();
+    let subagent = store
+        .create_run(
+            &session.session_id,
+            Some(&run.run_id),
+            "researcher",
+            "stub/echo",
+        )
+        .await
+        .unwrap();
+
+    let recoverable = store.list_recoverable_running_runs().await.unwrap();
+    assert!(
+        recoverable
+            .iter()
+            .any(|candidate| candidate.run_id == run.run_id),
+        "the active main run must be returned for automatic resume"
+    );
+    assert!(
+        !recoverable
+            .iter()
+            .any(|candidate| candidate.run_id == subagent.run_id),
+        "orphaned subagent runs must not be resumed as independent turns"
+    );
     assert_eq!(
-        detail.summary.active_run_status,
-        ActiveRunStatus::Interrupted
+        store.get_run(&run.run_id).await.unwrap().status,
+        "running",
+        "the main run must stay resumable"
+    );
+    assert_eq!(
+        store.get_run(&subagent.run_id).await.unwrap().status,
+        "interrupted",
+        "the orphaned subagent must be marked interrupted"
     );
     let events = store
         .list_events(&session.session_id, 0, 100)

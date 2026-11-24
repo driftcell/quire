@@ -302,9 +302,37 @@ export function SessionStreamView({
       }),
     [allQuestionCards],
   );
-  const liveRunCompleted = liveMain?.runId
-    ? traceByRunId.get(liveMain.runId)?.status === "completed"
+  const liveRunId = liveMain?.runId;
+  const liveRunCompleted = liveRunId
+    ? traceByRunId.get(liveRunId)?.status === "completed"
     : false;
+  const showLiveMain = Boolean(
+    liveMain &&
+      (liveMain.isStreaming ||
+        !liveRunId ||
+        !(
+          traceByRunId.has(liveRunId) &&
+          visibleMessages.some(
+            (msg) => msg.run_id === liveRunId && msg.role !== "user",
+          )
+        )),
+  );
+  const orphanTraces = useMemo(() => {
+    const rendered = new Set<string>();
+    for (const msg of visibleMessages) {
+      if (msg.run_id && msg.role !== "user") {
+        rendered.add(msg.run_id);
+      }
+    }
+    if (showLiveMain && liveRunId) {
+      rendered.add(liveRunId);
+    }
+    return traces.filter(
+      (trace) =>
+        !rendered.has(trace.run_id) &&
+        ((trace.segments?.length ?? 0) > 0 || Boolean(trace.task_focus)),
+    );
+  }, [liveRunId, showLiveMain, traces, visibleMessages]);
 
   return (
     <MessageScrollerProvider
@@ -370,16 +398,25 @@ export function SessionStreamView({
               );
             })}
 
-            {liveMain &&
-              (liveMain.isStreaming ||
-                !liveMain.runId ||
-                !(
-                  traceByRunId.has(liveMain.runId) &&
-                  visibleMessages.some(
-                    (msg) =>
-                      msg.run_id === liveMain.runId && msg.role !== "user",
-                  )
-                )) && (
+            {orphanTraces.map((trace) => (
+              <MessageScrollerItem
+                key={`orphan-${trace.run_id}`}
+                messageId={`orphan-${trace.run_id}`}
+              >
+                <Message align="start" className="items-start">
+                  <MessageContent className="min-w-0 w-full flex-1">
+                    <HistoricalRunTrace
+                      sessionId={sessionId}
+                      trace={trace}
+                      questionSlots={questionSlots}
+                      onJumpToSection={onJumpToSection}
+                    />
+                  </MessageContent>
+                </Message>
+              </MessageScrollerItem>
+            ))}
+
+            {showLiveMain && liveMain && (
                 <MessageScrollerItem messageId="live-main">
                   <MessageGroup>
                     <Message align="start" className="items-start">

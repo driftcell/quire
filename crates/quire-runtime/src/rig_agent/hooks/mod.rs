@@ -18,7 +18,10 @@ use serde_json::Value;
 use serde_json::json;
 use tokio::sync::Mutex;
 
-use crate::{kb::KbService, model_stream::ModelStreamEvent, service::PendingQueueCoordinator};
+use crate::{
+    kb::KbService, memory::ConversationMemory, model_stream::ModelStreamEvent,
+    service::PendingQueueCoordinator,
+};
 
 use super::{
     AgentExecution, SharedForkHistory, StreamEventSender,
@@ -103,6 +106,13 @@ async fn terminate(state: &SharedTurnState, termination: RunTermination) {
     state.lock().await.termination = termination;
 }
 
+#[derive(Clone)]
+pub(super) struct StepMemoryCheckpoint {
+    pub(super) memory: ConversationMemory,
+    pub(super) log_key: String,
+    pub(super) committed_history: Arc<Mutex<Vec<rig::message::Message>>>,
+}
+
 /// Owns model-call control, cancellation, queue supersession, usage and streamed text.
 pub(super) struct TurnControlHook {
     execution: AgentExecution,
@@ -112,9 +122,14 @@ pub(super) struct TurnControlHook {
     pricing: Option<ModelTurnPricing>,
     state: SharedTurnState,
     parent_history: SharedForkHistory,
+    memory: Option<StepMemoryCheckpoint>,
 }
 
 impl TurnControlHook {
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "hook carries explicit turn control, pricing, fork-history and incremental memory handles"
+    )]
     pub(super) fn new(
         execution: AgentExecution,
         scope: StreamEventSender,
@@ -123,6 +138,7 @@ impl TurnControlHook {
         pricing: ModelTurnPricing,
         state: SharedTurnState,
         parent_history: SharedForkHistory,
+        memory: Option<StepMemoryCheckpoint>,
     ) -> Self {
         Self {
             execution,
@@ -132,6 +148,7 @@ impl TurnControlHook {
             pricing: Some(pricing),
             state,
             parent_history,
+            memory,
         }
     }
 
@@ -149,6 +166,7 @@ impl TurnControlHook {
             pricing: None,
             state,
             parent_history: super::new_shared_fork_history(),
+            memory: None,
         }
     }
 
@@ -205,7 +223,24 @@ impl AgentHook for TurnControlHook {
                 .map(|message| message.as_ref().clone())
                 .collect();
             snapshot.push(event.prompt.clone());
-            update_fork_history(&self.parent_history, snapshot);
+            update_fork_history(&self.parent_history, snapshot.clone());
+            if ctx.turn() > 1
+                && let Some(checkpoint) = self.memory.as_ref()
+            {
+                let mut committed = checkpoint.committed_history.lock().await;
+                if snapshot.len() > committed.len() && snapshot.starts_with(&committed) {
+                    match checkpoint
+                        .memory
+                        .commit(&checkpoint.log_key, &committed, snapshot.clone(), None)
+                        .await
+                    {
+                        Ok(()) => *committed = snapshot,
+                        Err(error) => {
+                            tracing::warn!(%error, run_id = %self.execution.run_id, "failed to persist step to conversation memory");
+                        }
+                    }
+                }
+            }
         }
         let documents = self.session_documents();
         if documents.is_empty() {

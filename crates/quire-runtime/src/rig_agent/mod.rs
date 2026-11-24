@@ -200,6 +200,29 @@ pub(super) fn select_initial_history(
     Ok(recorded_history.to_vec())
 }
 
+pub(super) fn resolve_turn_prompt_and_history(
+    recorded_history: &[Message],
+    prompt: &Message,
+    prompt_recorded: bool,
+    fork_history: Option<Vec<Message>>,
+) -> RuntimeResult<(Message, Vec<Message>)> {
+    let effective_prompt = if prompt_recorded
+        && prompt == &Message::user("")
+        && let Some(last) = recorded_history.last()
+    {
+        last.clone()
+    } else {
+        prompt.clone()
+    };
+    let initial_history = select_initial_history(
+        recorded_history,
+        &effective_prompt,
+        prompt_recorded,
+        fork_history,
+    )?;
+    Ok((effective_prompt, initial_history))
+}
+
 #[derive(Clone)]
 struct SubagentScope {
     subagent_run_id: String,
@@ -392,12 +415,19 @@ impl RigModelCore {
                 .iter()
                 .map(|message| message.as_ref().clone())
                 .collect();
-            let initial_history = select_initial_history(
+            let (prompt, initial_history) = resolve_turn_prompt_and_history(
                 &recorded_history,
                 &prompt,
                 prompt_recorded,
                 fork_history,
             )?;
+            let committed_history = Arc::new(Mutex::new(recorded_history));
+            let step_memory = (persist_history && !execution.run_id.starts_with("run_sub_"))
+                .then(|| hooks::StepMemoryCheckpoint {
+                    memory: memory.clone(),
+                    log_key: memory_key.clone(),
+                    committed_history: Arc::clone(&committed_history),
+                });
 
             let parent_history = new_shared_fork_history();
             let built_in = self.build_tools(ToolBuildContext {
@@ -503,6 +533,7 @@ impl RigModelCore {
                     turn_pricing,
                     Arc::clone(&state),
                     Arc::clone(&parent_history),
+                    step_memory,
                 ))
                 .add_hook(ToolLifecycleHook::new(
                     execution.clone(),
@@ -552,10 +583,11 @@ impl RigModelCore {
 
             let (text, full_history) = outcome?;
             if persist_history {
+                let expected_prefix = committed_history.lock().await.clone();
                 memory
                     .commit(
                         &memory_key,
-                        &recorded_history,
+                        &expected_prefix,
                         full_history.clone(),
                         (!execution.run_id.starts_with("run_sub_")).then_some(execution.run_id.as_str()),
                     )

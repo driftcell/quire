@@ -72,7 +72,30 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("bind runtime HTTP listener")?;
     axum::serve(listener, http::router(service))
+        .with_graceful_shutdown(shutdown_signal())
         .await
         .context("serve runtime HTTP")?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut sigterm) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            sigterm.recv().await;
+        } else {
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }

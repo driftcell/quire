@@ -350,8 +350,13 @@ impl RuntimeService {
         let _queue = tokio::spawn(async move {
             queue_service.pending_queue_loop().await;
         });
-        let recovered = self.store.recover_running_runs().await?;
-        Ok(recovered)
+        let recoverable = self.store.list_recoverable_running_runs().await?;
+        let count = recoverable.len();
+        for run in recoverable {
+            let token = CancellationToken::new();
+            self.launch_resumed_turn(run.session_id, run.run_id, token);
+        }
+        Ok(count)
     }
 
     async fn pending_queue_loop(self) {

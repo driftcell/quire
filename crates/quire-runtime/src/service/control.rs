@@ -362,6 +362,27 @@ impl RuntimeService {
         });
     }
 
+    pub(crate) fn launch_resumed_turn(
+        &self,
+        session_id: String,
+        run_id: String,
+        token: CancellationToken,
+    ) {
+        let service = self.clone();
+        tokio::spawn(async move {
+            let _run_guard = RunTurnGuard::new(&run_id, token.clone(), service.runs.clone());
+            let result = service
+                .execute_resumed_turn(&session_id, &run_id, &token)
+                .await;
+            if let Err(error) = service
+                .finish_turn_outcome(&session_id, &run_id, &token, result)
+                .await
+            {
+                warn!(%error, %session_id, %run_id, "resumed agent turn failed");
+            }
+        });
+    }
+
     pub(crate) async fn spawn_turn(
         &self,
         session_id: &str,
@@ -446,6 +467,17 @@ impl RuntimeService {
         let result = self
             .execute_turn(session_id, run_id, content, current_message_id, &token)
             .await;
+        self.finish_turn_outcome(session_id, run_id, &token, result)
+            .await
+    }
+
+    async fn finish_turn_outcome(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        token: &CancellationToken,
+        result: RuntimeResult<()>,
+    ) -> RuntimeResult<()> {
         match result {
             Ok(()) => {
                 if token.is_cancelled() {

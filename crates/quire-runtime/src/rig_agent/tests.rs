@@ -63,3 +63,26 @@ fn static_preamble_marks_derived_subagents_without_changing_main_agent() {
     sub_exec.run_id = "run_sub_1".into();
     assert!(static_preamble(&sub_exec).contains("derived subagent"));
 }
+
+#[test]
+fn resolve_turn_prompt_and_history_resumes_from_canonical_memory() {
+    let recorded = vec![Message::user("最初的用户请求")];
+    let fallback_prompt = Message::user("");
+    let (resolved_prompt, resolved_history) =
+        resolve_turn_prompt_and_history(&recorded, &fallback_prompt, true, None)
+            .expect("resume from initial prompt");
+    assert_eq!(resolved_prompt, Message::user("最初的用户请求"));
+    assert!(resolved_history.is_empty());
+
+    let stepped = vec![
+        Message::user("最初的用户请求"),
+        Message::assistant("已创建报告框架"),
+        Message::user("tool result: rev=1"),
+    ];
+    let (resumed_prompt, resumed_history) =
+        resolve_turn_prompt_and_history(&stepped, &fallback_prompt, true, None)
+            .expect("resume from incrementally persisted memory");
+    assert_eq!(resumed_prompt, Message::user("tool result: rev=1"));
+    assert_eq!(resumed_history.len(), 2);
+    assert_eq!(resumed_history[0], stepped[0]);
+}

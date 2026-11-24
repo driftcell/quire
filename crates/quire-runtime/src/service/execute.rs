@@ -9,6 +9,28 @@ impl RuntimeService {
         _current_message_id: Option<&str>,
         token: &CancellationToken,
     ) -> RuntimeResult<()> {
+        self.execute_turn_inner(session_id, run_id, content, token, false)
+            .await
+    }
+
+    pub(crate) async fn execute_resumed_turn(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        token: &CancellationToken,
+    ) -> RuntimeResult<()> {
+        self.execute_turn_inner(session_id, run_id, "", token, true)
+            .await
+    }
+
+    async fn execute_turn_inner(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        content: &str,
+        token: &CancellationToken,
+        resumed: bool,
+    ) -> RuntimeResult<()> {
         let session = self.store.get_session_summary(session_id).await?;
         let (pinned, synced_version) = self.ensure_pinned_prompt(session_id).await?;
         let kb_version = self.kb.current_version().await?;
@@ -23,9 +45,22 @@ impl RuntimeService {
         }
         let mut sink = EventSink::new(session_id, self.store.clone());
         let main_scope = EventScope::main(run_id);
-        self.store
-            .start_run_with_event(run_id, SessionEventKind::TurnStarted)
+        if resumed {
+            sink.emit(
+                main_scope.clone(),
+                SessionEventKind::TaskFocus {
+                    title: "正在从断点恢复任务".into(),
+                    detail: Some("服务重启后已自动接续先前进度".into()),
+                    section_id: None,
+                    todos: Vec::new(),
+                },
+            )
             .await?;
+        } else {
+            self.store
+                .start_run_with_event(run_id, SessionEventKind::TurnStarted)
+                .await?;
+        }
         if token.is_cancelled() {
             self.finish_cancelled_run(run_id).await?;
             return Ok(());

@@ -273,4 +273,36 @@ describe("Borderless editorial chat", () => {
     );
     expect(streamHtml.match(/aria-label="需要你的确认"/g)?.length).toBe(1);
   });
+  test("interrupted run trace without assistant message remains visible in stream", () => {
+    const interruptedTrace: RunTraceSummary = {
+      run_id: "run-interrupted-no-msg",
+      status: "interrupted",
+      task_focus: {
+        title: "核对省属高校立项数据",
+        todos: [{ title: "核对省属高校立项数据", status: "in_progress" }],
+      },
+      segments: [],
+    };
+    const html = renderToStaticMarkup(
+      <SessionStreamView
+        sessionId="session-1"
+        messages={[
+          {
+            message_id: "m_user",
+            session_id: "session-1",
+            role: "user",
+            content: "帮我生成分析报告",
+            created_at: "2026-11-24T08:00:00Z",
+          },
+        ]}
+        traces={[interruptedTrace]}
+        liveMain={null}
+        liveSubagents={[]}
+        pendingQuestion={null}
+        isAnsweringQuestion={false}
+        onAnswerQuestion={() => {}}
+      />,
+    );
+    expect(html).toContain("核对省属高校立项数据");
+  });
 });

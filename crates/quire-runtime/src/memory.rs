@@ -382,6 +382,9 @@ impl ConversationMemory {
             )));
         }
         let suffix: Vec<Message> = full_history.into_iter().skip(current.len()).collect();
+        if suffix.is_empty() {
+            return Ok(());
+        }
         append_run_suffix(&mut conversation, suffix, log, run_id)?;
         self.save(log, &mut conversation).await
     }

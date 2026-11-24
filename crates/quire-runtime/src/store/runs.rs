@@ -1,5 +1,11 @@
 use super::*;
 
+#[derive(Debug, Clone)]
+pub struct RecoverableRun {
+    pub run_id: String,
+    pub session_id: String,
+}
+
 impl RuntimeStore {
     pub(crate) async fn materialize_run_trace_in(
         &self,
@@ -217,6 +223,48 @@ impl RuntimeStore {
         .fetch_optional(&self.pool)
         .await?;
         row.map(|row| row_to_run(&row)).transpose()
+    }
+
+    /// Mark orphaned subagent runs as interrupted and return surviving main-agent runs
+    /// so `boot()` can automatically resume them from their latest checkpoint.
+    pub async fn list_recoverable_running_runs(&self) -> RuntimeResult<Vec<RecoverableRun>> {
+        let orphaned_subs = sqlx::query(
+            r#"SELECT run_id FROM agent_runs
+               WHERE status = 'running' AND parent_run_id IS NOT NULL"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in &orphaned_subs {
+            let run_id: String = row.try_get("run_id")?;
+            let _ = self
+                .finish_run_with_event(
+                    &run_id,
+                    "interrupted",
+                    Some("runtime restarted while subagent was active"),
+                    SessionEventKind::TurnFailed {
+                        error: "runtime restarted while subagent was active".into(),
+                        recoverable: true,
+                    },
+                )
+                .await;
+        }
+
+        let rows = sqlx::query(
+            r#"SELECT run_id, session_id
+               FROM agent_runs
+               WHERE status = 'running' AND parent_run_id IS NULL
+               ORDER BY started_at ASC"#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            out.push(RecoverableRun {
+                run_id: row.try_get("run_id")?,
+                session_id: row.try_get("session_id")?,
+            });
+        }
+        Ok(out)
     }
 
     /// Mark every surviving `running` run as interrupted after a runtime restart.

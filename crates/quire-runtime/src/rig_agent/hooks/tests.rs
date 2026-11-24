@@ -55,6 +55,7 @@ async fn model_turn_finished_emits_per_call_usage_and_cost() {
         }),
         state: SharedTurnState::default(),
         parent_history: super::super::new_shared_fork_history(),
+        memory: None,
     });
     harness.set_turn(1);
     let content = Vec::new();
@@ -402,6 +403,7 @@ async fn completion_call_captures_main_history_snapshot_and_skips_subagents() {
         pricing: None,
         state: SharedTurnState::default(),
         parent_history: Arc::clone(&parent_history),
+        memory: None,
     };
     let harness = HookTestHarness::new();
     harness.set_turn(1);
@@ -433,6 +435,7 @@ async fn completion_call_captures_main_history_snapshot_and_skips_subagents() {
         pricing: None,
         state: SharedTurnState::default(),
         parent_history: Arc::clone(&parent_history),
+        memory: None,
     };
     let sub_harness = HookTestHarness::new();
     sub_harness.set_turn(1);
