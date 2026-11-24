@@ -95,7 +95,7 @@ entry to serve many sessions without trusting model-authored identity fields: me
 by the host runtime, not read from model arguments.
 
 `commit_chart` executes `get_document_digest` and `exec_apply_operations` directly in-process
-against `RuntimeToolScope::report_mcp()` (`QuireMcpServer`) using the current session/run/agent
+against `RuntimeToolScope::report` (`QuireReportService`) using the current session/run/agent
 `quire_server::auth::RequestContext` without any network or MCP loopback.
 
 Administrative discovery and explicit operational helpers may still create dedicated clients when
@@ -139,7 +139,7 @@ raw auth token reference.
 - Server/tool mutations publish cache invalidation and retire pooled connections.
 - Main and subagent runs sharing a server do not repeat `initialize` / `tools/list` per run.
 - Independent servers use independent connection locks and can prewarm concurrently.
-- `commit_chart` calls `QuireMcpServer` directly in-process with the current turn's `RequestContext`.
+- `commit_chart` calls `QuireReportService` directly in-process with the current turn's `RequestContext`.
 - Shared connections carry no fixed session identity; each call forwards host-authored `_meta.quire`.
 - Header/metadata mismatches are rejected and report creation cannot proceed without a session.
 

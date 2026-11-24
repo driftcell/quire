@@ -19,6 +19,7 @@ quire-server.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, features = ["chrono04"] }
+indexmap.workspace = true
 chrono.workspace = true
 sqlx.workspace = true
 redis.workspace = true

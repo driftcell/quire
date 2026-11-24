@@ -357,7 +357,7 @@ pub(crate) async fn commit_chart_tool(
             .await
             .map_err(tool_other)?;
         return Ok(CommitChartReceipt {
-            mutation: quire_server::mcp::ApplyOperationsReceipt {
+            mutation: quire_server::report::ApplyOperationsReceipt {
                 new_revision: 0,
                 base_revision: 0,
                 rebased: false,
@@ -401,15 +401,13 @@ pub(crate) async fn commit_chart_tool(
     }
     let effective_source_note = normalize_optional_text(source_note).or(preview.source_note);
 
-    let rmcp::handler::server::wrapper::Json(digest_receipt) = runtime
-        .report_mcp
-        .get_document_digest(rmcp::handler::server::wrapper::Parameters(
-            quire_server::mcp::DigestParams {
-                doc_id: doc_id.clone(),
-                query: None,
-                target_prose_chars: None,
-            },
-        ))
+    let digest_receipt = runtime
+        .report
+        .get_document_digest(quire_server::report::DigestParams {
+            doc_id: doc_id.clone(),
+            query: None,
+            target_prose_chars: None,
+        })
         .await
         .map_err(mcp_error_to_tool_error)?;
     let existing_echarts = digest_receipt
@@ -519,11 +517,11 @@ pub(crate) async fn commit_chart_tool(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| format!("commit previewed chart `{target_id}`"));
-    let rmcp::handler::server::wrapper::Json(receipt) = runtime
-        .report_mcp
+    let receipt = runtime
+        .report
         .exec_apply_operations(
             req_ctx,
-            quire_server::mcp::ApplyOperationsParams {
+            quire_server::report::ApplyOperationsParams {
                 doc_id,
                 expected_revision,
                 summary,

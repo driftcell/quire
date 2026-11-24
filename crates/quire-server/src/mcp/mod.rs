@@ -1,9 +1,9 @@
-//! Quire MCP tool server (19 domain tools) mounted at `/mcp` and callable in-process.
+//! Optional rmcp transport for the shared report application service.
 //!
-//! The implementation is split into `schema` (request/response contracts and compact receipts)
-//! and `handlers` (tool methods plus rebase helpers).
+//! Agent-runtime report tools do not use this adapter; they call
+//! `quire_server::report::QuireReportService` directly through native Rig tools.
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::ops::Deref;
 
 use rmcp::{
     ServerHandler,
@@ -11,39 +11,13 @@ use rmcp::{
     model::{Implementation, ServerCapabilities, ServerConfig},
     tool_handler,
 };
-use serde::Serialize;
-use serde_json::Value;
 
-use crate::state::AppState;
+use crate::{report::QuireReportService, state::AppState};
 
 mod handlers;
-mod lint_hint;
-mod schema;
 
+pub use crate::report::{REPORT_TOOL_NAMES, schema};
 pub use schema::*;
-
-/// Canonical names of the 19 Quire report domain tools.
-pub const REPORT_TOOL_NAMES: &[&str] = &[
-    "get_protocol_guide",
-    "create_report",
-    "list_reports",
-    "get_document_digest",
-    "read_as_markdown",
-    "read_blocks",
-    "apply_operations",
-    "rollback_revision",
-    "upsert_sources",
-    "list_sources",
-    "set_cover",
-    "configure_toc",
-    "configure_references",
-    "configure_page_chrome",
-    "update_style_and_css",
-    "lint_document",
-    "list_comments",
-    "add_comment",
-    "reply_comment",
-];
 
 const SERVER_INSTRUCTIONS: &str = r#"QUIRE MULTI-AGENT REPORT ENGINE
 
@@ -59,50 +33,24 @@ Every tool receipt includes `_next_hint`. Every error includes a structured hint
 
 #[derive(Clone)]
 pub struct QuireMcpServer {
-    state: AppState,
+    service: QuireReportService,
     tool_router: ToolRouter<Self>,
 }
 
-#[derive(Serialize)]
-struct ObjectSchema {
-    r#type: &'static str,
-}
-
 impl QuireMcpServer {
-    /// Construct the MCP server and register all 19 domain tools on the router.
     pub fn new(state: AppState) -> Self {
         Self {
-            state,
+            service: QuireReportService::new(state),
             tool_router: Self::tool_router(),
         }
     }
+}
 
-    /// Return the static description and JSON Schema for one of the 19 report tools.
-    pub fn tool_metadata(name: &str) -> (String, Value) {
-        static CACHE: OnceLock<HashMap<String, (String, Value)>> = OnceLock::new();
-        let catalog = CACHE.get_or_init(|| {
-            Self::tool_router()
-                .list_all()
-                .into_iter()
-                .map(|tool| {
-                    let description = tool
-                        .description
-                        .as_ref()
-                        .map(ToString::to_string)
-                        .unwrap_or_default();
-                    let schema = tool.schema_as_json_value();
-                    (tool.name.to_string(), (description, schema))
-                })
-                .collect()
-        });
-        catalog.get(name).cloned().unwrap_or_else(|| {
-            let schema =
-                serde_json::to_value(ObjectSchema { r#type: "object" }).unwrap_or_else(|error| {
-                    tracing::error!(%error, "failed to serialize fallback tool schema");
-                    Value::Object(Default::default())
-                });
-            (String::new(), schema)
-        })
+impl Deref for QuireMcpServer {
+    type Target = QuireReportService;
+
+    fn deref(&self) -> &Self::Target {
+        &self.service
     }
 }
 

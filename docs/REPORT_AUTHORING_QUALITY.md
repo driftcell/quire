@@ -217,7 +217,7 @@ Forensic inspection of the 19 agent runs and 429 tool calls in session `sess_y41
 4. **Atomic Source Attribution & In-Place Update in `preview_echarts` / `commit_chart` (`crates/quire-runtime/src/rig_agent/builtin_tools/`)**:
    - Both `preview_echarts` and `commit_chart` now accept optional `source_ids` and `source_note`, binding chart attribution in one transaction without a transient `QR422` warning.
    - When `commit_chart` targets an existing `Echarts` `block_id`, it now emits `PatchOp::PatchBlock` (and optional `MoveBlock` if a new anchor is supplied) instead of creating a colliding duplicate block.
-5. **CJK Default TOC/References Titles & Cover Initialization (`crates/quire-server/src/mcp/handlers/`, `schema/`)**:
+5. **CJK Default TOC/References Titles & Cover Initialization (`crates/quire-server/src/report/service/`, `schema/`)**:
    - `exec_create_report` automatically sets `toc.title = "目录"` and `references.title = "参考文献"` whenever `title` contains CJK characters, and accepts optional `subtitle`, `authors`, `date`, and `cover_meta` fields at creation time.
 6. **Lint Rule Precision (`crates/quire-lint/src/rules/{structure.rs,tables.rs,prose.rs,internal.rs}`)**:
    - `QR418`: Expanded counting adjectives (`结构性`, `系统性`, `阶段性`, `战略`) and counting nouns (`判断`, `主攻线`, `主线`, `路径`, `问题`, `短板`, `任务`, `行动`, `工程`) to catch bare counting headings like `三条结构性判断` and `四条主攻线`.
@@ -225,4 +225,4 @@ Forensic inspection of the 19 agent runs and 429 tool calls in session `sess_y41
    - `QR419`: Preserved parent H1 action-path/recommendation/conclusion exemptions (`行动路径`, `对策建议`, `结语`) across child H2 subsections.
    - `QR424` & `QR426`: Added internal platform shorthand (`指标库口径`, `指标库记录`) to `QR424` and section-boundary self-narration (`本节只确认`, `本章只确认`, `在行动路径章统一处理`, `需要在申报口径上收敛的一处细节`, `这一位置决定了它在申报中的用法`, `是基于学科名称的推断`) to `QR426`.
 7. **SOTA Multi-Agent Context & Prompt Architecture (`agents/*.md`, `skills/higher-education-writing/**`)**:
-   - Stripped generic coding-assistant boilerplate from `agents/main.md` and added an explicit `<delegation_brief_contract>` that replaces per-section character count quotas with question-driven synthesis (3–4 analytical questions / 6–8 focused paragraphs per H2), mandates `定位词：具体判断` on both H1 and H2 headings, enforces verbatim `SourceEntry.excerpt` coverage, and requires mid-section visual interleaving (`after_block_id`).
+   - Stripped generic coding-assistant boilerplate from `agents/main.md` and added an explicit `<delegation_brief_contract>` that replaces per-section character count quotas with question-driven synthesis (3–4 analytical questions / 6–8 focused paragraphs per H2), mandates `定位词：具体判断` on both H1 and H2 headings, requires original-evidence verification with optional reader-focused excerpts, and requires mid-section visual interleaving (`after_block_id`).

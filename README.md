@@ -15,7 +15,7 @@ dependency. Rendering and visual preview belong to the external frontend.
 | `quire-lint` | Pure, zero-I/O static lint registry and rule engine with layered select/ignore filters |
 | `quire-store` | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher |
 | `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json` |
-| `quire-server` | Axum REST/SSE endpoints and the 18-tool `rmcp` server mounted at `/mcp` |
+| `quire-server` | Shared report application service and contracts, Axum REST/SSE endpoints, and the optional 19-tool `rmcp` adapter mounted at `/mcp` |
 | `quire-runtime` | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE |
 
 ## Quickstart
@@ -264,15 +264,16 @@ the server or `rig` into the report engine. It owns:
   `kb_branch` selection for isolated test runs.
 - `/admin/mcp` Streamable HTTP administration tools for branches, branch-scoped items, providers,
   models and session inspection. It uses the same `KbService` / `ModelRegistry` / `RuntimeService`
-  methods as REST and is protected by `RUNTIME_API_TOKEN`; report-authoring sub-agents only see the
-  Quire server's `/mcp` surface.
+  methods as REST and is protected by runtime Bearer authentication. The admin control plane is
+  separate from native report tools and the external business MCP registry.
 - Crash recovery: startup marks orphaned `running` runs `interrupted` and appends a recoverable
   `turn_failed` event.
 - Frozen prompt-cache prefixes: resume injects `<knowledge_update>` before the new user message
   instead of rewriting the pinned system prompt.
-- rig-core `DynamicTool` adapters over Quire MCP tools, built-in skill/task/subagent tools and a
-  `SandboxProvider`/`Sandbox` abstraction with disabled/local providers and an optional Alibaba
-  Cloud FC implementation selected through `SANDBOX_*` environment variables.
+- All 19 report tools plus skill/task/subagent/preview tools are native `#[rig_tool]` built-ins.
+  Report tools call the shared `QuireReportService` directly; `DynamicTool` adapters remain only for
+  external business MCP tools. Sandbox execution uses a `SandboxProvider`/`Sandbox` abstraction with
+  disabled/local providers and optional Alibaba Cloud FC selected through `SANDBOX_*`.
 - `RigModelStreamProvider` is the default production model engine: it resolves branch-scoped agent
   definitions and model routes, drives rig-core streaming multi-turn tool loops, runs subagents
   concurrently with `JoinSet`, reports real token usage/context limits, persists full tool
@@ -281,8 +282,8 @@ the server or `rig` into the report engine. It owns:
   durable in `SessionDetail.pending_question`; answers/skips resume through
   `POST /api/sessions/{id}/questions/{question_id}/answer`, while a normal new message dismisses the
   card and starts a fresh turn.
-- Global MCP registry (`mcp_servers` / `mcp_tools`) with idempotent `quire-report` seeding, tool
-  discovery/sync, per-tool global kill switches, masked auth refs and moka + Redis invalidation.
+- Global MCP registry (`mcp_servers` / `mcp_tools`) with idempotent legacy `quire-report` retirement,
+  tool discovery/sync, per-tool global kill switches, masked auth refs and moka + Redis invalidation.
   Agent tool selection is the triple intersection of enabled server, enabled tool and allow-list.
 
 Session contracts and SSE envelopes are exported to `contracts/session-protocol.schema.json`.

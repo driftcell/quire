@@ -277,10 +277,6 @@ impl RuntimeService {
         quire_server::AppState::new(self.store.report_store().clone(), server_config)
     }
 
-    pub fn report_mcp(&self) -> quire_server::mcp::QuireMcpServer {
-        quire_server::mcp::QuireMcpServer::new(self.report_app_state())
-    }
-
     async fn delete_server_comment(&self, session_id: &str, thread_id: &str) -> RuntimeResult<()> {
         let session = self.store.get_session_summary(session_id).await?;
         let raw_doc_id = session

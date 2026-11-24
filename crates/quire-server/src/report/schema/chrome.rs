@@ -149,10 +149,11 @@ pub struct ConfigurePageChromeReceipt {
 }
 
 /// How `update_style_and_css` merges custom CSS.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CssMode {
     /// Append to the existing custom CSS block.
+    #[default]
     Append,
     /// Replace the existing custom CSS block.
     Replace,
@@ -179,7 +180,7 @@ pub struct UpdateStyleParams {
 }
 
 fn default_css_mode() -> CssMode {
-    CssMode::Append
+    CssMode::default()
 }
 
 /// Output for `update_style_and_css`.

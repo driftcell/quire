@@ -1,11 +1,11 @@
 use super::*;
 
-impl QuireMcpServer {
+impl QuireReportService {
     pub async fn exec_add_comment(
         &self,
         context: RequestContext,
         request: AddCommentParams,
-    ) -> Result<Json<AddCommentReceipt>, ErrorData> {
+    ) -> Result<AddCommentReceipt, ErrorData> {
         let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let block_id = parse_block_id(&request.block_id)?;
@@ -61,14 +61,14 @@ impl QuireMcpServer {
             "Comment thread `{}` created without a revision change. Writers should reply with reply_comment after editing.",
             thread.thread_id
         );
-        Ok(Json(AddCommentReceipt { thread, _next_hint }))
+        Ok(AddCommentReceipt { thread, _next_hint })
     }
 
     pub async fn exec_reply_comment(
         &self,
         context: RequestContext,
         request: ReplyCommentParams,
-    ) -> Result<Json<ReplyCommentReceipt>, ErrorData> {
+    ) -> Result<ReplyCommentReceipt, ErrorData> {
         let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let addressed_rev = request.addressed_rev.map(parse_revision).transpose()?;
@@ -105,6 +105,6 @@ impl QuireMcpServer {
                     .to_string()
             }
         };
-        Ok(Json(ReplyCommentReceipt { thread, _next_hint }))
+        Ok(ReplyCommentReceipt { thread, _next_hint })
     }
 }

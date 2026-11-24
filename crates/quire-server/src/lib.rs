@@ -8,6 +8,7 @@ pub mod error;
 pub mod guide;
 pub mod jwt;
 pub mod mcp;
+pub mod report;
 pub mod routes;
 pub mod sse;
 pub mod state;

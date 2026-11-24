@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`, `../notes/runtime_pending_failure_recovery.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`, `../notes/runtime_pending_failure_recovery.md`, `../notes/runtime_native_report_tools.md`
 
 ## 1. Scope & Non-Goals
 
@@ -40,8 +40,18 @@ through that facade rather than maintaining parallel direct dependencies on the 
 Built-ins are registered directly as native typed `Tool` values in a `ToolServer`. One
 `Arc<RuntimeToolScope>` is attached to the runner's `ToolContext::with_scope`; Rig preserves that
 live scope in each dispatch clone. There is no wrapper tool or per-call `DynamicTool` / `ToolAdapter`
-conversion for built-ins. MCP tools remain dynamic because their names and schemas are discovered at
-runtime.
+conversion for built-ins. External business MCP tools remain dynamic because their names and schemas
+are discovered at runtime.
+
+All 19 report tools are declared with `#[rig_tool(name = "...")]` in `report_inproc.rs`.
+`RuntimeToolScope::report` holds a `quire_server::report::QuireReportService`; the generated Rig
+tools call that shared domain service directly. Function and argument doc comments produce their
+model-facing descriptions and flat schemas; explicit `required(...)` lists preserve optional
+non-`Option` fields with deserialization defaults. They do not call `QuireMcpServer`, read rmcp
+`tool_metadata`, use custom report-tool definition macros, or wrap inputs/receipts in rmcp handler
+types. `QuireReportService` owns the shared Smart CAS, source, comment, lint and receipt behavior so
+the optional report `/mcp` transport adapter produces the same results. The administrative
+`/admin/mcp` server remains an independent rmcp control plane.
 
 `AgentRunner::tool_context` carries:
 

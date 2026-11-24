@@ -10,9 +10,9 @@ knowledge belongs in `docs/`, decision history belongs in `notes/`.
 | `quire-protocol` | Pure synchronous domain protocol: Block AST, patch engine, ranks, citations, Markdown projection, lint wire contracts, report/session wire types. Zero I/O. |
 | `quire-lint` | Pure synchronous lint rule registry and engine: `QRxxx` codes, select/ignore filters, document/block suppression. Zero I/O, no CLI. |
 | `quire-store` | PostgreSQL persistence, Smart CAS revisions, snapshots, Redis Streams/PubSub. No HTTP or MCP concerns. |
-| `quire-server` | Axum REST/SSE and the `rmcp` MCP server. Must not depend on `rig` or agent-runtime internals. |
+| `quire-server` | Shared `QuireReportService`, report tool contracts, Axum REST/SSE and optional `rmcp` transport adapters. Must not depend on `rig` or agent-runtime internals. |
 | `quire-session-protocol` | Pure synchronous Session REST/SSE contracts and JSON Schema export. Zero I/O. |
-| `quire-runtime` | Unified session backend and agent runtime. Embeds `quire-store` and `quire-server` in-process (native report `rig::tool::Tool`s + mounted `/api/docs/*` & `/mcp` routes). |
+| `quire-runtime` | Unified session backend and agent runtime. Native report `rig::tool::Tool`s call `QuireReportService` directly; mounts `/api/docs/*`, optional report `/mcp`, and the independent `/admin/mcp` control plane. |
 
 Dependency direction is one-way: protocol crates never depend on storage/server/runtime crates, and
 `quire-server` remains independent of `quire-runtime` and `rig`.

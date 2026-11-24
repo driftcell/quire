@@ -13,7 +13,7 @@ use rig::tool::server::ToolServer;
 use rig::{
     message::{ImageMediaType, ToolResultContent},
     rig_tool,
-    tool::{Tool, ToolContext, ToolExecutionError, ToolOutput},
+    tool::{ToolContext, ToolExecutionError, ToolOutput},
 };
 use serde_json::Value;
 #[cfg(test)]
@@ -144,7 +144,7 @@ pub(super) fn warn_missing_allowed_tools(
 }
 
 fn allow_list_matches(allowed_tools: &[String], tool_name: &str) -> bool {
-    let is_report_tool = quire_server::mcp::REPORT_TOOL_NAMES.contains(&tool_name);
+    let is_report_tool = quire_server::report::REPORT_TOOL_NAMES.contains(&tool_name);
     allowed_tools.iter().any(|pattern| {
         let trimmed = pattern.trim();
         tool_pattern_matches(trimmed, tool_name)
@@ -170,7 +170,7 @@ pub(super) struct BuiltInTools {
 
 pub(super) struct RuntimeToolScope {
     pub(super) engine: Arc<RigModelCore>,
-    pub(super) report_mcp: quire_server::mcp::QuireMcpServer,
+    pub(super) report: quire_server::report::QuireReportService,
     pub(super) event_scope: StreamEventSender,
     sandbox: Arc<SandboxLease>,
     pub(super) cancellation: tokio_util::sync::CancellationToken,
@@ -231,10 +231,10 @@ impl RigModelCore {
             engine,
             sandbox,
         } = context;
-        let report_mcp = self.build_report_mcp();
+        let report = self.build_report_service();
         let runtime = Arc::new(RuntimeToolScope {
             engine,
-            report_mcp,
+            report,
             event_scope: scope,
             sandbox,
             cancellation: execution.cancellation.clone(),

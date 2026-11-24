@@ -52,7 +52,7 @@ pub struct PreviewEchartsReceipt {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CommitChartReceipt {
     #[serde(flatten)]
-    pub mutation: quire_server::mcp::ApplyOperationsReceipt,
+    pub mutation: quire_server::report::ApplyOperationsReceipt,
     pub preview_id: String,
     pub block_id: String,
 }

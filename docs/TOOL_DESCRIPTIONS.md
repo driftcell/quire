@@ -4,19 +4,19 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-server`, `quire-runtime`, `quire-session-protocol`
-- **Related Notes:** `../notes/quire_typed_json_boundaries.md`
+- **Related Notes:** `../notes/quire_typed_json_boundaries.md`, `../notes/runtime_native_report_tools.md`
 
 ## 1. Scope & Non-Goals
 
 This document governs model-facing tool descriptions and parameter-level schema descriptions across
-report MCP tools (`QuireMcpServer`), runtime administration MCP tools (`AdminMcpServer`), and Rig
-built-in tools (`#[rig_tool]`). It does not cover agent system prompts, skill resources, or
-compaction prompts.
+native runtime report tools, the optional report rmcp adapter (`QuireMcpServer`), runtime
+administration MCP tools (`AdminMcpServer`), and other Rig built-in tools. It does not cover agent
+system prompts, skill resources, or compaction prompts.
 
 ## 2. Canonical Design & Contract
 
-Every tool co-locates its **Tool Description** and **Parameter Descriptions** directly in Rust `///`
-doc comments next to the implementation:
+Every tool co-locates its **Tool Description** and **Parameter Descriptions** in Rust next to the
+implementation:
 
 1. **Rig Built-in Tools (`#[rig::rig_tool]`)**:
    - The `///` doc comment on the `#[rig_tool]` function defines the **Tool Description** (purpose,
@@ -27,15 +27,22 @@ doc comments next to the implementation:
      mutually exclusive flags, defaults, and side-effect warnings).
    - No intermediate wrapper struct or external Markdown file is used; `server.tool(TOOL)`
      registers the generated zero-sized tool unit struct directly on Rig's `ToolServer`.
-2. **RMCP Tools (`#[rmcp::tool]` on `QuireMcpServer` & `AdminMcpServer`)**:
+2. **Native Report Tools (`report_inproc.rs`)**:
+   - Every one of the 19 tools uses `#[rig_tool(name = "...")]`. Function and argument `///`
+     comments define the model-facing description and flat parameter schema; no custom report-tool
+     definition macro or rmcp `tool_metadata` remains.
+   - Existing public fields stay as direct function arguments. Explicit `required(...)` lists make
+     defaulted non-`Option` fields optional without nesting them under a synthetic request object.
+     A transparent `SourceInputMap` preserves ordered `IndexMap` deserialization while advertising
+     the established object-map schema.
+   - Generated Rig dispatch calls `QuireReportService` directly and returns its domain receipt. The
+     service owns execution, not model-facing tool discovery.
+3. **RMCP Tools (`#[rmcp::tool]` on `QuireMcpServer` & `AdminMcpServer`)**:
    - The `///` doc comment on each `#[tool]` handler method defines the **Tool Description**.
    - `///` doc comments on the fields of each `#[derive(Deserialize, JsonSchema)]` `*Params` /
      `*Input` struct define the **Parameter Descriptions**.
-3. **In-Process Report Tools (`report_inproc.rs`)**:
-   - `define_stateless_report_tool!` and `define_contextual_report_tool!` read `(description, schema)`
-     from `QuireMcpServer::tool_metadata(name)`, which extracts the `///` doc comments and `schemars`
-     parameter schemas from `QuireMcpServer::tool_router()` once. Remote MCP clients and in-process
-     Rig agents therefore share one canonical tool and parameter definition per report tool.
+   - Report rmcp handlers are thin transport adapters over the same `QuireReportService`; `/admin/mcp`
+     remains an independent administrative rmcp server.
 
 ## 3. Invariants & Verification
 

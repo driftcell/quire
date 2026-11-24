@@ -327,7 +327,7 @@ Core contract and safety rules survive every ignore layer and are never counted 
 - `BlockPatch.lint_ignore` replaces the block list; an empty list clears it. Block data stays inside
   the existing `report_blocks.payload` JSONB.
 
-### MCP behavior
+### Tool behavior
 
 `LintParams` accepts optional `select` and `ignore` arrays. `lint_document` forwards them to
 `lint_document_with_options`; document and block filters still apply. A receipt with only suppressed
@@ -339,7 +339,7 @@ verify loop: fix every `error`, review `warning`, and ignore only diagnostics wh
 
 ### Hint orchestration
 
-`crates/quire-server/src/mcp/lint_hint.rs` turns diagnostics into one deterministic `_next_hint`.
+`crates/quire-server/src/report/lint_hint.rs` turns diagnostics into one deterministic `_next_hint`.
 Priority tiers are: errors, structural/chart/table/citation warnings, macro layout warnings
 (`QR417`-`QR419`), prose/policy warnings (`QR412`-`QR415`, `QR421`, `QR423`, `QR426`), then info. Diagnostics are grouped by
 `block_id` (or `document`), codes are deduplicated and tier-sorted, groups are ordered by tier,

@@ -1,3 +1,5 @@
+use rig::tool::Tool;
+
 use super::*;
 
 #[test]
@@ -200,22 +202,8 @@ fn bounded_tool_text_preserves_utf8_boundaries() {
 }
 
 #[test]
-fn native_report_tools_expose_non_empty_metadata_and_match_allow_lists() {
-    for name in quire_server::mcp::REPORT_TOOL_NAMES {
-        assert!(
-            BUILTIN_TOOLS.contains(name),
-            "report tool `{name}` must be registered in BUILTIN_TOOLS"
-        );
-        let (description, schema) = quire_server::mcp::QuireMcpServer::tool_metadata(name);
-        assert!(
-            !description.trim().is_empty(),
-            "report tool `{name}` must expose a non-empty description"
-        );
-        assert_eq!(
-            schema.get("type").and_then(Value::as_str),
-            Some("object"),
-            "report tool `{name}` must expose an object JSON Schema"
-        );
+fn native_report_tools_match_allow_lists() {
+    for name in quire_server::report::REPORT_TOOL_NAMES {
         assert!(allow_list_matches(&[name.to_string()], name));
         assert!(allow_list_matches(&[format!("quire-report:{name}")], name));
         assert!(allow_list_matches(&["quire-report:*".to_string()], name));

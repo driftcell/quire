@@ -1,11 +1,11 @@
 use super::*;
 
-impl QuireMcpServer {
+impl QuireReportService {
     pub async fn exec_apply_operations(
         &self,
         context: RequestContext,
         request: ApplyOperationsParams,
-    ) -> Result<Json<ApplyOperationsReceipt>, ErrorData> {
+    ) -> Result<ApplyOperationsReceipt, ErrorData> {
         if request.summary.trim().is_empty() {
             return Err(invalid_params(
                 "summary must not be empty",
@@ -55,7 +55,7 @@ impl QuireMcpServer {
             result.rebased_over,
             result.base_revision.get(),
         );
-        Ok(Json(ApplyOperationsReceipt {
+        Ok(ApplyOperationsReceipt {
             new_revision: result.new_revision.get(),
             base_revision: result.base_revision.get(),
             rebased: result.rebased,
@@ -65,14 +65,14 @@ impl QuireMcpServer {
             inline_warnings,
             blocking_errors,
             _next_hint,
-        }))
+        })
     }
 
     pub async fn exec_rollback_revision(
         &self,
         context: RequestContext,
         request: RollbackParams,
-    ) -> Result<Json<RollbackReceipt>, ErrorData> {
+    ) -> Result<RollbackReceipt, ErrorData> {
         let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let target_revision = parse_revision(request.target_revision)?;
@@ -90,21 +90,21 @@ impl QuireMcpServer {
             "Call get_document_digest or read_blocks to inspect revision {}, then lint_document before continuing edits.",
             result.new_revision
         );
-        Ok(Json(RollbackReceipt {
+        Ok(RollbackReceipt {
             doc_id: doc_id.to_string(),
             new_revision: result.new_revision.get(),
             rolled_back_to: result.target_revision.get(),
             replayed_revisions: result.replayed_revisions,
             summary,
             _next_hint,
-        }))
+        })
     }
 
     pub async fn exec_upsert_sources(
         &self,
         context: RequestContext,
         request: UpsertSourcesParams,
-    ) -> Result<Json<UpsertSourcesReceipt>, ErrorData> {
+    ) -> Result<UpsertSourcesReceipt, ErrorData> {
         if request.sources.is_empty() {
             return Err(invalid_params(
                 "sources must not be empty",
@@ -155,7 +155,7 @@ impl QuireMcpServer {
             "Sources already existed; no revision was created. Use canonical_id_map when citing."
                 .to_string()
         };
-        Ok(Json(UpsertSourcesReceipt {
+        Ok(UpsertSourcesReceipt {
             doc_id: doc_id.to_string(),
             revision: result.revision.get(),
             changed: result.changed,
@@ -167,7 +167,7 @@ impl QuireMcpServer {
             source_count: result.sources.len(),
             inline_warnings,
             _next_hint,
-        }))
+        })
     }
 
     pub(crate) async fn apply_with_reload<F>(

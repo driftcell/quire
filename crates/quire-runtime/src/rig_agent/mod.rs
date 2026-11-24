@@ -205,7 +205,7 @@ impl StreamEventSender {
 }
 
 impl RigModelCore {
-    pub(super) fn build_report_mcp(&self) -> quire_server::mcp::QuireMcpServer {
+    pub(super) fn build_report_service(&self) -> quire_server::report::QuireReportService {
         let bind_addr: std::net::SocketAddr = self
             .config
             .bind_addr
@@ -226,7 +226,7 @@ impl RigModelCore {
         };
         let state =
             quire_server::AppState::new(self.kb.store().report_store().clone(), server_config);
-        quire_server::mcp::QuireMcpServer::new(state)
+        quire_server::report::QuireReportService::new(state)
     }
 
     async fn run_main_turn(

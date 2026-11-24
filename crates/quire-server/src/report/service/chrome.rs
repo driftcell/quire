@@ -1,11 +1,11 @@
 use super::*;
 
-impl QuireMcpServer {
+impl QuireReportService {
     pub async fn exec_set_cover(
         &self,
         context: RequestContext,
         request: SetCoverParams,
-    ) -> Result<Json<SetCoverReceipt>, ErrorData> {
+    ) -> Result<SetCoverReceipt, ErrorData> {
         let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let patch = request.cover_patch;
@@ -23,19 +23,19 @@ impl QuireMcpServer {
             "Cover committed at revision {}. Continue with configure_toc or authoring blocks.",
             result.new_revision
         );
-        Ok(Json(SetCoverReceipt {
+        Ok(SetCoverReceipt {
             doc_id: doc_id.to_string(),
             revision: result.new_revision.get(),
             cover,
             _next_hint,
-        }))
+        })
     }
 
     pub async fn exec_configure_toc(
         &self,
         context: RequestContext,
         request: ConfigureTocParams,
-    ) -> Result<Json<ConfigureTocReceipt>, ErrorData> {
+    ) -> Result<ConfigureTocReceipt, ErrorData> {
         let actor = context.actor;
         if let Some(depth) = request.max_depth
             && !(1..=3).contains(&depth)
@@ -87,19 +87,19 @@ impl QuireMcpServer {
             "TOC committed at revision {}. Headings are auto-collected by the frontend; do not add TOC blocks.",
             result.new_revision
         );
-        Ok(Json(ConfigureTocReceipt {
+        Ok(ConfigureTocReceipt {
             doc_id: doc_id.to_string(),
             revision: result.new_revision.get(),
             toc,
             _next_hint,
-        }))
+        })
     }
 
     pub async fn exec_configure_references(
         &self,
         context: RequestContext,
         request: ConfigureReferencesParams,
-    ) -> Result<Json<ConfigureReferencesReceipt>, ErrorData> {
+    ) -> Result<ConfigureReferencesReceipt, ErrorData> {
         let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         let (result, document) = self
@@ -142,20 +142,20 @@ impl QuireMcpServer {
                 orphan_sources.join(", ")
             )
         };
-        Ok(Json(ConfigureReferencesReceipt {
+        Ok(ConfigureReferencesReceipt {
             doc_id: doc_id.to_string(),
             revision: result.new_revision.get(),
             references,
             orphan_sources,
             _next_hint,
-        }))
+        })
     }
 
     pub async fn exec_configure_page_chrome(
         &self,
         context: RequestContext,
         request: ConfigurePageChromeParams,
-    ) -> Result<Json<ConfigurePageChromeReceipt>, ErrorData> {
+    ) -> Result<ConfigurePageChromeReceipt, ErrorData> {
         let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
         if let Some(expected) = request.base_revision {
@@ -193,19 +193,19 @@ impl QuireMcpServer {
             "Page chrome committed at revision {}. Slots support {{page}}, {{total}}, {{title}}, {{subtitle}}, {{date}}, {{kicker}} and {{authors}}; heading_page_break accepts none, h1 or h1_and_h2.",
             result.new_revision
         );
-        Ok(Json(ConfigurePageChromeReceipt {
+        Ok(ConfigurePageChromeReceipt {
             doc_id: doc_id.to_string(),
             revision: result.new_revision.get(),
             page_chrome,
             _next_hint,
-        }))
+        })
     }
 
     pub async fn exec_update_style_and_css(
         &self,
         context: RequestContext,
         request: UpdateStyleParams,
-    ) -> Result<Json<UpdateStyleReceipt>, ErrorData> {
+    ) -> Result<UpdateStyleReceipt, ErrorData> {
         let actor = context.actor;
         for (name, value) in &request.tokens_patch {
             if !is_valid_css_token_name(name) {
@@ -258,14 +258,14 @@ impl QuireMcpServer {
             "Theme committed at revision {}. Run lint_document to re-check CSS and source usage.",
             result.new_revision
         );
-        Ok(Json(UpdateStyleReceipt {
+        Ok(UpdateStyleReceipt {
             doc_id: doc_id.to_string(),
             revision: result.new_revision.get(),
             theme: theme.summary(),
             token_count: theme.tokens.len(),
             has_custom_css: !theme.custom_css.is_empty(),
             _next_hint,
-        }))
+        })
     }
 
     pub(crate) fn merge_page_chrome(
