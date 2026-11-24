@@ -54,6 +54,7 @@ impl QuireMcpServer {
     /// - Include a verbatim `evidence` excerpt from the source so reviewers and `lint_document` can verify claim-to-source alignment.
     /// - Always inspect `canonical_id_map` in the receipt: if a duplicate URL or title merged into an existing source ID, cite the mapped canonical ID in your prose (`[^id]`) and block `source_ids`.
     /// - You can also register sources atomically alongside block edits via the `sources` map on `apply_operations`.
+    /// - In chat replies, place `<citation id="SOURCE_ID"/>` immediately after the claim it supports to render an interactive citation badge and a collapsible Sources drawer.
     #[tool(name = "upsert_sources")]
     pub async fn upsert_sources(
         &self,
@@ -177,7 +178,7 @@ impl QuireMcpServer {
     // ---------------------------------------------------------------------
     /// Configure A4 print/paged running headers, footers, first-page visibility, and automatic heading page-break policy (`none`, `h1`, or `h1_and_h2`).
     ///
-    /// Omitted optional fields keep their current settings. Header and footer slot templates support `{title}`, `{page}`, `{pages}`, and `{date}` placeholders.
+    /// Omitted optional fields keep their current settings. Header and footer slot templates support `{page}`, `{total}`, `{title}`, `{subtitle}`, `{date}`, `{kicker}`, and `{authors}` placeholders.
     #[tool(name = "configure_page_chrome")]
     pub async fn configure_page_chrome(
         &self,

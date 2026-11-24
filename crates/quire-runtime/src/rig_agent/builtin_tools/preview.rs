@@ -66,6 +66,7 @@ pub(crate) async fn preview_report_tool(
 ///   or the call will fail).
 /// - Receipt: returns `preview_id` (valid for 30 minutes), `lint_issues`, `preview_url`, and a PNG
 ///   screenshot for vision-capable models. Resolve all errors and visual overlaps before calling `commit_chart`.
+/// - In chat replies, embed `<echarts id="PREVIEW_ID"/>` on its own line to render the interactive chart preview.
 #[expect(
     clippy::too_many_arguments,
     reason = "rig_tool exposes each argument as a separate JSON Schema field"
@@ -281,7 +282,8 @@ fn normalize_optional_text(value: Option<String>) -> Option<String> {
 /// If `block_id` already exists as an `"echarts"` block in `doc_id`, updates it in place via
 /// `PatchBlock` (preserving review comment anchors) and repositions it when `after_block_id` or
 /// `before_block_id` is supplied. Automatically inherits `source_ids` and `source_note` from the
-/// cached preview unless overridden.
+/// cached preview unless overridden. In chat replies, embed `<echarts id="BLOCK_ID"/>` on its own
+/// line to render the committed interactive chart.
 #[expect(
     clippy::too_many_arguments,
     reason = "rig_tool exposes each argument as a separate JSON Schema field"

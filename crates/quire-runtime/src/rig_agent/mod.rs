@@ -535,19 +535,6 @@ impl RigModelCore {
 fn static_preamble(execution: &AgentExecution) -> String {
     let mut preamble = execution.system_prompt.clone();
     preamble.push_str("\n\n<runtime_rules>\n");
-    if !execution.run_id.starts_with("run_sub_") {
-        preamble.push_str(
-            "When the topic of this conversation is clear (especially on the first turn), call `set_session_title` with a concise title.\n",
-        );
-    }
-    preamble.push_str(
-        "In your chat replies, you can embed registered citations and charts using short XML tags:\n\
-         - Inline citation: first register the source in the database via `upsert_sources`, then place `<citation id=\"SOURCE_ID\"/>` inline right after the sentence or claim it supports. The chat UI automatically renders an interactive inline citation badge and a collapsible Sources drawer at the bottom of your message.\n\
-         - Inline chart: first preview with `preview_echarts` (and optionally commit with `commit_chart`), then place `<echarts id=\"BLOCK_OR_PREVIEW_ID\"/>` on its own line in your chat reply to render the interactive ECharts figure directly inside the chat message.\n",
-    );
-    preamble.push_str(
-        "For complex ECharts charts, call `preview_echarts` first with the complete native ECharts 6.0 `option`. Inspect the rendered screenshot and `lint_issues`, refine with `based_on_preview_id` plus a small `option_patch` only (never resend the full option), and commit the approved chart with `commit_chart` using the final `preview_id`. Do not write chart blocks directly through apply_operations when the preview workflow is available.\n",
-    );
     if let Some(branch) = execution.kb_branch.as_deref() {
         preamble.push_str(&format!(
             "Knowledge-base branch for this session: `{branch}`. Agent and skill lookups use this branch.\n"

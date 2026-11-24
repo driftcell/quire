@@ -118,10 +118,10 @@ pub struct ConfigureReferencesReceipt {
 pub struct ConfigurePageChromeParams {
     /// Target report `doc_id`.
     pub doc_id: String,
-    /// Running page header slots (`left`, `center`, `right`, supporting `{title}`, `{page}`, `{pages}`, `{date}`). Omit to keep the current header.
+    /// Running page header slots (`left`, `center`, `right`, supporting `{page}`, `{total}`, `{title}`, `{subtitle}`, `{date}`, `{kicker}`, and `{authors}`). Omit to keep the current header.
     #[serde(default)]
     pub header: Option<PageChromeSlots>,
-    /// Running page footer slots (`left`, `center`, `right`, supporting `{title}`, `{page}`, `{pages}`, `{date}`). Omit to keep the current footer.
+    /// Running page footer slots (`left`, `center`, `right`, supporting `{page}`, `{total}`, `{title}`, `{subtitle}`, `{date}`, `{kicker}`, and `{authors}`). Omit to keep the current footer.
     #[serde(default)]
     pub footer: Option<PageChromeSlots>,
     /// Whether to hide the running header on the first page. Omit to keep the current setting.
