@@ -40,7 +40,7 @@ enabled: true
 - 除非用户明确要求“每章另起一页”，严禁设置 `heading_page_break` 或 Heading 的 `page_break_before: true`。
 
 ## 撰稿规范
-- **进度同步**：可用 `describe_task` 向用户界面同步当前撰写章节。
+- **进度同步与子代理 Todo List**：开工时调用 `describe_task(title=..., section_id=..., todos=[...])` 列出所辖各小节撰稿与质检的 2—4 项子代理 Todo 清单，并在小节推进时动态更新 `todos` 状态。
 1. 动笔前调用 `load_skill("higher-education-writing")` 并读取 `references/examples.md` 对齐论证节奏（成效/案例加读 `showcase-and-cases.md`，公文加读 `gov-documents.md`；**不读取 `review-rubric.md`**）。
 2. **问题驱动与论证纵深（杜绝两三句话的干瘪短段）**：按主编简报中的 3–4 个递进分析问题组织每节，每节通常撰写 **6–8 个饱满的高密度自然段**（每段 180–280 字左右，完整走通“核心判断与校际位次定位 → 跨校/跨期结构反差拆解 → 体制机制与资源配置成因剖析 → 针对性建设动作与制度设计”四层论证闭环）。把问题讲透即止，严禁写一两句话就草草收段的电报式缩略段，也严禁为凑字数反复统计 `char_count` 或在节尾追加同义重复的补丁段。
 3. **围绕已有视觉块的精准无锁穿插（`InsertBefore` + `InsertAfter`）**：

@@ -232,39 +232,53 @@ fn push_preview_block(
     }
 }
 
-/// Synthesize a compact pipe-separated table preview (`Col A | Col B\nRow1A | Row1B`)
-/// from partial `columns` and `rows` while a `table` block is streaming.
+fn collect_leaf_columns<'a>(
+    cols: &'a [Value],
+    column_keys: &mut Vec<&'a str>,
+    header_labels: &mut Vec<String>,
+) {
+    for col in cols {
+        let Some(col_obj) = col.as_object() else {
+            continue;
+        };
+        if let Some(children) = col_obj.get("children").and_then(Value::as_array)
+            && !children.is_empty()
+        {
+            collect_leaf_columns(children, column_keys, header_labels);
+            continue;
+        }
+        if let Some(key) = col_obj.get("key").and_then(Value::as_str) {
+            column_keys.push(key);
+        }
+        let label = col_obj
+            .get("label")
+            .or_else(|| col_obj.get("title"))
+            .or_else(|| col_obj.get("key"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if let Some(label) = label {
+            header_labels.push(label.to_string());
+        }
+    }
+}
+
+/// Synthesize a pipe-separated table preview (`Col A | Col B\nRow1A | Row1B`)
+/// from partial `columns` (including nested `ColumnNode` trees) and `rows` while a `table` block is streaming.
 fn synthesize_table_preview_text(object: &serde_json::Map<String, Value>) -> Option<String> {
     let columns = object.get("columns").and_then(Value::as_array);
     let rows = object.get("rows").and_then(Value::as_array);
     let mut column_keys: Vec<&str> = Vec::new();
     let mut header_labels: Vec<String> = Vec::new();
     if let Some(cols) = columns {
-        for col in cols.iter().take(6) {
-            let Some(col_obj) = col.as_object() else {
-                continue;
-            };
-            if let Some(key) = col_obj.get("key").and_then(Value::as_str) {
-                column_keys.push(key);
-            }
-            let label = col_obj
-                .get("label")
-                .or_else(|| col_obj.get("title"))
-                .or_else(|| col_obj.get("key"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            if let Some(label) = label {
-                header_labels.push(label.to_string());
-            }
-        }
+        collect_leaf_columns(cols, &mut column_keys, &mut header_labels);
     }
     let mut lines: Vec<String> = Vec::new();
     if !header_labels.is_empty() {
         lines.push(header_labels.join(" | "));
     }
     if let Some(row_list) = rows {
-        for row in row_list.iter().take(4) {
+        for row in row_list {
             let cells: Vec<String> = match row {
                 Value::Object(row_obj) => {
                     if !column_keys.is_empty() {
@@ -275,14 +289,12 @@ fn synthesize_table_preview_text(object: &serde_json::Map<String, Value>) -> Opt
                     } else {
                         row_obj
                             .values()
-                            .take(6)
                             .map(|val| format_cell_preview(Some(val)))
                             .collect()
                     }
                 }
                 Value::Array(arr) => arr
                     .iter()
-                    .take(6)
                     .map(|val| format_cell_preview(Some(val)))
                     .collect(),
                 _ => Vec::new(),
@@ -290,9 +302,6 @@ fn synthesize_table_preview_text(object: &serde_json::Map<String, Value>) -> Opt
             if !cells.is_empty() && cells.iter().any(|cell| !cell.is_empty()) {
                 lines.push(cells.join(" | "));
             }
-        }
-        if row_list.len() > 4 {
-            lines.push(format!("… 共 {} 行数据流式写入中", row_list.len()));
         }
     }
     if lines.is_empty() {
@@ -307,14 +316,20 @@ fn synthesize_table_preview_text(object: &serde_json::Map<String, Value>) -> Opt
 
 fn format_cell_preview(value: Option<&Value>) -> String {
     match value {
-        Some(Value::String(text)) => text.trim().chars().take(28).collect(),
+        Some(Value::String(text)) => text.trim().replace('\n', " "),
         Some(Value::Number(num)) => num.to_string(),
         Some(Value::Bool(flag)) => flag.to_string(),
         Some(Value::Object(obj)) => obj
             .get("text")
             .or_else(|| obj.get("value"))
             .and_then(Value::as_str)
-            .map(|text| text.trim().chars().take(28).collect())
+            .map(|text| text.trim().replace('\n', " "))
+            .or_else(|| {
+                obj.get("number")
+                    .or_else(|| obj.get("value"))
+                    .and_then(Value::as_f64)
+                    .map(|n| n.to_string())
+            })
             .unwrap_or_default(),
         _ => String::new(),
     }

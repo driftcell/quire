@@ -59,6 +59,7 @@ export type SessionEvent1 =
       title: string;
       detail?: string | null;
       section_id?: string | null;
+      todos?: TaskTodoItem[];
       [k: string]: unknown;
     }
   | {
@@ -443,10 +444,25 @@ export interface RunTraceSummary {
   segments?: RunTraceSegment[];
   [k: string]: unknown;
 }
+export type TaskTodoStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "skipped";
+
+export interface TaskTodoItem {
+  id?: string | null;
+  title: string;
+  status: TaskTodoStatus;
+  detail?: string | null;
+  section_id?: string | null;
+}
+
 export interface RunTaskFocus {
   title: string;
   detail?: string | null;
   section_id?: string | null;
+  todos?: TaskTodoItem[];
   [k: string]: unknown;
 }
 export interface RunTraceToolItem {

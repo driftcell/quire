@@ -8,7 +8,6 @@ import {
 import { ChatEchartsBlock } from "@/components/chat/ChatEchartsBlock";
 import {
   CHAT_PROSE,
-  STREAMDOWN_ANIMATION,
   STREAMDOWN_CONTROLS,
 } from "@/components/chat/chatMarkdown";
 import {
@@ -106,9 +105,11 @@ export function ChatSourcesFooter({
 }
 
 /**
- * Streamdown wrapper with a stable reading-rate buffer, short ChatML inline
- * `<citation id="..."/>` badges, inline `<echarts id="..."/>` chart figures,
- * and a collapsible shadcn/ui `<Sources>` drawer at the bottom of the message.
+ * Streamdown wrapper with a 60fps reading-rate buffer (`useSmoothStreamText`),
+ * short XML `<citation id="..."/>` inline badges, `<echarts id="..."/>` figures,
+ * and a collapsible `<Sources>` drawer. Disables Streamdown's internal word-span
+ * animation (`animated={false}`) so character-level smoothing and inline custom
+ * tags never suffer from double-animation DOM remounting.
  */
 export function SmoothStreamdown({
   text,
@@ -145,7 +146,7 @@ export function SmoothStreamdown({
           <Streamdown
             mode={animating ? "streaming" : "static"}
             isAnimating={animating}
-            animated={animating ? STREAMDOWN_ANIMATION : false}
+            animated={false}
             controls={controls}
             allowedTags={CHATML_ALLOWED_TAGS}
             fallbackComponent={ChatMlFallbackRenderer}

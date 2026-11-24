@@ -20,7 +20,7 @@ function Sources({
   ...props
 }: SourcesProps) {
   return (
-    <Trace data-slot="sources" className={cn("mt-2.5", className)}>
+    <Trace data-slot="sources" className={cn("mt-2", className)}>
       <TraceCollapsible defaultOpen={defaultOpen} {...props} />
     </Trace>
   );
@@ -42,17 +42,17 @@ function SourcesTrigger({
     <TraceCollapsibleTrigger
       data-slot="sources-trigger"
       className={cn(
-        "rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+        "inline-flex h-7 items-center rounded-full border border-border/65 bg-foreground/[0.03] px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground",
         className,
       )}
       {...props}
     >
       <TraceLine className="text-xs">
-        <TraceIcon className="size-3.5 text-primary/80">
-          <BookOpenIcon className="size-3.5" />
+        <TraceIcon className="size-3.5 text-muted-foreground">
+          <BookOpenIcon className="size-3" />
         </TraceIcon>
         <TraceTitle className="font-medium">
-          {children ?? `参考了 ${count} 个来源`}
+          {children ?? `${count} 个参考来源`}
         </TraceTitle>
       </TraceLine>
     </TraceCollapsibleTrigger>
@@ -71,7 +71,7 @@ function SourcesContent({
   return (
     <TraceCollapsibleContent
       data-slot="sources-content"
-      className={cn("mt-2 space-y-1.5 border-l-border/70 pl-3", className)}
+      className={cn("mt-2 space-y-1.5 border-l border-border/60 pl-3", className)}
       {...props}
     >
       <Trace className="gap-1.5">{children}</Trace>
@@ -101,13 +101,13 @@ function Source({
     <div
       data-slot="source-item"
       className={cn(
-        "group/source flex w-full min-w-0 flex-col gap-0.5 rounded-lg border border-border/50 bg-background/80 px-2.5 py-1.5 text-xs transition-colors hover:border-border hover:bg-muted/30",
+        "group/source flex w-full min-w-0 flex-col gap-1 rounded-xl border border-border/60 bg-background px-3 py-2 text-xs transition-colors hover:border-foreground/25 hover:bg-foreground/[0.02]",
         className,
       )}
     >
       <TraceLine className="w-full text-xs">
         {index !== undefined && (
-          <span className="inline-flex size-4 shrink-0 items-center justify-center rounded bg-primary/10 font-mono text-[10px] font-semibold text-primary tabular-nums">
+          <span className="inline-flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full bg-foreground/[0.06] px-1 font-mono text-[10px] font-medium text-foreground/80 tabular-nums">
             {index}
           </span>
         )}
@@ -115,18 +115,18 @@ function Source({
           {children ?? displayTitle}
         </TraceTitle>
         {publisher && (
-          <TraceDescription className="text-[11px]">
+          <TraceDescription className="text-[11px] text-muted-foreground">
             · {publisher}
           </TraceDescription>
         )}
         {href && (
-          <TraceIcon className="ml-auto size-3 text-muted-foreground/70 group-hover/source:text-foreground">
+          <TraceIcon className="ml-auto size-3 text-muted-foreground/60 group-hover/source:text-foreground">
             <ExternalLinkIcon className="size-3" />
           </TraceIcon>
         )}
       </TraceLine>
       {excerpt && (
-        <p className="line-clamp-2 pl-6 text-[11px] leading-4 text-muted-foreground/85">
+        <p className="line-clamp-2 pl-5.5 text-[11.5px] leading-relaxed text-muted-foreground">
           {excerpt}
         </p>
       )}

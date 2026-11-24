@@ -587,13 +587,7 @@ pub(super) fn context_usage(usage: &Usage, context_limit: u64) -> ContextUsage {
 
 pub(super) fn preview_json(value: &Value) -> (String, bool) {
     let raw = serde_json::to_string(value).unwrap_or_default();
-    let mut chars = raw.chars();
-    let mut preview: String = chars.by_ref().take(240).collect();
-    let truncated = chars.next().is_some();
-    if truncated {
-        preview.push('…');
-    }
-    (preview, truncated)
+    (raw, false)
 }
 
 fn prompt_error(error: PromptError) -> RuntimeError {

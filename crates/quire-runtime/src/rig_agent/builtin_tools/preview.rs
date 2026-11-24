@@ -319,7 +319,7 @@ pub(crate) async fn commit_chart_tool(
         ));
     }
     let raw_doc_id = doc_id.unwrap_or_default();
-    let doc_id = ensure_session_doc_id(context, &runtime, &raw_doc_id).await?;
+    let resolved_doc_id = resolve_existing_session_doc_id(context, &runtime, &raw_doc_id).await?;
     let preview = runtime
         .engine
         .kb
@@ -333,6 +333,47 @@ pub(crate) async fn commit_chart_tool(
                 "chart preview `{preview_id}` was not found or expired after 30 minutes; call preview_echarts again to regenerate it"
             ))
         })?;
+    let Some(doc_id) = resolved_doc_id else {
+        // Pure chat-session mode: alias the cached preview under `block_id` in Redis
+        // so `<echarts id="block_id"/>` and `<echarts id="preview_id"/>` both render
+        // in chat without creating or linking a report document.
+        let target_id = BlockId::parse(block_id.trim()).map_err(tool_other)?;
+        let mut aliased = preview.clone();
+        aliased.preview_id = target_id.as_str().to_string();
+        if let Some(override_ids) = source_ids {
+            aliased.source_ids = override_ids;
+        }
+        if let Some(override_note) = normalize_optional_text(source_note) {
+            aliased.source_note = Some(override_note);
+        }
+        runtime
+            .engine
+            .kb
+            .store()
+            .bus()
+            .store_chart_preview(&aliased)
+            .await
+            .map_err(tool_other)?;
+        return Ok(CommitChartReceipt {
+            mutation: quire_server::mcp::ApplyOperationsReceipt {
+                new_revision: 0,
+                base_revision: 0,
+                rebased: false,
+                rebased_over: 0,
+                committed: true,
+                assigned_ids: Vec::new(),
+                inline_warnings: Vec::new(),
+                blocking_errors: Vec::new(),
+                _next_hint: format!(
+                    "Chart `{}` is ready for inline chat rendering via `<echarts id=\"{}\"/>` (no report document created).",
+                    target_id.as_str(),
+                    target_id.as_str()
+                ),
+            },
+            preview_id,
+            block_id: target_id.as_str().to_string(),
+        });
+    };
     let after_block_id = normalize_optional_text(after_block_id);
     let before_block_id = normalize_optional_text(before_block_id);
     let section_id = normalize_optional_text(section_id);

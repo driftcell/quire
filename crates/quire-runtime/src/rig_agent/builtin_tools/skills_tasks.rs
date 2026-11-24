@@ -77,17 +77,19 @@ pub(crate) async fn read_skill_resource_tool(
     })
 }
 
-/// Report the current work stage to the user interface header without cluttering the tool trace.
-/// Use it at major phase transitions during longer multi-step tasks.
+/// Report the current work stage and dynamic todo-list plan to the user interface without cluttering the tool trace.
+/// Both the lead agent and subagents should pass and dynamically update `todos` at phase transitions so the UI can render an accurate step-by-step todo list and progress bar.
 #[rig_tool(name = "describe_task")]
 pub(crate) async fn describe_task_tool(
     #[rig(context)] context: &mut ToolContext,
-    /// Short Chinese status phrase, ideally at most 16 characters (no internal tool names or raw IDs).
+    /// Short Chinese status phrase for the active stage, ideally at most 16 characters (no internal tool names or raw IDs).
     title: String,
     /// Optional clarification of the current focus or blocker.
     detail: Option<String>,
     /// Optional `block_id` of the report heading currently being worked on to highlight the active chapter in the UI.
     section_id: Option<String>,
+    /// Optional ordered todo list for this agent (`status`: `"pending" | "in_progress" | "completed" | "skipped"`). Pass the full planned todo list on start and dynamically adjust statuses or items as stages complete.
+    todos: Option<Vec<quire_session_protocol::TaskTodoItem>>,
 ) -> Result<DescribeTaskReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let title = title.trim().to_string();
@@ -96,18 +98,32 @@ pub(crate) async fn describe_task_tool(
             "`title` must be a non-empty status phrase",
         ));
     }
+    let normalized_todos: Vec<quire_session_protocol::TaskTodoItem> = todos
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|mut item| {
+            item.title = item.title.trim().to_string();
+            if item.title.is_empty() {
+                None
+            } else {
+                Some(item)
+            }
+        })
+        .collect();
     runtime
         .event_scope
         .send(ModelStreamEvent::TaskFocus {
             title: title.clone(),
             detail: detail.clone(),
             section_id: section_id.clone(),
+            todos: normalized_todos.clone(),
         })
         .await;
     Ok(DescribeTaskReceipt {
         title,
         detail,
         section_id,
+        todos: normalized_todos,
     })
 }
 

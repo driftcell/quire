@@ -2,10 +2,12 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3Icon,
   BookOpenIcon,
+  DatabaseIcon,
   EyeIcon,
   FilePlus2Icon,
   FileTextIcon,
   FilesIcon,
+  GlobeIcon,
   HelpCircleIcon,
   HistoryIcon,
   LayoutTemplateIcon,
@@ -13,6 +15,7 @@ import {
   MessageSquareIcon,
   PaperclipIcon,
   PenLineIcon,
+  SearchIcon,
   ShieldCheckIcon,
   TerminalIcon,
   TypeIcon,
@@ -48,6 +51,7 @@ const TOOL_META: Record<string, ToolMeta> = {
   configure_page_chrome: { label: "配置页眉页脚", icon: LayoutTemplateIcon },
   update_style_and_css: { label: "更新样式与 CSS", icon: LayoutTemplateIcon },
   upsert_sources: { label: "登记数据来源", icon: Link2Icon },
+  list_sources: { label: "查看数据来源", icon: Link2Icon },
   list_comments: { label: "查看批注", icon: MessageSquareIcon },
   add_comment: { label: "添加批注", icon: MessageSquareIcon },
   reply_comment: { label: "回复批注", icon: MessageSquareIcon },
@@ -61,6 +65,8 @@ const TOOL_META: Record<string, ToolMeta> = {
   list_subagents: { label: "查看可用子代理", icon: UsersIcon },
   spawn_subagents: { label: "派发子代理", icon: UsersIcon },
   describe_task: { label: "整理任务说明", icon: FileTextIcon },
+  deepseek_search: { label: "检索权威资料", icon: SearchIcon },
+  deepseek_fetch: { label: "读取网页原文", icon: GlobeIcon },
 };
 
 /**
@@ -70,7 +76,10 @@ const TOOL_META: Record<string, ToolMeta> = {
  * exception: keep it visible for debugging.
  */
 export function isVisibleTraceTool(tool: ToolCallTraceItem): boolean {
-  if (tool.toolName === "describe_task") {
+  if (
+    tool.toolName === "describe_task" ||
+    tool.toolName === "set_session_title"
+  ) {
     return false;
   }
   if (tool.toolName === "spawn_subagents") {
@@ -80,5 +89,30 @@ export function isVisibleTraceTool(tool: ToolCallTraceItem): boolean {
 }
 
 export function getToolMeta(toolName: string): ToolMeta {
-  return TOOL_META[toolName] ?? { label: toolName, icon: WrenchIcon };
+  const direct = TOOL_META[toolName];
+  if (direct) {
+    return direct;
+  }
+  const normalized = toolName.includes(":")
+    ? (toolName.split(":").pop() ?? toolName)
+    : toolName;
+  if (TOOL_META[normalized]) {
+    return TOOL_META[normalized];
+  }
+  if (normalized.startsWith("panorama_report_")) {
+    return { label: "查询高教全景数据", icon: DatabaseIcon };
+  }
+  if (normalized.startsWith("shuangyou_")) {
+    return { label: "查询双优建设数据", icon: DatabaseIcon };
+  }
+  if (normalized.startsWith("subjectcloud_")) {
+    return { label: "查询学科云数据", icon: DatabaseIcon };
+  }
+  if (normalized.includes("search")) {
+    return { label: "检索权威资料", icon: SearchIcon };
+  }
+  if (normalized.includes("fetch")) {
+    return { label: "读取网页原文", icon: GlobeIcon };
+  }
+  return { label: toolName, icon: WrenchIcon };
 }

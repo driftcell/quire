@@ -3,12 +3,15 @@ import type { LucideIcon } from "lucide-react";
 import {
   BarChart3Icon,
   BookOpenIcon,
+  DatabaseIcon,
   FilePlus2Icon,
   FileTextIcon,
+  GlobeIcon,
   HistoryIcon,
   LayoutTemplateIcon,
   MessageSquareIcon,
   PaperclipIcon,
+  SearchIcon,
   UsersIcon,
   WrenchIcon,
 } from "lucide-react";
@@ -39,8 +42,9 @@ function expectMeta(toolName: string, label: string, icon: LucideIcon): void {
 }
 
 describe("isVisibleTraceTool", () => {
-  test("hides orchestration tools except failed spawn calls", () => {
+  test("hides orchestration and session-title metadata tools except failed spawn calls", () => {
     expect(isVisibleTraceTool(tool("describe", "describe_task"))).toBe(false);
+    expect(isVisibleTraceTool(tool("title", "set_session_title"))).toBe(false);
     expect(
       isVisibleTraceTool(tool("spawn-running", "spawn_subagents", "running")),
     ).toBe(false);
@@ -57,13 +61,18 @@ describe("isVisibleTraceTool", () => {
 });
 
 describe("getToolMeta", () => {
-  test("returns Chinese semantic labels for report tools", () => {
+  test("returns Chinese semantic labels for report and research tools", () => {
     expectMeta("read_blocks", "读取报告内容", FileTextIcon);
     expectMeta("get_document_digest", "读取文档大纲", FileTextIcon);
     expectMeta("preview_echarts", "预渲染图表", BarChart3Icon);
     expectMeta("configure_toc", "配置目录", LayoutTemplateIcon);
     expectMeta("add_comment", "添加批注", MessageSquareIcon);
     expectMeta("sandbox_mount_attachment", "挂载附件到沙箱", PaperclipIcon);
+    expectMeta("deepseek_search", "检索权威资料", SearchIcon);
+    expectMeta("deepseek_fetch", "读取网页原文", GlobeIcon);
+    expectMeta("panorama_report_universities", "查询高教全景数据", DatabaseIcon);
+    expectMeta("shuangyou_intel_list", "查询双优建设数据", DatabaseIcon);
+    expectMeta("subjectcloud_overview", "查询学科云数据", DatabaseIcon);
   });
 
   test("covers report lifecycle and subagent orchestration tools", () => {
@@ -85,6 +94,7 @@ describe("getToolMeta", () => {
       "apply_operations",
       "rollback_revision",
       "upsert_sources",
+      "list_sources",
       "set_cover",
       "configure_toc",
       "configure_references",
@@ -108,6 +118,8 @@ describe("getToolMeta", () => {
       "describe_task",
       "list_subagents",
       "spawn_subagents",
+      "deepseek_search",
+      "deepseek_fetch",
     ];
     for (const name of toolNames) {
       const meta = getToolMeta(name);

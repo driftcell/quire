@@ -3,7 +3,7 @@
 use std::{collections::VecDeque, future::Future, pin::Pin, sync::Arc};
 
 use futures::Stream;
-use quire_session_protocol::{ContextUsage, QuestionItem};
+use quire_session_protocol::{ContextUsage, QuestionItem, TaskTodoItem};
 use serde_json::Value;
 use tokio::{sync::Mutex, sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;
@@ -18,6 +18,7 @@ pub enum ModelStreamEvent {
         title: String,
         detail: Option<String>,
         section_id: Option<String>,
+        todos: Vec<TaskTodoItem>,
     },
     DocLinked {
         doc_id: String,
@@ -219,6 +220,7 @@ pub(crate) fn sample_model_stream_events() -> Vec<ModelStreamEvent> {
             title: "title".into(),
             detail: None,
             section_id: None,
+            todos: Vec::new(),
         },
         ModelStreamEvent::DocLinked {
             doc_id: "doc_1".into(),

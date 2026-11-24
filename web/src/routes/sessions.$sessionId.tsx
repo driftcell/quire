@@ -163,9 +163,15 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     isRunActive: effectiveRunStatus === "running",
   });
 
-  // A linked document is enough to select the report workspace. Session detail
-  // loading uses the same loading frame so the right pane never appears late.
-  const hasReportData = effectiveDocId !== null || sessionQuery.isLoading;
+  const isEmptyContainerDoc =
+    docQuery.data !== undefined &&
+    docQuery.data.document.blocks.length === 0 &&
+    docQuery.data.document.title === "会话研究资料与图表";
+
+  // A linked document is enough to select the report workspace unless it is a
+  // legacy 0-block chat container.
+  const hasReportData =
+    (effectiveDocId !== null && !isEmptyContainerDoc) || sessionQuery.isLoading;
 
   const jumpToSection = useCallback((sectionId: string) => {
     const el = window.document.getElementById(`block-${sectionId}`);

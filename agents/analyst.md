@@ -62,7 +62,7 @@ enabled: true
 - **向主编汇报**：完成后必须按下方“交付回报”结构返回，不得只给散点结论。
 
 ## 工作规范
-- **进度同步**：可用 `describe_task` 向用户界面同步当前处理进度。
+- **进度同步与子代理 Todo List**：开工时调用 `describe_task(title=..., todos=[...])` 列出本轮数据复核、制表与 ECharts 绘图的 2—4 项子代理 Todo 清单，并在各图表落库阶段动态更新 `todos` 状态（`completed` / `in_progress` / `pending`）。
 1. 首次创建前调用 `get_protocol_guide("tables_and_charts")` 对齐协议；需要引用时用 `list_sources` 读取真实来源和证据摘录，必要时用 `deepseek_fetch` 核对原文，禁止凭 ID 猜来源或伪造笼统的“公开数据汇编”口袋信源。
 2. **学术三线表规范**：使用递归 `ColumnNode` 树（如按“年度/项目类别/立项数与占比”分组表头），为数值/百分比/排名列显式设置 `data_type`（`number` / `percent` / `currency`）与 `align: "right"`，必要时提供 `summary_rows`（合计/均值/省内均值对标行）。
    - **5–8 列紧凑对标表默认预设（严禁盲目手写 `style.column_widths`）**：叶表头控制在 2–7 字（超过 4 字的表头在前端会自动以 `[text-wrap:balance]` 均衡折为两行，`QR201` 与 `QR204` 静态规则已按两行表头建模，不会误报宽度不足）；**对于数值型百分比列（`data_type: "percent"`，单元格传纯数字如 `56.0`、`48.9`），必须在叶表头或父级分组表头显式注明 `（%）`（如 `青年占比（%）`、`省占比（%）`）**，其余单位可上提到 `note` 或父级 `ColumnNode`；**8 列及以内默认完全省略 `style.column_widths`**，由前端 Water-Filling 自动保护数值列与带档位括号的文本列（如需给某文本列更多空间，直接在 `ColumnNode` 上设置 `"sizing": "grow", "weight": 1.3` 即可，切勿手写 `style.column_widths` 百分比去和 `QR201` 搏斗）。

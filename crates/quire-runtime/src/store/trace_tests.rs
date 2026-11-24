@@ -68,6 +68,7 @@ fn aggregates_main_and_subagent_tool_traces() {
                 title: "Intro".into(),
                 detail: Some("write".into()),
                 section_id: Some("intro".into()),
+                todos: Vec::new(),
             },
         ),
         SessionEvent::new(

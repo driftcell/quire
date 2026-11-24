@@ -2,12 +2,18 @@ import type { ToolCallTraceItem } from "@/components/chat/ToolCallTrace";
 import {
   buildHistoricalMilestones,
   buildLiveMilestones,
+  extractHistoricalTodos,
+  extractLiveTodos,
+  finalizeTodos,
+  mergeTodoStep,
+  parseDescribeTaskInput,
   type TaskMilestoneNode,
 } from "@/components/chat/taskMilestones";
 import { getToolMeta, isVisibleTraceTool } from "@/components/chat/toolMeta";
 import type {
   RunTraceSubagent,
   RunTraceSummary,
+  TaskTodoItem,
 } from "@/contracts/session-protocol";
 import {
   toToolTraceItems,
@@ -423,6 +429,7 @@ export interface SubagentActivityPill {
   toolCount: number;
   completedToolCount: number;
   recentTools: string[];
+  todos: TaskTodoItem[];
 }
 
 export interface RunStatusModel {
@@ -435,6 +442,7 @@ export interface RunStatusModel {
   recentMainTools: string[];
   subagents: SubagentActivityPill[];
   milestones: TaskMilestoneNode[];
+  todos: TaskTodoItem[];
   elapsedLabel?: string;
 }
 
@@ -475,9 +483,10 @@ export function buildLiveRunStatusModel(
 ): RunStatusModel {
   const progress = summarizeLiveProgress(trace, subagents);
   const milestones = buildLiveMilestones(trace, subagents);
+  const todos = extractLiveTodos(trace);
   const lastMilestone = milestones[milestones.length - 1];
   const lastSeg = trace.segments[trace.segments.length - 1];
-  let fallbackTitle = trace.isStreaming ? "正在处理" : "本轮执行已完成";
+  let fallbackTitle = trace.isStreaming ? "正在处理" : "执行完成";
   if (trace.isStreaming && lastSeg) {
     if (lastSeg.kind === "thinking") {
       fallbackTitle = "正在思考规划";
@@ -502,6 +511,7 @@ export function buildLiveRunStatusModel(
 
   const pills: SubagentActivityPill[] = subagents.map((sub) => {
     const view = extractSubagentLiveView(sub.trace);
+    const subTodos = extractLiveTodos(sub.trace);
     const toolLabel = latestToolLabel(view.tools);
     const activityText =
       sub.trace.taskFocus?.title?.trim() ||
@@ -521,6 +531,7 @@ export function buildLiveRunStatusModel(
       completedToolCount: view.tools.filter((t) => t.status !== "running")
         .length,
       recentTools: recentToolLabels(view.tools),
+      todos: subTodos,
     };
   });
 
@@ -539,6 +550,7 @@ export function buildLiveRunStatusModel(
     recentMainTools: recentToolLabels(mainTools),
     subagents: pills,
     milestones,
+    todos,
     elapsedLabel: formatLiveElapsed(elapsedSeconds),
   };
 }
@@ -548,6 +560,7 @@ export function buildHistoricalRunStatusModel(
 ): RunStatusModel {
   const status = normalizeTerminalStatus(trace.status);
   const milestones = buildHistoricalMilestones(trace);
+  const todos = extractHistoricalTodos(trace);
   const lastMilestone = milestones[milestones.length - 1];
   const tools: ToolCallTraceItem[] = [];
   const pills: SubagentActivityPill[] = [];
@@ -557,11 +570,21 @@ export function buildHistoricalRunStatusModel(
       tools.push(...toToolTraceItems(seg.tools).filter(isVisibleTraceTool));
       for (const sub of seg.subagents ?? []) {
         const subTools: ToolCallTraceItem[] = [];
+        let subTodos: TaskTodoItem[] = sub.task_focus?.todos
+          ? sub.task_focus.todos.map((item) => ({ ...item }))
+          : [];
         for (const sSeg of sub.segments ?? []) {
           if (sSeg.kind === "execution") {
-            subTools.push(
-              ...toToolTraceItems(sSeg.tools).filter(isVisibleTraceTool),
-            );
+            for (const item of toToolTraceItems(sSeg.tools)) {
+              if (item.toolName === "describe_task") {
+                subTodos = mergeTodoStep(
+                  subTodos,
+                  parseDescribeTaskInput(item.inputPreview),
+                );
+              } else if (isVisibleTraceTool(item)) {
+                subTools.push(item);
+              }
+            }
           }
         }
         const subStatus =
@@ -584,6 +607,7 @@ export function buildHistoricalRunStatusModel(
           completedToolCount: subTools.filter((t) => t.status !== "running")
             .length,
           recentTools: recentToolLabels(subTools),
+          todos: finalizeTodos(subTodos, subStatus === "completed"),
         });
       }
     }
@@ -594,7 +618,7 @@ export function buildHistoricalRunStatusModel(
       ? "执行失败"
       : status === "interrupted"
         ? "已中断"
-        : "本轮执行已完成";
+        : "执行完成";
 
   const elapsedLabel =
     typeof trace.duration_ms === "number" && trace.duration_ms > 0
@@ -616,6 +640,7 @@ export function buildHistoricalRunStatusModel(
     recentMainTools: recentToolLabels(tools),
     subagents: pills,
     milestones,
+    todos,
     elapsedLabel,
   };
 }

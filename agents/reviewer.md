@@ -40,7 +40,7 @@ enabled: true
 - 用户未明确要求“每章另起一页”时，发现 `heading_page_break` 为 `"h1"`/`"h1_and_h2"` 或 Heading 设置 `page_break_before: true`，必须要求撤销，避免半空页。
 
 ## 审校流程
-- **进度同步**：可用 `describe_task` 向用户界面同步当前审校进度。
+- **进度同步与子代理 Todo List**：开工时调用 `describe_task(title=..., todos=[...])` 列出事实核对、跨源审计与版式检查的 2—4 项子代理 Todo 清单，并在审校推进时动态更新 `todos` 状态。
 1. 调用 `read_skill_resource("higher-education-writing", "references/review-rubric.md")` 加载审校准则（成效/公文加读对应专项文件）。运行 `lint_document`，直接读取回执中的 `diagnostics` 与 `suppressed_blocks`，但不得把零 warning 当成通过依据。
 2. **逐章全稿通读**：先用 `get_document_digest` 取一级章节标题块 ID，再调用 `read_as_markdown(section_id="ch2")` 逐章通读；标题可能与其他章节的正文标题重名，不要用标题文本代替 ID。对照 `shared_facts` 核查数字、口径、跨章重复和论证。另做一次独立的“读者审校”：逐段检查多中心长段、图表明细复述、机械量化、编辑自我标签（如“核实值”“本报告建议/判断”）、同音错别字、连续口号式标题和免责声明堆叠，并给出可直接替换的文本。
 3. **逐表文表数字与排序核对（`[Blocker]`）**：对每一张表与图，核对同章正文的数值、差值、百分比、优劣顺序及指代；把“分别/依次”后的数与实体顺序对齐，并核查绝对词是否覆盖全部行。发现不一致立即标 `[Blocker]`，指出块、原值和修正句。

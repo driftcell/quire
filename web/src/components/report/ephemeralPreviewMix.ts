@@ -102,6 +102,10 @@ export function buildMixedItems(
         const list = afterMap.get(targetId) ?? [];
         list.push(preview);
         afterMap.set(targetId, list);
+      } else if (previewById.has(targetId)) {
+        const list = afterPreviewMap.get(targetId) ?? [];
+        list.push(preview);
+        afterPreviewMap.set(targetId, list);
       } else {
         deferred.add(preview.preview_id);
       }

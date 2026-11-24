@@ -106,8 +106,8 @@ export function SessionChatPane({
   onCompact,
 }: SessionChatPaneProps) {
   const richContext = useMemo(
-    () => buildChatRichContext(documentView),
-    [documentView],
+    () => buildChatRichContext(documentView, traces, liveMain, liveSubagents),
+    [documentView, traces, liveMain, liveSubagents],
   );
 
   return (

@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     RunTaskFocus, RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem,
-    SessionEvent, SessionEventKind,
+    SessionEvent, SessionEventKind, TaskTodoItem, TaskTodoStatus,
 };
 
 struct RunTraceAccumulator {
@@ -427,20 +427,44 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                 title,
                 detail,
                 section_id,
+                todos,
             } => {
-                let focus = RunTaskFocus {
-                    title: title.clone(),
-                    detail: detail.clone(),
-                    section_id: section_id.clone(),
-                };
                 if subagent_event {
                     if let Some(location) = ensure_subagent(&mut trace.summary.segments, event)
                         && let Some(record) = subagent_mut(&mut trace.summary.segments, location)
                     {
-                        record.task_focus = Some(focus);
+                        let merged_todos = merge_task_todos(
+                            record.task_focus.as_ref().map(|f| f.todos.as_slice()),
+                            title,
+                            detail.as_deref(),
+                            section_id.as_deref(),
+                            todos,
+                        );
+                        record.task_focus = Some(RunTaskFocus {
+                            title: title.clone(),
+                            detail: detail.clone(),
+                            section_id: section_id.clone(),
+                            todos: merged_todos,
+                        });
                     }
                 } else {
-                    trace.summary.task_focus = Some(focus);
+                    let merged_todos = merge_task_todos(
+                        trace
+                            .summary
+                            .task_focus
+                            .as_ref()
+                            .map(|f| f.todos.as_slice()),
+                        title,
+                        detail.as_deref(),
+                        section_id.as_deref(),
+                        todos,
+                    );
+                    trace.summary.task_focus = Some(RunTaskFocus {
+                        title: title.clone(),
+                        detail: detail.clone(),
+                        section_id: section_id.clone(),
+                        todos: merged_todos,
+                    });
                 }
             }
             SessionEventKind::ToolCallStarted {
@@ -596,6 +620,49 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
         trace.finalize_active_clocks();
     }
     traces.into_iter().map(|trace| trace.summary).collect()
+}
+
+fn merge_task_todos(
+    previous: Option<&[TaskTodoItem]>,
+    title: &str,
+    detail: Option<&str>,
+    section_id: Option<&str>,
+    incoming: &[TaskTodoItem],
+) -> Vec<TaskTodoItem> {
+    if !incoming.is_empty() {
+        return incoming.to_vec();
+    }
+    let Some(prev) = previous.filter(|items| !items.is_empty()) else {
+        return Vec::new();
+    };
+    let mut updated: Vec<TaskTodoItem> = prev
+        .iter()
+        .map(|item| {
+            let mut next = item.clone();
+            if next.status == TaskTodoStatus::InProgress && next.title != title {
+                next.status = TaskTodoStatus::Completed;
+            }
+            next
+        })
+        .collect();
+    if let Some(matched) = updated.iter_mut().find(|item| item.title == title) {
+        matched.status = TaskTodoStatus::InProgress;
+        if let Some(d) = detail {
+            matched.detail = Some(d.to_string());
+        }
+        if let Some(s) = section_id {
+            matched.section_id = Some(s.to_string());
+        }
+    } else {
+        updated.push(TaskTodoItem {
+            id: None,
+            title: title.to_string(),
+            status: TaskTodoStatus::InProgress,
+            detail: detail.map(ToOwned::to_owned),
+            section_id: section_id.map(ToOwned::to_owned),
+        });
+    }
+    updated
 }
 
 #[cfg(test)]

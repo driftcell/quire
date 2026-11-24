@@ -6,7 +6,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AgentAvatar } from "@/components/chat/agentAvatar";
 import {
   HistoricalRunTrace,
   LiveTraceSegments,
@@ -339,9 +338,8 @@ export function SessionStreamView({
                     key={msg.message_id}
                     messageId={msg.message_id}
                   >
-                    <Message align="start" className="items-start gap-2.5">
-                      <AgentAvatar actor="main" size="sm" className="mt-0.5" />
-                      <MessageContent className="min-w-0 flex-1">
+                    <Message align="start" className="items-start">
+                      <MessageContent className="min-w-0 w-full flex-1">
                         <HistoricalRunTrace
                           sessionId={sessionId}
                           trace={trace}
@@ -383,14 +381,8 @@ export function SessionStreamView({
                 )) && (
                 <MessageScrollerItem messageId="live-main">
                   <MessageGroup>
-                    <Message align="start" className="items-start gap-2.5">
-                      <AgentAvatar
-                        actor="main"
-                        size="sm"
-                        active={liveMain.isStreaming}
-                        className="mt-1"
-                      />
-                      <MessageContent className="min-w-0 flex-1 gap-2">
+                    <Message align="start" className="items-start">
+                      <MessageContent className="min-w-0 w-full flex-1 gap-2">
                         <LiveRunSection
                           key={liveMain.runId ?? "live-main"}
                           sessionId={sessionId}

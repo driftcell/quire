@@ -40,7 +40,7 @@ fn describe_task_schema_advertises_status_and_parameters() {
         .get("properties")
         .and_then(Value::as_object)
         .expect("describe_task schema should have properties");
-    for name in ["title", "detail", "section_id"] {
+    for name in ["title", "detail", "section_id", "todos"] {
         assert!(properties.contains_key(name), "missing `{name}`");
     }
     let title = properties

@@ -4,14 +4,10 @@ import {
   CheckIcon,
   CompassIcon,
   Loader2Icon,
+  MinusIcon,
   SparklesIcon,
 } from "lucide-react";
 import { cn } from "cn";
-import {
-  RunActivity,
-  type RunActivityEntry,
-  type RunActivityStatus,
-} from "@/components/assistant-ui/elements/run-activity";
 import { mono, paper } from "@/components/assistant-ui/elements/surfaces";
 import {
   TaskCard,
@@ -82,16 +78,16 @@ function SemanticPillBar({ pills }: { pills: SemanticActionPill[] }) {
           className={cn(
             "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition-colors",
             pill.status === "running"
-              ? "border-blue-500/35 bg-blue-500/10 text-foreground"
+              ? "border-foreground/25 bg-foreground/[0.06] text-foreground"
               : pill.status === "failed"
                 ? "border-destructive/35 bg-destructive/10 text-destructive"
-                : "border-border/60 bg-foreground/[0.04] text-foreground/85",
+                : "border-border/65 bg-foreground/[0.03] text-foreground/85",
           )}
         >
           {pill.status === "running" ? (
             <Loader2Icon
               aria-hidden
-              className="size-3 shrink-0 animate-spin text-blue-500"
+              className="size-3 shrink-0 animate-spin text-foreground"
             />
           ) : pill.status === "failed" ? (
             <AlertCircleIcon
@@ -111,7 +107,9 @@ function SemanticPillBar({ pills }: { pills: SemanticActionPill[] }) {
             </span>
           )}
           {pill.targets.length > 0 && (
-            <span className={cn(mono, "text-muted-foreground truncate max-w-36")}>
+            <span
+              className={cn(mono, "max-w-44 truncate text-muted-foreground")}
+            >
               · {pill.targets.join(", ")}
             </span>
           )}
@@ -152,8 +150,46 @@ function SubagentTaskCardItem({
   );
 
   const resultContent =
-    sub.semanticPills.length > 0 || sub.summaryText ? (
+    sub.todos.length > 0 ||
+    sub.semanticPills.length > 0 ||
+    sub.summaryText ? (
       <div className="flex flex-col gap-2">
+        {sub.todos.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {sub.todos.map((todo, idx) => {
+              const skipped = todo.status === "skipped";
+              const done = !skipped && todo.status === "completed";
+              const active =
+                !skipped && !done && todo.status === "in_progress";
+              return (
+                <li
+                  key={todo.id ?? `${todo.title}-${idx}`}
+                  className="flex items-center gap-1.5 text-xs"
+                >
+                  {skipped ? (
+                    <MinusIcon className="size-3 shrink-0 text-muted-foreground/50" />
+                  ) : done ? (
+                    <CheckIcon className="size-3 shrink-0 text-emerald-500" />
+                  ) : active ? (
+                    <Loader2Icon className="size-3 shrink-0 animate-spin text-foreground" />
+                  ) : (
+                    <span className="mx-0.5 size-1.5 shrink-0 rounded-full border border-foreground/30" />
+                  )}
+                  <span
+                    className={cn(
+                      "truncate",
+                      skipped && "text-muted-foreground/50 line-through",
+                      done && "text-muted-foreground",
+                      active && "font-medium text-foreground",
+                    )}
+                  >
+                    {todo.title}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
         <SemanticPillBar pills={sub.semanticPills} />
         {sub.summaryText && (
           <p className="line-clamp-2 text-xs text-muted-foreground">
@@ -174,11 +210,11 @@ function SubagentTaskCardItem({
           : undefined
       }
       result={resultContent}
-      className="max-w-none"
+      className="max-w-none rounded-xl"
     >
       <div className="flex flex-col gap-2.5 text-xs">
         <div className="flex items-start justify-between gap-2">
-          <p className="text-muted-foreground leading-relaxed">{sub.task}</p>
+          <p className="leading-relaxed text-muted-foreground">{sub.task}</p>
           {sub.sectionId && onJumpToSection && (
             <button
               type="button"
@@ -209,7 +245,7 @@ function SubagentTaskCardItem({
                     {ms.title}
                   </span>
                   {ms.detail && (
-                    <span className="text-muted-foreground truncate">
+                    <span className="truncate text-muted-foreground">
                       · {ms.detail}
                     </span>
                   )}
@@ -227,8 +263,8 @@ function SubagentTaskCardItem({
             streaming={sub.status === "running"}
             open={timelineOpen}
             onOpenChange={setTimelineOpen}
-            restingLabel={`查看子代理 ${steps.length} 项工具轨迹`}
-            activeLabel={`正在执行子代理操作 (${steps.length})...`}
+            restingLabel={`查看 ${steps.length} 项工具调用`}
+            activeLabel={`正在执行 (${steps.length})...`}
             stats={[]}
             className="max-w-none"
           />
@@ -240,12 +276,18 @@ function SubagentTaskCardItem({
 
 function MilestoneStageCard({
   milestone,
+  showStageIndex,
+  defaultToolTimelineOpen = false,
   onJumpToSection,
 }: {
   milestone: TaskMilestoneNode;
+  showStageIndex: boolean;
+  defaultToolTimelineOpen?: boolean;
   onJumpToSection?: (sectionId: string) => void;
 }) {
-  const [toolTimelineOpen, setToolTimelineOpen] = useState(false);
+  const [toolTimelineOpen, setToolTimelineOpen] = useState(
+    defaultToolTimelineOpen,
+  );
 
   const timelineSteps: TimelineStep[] = useMemo(
     () =>
@@ -267,54 +309,54 @@ function MilestoneStageCard({
       data-milestone-status={milestone.status}
       className={cn(
         paper,
-        "flex flex-col gap-2.5 rounded-2xl p-3.5 transition-colors",
+        "flex flex-col gap-2.5 rounded-xl p-3 transition-colors",
       )}
     >
-      {/* Stage Header: Step Number + describe_task Title + Section Jump */}
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="flex items-center gap-2">
-            <span
+      {showStageIndex && (
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <span
+                className={cn(
+                  mono,
+                  "inline-flex shrink-0 items-center rounded bg-foreground/[0.06] px-1.5 py-0.5 text-muted-foreground tabular-nums",
+                )}
+              >
+                {String(milestone.stepNumber).padStart(2, "0")}
+              </span>
+              <span className="min-w-0 truncate text-[13px] font-medium text-foreground">
+                {milestone.title}
+              </span>
+            </div>
+            {milestone.detail && (
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {milestone.detail}
+              </p>
+            )}
+          </div>
+
+          {milestone.sectionId && onJumpToSection && (
+            <button
+              type="button"
+              onClick={() => {
+                if (milestone.sectionId) {
+                  onJumpToSection(milestone.sectionId);
+                }
+              }}
               className={cn(
                 mono,
-                "inline-flex shrink-0 items-center rounded-md bg-foreground/[0.06] px-1.5 py-0.5 text-foreground/80",
+                "inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 bg-foreground/[0.03] px-2 py-0.5 text-foreground/80 transition-colors hover:bg-foreground/[0.08]",
               )}
             >
-              STAGE {String(milestone.stepNumber).padStart(2, "0")}
-            </span>
-            <span className="min-w-0 truncate text-[13.5px] font-medium text-foreground">
-              {milestone.title}
-            </span>
-          </div>
-          {milestone.detail && (
-            <p className="text-muted-foreground text-xs leading-relaxed">
-              {milestone.detail}
-            </p>
+              <CompassIcon className="size-3" aria-hidden />#
+              {milestone.sectionId}
+            </button>
           )}
         </div>
+      )}
 
-        {milestone.sectionId && onJumpToSection && (
-          <button
-            type="button"
-            onClick={() => {
-              if (milestone.sectionId) {
-                onJumpToSection(milestone.sectionId);
-              }
-            }}
-            className={cn(
-              mono,
-              "inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 bg-foreground/[0.03] px-2.5 py-0.5 text-foreground/80 transition-colors hover:bg-foreground/[0.08]",
-            )}
-          >
-            <CompassIcon className="size-3" aria-hidden />#{milestone.sectionId}
-          </button>
-        )}
-      </div>
-
-      {/* Semantic Aggregated Action Capsules (Default High-Signal View) */}
       <SemanticPillBar pills={milestone.semanticPills} />
 
-      {/* Spawned Subagent Workstation TaskCards in this Milestone */}
       {milestone.subagents.length > 0 && (
         <div className="grid grid-cols-1 gap-2 pt-0.5">
           {milestone.subagents.map((sub) => (
@@ -327,7 +369,6 @@ function MilestoneStageCard({
         </div>
       )}
 
-      {/* Official assistant-ui ToolTimeline (Collapsed by Default) */}
       {timelineSteps.length > 0 && (
         <ToolTimeline
           steps={timelineSteps}
@@ -335,21 +376,20 @@ function MilestoneStageCard({
           streaming={milestone.status === "running"}
           open={toolTimelineOpen}
           onOpenChange={setToolTimelineOpen}
-          restingLabel={`查看本阶段 ${timelineSteps.length} 项工具步序`}
-          activeLabel={`正在执行本阶段工具 (${timelineSteps.length})...`}
+          restingLabel={`查看 ${timelineSteps.length} 项底层调用`}
+          activeLabel={`正在执行 (${timelineSteps.length})...`}
           stats={[]}
           className="max-w-none"
         />
       )}
 
-      {/* Optional Raw Thinking Disclosure (Hidden by Default per user preference) */}
       {milestone.rawThinking && (
         <details className="group/thinking text-xs text-muted-foreground">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md py-0.5 text-xs text-muted-foreground/80 transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
             <SparklesIcon className="size-3 shrink-0" aria-hidden />
-            <span>查看本阶段思考摘录</span>
+            <span>查看思考摘录</span>
           </summary>
-          <div className="mt-1.5 rounded-xl border border-border/50 bg-foreground/[0.02] p-2.5 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
+          <div className="mt-1.5 rounded-lg border border-border/50 bg-foreground/[0.02] p-2.5 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
             {milestone.rawThinking}
           </div>
         </details>
@@ -358,50 +398,39 @@ function MilestoneStageCard({
   );
 }
 
-const MilestoneRunActivityPanel = memo(function MilestoneRunActivityPanel({
+const MilestoneExpandedList = memo(function MilestoneExpandedList({
   milestones,
   status,
-  elapsedLabel,
-  open,
-  onOpenChange,
   onJumpToSection,
 }: {
   milestones: TaskMilestoneNode[];
-  status: RunActivityStatus;
-  elapsedLabel?: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  status: string;
   onJumpToSection?: (sectionId: string) => void;
 }) {
-  const entries: RunActivityEntry[] = useMemo(
-    () =>
-      milestones.map((ms) => ({
-        id: ms.id,
-        kind: "tool" as const,
-        label: ms.title,
-        content: (
-          <MilestoneStageCard
-            milestone={ms}
-            onJumpToSection={onJumpToSection}
-          />
-        ),
-      })),
-    [milestones, onJumpToSection],
-  );
-
-  if (entries.length === 0) {
+  if (milestones.length === 0) {
     return null;
   }
 
+  const showStageIndex = milestones.length > 1;
+
   return (
-    <RunActivity
-      status={status}
-      statusLabel={`describe_task 阶段里程碑轴 (${entries.length} 个阶段)`}
-      durationLabel={elapsedLabel ? `· ${elapsedLabel}` : undefined}
-      entries={entries}
-      open={open}
-      onOpenChange={onOpenChange}
-    />
+    <div
+      data-slot="run-activity"
+      data-status={status}
+      className="flex min-w-0 flex-col gap-2"
+    >
+      {milestones.map((ms) => (
+        <MilestoneStageCard
+          key={ms.id}
+          milestone={ms}
+          showStageIndex={showStageIndex}
+          defaultToolTimelineOpen={
+            milestones.length === 1 && ms.subagents.length === 0
+          }
+          onJumpToSection={onJumpToSection}
+        />
+      ))}
+    </div>
   );
 });
 
@@ -444,15 +473,8 @@ export function HistoricalRunTrace({
     ) : null;
   }
 
-  const activityStatus: RunActivityStatus =
-    headerModel.status === "failed"
-      ? "error"
-      : headerModel.status === "interrupted"
-        ? "cancelled"
-        : "complete";
-
   return (
-    <div className="w-full space-y-2.5">
+    <div className="w-full space-y-2">
       <RunActivityHeader
         model={headerModel}
         isStreaming={false}
@@ -462,12 +484,9 @@ export function HistoricalRunTrace({
       />
 
       {detailsOpen && (
-        <MilestoneRunActivityPanel
+        <MilestoneExpandedList
           milestones={milestones}
-          status={activityStatus}
-          elapsedLabel={headerModel.elapsedLabel}
-          open={detailsOpen}
-          onOpenChange={setDetailsOpen}
+          status={headerModel.status}
           onJumpToSection={onJumpToSection}
         />
       )}
@@ -494,7 +513,6 @@ export function LiveTraceSegments({
   segments,
   questionSlots,
   detailsOpen = false,
-  onOpenChange,
   onJumpToSection,
 }: {
   sessionId: string;
@@ -518,11 +536,9 @@ export function LiveTraceSegments({
   return (
     <>
       {detailsOpen && milestones.length > 0 && (
-        <MilestoneRunActivityPanel
+        <MilestoneExpandedList
           milestones={milestones}
           status={trace?.isStreaming ? "running" : "complete"}
-          open={detailsOpen}
-          onOpenChange={(next) => onOpenChange?.(next)}
           onJumpToSection={onJumpToSection}
         />
       )}

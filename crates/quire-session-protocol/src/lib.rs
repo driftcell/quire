@@ -15,6 +15,7 @@ pub use session::{
     QuestionItem, QuestionOption, QuestionnaireResolutionStatus, ResolvedQuestion,
     ResolvedQuestionItemAnswer, RunTaskFocus, RunTraceSegment, RunTraceSubagent, RunTraceSummary,
     RunTraceToolItem, SendMessageRequest, SessionCommentRef, SessionDetail, SessionMessage,
-    SessionStatus, SessionSummary, ToolCallDetail, UpdatePendingMessageRequest,
+    SessionStatus, SessionSummary, TaskTodoItem, TaskTodoStatus, ToolCallDetail,
+    UpdatePendingMessageRequest,
 };
 pub use trace::aggregate_run_traces;

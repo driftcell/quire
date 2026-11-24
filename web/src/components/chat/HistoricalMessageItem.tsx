@@ -2,7 +2,6 @@ import { memo, type ReactNode } from "react";
 import { CopyIcon } from "lucide-react";
 import { toast } from "sonner";
 import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
-import { AgentAvatar } from "@/components/chat/agentAvatar";
 import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
 import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
@@ -151,9 +150,8 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
 
   return (
     <MessageGroup className="group/assistant">
-      <Message align="start" className="items-start gap-2.5">
-        <AgentAvatar actor="main" size="sm" className="mt-0.5" />
-        <MessageContent className="min-w-0 flex-1 gap-2">
+      <Message align="start" className="items-start">
+        <MessageContent className="min-w-0 w-full flex-1 gap-2">
           {trace && (
             <HistoricalRunTrace
               sessionId={sessionId}

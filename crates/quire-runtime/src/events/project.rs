@@ -93,12 +93,14 @@ pub fn project(scope: EventScope, event: ModelStreamEvent) -> EventAction {
             title,
             detail,
             section_id,
+            todos,
         } => EventAction::Emit {
             scope,
             kind: SessionEventKind::TaskFocus {
                 title,
                 detail,
                 section_id,
+                todos,
             },
         },
         ModelStreamEvent::DocLinked { doc_id, title } if scope.is_main() => EventAction::Emit {

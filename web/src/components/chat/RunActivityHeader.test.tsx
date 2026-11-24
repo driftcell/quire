@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import { AgentAvatar } from "@/components/chat/agentAvatar";
+import { buildChatRichContext } from "@/components/chat/chatRichContext";
 import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
 import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
 import {
@@ -13,18 +15,36 @@ import {
 import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
-describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () => {
-  test("buildLiveRunStatusModel tracks both main agent and subagents cleanly with AgentPlan & SubagentList", () => {
+describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
+  test("buildLiveRunStatusModel tracks main agent and subagent Todo Lists without duplicate timers or fake buttons", () => {
     const liveMain: LiveAgentTrace = {
       runId: "run_1",
       agentId: "main",
       isStreaming: true,
       startedAtMs: 1_000,
-      taskFocus: { title: "正在统筹撰写双优建设报告", detail: "核对高校数据" },
+      taskFocus: {
+        title: "正在统筹撰写双优建设报告",
+        detail: "核对高校数据",
+        todos: [
+          { title: "第一阶段：构建报告框架", status: "completed" },
+          {
+            title: "正在统筹撰写双优建设报告",
+            status: "in_progress",
+            detail: "核对高校数据",
+          },
+          { title: "第三阶段：全局质检与终审", status: "pending" },
+        ],
+      },
       segments: [
         {
           kind: "execution",
           tools: [
+            {
+              toolCallId: "tc_title",
+              toolName: "set_session_title",
+              status: "completed",
+              inputPreview: JSON.stringify({ title: "双优建设报告" }),
+            },
             {
               toolCallId: "tc_desc_1",
               toolName: "describe_task",
@@ -74,7 +94,13 @@ describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () 
           runId: "sub_1",
           agentId: "researcher",
           isStreaming: true,
-          taskFocus: { title: "检索国自然立项数据" },
+          taskFocus: {
+            title: "检索国自然立项数据",
+            todos: [
+              { title: "查询教育部经费公报", status: "completed" },
+              { title: "检索国自然立项数据", status: "in_progress" },
+            ],
+          },
           segments: [],
         },
       },
@@ -90,10 +116,13 @@ describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () 
     const model = buildLiveRunStatusModel(liveMain, subagents, 14);
     expect(model.status).toBe("running");
     expect(model.title).toBe("正在统筹撰写双优建设报告");
+    // set_session_title is hidden from visible tools
     expect(model.toolCount).toBe(2);
     expect(model.completedToolCount).toBe(1);
+    expect(model.todos).toHaveLength(3);
     expect(model.subagents).toHaveLength(1);
     expect(model.subagents[0]?.activityText).toBe("检索国自然立项数据");
+    expect(model.subagents[0]?.todos).toHaveLength(2);
     expect(model.elapsedLabel).toBe("14秒");
 
     const html = renderToStaticMarkup(
@@ -108,15 +137,18 @@ describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () 
     expect(html).toContain('data-slot="agent-status"');
     expect(html).toContain('data-slot="agent-plan"');
     expect(html).toContain('data-slot="subagent-list"');
-    expect(html).toContain("主控");
+    expect(html).toContain('data-slot="subagent-todo-list"');
     expect(html).toContain("第一阶段：构建报告框架");
     expect(html).toContain("正在统筹撰写双优建设报告");
-    expect(html).toContain("1 of 2");
+    expect(html).toContain("第三阶段：全局质检与终审");
+    expect(html).toContain("1 of 3");
     expect(html).toContain('data-subagent-pill="sub_1"');
     expect(html).toContain("检索国自然立项数据");
+    // Elapsed time must appear only ONCE in the header
+    expect(html.split("14秒").length - 1).toBe(1);
   });
 
-  test("buildHistoricalRunStatusModel preserves the exact same header structure after completion", () => {
+  test("buildHistoricalRunStatusModel preserves structure after completion and supports chat-only upsert_sources", () => {
     const trace: RunTraceSummary = {
       run_id: "run_1",
       status: "completed",
@@ -133,13 +165,27 @@ describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () 
               input_preview: JSON.stringify({
                 title: "阶段一：采集经费来源",
                 detail: "汇总教育部与省级拨款",
+                todos: [
+                  { title: "阶段一：采集经费来源", status: "in_progress" },
+                  { title: "已完成双优建设报告", status: "pending" },
+                ],
               }),
             },
             {
               tool_call_id: "tc_s1",
               tool_name: "upsert_sources",
               status: "completed",
-              input_preview: JSON.stringify({ title: "教育部经费公报" }),
+              input_preview: JSON.stringify({
+                sources: [
+                  {
+                    id: "moe-2024",
+                    title: "2024年全国教育事业发展统计公报",
+                    publisher: "中华人民共和国教育部",
+                    url: "https://www.moe.gov.cn/jyb_sjzl/",
+                    evidence: "全国共有高等学校 3119 所。",
+                  },
+                ],
+              }),
             },
             {
               tool_call_id: "tc_d2",
@@ -184,6 +230,8 @@ describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () 
     expect(model.title).toBe("已完成双优建设报告");
     expect(model.toolCount).toBe(2);
     expect(model.completedToolCount).toBe(2);
+    expect(model.todos).toHaveLength(2);
+    expect(model.todos.every((t) => t.status === "completed")).toBe(true);
     expect(model.subagents[0]?.activityText).toBe("完成数据核验");
     expect(model.elapsedLabel).toBe("14秒");
 
@@ -204,6 +252,7 @@ describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () 
     expect(html).toContain("1 个子代理");
     expect(html).toContain("完成数据核验");
     expect(html).toContain('data-live-header-jump="true"');
+    expect(html.split("14秒").length - 1).toBe(1);
 
     const traceHtml = renderToStaticMarkup(
       <HistoricalRunTrace
@@ -214,5 +263,28 @@ describe("RunStatusModel, assistant-ui Elements & describe_task Milestones", () 
     );
     expect(traceHtml).toContain('data-slot="agent-plan"');
     expect(traceHtml).toContain("阶段一：采集经费来源");
+
+    // Verify pure chat-session source extraction without a report document
+    const richCtx = buildChatRichContext(null, [trace], null, []);
+    const moeSource = richCtx.sources.get("moe-2024");
+    expect(moeSource?.title).toBe("2024年全国教育事业发展统计公报");
+    expect(moeSource?.publisher).toBe("中华人民共和国教育部");
+    expect(moeSource?.excerpt).toBe("全国共有高等学校 3119 所。");
+  });
+
+  test("AgentAvatar renders deterministic unique character SVG per agent without pulsing dots", () => {
+    const mainHtml = renderToStaticMarkup(
+      <AgentAvatar actor="main" active={true} />,
+    );
+    const analystHtml = renderToStaticMarkup(
+      <AgentAvatar actor="analyst" active={true} />,
+    );
+    const writerHtml = renderToStaticMarkup(
+      <AgentAvatar actor="writer" active={true} />,
+    );
+    expect(mainHtml).toContain("<svg");
+    expect(mainHtml).not.toContain("animate-pulse");
+    expect(analystHtml).not.toEqual(writerHtml);
+    expect(mainHtml).not.toEqual(analystHtml);
   });
 });

@@ -76,7 +76,7 @@ pub struct RollbackReceipt {
 }
 
 /// Source payload accepted by `upsert_sources` and inline source maps.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SourceInput {
     /// Stable short semantic source ID (`[a-zA-Z0-9_-]{1,48}`, e.g. `"annual_rep_25"`). Required in `upsert_sources` list items; optional when supplied as a map value in `apply_operations.sources`.
     #[serde(default, alias = "source_id", skip_serializing_if = "Option::is_none")]

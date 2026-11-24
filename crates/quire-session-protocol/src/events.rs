@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::session::{PendingQueueItem, QuestionAnswer, QuestionItem};
+use crate::session::{PendingQueueItem, QuestionAnswer, QuestionItem, TaskTodoItem};
 
 /// Common envelope for every Session-SSE frame.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -82,6 +82,8 @@ pub enum SessionEventKind {
         detail: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         section_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        todos: Vec<TaskTodoItem>,
     },
     ToolCallStarted {
         tool_call_id: String,
@@ -242,6 +244,7 @@ impl SessionEventKind {
                 title: "title".into(),
                 detail: None,
                 section_id: None,
+                todos: Vec::new(),
             },
             Self::ToolCallStarted {
                 tool_call_id: "tc_1".into(),
@@ -387,6 +390,7 @@ mod tests {
                 title: "正在绘制人才分布图".into(),
                 detail: Some("按学科门类拆分".into()),
                 section_id: Some("sec3_h2".into()),
+                todos: Vec::new(),
             },
         );
         let json = serde_json::to_value(&event).unwrap();

@@ -31,7 +31,7 @@ enabled: true
 - **向主编汇报**：简明同步已配置的封面变体、页眉页脚模板及 `lint_document` / `preview_report` 的版面核验结果。
 
 ## 工作规范
-- **进度同步**：可用 `describe_task` 向用户界面同步当前处理的版式环节。
+- **进度同步与子代理 Todo List**：开工时调用 `describe_task(title=..., todos=[...])` 列出版式规划、封面/样式更新与渲染核验的 2—4 项子代理 Todo 清单，并随进度动态更新 `todos` 状态。
 1. 首次调整前可调用 `get_protocol_guide("citations_and_css")` 确认协议。
 2. **封面与页眉页脚标准化**：
    - 调用 `set_cover` 设置标题、副标题、眉题（`meta.kicker`，如“高校学科建设专项调研”或“2025年度科研竞争力对标”）、编制单位（`meta.unit`）、作者与日期。若使用 `custom_html`，必须遵守安全白名单，禁止 `<script>`、内联事件与外部未知脚本（防止 `QR106`），并在 A4 首屏内完整居中。

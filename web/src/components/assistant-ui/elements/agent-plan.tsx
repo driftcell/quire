@@ -1,101 +1,176 @@
 "use client";
 
 import type { ComponentProps } from "react";
-import { CheckIcon, Loader2Icon } from "lucide-react";
+import { CheckIcon, Loader2Icon, MinusIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mono } from "./surfaces";
 import { announced, pct, progressOf } from "../utils/range";
+
+export type AgentPlanStepStatus =
+  | "pending"
+  | "in_progress"
+  | "completed"
+  | "skipped";
 
 export type AgentPlanStep = {
   id?: string | undefined;
   label: string;
   description?: string | undefined;
+  status?: AgentPlanStepStatus | undefined;
 };
 
 export function AgentPlan({
   steps,
   activeIndex,
-  title = "Plan",
+  title,
+  hideSingleStepList = false,
   className,
   ...props
 }: Omit<ComponentProps<"div">, "children" | "steps" | "activeIndex"> & {
   steps: readonly (string | AgentPlanStep)[];
   activeIndex: number;
   title?: string | undefined;
+  hideSingleStepList?: boolean | undefined;
 }) {
   const total = steps.length;
-  const completed = progressOf(activeIndex, total);
+  const normalizedSteps: AgentPlanStep[] = steps.map((step) =>
+    typeof step === "string" ? { label: step } : step,
+  );
+  const hasExplicitStatus = normalizedSteps.some(
+    (s) => s.status !== undefined,
+  );
+  const allFinished = activeIndex >= total;
+
+  const completed = allFinished
+    ? total
+    : hasExplicitStatus
+      ? normalizedSteps.filter(
+          (s) => s.status === "completed" || s.status === "skipped",
+        ).length
+      : progressOf(activeIndex, total);
+
   const allDone = completed >= total;
   const progress = pct(completed, total);
+
+  if (hideSingleStepList && total <= 1) {
+    return (
+      <div
+        data-slot="agent-plan"
+        className={cn("sr-only", className)}
+        {...props}
+      >
+        <span>
+          {completed} of {total}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div
       data-slot="agent-plan"
-      className={cn("flex w-full max-w-sm flex-col gap-3", className)}
+      className={cn("flex w-full flex-col gap-2.5", className)}
       {...props}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-[13.5px] font-medium">{title}</span>
-        <span className={cn(mono, "text-muted-foreground tabular-nums")}>
+      {title ? (
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-medium text-muted-foreground">
+            {title}
+          </span>
+          <span className={cn(mono, "text-muted-foreground tabular-nums")}>
+            {completed} of {total}
+          </span>
+        </div>
+      ) : (
+        <span className="sr-only">
           {completed} of {total}
         </span>
-      </div>
+      )}
       <div
         data-slot="agent-plan-progress"
-        aria-label={`${title} progress: ${announced(progress)}%`}
-        className="bg-foreground/[0.06] inset-ring-border h-[3px] w-full overflow-hidden rounded-full inset-ring forced-colors:outline"
+        aria-label={`Plan progress: ${announced(progress)}%`}
+        className="bg-foreground/[0.06] h-[2px] w-full overflow-hidden rounded-full"
       >
         <span
           aria-hidden
-          className="bg-foreground/80 block h-full rounded-full transition-[width] duration-500 forced-color-adjust-none motion-reduce:transition-none"
+          className={cn(
+            "block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none",
+            allDone ? "bg-emerald-500/80" : "bg-foreground/80",
+          )}
           style={{ width: `${progress}%` }}
         />
       </div>
-      <ul className="flex flex-col gap-2.5">
-        {steps.map((step, i) => {
-          const item = typeof step === "string" ? { label: step } : step;
-          const done = allDone || i < completed;
-          const active = !allDone && i === completed;
-          const status = done ? "done" : active ? "in progress" : "not started";
+      <ul className="flex flex-col gap-1.5">
+        {normalizedSteps.map((item, i) => {
+          const explicit = item.status;
+          const skipped = explicit === "skipped";
+          const done =
+            !skipped &&
+            (allDone ||
+              (explicit !== undefined
+                ? explicit === "completed"
+                : i < completed));
+          const active =
+            !allDone &&
+            !skipped &&
+            !done &&
+            (explicit !== undefined
+              ? explicit === "in_progress"
+              : i === completed);
+
           return (
             <li
-              key={typeof step === "string" ? i : (step.id ?? i)}
+              key={item.id ?? `${item.label}-${i}`}
+              data-step-status={
+                skipped
+                  ? "skipped"
+                  : done
+                    ? "completed"
+                    : active
+                      ? "in_progress"
+                      : "pending"
+              }
               className={cn(
-                "flex gap-2.5 text-[13.5px]",
+                "flex gap-2 text-[13px] leading-5",
                 active && item.description ? "items-start" : "items-center",
               )}
             >
               <span className="flex size-4 shrink-0 items-center justify-center">
-                {done ? (
+                {skipped ? (
+                  <MinusIcon
+                    aria-hidden
+                    className="size-3 text-muted-foreground/50"
+                  />
+                ) : done ? (
                   <CheckIcon
                     aria-hidden
-                    className="text-muted-foreground size-3.5"
+                    className="size-3.5 text-emerald-500"
                   />
                 ) : active ? (
                   <Loader2Icon
                     aria-hidden
-                    className="text-foreground/90 size-3.5 animate-spin motion-reduce:animate-none"
+                    className="size-3.5 animate-spin text-foreground motion-reduce:animate-none"
                   />
                 ) : (
                   <span
                     aria-hidden
-                    className="bg-foreground/15 inset-ring-border size-1.5 rounded-full inset-ring forced-colors:border"
+                    className="size-1.5 rounded-full border border-foreground/30"
                   />
                 )}
               </span>
-              <span className="min-w-0">
+              <span className="min-w-0 flex-1">
                 <span
                   className={cn(
+                    skipped && "text-muted-foreground/50 line-through",
                     done && "text-muted-foreground",
-                    active && "text-foreground/90",
-                    !done && !active && "text-muted-foreground",
+                    active && "font-medium text-foreground",
+                    !done && !active && !skipped && "text-muted-foreground/80",
                   )}
                 >
                   {item.label}
                 </span>
-                <span className="sr-only">{` ${status}`}</span>
                 {active && item.description ? (
-                  <span className="text-muted-foreground mt-0.5 block text-xs">
+                  <span className="mt-0.5 block text-xs text-muted-foreground">
                     {item.description}
                   </span>
                 ) : null}

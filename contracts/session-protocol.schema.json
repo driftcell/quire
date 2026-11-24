@@ -240,6 +240,12 @@
                 "string",
                 "null"
               ]
+            },
+            "todos": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TaskTodoItem"
+              }
             }
           },
           "required": [
@@ -593,6 +599,48 @@
             "success"
           ]
         }
+      ]
+    },
+    "TaskTodoItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TaskTodoStatus",
+          "default": "pending"
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "section_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "title"
+      ]
+    },
+    "TaskTodoStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed",
+        "skipped"
       ]
     },
     "QuestionItem": {
@@ -1313,6 +1361,12 @@
             "string",
             "null"
           ]
+        },
+        "todos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TaskTodoItem"
+          }
         }
       },
       "required": [

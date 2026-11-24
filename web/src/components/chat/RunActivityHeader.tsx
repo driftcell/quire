@@ -1,14 +1,16 @@
 import { memo } from "react";
-import { ChevronDownIcon, CompassIcon } from "lucide-react";
+import {
+  AlertCircleIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CompassIcon,
+  Loader2Icon,
+} from "lucide-react";
 import { cn } from "cn";
 import {
   AgentPlan,
   type AgentPlanStep,
 } from "@/components/assistant-ui/elements/agent-plan";
-import {
-  AgentStatus,
-  type AgentState,
-} from "@/components/assistant-ui/elements/agent-status";
 import {
   SubagentList,
   type SubagentItem,
@@ -28,13 +30,11 @@ export interface RunActivityHeaderProps {
 }
 
 /**
- * Multi-Agent Orchestration Header built on official `assistant-ui Elements`:
- * - Top status bar with `AgentStatus` pill, telemetry counters, section jump, and stop button
- * - Lead Agent `describe_task` stage plan via `AgentPlan`
- * - Parallel subagent workstation cards via `SubagentList`
- *
- * Maintains an identical DOM layout between live streaming and settled historical
- * states so completing a turn never causes vertical layout shift.
+ * Vercel / Apple HIG Minimalist Execution Header built on official `assistant-ui Elements`:
+ * - Single clean status indicator (no fake pause button, no redundant "主控" pill)
+ * - Elapsed duration displayed exactly ONCE
+ * - Dynamic Todo-List `AgentPlan` rendered when a multi-step Todo list or multi-stage plan exists
+ * - Parallel subagent workstation cards via `SubagentList` with per-subagent Todo Lists & deterministic avatars
  */
 export const RunActivityHeader = memo(function RunActivityHeader({
   model,
@@ -48,55 +48,95 @@ export const RunActivityHeader = memo(function RunActivityHeader({
     (s) => s.status !== "running",
   ).length;
   const subCount = model.subagents.length;
-
-  const agentState: AgentState = isStreaming
-    ? "working"
-    : model.status === "failed" || model.status === "interrupted"
-      ? "failed"
-      : "done";
+  const isFailed =
+    model.status === "failed" || model.status === "interrupted";
 
   const planSteps: AgentPlanStep[] =
-    model.milestones.length > 0
-      ? model.milestones.map((ms) => ({
-          id: ms.id,
-          label: ms.title,
-          description: ms.detail,
+    model.todos.length > 0
+      ? model.todos.map((todo, idx) => ({
+          id: todo.id ?? `todo-${idx}`,
+          label: todo.title,
+          description: todo.detail ?? undefined,
+          status: todo.status,
         }))
-      : [
-          {
-            id: "default-plan-step",
-            label: model.title,
-            description: model.detail,
-          },
-        ];
+      : model.milestones.length > 0
+        ? model.milestones.map((ms) => ({
+            id: ms.id,
+            label: ms.title,
+            description: ms.detail,
+            status:
+              ms.status === "running"
+                ? ("in_progress" as const)
+                : ("completed" as const),
+          }))
+        : [
+            {
+              id: "default-plan-step",
+              label: model.title,
+              description: model.detail,
+              status: isStreaming
+                ? ("in_progress" as const)
+                : ("completed" as const),
+            },
+          ];
 
-  const runningMilestoneIndex = model.milestones.findIndex(
-    (ms) => ms.status === "running",
+  const hasMultiStepPlan =
+    model.todos.length > 0 || planSteps.length > 1;
+
+  const activeTodoIndex = planSteps.findIndex(
+    (s) => s.status === "in_progress",
   );
   const activePlanIndex = isStreaming
-    ? runningMilestoneIndex >= 0
-      ? runningMilestoneIndex
-      : Math.max(0, planSteps.length - 1)
+    ? activeTodoIndex >= 0
+      ? activeTodoIndex
+      : Math.max(
+          0,
+          planSteps.filter(
+            (s) => s.status === "completed" || s.status === "skipped",
+          ).length,
+        )
     : planSteps.length;
 
   const subagentItems: SubagentItem[] = model.subagents.map((sub) => {
     const identity = resolveAgentIdentity(sub.actor);
+    const subTodos: AgentPlanStep[] = sub.todos.map((t, idx) => ({
+      id: t.id ?? `${sub.id}-todo-${idx}`,
+      label: t.title,
+      description: t.detail ?? undefined,
+      status: t.status,
+    }));
+    const completedTodos = subTodos.filter(
+      (t) => t.status === "completed" || t.status === "skipped",
+    ).length;
+
+    const progressBadge =
+      subTodos.length > 0
+        ? `${completedTodos}/${subTodos.length}`
+        : sub.toolCount > 0
+          ? `${sub.completedToolCount}/${sub.toolCount}`
+          : identity.role;
+
     return {
       id: sub.id,
+      actor: sub.actor,
       name: `${identity.label} · ${sub.activityText}`,
-      model:
-        sub.toolCount > 0
-          ? `${identity.role} · ${sub.completedToolCount}/${sub.toolCount}`
-          : identity.role,
+      model: progressBadge,
       status: sub.status,
       detail:
         sub.recentTools.length > 0
           ? sub.recentTools.join(" · ")
           : sub.task,
+      todos: subTodos.length > 0 ? subTodos : undefined,
     };
   });
 
   const subagentProgress: number[] = model.subagents.map((sub) => {
+    if (sub.todos.length > 0) {
+      const doneCount = sub.todos.filter(
+        (t) => t.status === "completed" || t.status === "skipped",
+      ).length;
+      return Math.min(100, Math.round((doneCount / sub.todos.length) * 100));
+    }
     if (sub.toolCount > 0) {
       return Math.min(
         100,
@@ -113,94 +153,87 @@ export const RunActivityHeader = memo(function RunActivityHeader({
       data-status={model.status}
       className={cn(
         paper,
-        "relative flex w-full flex-col gap-3 overflow-hidden rounded-2xl p-3.5 text-xs leading-5 transition-colors",
+        "relative flex w-full flex-col gap-2.5 overflow-hidden rounded-xl px-3.5 py-2.5 text-xs leading-5 transition-colors",
         isStreaming &&
-          "sticky top-0 z-10 border-foreground/20 bg-background/95 shadow-xs backdrop-blur-md",
-        model.status === "failed" && "border-destructive/40 bg-destructive/5",
+          "sticky top-0 z-10 border-foreground/15 bg-background/95 shadow-2xs backdrop-blur-md",
+        isFailed && "border-destructive/35 bg-destructive/5",
       )}
     >
-      {/* Top Bar: AgentStatus + Current Focus + Telemetry Counters + Expand Toggle */}
-      <div className="flex min-h-7 w-full items-center gap-2">
+      {/* Top Bar: Clean Status Icon + Title + Single Monospace Telemetry Row */}
+      <div className="flex min-h-6 w-full items-center gap-2">
         <button
           type="button"
           data-live-header-toggle="true"
           data-activity-trigger="true"
           aria-expanded={detailsOpen}
-          title={
-            detailsOpen
-              ? "收起 describe_task 阶段里程碑轴"
-              : "展开 describe_task 阶段里程碑轴"
-          }
           onClick={onToggleDetails}
-          className="group/canvas flex min-w-0 flex-1 items-center gap-2.5 text-left focus-visible:outline-none"
+          className="group/canvas flex min-w-0 flex-1 items-center gap-2 text-left focus-visible:outline-none"
         >
-          <AgentStatus
-            state={agentState}
-            label="主控"
-            elapsed={model.elapsedLabel}
-            className="shrink-0 py-1 ps-2.5 pe-1"
-          />
+          <span
+            data-slot="agent-status"
+            className="flex size-4 shrink-0 items-center justify-center"
+          >
+            {isStreaming ? (
+              <Loader2Icon
+                aria-hidden
+                className="size-3.5 animate-spin text-foreground motion-reduce:animate-none"
+              />
+            ) : isFailed ? (
+              <AlertCircleIcon
+                aria-hidden
+                className="size-3.5 text-destructive"
+              />
+            ) : (
+              <CheckIcon aria-hidden className="size-3.5 text-emerald-500" />
+            )}
+          </span>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="min-w-0 truncate text-[13.5px] font-medium text-foreground">
-                {model.title}
-              </span>
-              {model.detail && (
-                <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">
-                  · {model.detail}
-                </span>
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span
+              className={cn(
+                "min-w-0 truncate text-[13px] font-medium text-foreground",
+                isStreaming && "shimmer",
               )}
-            </div>
+            >
+              {model.title}
+            </span>
+            {model.detail && (
+              <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">
+                · {model.detail}
+              </span>
+            )}
           </div>
 
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
+          <span
+            className={cn(
+              mono,
+              "ml-auto flex shrink-0 items-center gap-2 text-muted-foreground tabular-nums",
+            )}
+          >
             {model.toolCount > 0 && (
-              <span
-                data-live-progress-tools="true"
-                className={cn(
-                  mono,
-                  "hidden rounded-md bg-foreground/[0.04] px-1.5 py-0.5 sm:inline-flex",
-                )}
-              >
+              <span data-live-progress-tools="true">
                 {isStreaming
                   ? `工具 ${model.completedToolCount}/${model.toolCount}`
                   : `${model.toolCount} 次工具`}
               </span>
             )}
             {subCount > 0 && (
-              <span
-                data-live-progress-subagents="true"
-                className={cn(
-                  mono,
-                  "rounded-md bg-foreground/[0.04] px-1.5 py-0.5",
-                )}
-              >
+              <span data-live-progress-subagents="true">
                 {isStreaming
                   ? `子代理 ${completedSubagents}/${subCount}`
                   : `${subCount} 个子代理`}
               </span>
             )}
             {model.elapsedLabel && (
-              <span
-                data-live-elapsed="true"
-                className={cn(
-                  mono,
-                  "rounded-md bg-foreground/[0.04] px-1.5 py-0.5",
-                )}
-              >
-                {model.elapsedLabel}
-              </span>
+              <span data-live-elapsed="true">{model.elapsedLabel}</span>
             )}
-            <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-foreground/[0.03] px-2.5 py-0.5 text-[11px] font-medium text-foreground/85 transition-colors group-hover/canvas:bg-foreground/[0.07]">
-              <span>{detailsOpen ? "收起阶段" : "阶段详情"}</span>
-              <ChevronDownIcon
-                className={cn(
-                  "size-3.5 shrink-0 transition-transform duration-200",
-                  detailsOpen && "rotate-180",
-                )}
-              />
-            </span>
+            <ChevronDownIcon
+              aria-hidden
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-200 group-hover/canvas:text-foreground",
+                detailsOpen && "rotate-180",
+              )}
+            />
           </span>
         </button>
 
@@ -215,7 +248,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
                 onJumpToSection(model.sectionId);
               }
             }}
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-full border border-border/60 bg-background text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
+            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
           >
             <CompassIcon className="size-3.5" aria-hidden="true" />
           </button>
@@ -226,17 +259,21 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         )}
       </div>
 
-      {/* Official assistant-ui AgentPlan driven by describe_task milestones */}
-      <div className="border-t border-border/50 pt-2.5">
+      {/* Dynamic Todo-List AgentPlan: visible only when multi-step todos or stages exist */}
+      <div
+        className={cn(
+          hasMultiStepPlan ? "border-t border-border/50 pt-2.5" : "sr-only",
+        )}
+      >
         <AgentPlan
-          title="主控阶段路线"
           steps={planSteps}
           activeIndex={activePlanIndex}
+          hideSingleStepList={!hasMultiStepPlan}
           className="max-w-none"
         />
       </div>
 
-      {/* Official assistant-ui SubagentList for parallel worker roster */}
+      {/* Parallel Subagent Workstation Roster */}
       {subCount > 0 && (
         <div
           data-slot="subagent-activity-strip"
@@ -250,8 +287,8 @@ export const RunActivityHeader = memo(function RunActivityHeader({
               isStreaming && subCount > 0 && completedSubagents === subCount
             }
             summaryAgent={{
-              name: model.title || "主控代理汇总成稿",
-              model: "主编统筹",
+              name: model.title || "主编汇总成稿",
+              model: "汇总中",
             }}
             className={cn(
               "max-w-none",

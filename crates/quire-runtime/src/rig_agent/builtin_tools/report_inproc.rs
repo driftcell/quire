@@ -119,19 +119,19 @@ define_contextual_report_tool!(
     quire_server::mcp::RollbackParams,
     exec_rollback_revision
 );
-pub(crate) async fn ensure_session_doc_id(
+pub(crate) async fn resolve_existing_session_doc_id(
     context: &ToolContext,
     runtime: &RuntimeToolScope,
     explicit_doc_id: &str,
-) -> Result<String, ToolExecutionError> {
+) -> Result<Option<String>, ToolExecutionError> {
     let trimmed = explicit_doc_id.trim();
     if !trimmed.is_empty() {
-        return Ok(trimmed.to_string());
+        return Ok(Some(trimmed.to_string()));
     }
     if let Some(existing) = super::super::current_doc_id(&runtime.doc_id)
         && !existing.trim().is_empty()
     {
-        return Ok(existing);
+        return Ok(Some(existing));
     }
     let turn = quire_turn_meta(context)?;
     if let Ok(summary) = runtime
@@ -144,45 +144,9 @@ pub(crate) async fn ensure_session_doc_id(
         && !bound.trim().is_empty()
     {
         super::super::update_doc_id(&runtime.doc_id, Some(bound.clone()));
-        return Ok(bound);
+        return Ok(Some(bound));
     }
-    let req_ctx = in_process_request_context(context)?;
-    let rmcp::handler::server::wrapper::Json(created) = runtime
-        .report_mcp
-        .exec_create_report(
-            req_ctx,
-            quire_server::mcp::CreateReportParams {
-                doc_id: None,
-                title: "会话研究资料与图表".to_string(),
-                subtitle: None,
-                authors: None,
-                date: None,
-                theme_preset: None,
-                target_prose_chars: None,
-                enable_cover: Some(false),
-                enable_toc: Some(false),
-                initial_blocks: None,
-                idempotency_key: None,
-                cover_meta: None,
-            },
-        )
-        .await
-        .map_err(mcp_error_to_tool_error)?;
-    let _ = runtime
-        .engine
-        .kb
-        .store()
-        .bind_doc(&turn.session_id, &created.doc_id)
-        .await;
-    super::super::update_doc_id(&runtime.doc_id, Some(created.doc_id.clone()));
-    runtime
-        .event_scope
-        .send(ModelStreamEvent::DocLinked {
-            doc_id: created.doc_id.clone(),
-            title: created.title,
-        })
-        .await;
-    Ok(created.doc_id)
+    Ok(None)
 }
 
 pub(crate) struct UpsertSourcesTool;
@@ -207,14 +171,40 @@ impl Tool for UpsertSourcesTool {
         mut args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let runtime = runtime_tool_scope(context)?;
-        args.doc_id = ensure_session_doc_id(context, &runtime, &args.doc_id).await?;
-        let req_ctx = in_process_request_context(context)?;
-        let rmcp::handler::server::wrapper::Json(receipt) = runtime
-            .report_mcp
-            .exec_upsert_sources(req_ctx, args)
-            .await
-            .map_err(mcp_error_to_tool_error)?;
-        serde_json::to_value(receipt).map_err(tool_other)
+        if let Some(doc_id) =
+            resolve_existing_session_doc_id(context, &runtime, &args.doc_id).await?
+        {
+            args.doc_id = doc_id;
+            let saved_sources = args.sources.clone();
+            let req_ctx = in_process_request_context(context)?;
+            let rmcp::handler::server::wrapper::Json(receipt) = runtime
+                .report_mcp
+                .exec_upsert_sources(req_ctx, args)
+                .await
+                .map_err(mcp_error_to_tool_error)?;
+            let mut val = serde_json::to_value(receipt).map_err(tool_other)?;
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert(
+                    "sources".to_string(),
+                    serde_json::to_value(saved_sources).unwrap_or(Value::Null),
+                );
+            }
+            return Ok(val);
+        }
+        // Pure chat-session mode: register sources for inline `<citation id="..."/>`
+        // without creating or binding any report document.
+        let upserted_ids: Vec<String> = args
+            .sources
+            .iter()
+            .filter_map(|entry| entry.id.as_ref().map(|id| id.as_str().to_string()))
+            .collect();
+        Ok(serde_json::json!({
+            "mode": "chat_session",
+            "doc_id": Value::Null,
+            "upserted_ids": upserted_ids,
+            "total_sources": args.sources.len(),
+            "sources": args.sources,
+        }))
     }
 }
 
@@ -240,13 +230,22 @@ impl Tool for ListSourcesTool {
         mut args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         let runtime = runtime_tool_scope(context)?;
-        args.doc_id = ensure_session_doc_id(context, &runtime, &args.doc_id).await?;
-        let rmcp::handler::server::wrapper::Json(receipt) = runtime
-            .report_mcp
-            .list_sources(rmcp::handler::server::wrapper::Parameters(args))
-            .await
-            .map_err(mcp_error_to_tool_error)?;
-        serde_json::to_value(receipt).map_err(tool_other)
+        if let Some(doc_id) =
+            resolve_existing_session_doc_id(context, &runtime, &args.doc_id).await?
+        {
+            args.doc_id = doc_id;
+            let rmcp::handler::server::wrapper::Json(receipt) = runtime
+                .report_mcp
+                .list_sources(rmcp::handler::server::wrapper::Parameters(args))
+                .await
+                .map_err(mcp_error_to_tool_error)?;
+            return serde_json::to_value(receipt).map_err(tool_other);
+        }
+        Ok(serde_json::json!({
+            "mode": "chat_session",
+            "doc_id": Value::Null,
+            "sources": [],
+        }))
     }
 }
 define_contextual_report_tool!(

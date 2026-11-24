@@ -69,6 +69,8 @@ pub struct DescribeTaskReceipt {
     pub title: String,
     pub detail: Option<String>,
     pub section_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todos: Vec<quire_session_protocol::TaskTodoItem>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

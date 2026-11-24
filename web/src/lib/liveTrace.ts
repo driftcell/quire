@@ -4,6 +4,7 @@ import type {
   RunTraceSubagent,
   RunTraceSummary,
   RunTraceToolItem,
+  TaskTodoItem,
 } from "@/contracts/session-protocol";
 
 export type LiveTraceSegment =
@@ -26,7 +27,12 @@ export interface LiveAgentTrace {
   /** Server `turn_started` timestamp used as the stable run clock across refreshes. */
   startedAtMs?: number;
   segments: LiveTraceSegment[];
-  taskFocus?: { title: string; detail?: string; sectionId?: string };
+  taskFocus?: {
+    title: string;
+    detail?: string;
+    sectionId?: string;
+    todos?: TaskTodoItem[];
+  };
   isStreaming: boolean;
 }
 
@@ -152,6 +158,7 @@ export function liveTraceFromSummary(
           title: trace.task_focus.title,
           detail: trace.task_focus.detail ?? undefined,
           sectionId: trace.task_focus.section_id ?? undefined,
+          todos: trace.task_focus.todos,
         }
       : undefined,
     isStreaming: isStreaming && trace.status === "running",
@@ -203,6 +210,7 @@ export function liveSubagentFromSummary(
             title: subagent.task_focus.title,
             detail: subagent.task_focus.detail ?? undefined,
             sectionId: subagent.task_focus.section_id ?? undefined,
+            todos: subagent.task_focus.todos,
           }
         : undefined,
       isStreaming: isStreaming && status === "running",

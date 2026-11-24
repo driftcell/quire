@@ -4,7 +4,10 @@ import type {
   RunTraceSegment,
   RunTraceSubagent,
   RunTraceSummary,
+  TaskTodoItem,
+  TaskTodoStatus,
 } from "@/contracts/session-protocol";
+import { isRecord } from "@/lib/guards";
 import {
   toToolTraceItems,
   type LiveAgentTrace,
@@ -28,6 +31,7 @@ export interface MilestoneSubagentCard {
   focusDetail?: string;
   sectionId?: string;
   status: "running" | "completed" | "failed";
+  todos: TaskTodoItem[];
   semanticPills: SemanticActionPill[];
   milestones: TaskMilestoneNode[];
   summaryText?: string;
@@ -44,6 +48,7 @@ export interface TaskMilestoneNode {
   detail?: string;
   sectionId?: string;
   status: "running" | "completed" | "failed";
+   isExplicitStage?: boolean;
   semanticPills: SemanticActionPill[];
   subagents: MilestoneSubagentCard[];
   rawTools: ToolCallTraceItem[];
@@ -60,16 +65,122 @@ function extractJsonStringField(raw: string, field: string): string | undefined 
   return val && val.length > 0 ? val : undefined;
 }
 
+function normalizeTodoStatus(raw: unknown): TaskTodoStatus {
+  if (
+    raw === "pending" ||
+    raw === "in_progress" ||
+    raw === "completed" ||
+    raw === "skipped"
+  ) {
+    return raw;
+  }
+  return "pending";
+}
+
+function parseTodosFromParsedJson(rawTodos: unknown): TaskTodoItem[] {
+  if (!Array.isArray(rawTodos)) return [];
+  const items: TaskTodoItem[] = [];
+  for (const entry of rawTodos) {
+    if (!isRecord(entry) || typeof entry.title !== "string") continue;
+    const title = entry.title.trim();
+    if (!title) continue;
+    items.push({
+      id: typeof entry.id === "string" ? entry.id : undefined,
+      title,
+      status: normalizeTodoStatus(entry.status),
+      detail: typeof entry.detail === "string" ? entry.detail : undefined,
+      section_id:
+        typeof entry.section_id === "string" ? entry.section_id : undefined,
+    });
+  }
+  return items;
+}
+
 export function parseDescribeTaskInput(inputPreview: string): {
   title?: string;
   detail?: string;
   sectionId?: string;
+  todos?: TaskTodoItem[];
 } {
+  if (!inputPreview) return {};
+  try {
+    const parsed: unknown = JSON.parse(inputPreview);
+    if (isRecord(parsed)) {
+      const todos = parseTodosFromParsedJson(parsed.todos);
+      return {
+        title:
+          typeof parsed.title === "string" && parsed.title.trim()
+            ? parsed.title.trim()
+            : undefined,
+        detail:
+          typeof parsed.detail === "string" && parsed.detail.trim()
+            ? parsed.detail.trim()
+            : undefined,
+        sectionId:
+          typeof parsed.section_id === "string" && parsed.section_id.trim()
+            ? parsed.section_id.trim()
+            : undefined,
+        todos: todos.length > 0 ? todos : undefined,
+      };
+    }
+  } catch {
+    // Fallback to regex extraction when JSON is partial.
+  }
   return {
     title: extractJsonStringField(inputPreview, "title"),
     detail: extractJsonStringField(inputPreview, "detail"),
     sectionId: extractJsonStringField(inputPreview, "section_id"),
   };
+}
+
+export function mergeTodoStep(
+  previous: TaskTodoItem[],
+  step: {
+    title?: string;
+    detail?: string;
+    sectionId?: string;
+    todos?: TaskTodoItem[];
+  },
+): TaskTodoItem[] {
+  if (step.todos && step.todos.length > 0) {
+    return step.todos.map((item) => ({ ...item }));
+  }
+  if (!step.title || previous.length === 0) {
+    return previous;
+  }
+  const updated = previous.map((item) =>
+    item.status === "in_progress" && item.title !== step.title
+      ? { ...item, status: "completed" as const }
+      : { ...item },
+  );
+  const existing = updated.find((item) => item.title === step.title);
+  if (existing) {
+    existing.status = "in_progress";
+    if (step.detail) existing.detail = step.detail;
+    if (step.sectionId) existing.section_id = step.sectionId;
+  } else {
+    updated.push({
+      title: step.title,
+      status: "in_progress",
+      detail: step.detail,
+      section_id: step.sectionId,
+    });
+  }
+  return updated;
+}
+
+export function finalizeTodos(
+  todos: TaskTodoItem[],
+  isSettledSuccess: boolean,
+): TaskTodoItem[] {
+  if (!isSettledSuccess || todos.length === 0) {
+    return todos;
+  }
+  return todos.map((item) =>
+    item.status === "skipped"
+      ? item
+      : { ...item, status: "completed" as const },
+  );
 }
 
 export function extractToolTargetHint(
@@ -159,12 +270,20 @@ function defaultPhaseTitle(
   hasThinking: boolean,
   isFirst: boolean,
 ): string {
-  if (hasSubagents && tools.length === 0) {
-    return "派发子代理集群协同作业";
+  const visible = tools.filter(isVisibleTraceTool);
+  if (hasSubagents && visible.length === 0) {
+    return "派发子代理协同执行";
   }
-  const firstVisible = tools.find(isVisibleTraceTool);
-  if (firstVisible) {
-    return getToolMeta(firstVisible.toolName).label;
+  if (visible.length > 0) {
+    const distinctLabels: string[] = [];
+    for (const tool of visible) {
+      const label = getToolMeta(tool.toolName).label;
+      if (!distinctLabels.includes(label)) {
+        distinctLabels.push(label);
+      }
+      if (distinctLabels.length >= 2) break;
+    }
+    return distinctLabels.join(" · ");
   }
   if (hasThinking) {
     return isFirst ? "需求拆解与研究规划" : "阶段研判与统筹";
@@ -182,6 +301,7 @@ function buildSubagentMilestonesFromSegments(
   let currentTitle = fallbackFocus.title;
   let currentDetail = fallbackFocus.detail;
   let currentSection = fallbackFocus.sectionId;
+  let currentExplicit = Boolean(fallbackFocus.title);
   let currentTools: ToolCallTraceItem[] = [];
   let currentThinking: string[] = [];
   let currentDuration = 0;
@@ -219,6 +339,7 @@ function buildSubagentMilestonesFromSegments(
       detail: currentDetail,
       sectionId: currentSection,
       status,
+      isExplicitStage: currentExplicit,
       semanticPills: buildSemanticActionPills(visibleTools),
       subagents: [],
       rawTools: visibleTools,
@@ -228,6 +349,7 @@ function buildSubagentMilestonesFromSegments(
     currentTitle = undefined;
     currentDetail = undefined;
     currentSection = undefined;
+    currentExplicit = false;
     currentTools = [];
     currentThinking = [];
     currentDuration = 0;
@@ -255,6 +377,7 @@ function buildSubagentMilestonesFromSegments(
             currentTitle = parsed.title;
             currentDetail = parsed.detail;
             currentSection = parsed.sectionId;
+            currentExplicit = true;
           }
           continue;
         }
@@ -277,6 +400,7 @@ function buildLiveSubagentMilestonesFromSegments(
   let currentTitle = fallbackFocus.title;
   let currentDetail = fallbackFocus.detail;
   let currentSection = fallbackFocus.sectionId;
+  let currentExplicit = Boolean(fallbackFocus.title);
   let currentTools: ToolCallTraceItem[] = [];
   let currentThinking: string[] = [];
   let currentDuration = 0;
@@ -314,6 +438,7 @@ function buildLiveSubagentMilestonesFromSegments(
       detail: currentDetail,
       sectionId: currentSection,
       status,
+      isExplicitStage: currentExplicit,
       semanticPills: buildSemanticActionPills(visibleTools),
       subagents: [],
       rawTools: visibleTools,
@@ -323,6 +448,7 @@ function buildLiveSubagentMilestonesFromSegments(
     currentTitle = undefined;
     currentDetail = undefined;
     currentSection = undefined;
+    currentExplicit = false;
     currentTools = [];
     currentThinking = [];
     currentDuration = 0;
@@ -349,6 +475,7 @@ function buildLiveSubagentMilestonesFromSegments(
             currentTitle = parsed.title;
             currentDetail = parsed.detail;
             currentSection = parsed.sectionId;
+            currentExplicit = true;
           }
           continue;
         }
@@ -376,6 +503,9 @@ function buildHistoricalSubagentCard(
   let lastDescribeTitle: string | undefined;
   let lastDescribeDetail: string | undefined;
   let lastDescribeSection: string | undefined;
+  let todos: TaskTodoItem[] = sub.task_focus?.todos
+    ? sub.task_focus.todos.map((item) => ({ ...item }))
+    : [];
 
   for (const seg of sub.segments ?? []) {
     if (seg.kind === "thinking" && seg.text.trim()) {
@@ -391,6 +521,7 @@ function buildHistoricalSubagentCard(
             lastDescribeDetail = parsed.detail;
             lastDescribeSection = parsed.sectionId;
           }
+          todos = mergeTodoStep(todos, parsed);
         } else if (isVisibleTraceTool(tool)) {
           allTools.push(tool);
         }
@@ -423,6 +554,7 @@ function buildHistoricalSubagentCard(
     focusDetail,
     sectionId,
     status,
+    todos: finalizeTodos(todos, status === "completed"),
     semanticPills: buildSemanticActionPills(allTools),
     milestones,
     summaryText:
@@ -441,6 +573,9 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
   let lastDescribeTitle: string | undefined;
   let lastDescribeDetail: string | undefined;
   let lastDescribeSection: string | undefined;
+  let todos: TaskTodoItem[] = sub.trace.taskFocus?.todos
+    ? sub.trace.taskFocus.todos.map((item) => ({ ...item }))
+    : [];
 
   for (const seg of sub.trace.segments) {
     if (seg.kind === "thinking" && seg.text.trim()) {
@@ -456,6 +591,7 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
             lastDescribeDetail = parsed.detail;
             lastDescribeSection = parsed.sectionId;
           }
+          todos = mergeTodoStep(todos, parsed);
         } else if (isVisibleTraceTool(tool)) {
           allTools.push(tool);
         }
@@ -488,6 +624,7 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
     focusDetail,
     sectionId,
     status: sub.status,
+    todos: finalizeTodos(todos, sub.status === "completed"),
     semanticPills: buildSemanticActionPills(allTools),
     milestones,
     summaryText:
@@ -497,6 +634,38 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
     rawTools: allTools,
     rawThinking: thinkingParts.join("\n\n").trim(),
   };
+}
+
+export function extractHistoricalTodos(trace: RunTraceSummary): TaskTodoItem[] {
+  let todos: TaskTodoItem[] = trace.task_focus?.todos
+    ? trace.task_focus.todos.map((item) => ({ ...item }))
+    : [];
+  for (const seg of trace.segments ?? []) {
+    if (seg.kind !== "execution") continue;
+    for (const tool of seg.tools ?? []) {
+      if (tool.tool_name === "describe_task") {
+        const parsed = parseDescribeTaskInput(tool.input_preview);
+        todos = mergeTodoStep(todos, parsed);
+      }
+    }
+  }
+  return finalizeTodos(todos, trace.status === "completed");
+}
+
+export function extractLiveTodos(trace: LiveAgentTrace): TaskTodoItem[] {
+  let todos: TaskTodoItem[] = trace.taskFocus?.todos
+    ? trace.taskFocus.todos.map((item) => ({ ...item }))
+    : [];
+  for (const seg of trace.segments) {
+    if (seg.kind !== "execution") continue;
+    for (const tool of seg.tools) {
+      if (tool.toolName === "describe_task") {
+        const parsed = parseDescribeTaskInput(tool.inputPreview);
+        todos = mergeTodoStep(todos, parsed);
+      }
+    }
+  }
+  return finalizeTodos(todos, !trace.isStreaming);
 }
 
 /**
@@ -511,6 +680,7 @@ export function buildHistoricalMilestones(
   let currentTitle: string | undefined;
   let currentDetail: string | undefined;
   let currentSection: string | undefined;
+  let currentExplicit = false;
   let currentTools: ToolCallTraceItem[] = [];
   let currentSubagents: MilestoneSubagentCard[] = [];
   let currentThinking: string[] = [];
@@ -534,13 +704,14 @@ export function buildHistoricalMilestones(
     const status: "running" | "completed" | "failed" = hasFailed
       ? "failed"
       : "completed";
+    const explicitTitle =
+      currentTitle || (isFinal ? trace.task_focus?.title?.trim() : undefined);
 
     milestones.push({
       id: `${trace.run_id}-ms-${stepNumber}`,
       stepNumber,
       title:
-        currentTitle ||
-        (isFinal && trace.task_focus?.title?.trim()) ||
+        explicitTitle ||
         defaultPhaseTitle(
           visibleTools,
           currentSubagents.length > 0,
@@ -554,6 +725,7 @@ export function buildHistoricalMilestones(
         currentSection ??
         (isFinal ? trace.task_focus?.section_id ?? undefined : undefined),
       status,
+      isExplicitStage: currentExplicit || Boolean(explicitTitle),
       semanticPills: buildSemanticActionPills(visibleTools),
       subagents: currentSubagents,
       rawTools: visibleTools,
@@ -564,6 +736,7 @@ export function buildHistoricalMilestones(
     currentTitle = undefined;
     currentDetail = undefined;
     currentSection = undefined;
+    currentExplicit = false;
     currentTools = [];
     currentSubagents = [];
     currentThinking = [];
@@ -595,6 +768,7 @@ export function buildHistoricalMilestones(
             currentTitle = parsed.title;
             currentDetail = parsed.detail;
             currentSection = parsed.sectionId;
+            currentExplicit = true;
           }
           continue;
         }
@@ -616,6 +790,7 @@ export function buildHistoricalMilestones(
       detail: trace.task_focus.detail ?? undefined,
       sectionId: trace.task_focus.section_id ?? undefined,
       status: trace.status === "failed" ? "failed" : "completed",
+      isExplicitStage: true,
       semanticPills: [],
       subagents: [],
       rawTools: [],
@@ -640,6 +815,7 @@ export function buildLiveMilestones(
   let currentTitle: string | undefined;
   let currentDetail: string | undefined;
   let currentSection: string | undefined;
+  let currentExplicit = false;
   let currentTools: ToolCallTraceItem[] = [];
   let currentSubagents: MilestoneSubagentCard[] = [];
   let currentThinking: string[] = [];
@@ -669,13 +845,14 @@ export function buildLiveMilestones(
       : hasFailed
         ? "failed"
         : "completed";
+    const explicitTitle =
+      currentTitle || (isFinal ? trace.taskFocus?.title?.trim() : undefined);
 
     milestones.push({
       id: `${trace.runId ?? "live"}-ms-${stepNumber}`,
       stepNumber,
       title:
-        currentTitle ||
-        (isFinal && trace.taskFocus?.title?.trim()) ||
+        explicitTitle ||
         defaultPhaseTitle(
           visibleTools,
           currentSubagents.length > 0,
@@ -687,6 +864,7 @@ export function buildLiveMilestones(
       sectionId:
         currentSection ?? (isFinal ? trace.taskFocus?.sectionId : undefined),
       status,
+      isExplicitStage: currentExplicit || Boolean(explicitTitle),
       semanticPills: buildSemanticActionPills(visibleTools),
       subagents: currentSubagents,
       rawTools: visibleTools,
@@ -697,6 +875,7 @@ export function buildLiveMilestones(
     currentTitle = undefined;
     currentDetail = undefined;
     currentSection = undefined;
+    currentExplicit = false;
     currentTools = [];
     currentSubagents = [];
     currentThinking = [];
@@ -728,6 +907,7 @@ export function buildLiveMilestones(
             currentTitle = parsed.title;
             currentDetail = parsed.detail;
             currentSection = parsed.sectionId;
+            currentExplicit = true;
           }
           continue;
         }
@@ -752,6 +932,7 @@ export function buildLiveMilestones(
       detail: trace.taskFocus.detail,
       sectionId: trace.taskFocus.sectionId,
       status: trace.isStreaming ? "running" : "completed",
+      isExplicitStage: true,
       semanticPills: [],
       subagents: [],
       rawTools: [],

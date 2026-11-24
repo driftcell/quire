@@ -7,6 +7,7 @@ import type {
   RunTraceSubagent,
   RunTraceSummary,
   SessionEvent,
+  TaskTodoItem,
 } from "@/contracts/session-protocol";
 import {
   appendSubagentSegment,
@@ -299,28 +300,66 @@ export function reduceSessionEvent(
       }
       break;
     case "task_focus": {
-      const focus = {
-        title: event.title,
-        detail: event.detail ?? undefined,
-        sectionId: event.section_id ?? undefined,
+      const mergeTodos = (
+        prevTodos: TaskTodoItem[] | undefined,
+      ): TaskTodoItem[] | undefined => {
+        if (event.todos && event.todos.length > 0) {
+          return event.todos;
+        }
+        if (!prevTodos || prevTodos.length === 0) {
+          return undefined;
+        }
+        const updated = prevTodos.map((item) =>
+          item.status === "in_progress" && item.title !== event.title
+            ? { ...item, status: "completed" as const }
+            : { ...item },
+        );
+        const match = updated.find((item) => item.title === event.title);
+        if (match) {
+          match.status = "in_progress";
+          if (event.detail) match.detail = event.detail;
+          if (event.section_id) match.section_id = event.section_id;
+        } else {
+          updated.push({
+            title: event.title,
+            status: "in_progress",
+            detail: event.detail ?? undefined,
+            section_id: event.section_id ?? undefined,
+          });
+        }
+        return updated;
       };
       if (isSubagentEvent) {
         next = {
           ...next,
-          liveSubagents: mapSubagent(next, event.run_id, (subagent) => ({
-            ...subagent,
-            trace: {
-              ...withSubagentTrace(subagent.trace, eventTs),
-              taskFocus: focus,
-            },
-          })),
+          liveSubagents: mapSubagent(next, event.run_id, (subagent) => {
+            const subTrace = withSubagentTrace(subagent.trace, eventTs);
+            return {
+              ...subagent,
+              trace: {
+                ...subTrace,
+                taskFocus: {
+                  title: event.title,
+                  detail: event.detail ?? undefined,
+                  sectionId: event.section_id ?? undefined,
+                  todos: mergeTodos(subTrace.taskFocus?.todos),
+                },
+              },
+            };
+          }),
         };
       } else {
+        const mainTrace = withMainTrace(next, event.run_id, eventTs);
         next = {
           ...next,
           liveMain: {
-            ...withMainTrace(next, event.run_id, eventTs),
-            taskFocus: focus,
+            ...mainTrace,
+            taskFocus: {
+              title: event.title,
+              detail: event.detail ?? undefined,
+              sectionId: event.section_id ?? undefined,
+              todos: mergeTodos(mainTrace.taskFocus?.todos),
+            },
           },
         };
       }
