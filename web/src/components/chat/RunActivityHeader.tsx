@@ -160,11 +160,22 @@ function SubagentAvatarStack({
   onExpand: () => void;
   onFocusSubagent: (subagentId: string) => void;
 }) {
-  const visibleSubagents = model.subagents.slice(0, 6);
-  const hiddenCount = model.subagents.length - visibleSubagents.length;
-  const runningCount = model.subagents.filter(
+  const runningSubagents = model.subagents.filter(
     (sub) => sub.status === "running",
-  ).length;
+  );
+  const failedSubagents = model.subagents.filter(
+    (sub) => sub.status === "failed",
+  );
+  const completedSubagents = model.subagents.filter(
+    (sub) => sub.status === "completed",
+  );
+  const remainingSlots = Math.max(0, 6 - runningSubagents.length);
+  const visibleSubagents = [
+    ...runningSubagents,
+    ...[...failedSubagents, ...completedSubagents].slice(0, remainingSlots),
+  ];
+  const hiddenCount = model.subagents.length - visibleSubagents.length;
+  const runningCount = runningSubagents.length;
   const hasFailed = model.subagents.some((sub) => sub.status === "failed");
 
   return (
@@ -172,9 +183,9 @@ function SubagentAvatarStack({
       data-slot="subagent-list"
       data-presentation="avatar-stack"
       aria-label="子代理进度"
-      className="mt-3.5 flex items-center gap-2"
+      className="mt-3.5 flex items-start gap-2"
     >
-      <ol className="flex -space-x-1">
+      <ol className="flex min-w-0 flex-1 flex-wrap -space-x-1 gap-y-1">
         {visibleSubagents.map((sub) => {
           const identity = resolveAgentIdentity(sub.actor);
           const running = sub.status === "running";
@@ -233,7 +244,7 @@ function SubagentAvatarStack({
       </ol>
       <span
         className={cn(
-          "ml-auto shrink-0 text-[11px] text-muted-foreground",
+          "ml-auto shrink-0 pt-1 text-[11px] text-muted-foreground",
           hasFailed && "text-destructive",
         )}
       >

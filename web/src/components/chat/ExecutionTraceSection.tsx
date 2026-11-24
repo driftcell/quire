@@ -62,9 +62,10 @@ export function HistoricalRunTrace({
   }
 
   const headerModel = buildHistoricalRunStatusModel(trace);
-  const lastTextSegment = [...segments]
-    .reverse()
-    .find((seg) => seg.kind === "text");
+  const lastTextSegment =
+    trace.status === "completed"
+      ? [...segments].reverse().find((seg) => seg.kind === "text")
+      : undefined;
   const compactQuestions = collectQuestionNodes(segments, questionSlots);
 
   if (!showHeader) {
@@ -105,8 +106,10 @@ export function HistoricalRunTrace({
 }
 
 export function LiveTraceSegments({
+  trace,
   segments,
   questionSlots,
+  showFinalText = false,
 }: {
   sessionId: string;
   trace?: LiveAgentTrace;
@@ -116,6 +119,7 @@ export function LiveTraceSegments({
   detailsOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   onJumpToSection?: (sectionId: string) => void;
+  showFinalText?: boolean;
 }) {
   const lastTextSegment = [...segments]
     .reverse()
@@ -128,14 +132,20 @@ export function LiveTraceSegments({
         <div className="space-y-3">{compactQuestions}</div>
       )}
 
-      {lastTextSegment && lastTextSegment.kind === "text" && (
-        <SmoothStreamdown
-          key={lastTextSegment.key}
-          text={lastTextSegment.text}
-          isStreaming={lastTextSegment.isStreaming}
-          className={CHAT_PROSE}
-        />
-      )}
+      {showFinalText &&
+        trace?.isStreaming === false &&
+        lastTextSegment &&
+        lastTextSegment.kind === "text" && (
+          <div data-slot="final-main-output">
+            <SmoothStreamdown
+              key={lastTextSegment.key}
+              text={lastTextSegment.text}
+              isStreaming={false}
+              revealOnMount={true}
+              className={CHAT_PROSE}
+            />
+          </div>
+        )}
     </>
   );
 }

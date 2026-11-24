@@ -286,10 +286,10 @@ export class SmoothStreamPlayer {
  * Smooth a streaming text target at a stable reading rate while catching up
  * bursts within roughly 350ms. Historical/static text is returned immediately.
  */
-export function useSmoothStreamText(
+function useSmoothStreamTextBase(
   targetText: string,
   isStreaming: boolean,
-  maxBacklog = Number.POSITIVE_INFINITY,
+  maxBacklog: number,
 ): SmoothStreamState {
   const [state, setState] = useState<SmoothStreamState>(() => ({
     text: targetText,
@@ -317,6 +317,51 @@ export function useSmoothStreamText(
     },
     [player],
   );
+
+  return state;
+}
+
+/**
+ * Buffer a newly revealed final response from an empty mount. The upstream
+ * player remains the single rate-limiting clock; this wrapper only owns the
+ * reveal lifecycle and switches it back to static mode after the tail drains.
+ */
+export function useSmoothStreamText(
+  targetText: string,
+  isStreaming: boolean,
+  maxBacklog = Number.POSITIVE_INFINITY,
+  revealOnMount = false,
+): SmoothStreamState {
+  const [reveal, setReveal] = useState(() => ({
+    text: revealOnMount ? "" : targetText,
+    isStreaming: revealOnMount || isStreaming,
+  }));
+
+  useEffect(() => {
+    if (revealOnMount) {
+      // oxlint-disable-next-line react/set-state-in-effect -- reveal starts empty, then follows the settled final target
+      setReveal({ text: targetText, isStreaming: true });
+    }
+  }, [revealOnMount, targetText]);
+
+  const state = useSmoothStreamTextBase(
+    revealOnMount ? reveal.text : targetText,
+    revealOnMount ? reveal.isStreaming : isStreaming,
+    maxBacklog,
+  );
+
+  useEffect(() => {
+    if (
+      revealOnMount &&
+      reveal.isStreaming &&
+      targetText.length > 0 &&
+      state.text === targetText &&
+      !state.isSmoothing
+    ) {
+      // oxlint-disable-next-line react/set-state-in-effect -- the buffered reveal has reached its target and can become static
+      setReveal((current) => ({ ...current, isStreaming: false }));
+    }
+  }, [reveal.isStreaming, revealOnMount, state, targetText]);
 
   return state;
 }

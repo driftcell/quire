@@ -1,8 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import {
+  HistoricalRunTrace,
+  LiveTraceSegments,
+} from "@/components/chat/ExecutionTraceSection";
+import { HistoricalMessageItem } from "@/components/chat/HistoricalMessageItem";
 import { PromptComposer } from "@/components/chat/PromptComposer";
 import { QuestionCard } from "@/components/chat/QuestionCard";
-import type { PendingQuestion } from "@/contracts/session-protocol";
+import type { RenderSegment } from "@/components/chat/traceSegments";
+import type {
+  PendingQuestion,
+  RunTraceSummary,
+  SessionMessage,
+} from "@/contracts/session-protocol";
 
 const pending: PendingQuestion = {
   question_id: "question-1",
@@ -84,5 +94,95 @@ describe("Borderless editorial chat", () => {
     expect(html).toContain("19%");
     expect(html).toContain("¥0.1128");
     expect(html).not.toContain("正在处理当前任务，新发送的内容将自动排队");
+  });
+
+  test("main prose appears only after successful completion and keeps only the last segment", () => {
+    const segments: RenderSegment[] = [
+      {
+        key: "text-1",
+        kind: "text",
+        text: "中途生成的正文",
+        isStreaming: false,
+      },
+      {
+        key: "activity-1",
+        kind: "activity",
+        items: [],
+        isActive: false,
+      },
+      {
+        key: "text-2",
+        kind: "text",
+        text: "任务完成后的最终正文",
+        isStreaming: false,
+      },
+    ];
+    const runningHtml = renderToStaticMarkup(
+      <LiveTraceSegments
+        sessionId="session-1"
+        trace={{ agentId: "main", segments: [], isStreaming: true }}
+        segments={segments}
+      />,
+    );
+    expect(runningHtml).not.toContain("中途生成的正文");
+    expect(runningHtml).not.toContain("任务完成后的最终正文");
+
+    const completedHtml = renderToStaticMarkup(
+      <LiveTraceSegments
+        sessionId="session-1"
+        trace={{ agentId: "main", segments: [], isStreaming: false }}
+        segments={segments}
+        showFinalText={true}
+      />,
+    );
+    expect(completedHtml).toContain('data-slot="final-main-output"');
+    // The live final response starts with an empty reveal buffer on the client.
+    expect(completedHtml).not.toContain("中途生成的正文");
+  });
+
+  test("failed and interrupted runs never expose partial main prose", () => {
+    const failedTrace: RunTraceSummary = {
+      run_id: "run-failed",
+      status: "failed",
+      segments: [{ kind: "text", text: "失败前的半截正文" }],
+    };
+    const failedHtml = renderToStaticMarkup(
+      <HistoricalRunTrace sessionId="session-1" trace={failedTrace} />,
+    );
+    expect(failedHtml).not.toContain("失败前的半截正文");
+
+    const interruptedMessage: SessionMessage = {
+      message_id: "message-interrupted",
+      session_id: "session-1",
+      role: "assistant",
+      content: "中断前的半截正文",
+      run_id: "run-interrupted",
+      created_at: "2026-11-24T08:00:00Z",
+    };
+    const interruptedHtml = renderToStaticMarkup(
+      <HistoricalMessageItem
+        sessionId="session-1"
+        msg={interruptedMessage}
+        attachmentMap={new Map()}
+        trace={{
+          run_id: "run-interrupted",
+          status: "interrupted",
+          segments: [],
+        }}
+      />,
+    );
+    expect(interruptedHtml).not.toContain("中断前的半截正文");
+
+    const completedHtml = renderToStaticMarkup(
+      <HistoricalRunTrace
+        sessionId="session-1"
+        trace={{
+          ...failedTrace,
+          status: "completed",
+          segments: [{ kind: "text", text: "成功完成后的正文" }],
+        }}
+      />,
+    );
+    expect(completedHtml).toContain("成功完成后的正文");
   });
 });

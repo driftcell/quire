@@ -160,13 +160,15 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
               onJumpToSection={onJumpToSection}
             />
           )}
-          {!hasTextSegment && msg.content.trim().length > 0 && (
-            <SmoothStreamdown
-              text={msg.content}
-              isStreaming={false}
-              className={CHAT_PROSE}
-            />
-          )}
+          {!hasTextSegment &&
+            (!trace || trace.status === "completed") &&
+            msg.content.trim().length > 0 && (
+              <SmoothStreamdown
+                text={msg.content}
+                isStreaming={false}
+                className={CHAT_PROSE}
+              />
+            )}
           <div className="flex min-h-5 w-full items-center justify-end gap-2 pt-0.5 opacity-0 transition-opacity group-hover/assistant:opacity-100 group-focus-within/assistant:opacity-100">
             {sentAt && (
               <time

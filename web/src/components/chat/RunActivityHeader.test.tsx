@@ -277,6 +277,26 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     const stack = renderCollapsed(crowded);
     expect(stack.split("data-subagent-pill=").length - 1).toBe(6);
     expect(stack).toContain("+3");
+
+    const activeCrowd = makeModel(["in_progress"]);
+    activeCrowd.subagents = Array.from({ length: 9 }, (_, index) => ({
+      id: `sub-${index + 1}`,
+      actor: `researcher-${index + 1}`,
+      status: index < 8 ? "running" : "completed",
+      activityText: "核对高校数据",
+      toolCount: 0,
+      completedToolCount: 0,
+      recentTools: [],
+      todos: [],
+    }));
+    const activeStack = renderCollapsed(activeCrowd);
+    expect(activeStack.split("data-subagent-pill=").length - 1).toBe(8);
+    for (let index = 1; index <= 8; index += 1) {
+      expect(activeStack).toContain(`data-subagent-pill="sub-${index}"`);
+    }
+    expect(activeStack).not.toContain('data-subagent-pill="sub-9"');
+    expect(activeStack).toContain("+1");
+    expect(activeStack).toContain("flex-wrap");
   });
 
   test("buildHistoricalRunStatusModel preserves structure after completion and supports chat-only upsert_sources", () => {

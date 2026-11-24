@@ -46,6 +46,7 @@ function LiveRunSection({
   questionSlots,
   onJumpToSection,
   onInterrupt,
+  showFinalText,
 }: {
   sessionId: string;
   trace: LiveAgentTrace;
@@ -54,6 +55,7 @@ function LiveRunSection({
   questionSlots: Map<string, ReactNode>;
   onJumpToSection?: (sectionId: string) => void;
   onInterrupt?: () => Promise<void>;
+  showFinalText: boolean;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [fallbackStartedAt] = useState(() => Date.now());
@@ -94,6 +96,7 @@ function LiveRunSection({
         detailsOpen={detailsOpen}
         onOpenChange={setDetailsOpen}
         onJumpToSection={onJumpToSection}
+        showFinalText={showFinalText}
       />
     </div>
   );
@@ -304,6 +307,9 @@ export function SessionStreamView({
       }),
     [allQuestionCards],
   );
+  const liveRunCompleted = liveMain?.runId
+    ? traceByRunId.get(liveMain.runId)?.status === "completed"
+    : false;
 
   return (
     <MessageScrollerProvider
@@ -392,6 +398,7 @@ export function SessionStreamView({
                           questionSlots={questionSlots}
                           onJumpToSection={onJumpToSection}
                           onInterrupt={onInterrupt}
+                          showFinalText={liveRunCompleted}
                         />
                       </MessageContent>
                     </Message>

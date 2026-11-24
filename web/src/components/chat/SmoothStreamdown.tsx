@@ -34,6 +34,8 @@ export interface SmoothStreamdownProps {
   isStreaming: boolean;
   className?: string;
   maxBacklog?: number;
+  /** Buffer a settled live response from empty once, then settle into static mode. */
+  revealOnMount?: boolean;
   controls?: ControlsConfig;
 }
 
@@ -48,7 +50,8 @@ const ChatMlFallbackRenderer: ComponentType<
   const { sources, charts } = useChatRichContext();
   const citationOrderMap = useChatMessageCitationOrder();
   const tagName = node?.tagName;
-  const rawId = typeof props.id === "string" ? stripClobberPrefix(props.id) : "";
+  const rawId =
+    typeof props.id === "string" ? stripClobberPrefix(props.id) : "";
 
   if (!rawId) {
     return null;
@@ -116,12 +119,14 @@ export function SmoothStreamdown({
   isStreaming,
   className = CHAT_PROSE,
   maxBacklog,
+  revealOnMount = false,
   controls = STREAMDOWN_CONTROLS,
 }: SmoothStreamdownProps) {
   const { text: smoothedText, isSmoothing } = useSmoothStreamText(
     text,
     isStreaming,
     maxBacklog,
+    revealOnMount,
   );
   const { sources } = useChatRichContext();
   const animating = isStreaming || isSmoothing;
