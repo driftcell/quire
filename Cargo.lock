@@ -5205,12 +5205,10 @@ dependencies = [
 name = "quire-server"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-stream",
  "axum",
  "base64 0.22.1",
  "chrono",
- "dotenvy",
  "futures",
  "http",
  "indexmap 2.14.2",
@@ -5230,7 +5228,6 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

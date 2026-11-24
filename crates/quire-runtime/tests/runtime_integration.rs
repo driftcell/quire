@@ -726,7 +726,6 @@ impl ModelStreamProvider for RecordingStreamProvider {
 
 #[derive(Default)]
 struct MockChatState {
-    request_count: AtomicUsize,
     requests: Mutex<Vec<Value>>,
     started: Notify,
     release: Notify,
@@ -855,13 +854,39 @@ fn text_stream() -> Vec<String> {
     ]
 }
 
+fn last_user_message_text(body: &Value) -> Option<String> {
+    let messages = body
+        .get("input")
+        .or_else(|| body.get("messages"))?
+        .as_array()?;
+    let message = messages
+        .iter()
+        .rev()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))?;
+    match message.get("content")? {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(parts) => Some(
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(""),
+        ),
+        _ => None,
+    }
+}
+
 async fn mock_chat_completions(
     axum::extract::State(state): axum::extract::State<Arc<MockChatState>>,
     axum::Json(body): axum::Json<Value>,
 ) -> axum::response::Response {
-    let index = state.request_count.fetch_add(1, Ordering::SeqCst);
+    // Other tests share the runtime KB default agent and can hit this mock concurrently.
+    // Only the test's opening prompt should start the gated tool-call turn; the queued
+    // follow-up also carries that prompt in history, so inspect the latest user message.
+    let is_tool_boundary_start =
+        last_user_message_text(&body).is_some_and(|text| text.trim() == "先更新标题，再继续回答。");
     state.requests.lock().await.push(body);
-    let chunks = if index == 0 {
+    let chunks = if is_tool_boundary_start {
         state.started.notify_one();
         state.release.notified().await;
         tool_call_stream()
@@ -4478,7 +4503,7 @@ async fn tool_boundary_supersedes_run_and_starts_queued_turn() {
     assert!(detail.pending_queue.is_empty());
 
     let mut injected = None;
-    for _ in 0..150 {
+    for _ in 0..500 {
         let requests = mock_state.requests.lock().await;
         for request in requests.iter() {
             let Some(messages) = request["messages"]
@@ -4511,8 +4536,16 @@ async fn tool_boundary_supersedes_run_and_starts_queued_turn() {
         drop(requests);
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let injected = injected
-        .expect("a request must place the queued message immediately after the real tool result");
+    let injected = match injected {
+        Some(injected) => injected,
+        None => {
+            let requests = mock_state.requests.lock().await;
+            panic!(
+                "a request must place the queued message immediately after the real tool result; requests={}",
+                serde_json::to_string_pretty(&*requests).unwrap_or_default()
+            );
+        }
+    };
     assert_eq!(injected["role"], "user");
     assert_eq!(injected["type"], "message");
     assert!(

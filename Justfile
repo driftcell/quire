@@ -71,17 +71,9 @@ clippy:
 # Full verification gate used phase by phase.
 verify: fmt-check clippy test
 
-# Start the API/MCP server.
+# Start the unified Quire server (API, MCP, session runtime, and agent execution).
 server:
-    cargo run -p quire-server --bin quire-server
-
-# Start the independent session/agent runtime.
-runtime:
-    cargo run -p quire-runtime --bin quire-runtime
-
-# End-to-end multi-agent scenario (requires the full stack).
-e2e:
-    cargo test -p quire-server --test e2e_multi_agent_workflow -- --nocapture
+    cargo run -p quire-runtime --bin server
 
 # Quick infrastructure health check.
 status:

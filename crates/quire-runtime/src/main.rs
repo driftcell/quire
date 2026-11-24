@@ -1,4 +1,4 @@
-//! `quire-runtime` binary entrypoint.
+//! Unified Quire `server` binary entrypoint.
 
 #![forbid(unsafe_code)]
 
@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
         seeded_skills = seed.skills,
         kb_version = seed.kb_version,
         bind_addr = %config.bind_addr,
-        "quire-runtime ready"
+        "server ready"
     );
     let listener = tokio::net::TcpListener::bind(&config.bind_addr)
         .await

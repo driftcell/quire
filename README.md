@@ -24,8 +24,7 @@ dependency. Rendering and visual preview belong to the external frontend.
 cp .env.example .env
 just up          # PostgreSQL 16 + Redis 7 via docker compose
 just migrate     # SQLx migrations
-just server      # quire-server on BIND_ADDR (default 0.0.0.0:8080)
-just runtime     # quire-runtime on 127.0.0.1:8081 (auto-runs its own migrations)
+just server      # unified Quire server (`quire-runtime --bin server`, auto-runs migrations)
 ```
 
 The server also auto-runs embedded migrations on startup (`AUTO_MIGRATE=true` by default).
@@ -56,16 +55,11 @@ just test-protocol   # pure protocol unit tests
 just test-store      # unit + live PostgreSQL/Redis integration tests
 just test            # workspace tests; recreates report_core_test from DATABASE_URL
 just clippy          # cargo clippy --workspace --all-targets -- -D warnings
-just e2e             # explicit end-to-end run
 ```
 
 `just test` derives a disposable `report_core_test` database from `DATABASE_URL`. Running the
 runtime integration tests directly with `cargo test` requires `TEST_DATABASE_URL`; they refuse to
 run against `report_core` because they mutate runtime state.
-
-The E2E test boots the real `quire-server` binary, starts two parallel MCP clients, observes SSE,
-runs parallel `apply_operations` batches with Smart CAS rebases, self-heals a dangling citation,
-rolls back and validates `computed` frontend metadata.
 
 ## Environment
 
@@ -250,8 +244,8 @@ streamed placeholders immediately instead of waiting for `ttl_ms` to expire.
 
 ## Agent runtime
 
-`quire-runtime` is an independent backend; it talks to `quire-server` over MCP/HTTP and never links
-the server or `rig` into the report engine. It owns:
+`quire-runtime` is the unified backend; it embeds the `quire-server` report engine in-process while
+`quire-server` remains independent of the runtime and `rig`. It owns:
 
 - PostgreSQL tables for `agent_sessions`, messages, attachments, runs, `session_events`,
   `agent_tool_calls`, knowledge documents, agent definitions, skills and skill resources.
