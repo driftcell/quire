@@ -35,7 +35,7 @@ export function UserMessageBubble({
         )}
         <MessageAttachments ids={attachmentIds} attachmentMap={attachmentMap} />
         {body.length > 0 && (
-          <div className="w-fit max-w-full rounded-2xl rounded-tr-sm border border-border/60 bg-muted/75 px-4 py-2.5 text-sm leading-6 whitespace-pre-wrap text-foreground shadow-2xs">
+          <div className="w-fit max-w-full rounded-2xl bg-secondary/85 px-4 py-3 text-sm leading-6.5 break-words whitespace-pre-wrap text-foreground">
             {body}
           </div>
         )}

@@ -26,9 +26,8 @@ interface AvatarTheme {
 }
 
 /**
- * 12 curated Vercel / Linear / Boring-Avatars Beam harmonic palettes.
- * Each agent name hashes deterministically to a unique color triad and
- * geometric character expression that stays 100% consistent across renders.
+ * Twelve restrained harmonic palettes. Each agent name hashes to a stable
+ * foreground/background pair for its mirrored Identicon across every render.
  */
 const MAIN_AVATAR_THEME: AvatarTheme = {
   bg: "#18181b",
@@ -290,71 +289,60 @@ export function resolveAgentIdentity(rawActor: string): AgentIdentity {
 }
 
 /**
- * Deterministic Boring-Avatars Beam style character SVG generator.
- * Produces a unique, expressive, friendly geometric face for each agent
- * identifier without any random runtime drift.
+ * GitHub-style deterministic Identicon. Fifteen hash-driven cells are mirrored
+ * into a five-by-five grid, giving every agent a stable editorial glyph without
+ * random runtime drift or decorative faces.
  */
-function DeterministicBeamSvg({ actor }: { actor: string }) {
+function DeterministicIdenticonSvg({ actor }: { actor: string }) {
   const lower = (actor.trim() || "main").toLowerCase();
   const isMain =
     lower === "main" || lower === "orchestrator" || lower === "主笔";
   const hash = fnv1aHash(lower);
+  const gridHash = fnv1aHash(`${lower}:identicon-grid`);
   const theme = isMain
     ? MAIN_AVATAR_THEME
     : (AVATAR_THEMES[1 + (hash % (AVATAR_THEMES.length - 1))] ??
       MAIN_AVATAR_THEME);
 
-  const tx = ((hash & 0x07) - 3) * 1.1;
-  const ty = (((hash >> 3) & 0x07) - 3) * 1.1;
-  const rotate = (((hash >> 6) & 0x0f) - 7) * 1.5;
-  const eyeSpread = 3.6 + ((hash >> 10) & 0x03) * 0.55;
-  const eyeY = 14.5 + ((hash >> 12) & 0x03) * 0.5;
-  const mouthSmile = (hash >> 14) & 0x01;
-  const orbX = 6 + ((hash >> 15) & 0x0f);
-  const orbY = 6 + ((hash >> 19) & 0x0f);
+  const generatedRows = Array.from({ length: 5 }, (_, row) => {
+    let mask = 0;
+    for (let column = 0; column < 3; column += 1) {
+      const bit = row * 3 + column;
+      if (((gridHash >>> bit) & 1) === 1) {
+        mask |= (1 << column) | (1 << (4 - column));
+      }
+    }
+    return mask;
+  });
+  const rows = generatedRows.some((mask) => mask !== 0)
+    ? generatedRows
+    : [0, 0, 0b00100, 0, 0];
+  const ink = isMain ? theme.accent : theme.face;
 
   return (
     <svg
-      viewBox="0 0 36 36"
+      viewBox="0 0 40 40"
       fill="none"
       role="img"
       aria-hidden="true"
+      shapeRendering="crispEdges"
       className="size-full overflow-hidden rounded-full"
     >
-      <rect width="36" height="36" rx="18" fill={theme.bg} />
-      <circle cx={orbX} cy={orbY} r="10" fill={theme.accent} opacity="0.32" />
-      <g
-        transform={`translate(${tx.toFixed(1)} ${ty.toFixed(1)}) rotate(${rotate.toFixed(1)} 18 18)`}
-      >
-        <rect
-          x="5"
-          y="7"
-          width="26"
-          height="26"
-          rx="11"
-          fill={theme.face}
-        />
-        <circle cx={18 - eyeSpread} cy={eyeY} r="1.65" fill={theme.ink} />
-        <circle cx={18 + eyeSpread} cy={eyeY} r="1.65" fill={theme.ink} />
-        {mouthSmile ? (
-          <path
-            d={`M 15 ${eyeY + 5} Q 18 ${eyeY + 8} 21 ${eyeY + 5}`}
-            stroke={theme.ink}
-            strokeWidth="1.65"
-            strokeLinecap="round"
-            fill="none"
-          />
-        ) : (
-          <rect
-            x="15.5"
-            y={eyeY + 4.5}
-            width="5"
-            height="1.6"
-            rx="0.8"
-            fill={theme.ink}
-          />
-        )}
-      </g>
+      <rect width="40" height="40" rx="20" fill={theme.bg} />
+      {rows.flatMap((mask, row) =>
+        Array.from({ length: 5 }, (_, column) =>
+          (mask & (1 << column)) !== 0 ? (
+            <rect
+              key={`${row}-${column}`}
+              x={5 + column * 6}
+              y={5 + row * 6}
+              width="6"
+              height="6"
+              fill={ink}
+            />
+          ) : null,
+        ),
+      )}
     </svg>
   );
 }
@@ -389,7 +377,7 @@ export const AgentAvatar = memo(function AgentAvatar({
         className,
       )}
     >
-      <DeterministicBeamSvg actor={identity.actor} />
+      <DeterministicIdenticonSvg actor={identity.actor} />
     </span>
   );
 });

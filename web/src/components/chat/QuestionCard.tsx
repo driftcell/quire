@@ -2,11 +2,11 @@ import { useState } from "react";
 import {
   CheckCircle2Icon,
   CheckIcon,
+  ChevronDownIcon,
   HelpCircleIcon,
   SkipForwardIcon,
 } from "lucide-react";
 import { cn } from "cn";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Questionnaire,
   QuestionnaireActions,
@@ -223,128 +223,155 @@ export function QuestionCard({
     onSubmit(answers, false);
   };
 
-  return (
-    <Card
-      className={
-        isFrozen
-          ? "my-3 border-border/70 bg-muted/25 shadow-none"
-          : "my-3 border-primary/25 shadow-sm"
-      }
-    >
-      <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
-          {resolvedState?.status === "answered" ? (
-            <CheckCircle2Icon className="size-4 text-emerald-600" />
-          ) : resolvedState ? (
-            <SkipForwardIcon className="size-4 text-muted-foreground" />
+  const frozenTitle =
+    resolvedState?.status === "answered"
+      ? pending.questions.length === 1
+        ? `已确认：${pending.questions[0]?.title ?? "研究参数"}`
+        : `已确认 ${pending.questions.length} 项选择`
+      : resolvedState?.status === "skipped"
+        ? "已跳过问题确认"
+        : "已改用新消息继续";
+
+  if (isFrozen) {
+    return (
+      <details
+        data-slot="question-card"
+        data-state={resolvedState.status}
+        className="group/decision my-3 border-l-2 border-border/80 pl-3.5"
+      >
+        <summary className="flex min-h-7 cursor-pointer list-none items-center gap-2 rounded-sm text-xs text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none [&::-webkit-details-marker]:hidden">
+          {resolvedState.status === "answered" ? (
+            <CheckCircle2Icon
+              aria-hidden
+              className="size-3.5 shrink-0 text-emerald-600"
+            />
           ) : (
-            <HelpCircleIcon className="size-4 text-primary" />
+            <SkipForwardIcon
+              aria-hidden
+              className="size-3.5 shrink-0 text-muted-foreground"
+            />
           )}
-          <span>
-            {resolvedState?.status === "answered"
-              ? "已提交问题回答"
-              : resolvedState?.status === "skipped"
-                ? "已跳过问题"
-                : resolvedState?.status === "dismissed"
-                  ? "已忽略问题"
-                  : "Agent 需要你的确认"}
+          <span className="min-w-0 flex-1 truncate" title={frozenTitle}>
+            {frozenTitle}
           </span>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isFrozen ? (
+          <ChevronDownIcon
+            aria-hidden
+            className="size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200 group-open/decision:rotate-180 motion-reduce:transition-none"
+          />
+        </summary>
+        <div className="py-3 pr-1">
           <QuestionReview
             questions={pending.questions}
             answers={answerByQ}
             status={resolvedState.status}
           />
-        ) : (
-          <>
-            {pending.questions.length > 1 && (
-              <QuestionNav
-                questions={pending.questions}
-                activeId={activeQuestionId}
-                selectedByQ={selectedByQ}
-                freeformByQ={freeformByQ}
-                onSelect={setActiveQuestionId}
-              />
-            )}
-            <Questionnaire
-              item={activeQuestionId || undefined}
-              onItemChange={setActiveQuestionId}
-              onSubmit={(event) => {
-                event.preventDefault();
-                handleSubmit();
-              }}
-            >
-              {pending.questions.map((question) => {
-                const selected = selectedByQ[question.id] ?? [];
-                const freeform = freeformByQ[question.id] ?? "";
-                const options = question.options ?? [];
-                return (
-                  <QuestionnaireItem
-                    key={question.id}
-                    name={question.id}
-                    multiple={question.multiple}
-                  >
-                    <QuestionnaireTitle>{question.title}</QuestionnaireTitle>
-                    {question.description && (
-                      <QuestionnaireDescription>
-                        {question.description}
-                      </QuestionnaireDescription>
-                    )}
-                    {options.length > 0 && (
-                      <QuestionnaireChoices>
-                        {options.map((option) => (
-                          <QuestionnaireChoice
-                            key={option.id}
-                            value={option.id}
-                            checked={selected.includes(option.id)}
-                            onChange={() => toggleOption(question, option.id)}
-                          >
-                            <span>{option.label}</span>
-                            {option.description && (
-                              <QuestionnaireChoiceDescription>
-                                {option.description}
-                              </QuestionnaireChoiceDescription>
-                            )}
-                          </QuestionnaireChoice>
-                        ))}
-                      </QuestionnaireChoices>
-                    )}
-                    <QuestionnaireInput
-                      aria-label={`${question.title} 补充说明`}
-                      placeholder="自由补充说明（可选）…"
-                      value={freeform}
-                      onChange={(event) => {
-                        const value = event.target.value;
-                        setFreeformByQ((prev) => ({
-                          ...prev,
-                          [question.id]: value,
-                        }));
-                      }}
-                    />
-                    <QuestionnaireActions>
-                      <QuestionnairePrevious />
-                      <QuestionnaireSkip
-                        type="button"
-                        disabled={isSubmitting}
-                        onClick={() => onSubmit([], true)}
-                      >
-                        跳过全部
-                      </QuestionnaireSkip>
-                      <QuestionnaireNext />
-                      <QuestionnaireSubmit disabled={isSubmitting}>
-                        {isSubmitting ? "提交中…" : "提交回答"}
-                      </QuestionnaireSubmit>
-                    </QuestionnaireActions>
-                  </QuestionnaireItem>
-                );
-              })}
-            </Questionnaire>
-          </>
+        </div>
+      </details>
+    );
+  }
+
+  return (
+    <section
+      data-slot="question-card"
+      data-state="pending"
+      aria-label="需要你的确认"
+      aria-busy={isSubmitting}
+      className="my-3 rounded-xl border border-[#1D4ED8]/45 bg-[#1D4ED8]/[0.025] p-4"
+    >
+      <header className="flex items-center gap-2 text-sm font-medium text-foreground">
+        <HelpCircleIcon aria-hidden className="size-4 text-[#1D4ED8]" />
+        <span>需要你的确认</span>
+        {pending.questions.length > 1 && (
+          <span className="ml-auto text-[11px] font-normal text-muted-foreground tabular-nums">
+            {pending.questions.length} 项
+          </span>
         )}
-      </CardContent>
-    </Card>
+      </header>
+      <div className="mt-3">
+        {pending.questions.length > 1 && (
+          <QuestionNav
+            questions={pending.questions}
+            activeId={activeQuestionId}
+            selectedByQ={selectedByQ}
+            freeformByQ={freeformByQ}
+            onSelect={setActiveQuestionId}
+          />
+        )}
+        <Questionnaire
+          item={activeQuestionId || undefined}
+          onItemChange={setActiveQuestionId}
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSubmit();
+          }}
+        >
+          {pending.questions.map((question) => {
+            const selected = selectedByQ[question.id] ?? [];
+            const freeform = freeformByQ[question.id] ?? "";
+            const options = question.options ?? [];
+            return (
+              <QuestionnaireItem
+                key={question.id}
+                name={question.id}
+                multiple={question.multiple}
+              >
+                <QuestionnaireTitle>{question.title}</QuestionnaireTitle>
+                {question.description && (
+                  <QuestionnaireDescription>
+                    {question.description}
+                  </QuestionnaireDescription>
+                )}
+                {options.length > 0 && (
+                  <QuestionnaireChoices>
+                    {options.map((option) => (
+                      <QuestionnaireChoice
+                        key={option.id}
+                        value={option.id}
+                        checked={selected.includes(option.id)}
+                        onChange={() => toggleOption(question, option.id)}
+                      >
+                        <span>{option.label}</span>
+                        {option.description && (
+                          <QuestionnaireChoiceDescription>
+                            {option.description}
+                          </QuestionnaireChoiceDescription>
+                        )}
+                      </QuestionnaireChoice>
+                    ))}
+                  </QuestionnaireChoices>
+                )}
+                <QuestionnaireInput
+                  aria-label={`${question.title} 补充说明`}
+                  autoComplete="off"
+                  placeholder="自由补充说明（可选）…"
+                  value={freeform}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setFreeformByQ((prev) => ({
+                      ...prev,
+                      [question.id]: value,
+                    }));
+                  }}
+                />
+                <QuestionnaireActions>
+                  <QuestionnairePrevious>上一题</QuestionnairePrevious>
+                  <QuestionnaireSkip
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => onSubmit([], true)}
+                  >
+                    跳过全部
+                  </QuestionnaireSkip>
+                  <QuestionnaireNext>下一题</QuestionnaireNext>
+                  <QuestionnaireSubmit disabled={isSubmitting}>
+                    {isSubmitting ? "提交中…" : "提交回答"}
+                  </QuestionnaireSubmit>
+                </QuestionnaireActions>
+              </QuestionnaireItem>
+            );
+          })}
+        </Questionnaire>
+      </div>
+    </section>
   );
 }

@@ -2,10 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentAvatar } from "@/components/chat/agentAvatar";
 import { buildChatRichContext } from "@/components/chat/chatRichContext";
-import {
-  HistoricalRunTrace,
-  LiveTraceSegments,
-} from "@/components/chat/ExecutionTraceSection";
+import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
 import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
 import {
   buildHistoricalMilestones,
@@ -15,13 +12,12 @@ import {
 import {
   buildHistoricalRunStatusModel,
   buildLiveRunStatusModel,
-  buildLiveSegments,
 } from "@/components/chat/traceSegments";
 import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
-describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
-  test("buildLiveRunStatusModel tracks main agent and subagent Todo Lists without sticky occlusion, duplicate spinners, or shimmer", () => {
+describe("RunStatusModel & Borderless Editorial Stream", () => {
+  test("live ledger focuses on current work, next steps, and specialist status", () => {
     const liveMain: LiveAgentTrace = {
       runId: "run_1",
       agentId: "main",
@@ -110,7 +106,12 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
               { title: "检索国自然立项数据", status: "in_progress" },
             ],
           },
-          segments: [],
+          segments: [
+            {
+              kind: "text",
+              text: "已核验国自然立项数据，形成可直接用于报告的分析结论。",
+            },
+          ],
         },
       },
     ];
@@ -138,7 +139,7 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
       <RunActivityHeader
         model={model}
         isStreaming={true}
-        detailsOpen={true}
+        detailsOpen={false}
         onToggleDetails={() => {}}
       />,
     );
@@ -146,11 +147,15 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     expect(html).toContain('data-slot="agent-status"');
     expect(html).toContain('data-slot="agent-plan"');
     expect(html).toContain('data-slot="subagent-list"');
-    expect(html).toContain('data-slot="subagent-todo-list"');
-    expect(html).toContain("第一阶段：构建报告框架");
+    expect(html).toContain('data-presentation="ledger"');
+    expect(html).not.toContain('data-slot="subagent-todo-list"');
+    expect(html).not.toContain('data-slot="agent-plan-progress"');
+    expect(html).not.toContain('data-slot="subagent-progress"');
+    expect(html).not.toContain('data-live-progress-tools="true"');
+    expect(html).not.toContain("第一阶段：构建报告框架");
     expect(html).toContain("正在统筹撰写双优建设报告");
     expect(html).toContain("第三阶段：全局质检与终审");
-    expect(html).toContain("1 of 3");
+    expect(html).toContain("执行计划，共 3 步，当前第 2 步");
     expect(html).toContain('data-subagent-pill="sub_1"');
     expect(html).toContain("检索国自然立项数据");
     // Never sticky (prevents occluding QuestionCard on scroll)
@@ -161,19 +166,27 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     // Elapsed time must appear only ONCE in the header
     expect(html.split("14秒").length - 1).toBe(1);
 
-    const liveSegments = buildLiveSegments(liveMain, subagents);
-    const detailsHtml = renderToStaticMarkup(
-      <LiveTraceSegments
-        sessionId="sess_1"
-        trace={liveMain}
-        subagents={subagents}
-        segments={liveSegments}
+    const expandedHtml = renderToStaticMarkup(
+      <RunActivityHeader
+        model={model}
+        isStreaming={true}
         detailsOpen={true}
+        onToggleDetails={() => {}}
       />,
     );
+    expect(expandedHtml).toContain("第一阶段：构建报告框架");
+
+    expect(expandedHtml).toContain('data-slot="subagent-todo-list"');
+    expect(expandedHtml).toContain("查询教育部经费公报");
+    expect(expandedHtml).toContain("检索国自然立项数据");
+    expect(expandedHtml).not.toContain('data-slot="subagent-output"');
+    expect(expandedHtml).not.toContain('data-slot="semantic-action-pills"');
+    expect(expandedHtml).not.toContain(
+      "已核验国自然立项数据，形成可直接用于报告的分析结论。",
+    );
     // Raw chain-of-thought thinking must never leak into the user-facing UI
-    expect(detailsHtml).not.toContain("内部推理过程不应在用户聊天界面中暴露");
-    expect(detailsHtml).not.toContain("animate-spin");
+    expect(expandedHtml).not.toContain("内部推理过程不应在用户聊天界面中暴露");
+    expect(expandedHtml).not.toContain("animate-spin");
   });
 
   test("buildHistoricalRunStatusModel preserves structure after completion and supports chat-only upsert_sources", () => {
@@ -242,7 +255,10 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
               display_name: "数据检索员",
               task: "检索数据",
               status: "completed",
-              task_focus: { title: "完成数据核验" },
+              task_focus: {
+                title: "完成数据核验",
+                todos: [{ title: "完成数据核验", status: "completed" }],
+              },
               segments: [],
             },
           ],
@@ -278,14 +294,31 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     );
     expect(html).toContain('data-live-header="true"');
     expect(html).toContain('data-status="completed"');
-    expect(html).toContain('data-slot="agent-plan"');
-    expect(html).toContain("2 of 2");
-    expect(html).toContain("2 次工具");
-    expect(html).toContain("1 个子代理");
-    expect(html).toContain("完成数据核验");
+    expect(html).toContain('data-presentation="receipt"');
+    expect(html).not.toContain('data-slot="agent-plan"');
+    expect(html).not.toContain('data-slot="subagent-list"');
+    expect(html).not.toContain('data-live-progress-tools="true"');
+    expect(html).not.toContain('data-live-progress-subagents="true"');
+    expect(html).not.toContain("完成数据核验");
     expect(html).toContain('data-live-header-jump="true"');
     expect(html).toContain("定位章节");
     expect(html.split("14秒").length - 1).toBe(1);
+
+    const expandedHistorical = renderToStaticMarkup(
+      <RunActivityHeader
+        model={model}
+        isStreaming={false}
+        detailsOpen={true}
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(expandedHistorical).toContain("阶段一：采集经费来源");
+    expect(expandedHistorical).toContain('data-slot="subagent-todo-list"');
+    expect(expandedHistorical).toContain("完成数据核验");
+    expect(expandedHistorical).not.toContain('data-slot="subagent-output"');
+    expect(expandedHistorical).not.toContain(
+      'data-slot="semantic-action-pills"',
+    );
 
     const traceHtml = renderToStaticMarkup(
       <HistoricalRunTrace
@@ -294,8 +327,9 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
         onJumpToSection={() => {}}
       />,
     );
-    expect(traceHtml).toContain('data-slot="agent-plan"');
-    expect(traceHtml).toContain("阶段一：采集经费来源");
+    expect(traceHtml).toContain('data-presentation="receipt"');
+    expect(traceHtml).not.toContain('data-slot="agent-plan"');
+    expect(traceHtml).not.toContain("阶段一：采集经费来源");
     expect(traceHtml).not.toContain("历史内部思考文本同样不向终端用户展示");
 
     // Verify pure chat-session source extraction without a report document
@@ -348,7 +382,7 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     expect(pills[1]?.targets).toEqual([]);
   });
 
-  test("AgentAvatar renders deterministic unique character SVG per agent without pulsing dots", () => {
+  test("AgentAvatar renders deterministic mirrored Identicons without pulsing dots", () => {
     const mainHtml = renderToStaticMarkup(
       <AgentAvatar actor="main" active={true} />,
     );
@@ -360,6 +394,21 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     );
     expect(mainHtml).toContain("<svg");
     expect(mainHtml).not.toContain("animate-pulse");
+    expect(
+      renderToStaticMarkup(<AgentAvatar actor="main" active={true} />),
+    ).toBe(mainHtml);
+    const cells = Array.from(
+      mainHtml.matchAll(/<rect x="(\d+)" y="(\d+)" width="6"/g),
+      (match) => ({ x: Number(match[1]), y: Number(match[2]) }),
+    );
+    expect(cells.length).toBeGreaterThan(0);
+    for (const cell of cells) {
+      expect(
+        cells.some(
+          (candidate) => candidate.y === cell.y && candidate.x === 34 - cell.x,
+        ),
+      ).toBe(true);
+    }
     expect(analystHtml).not.toEqual(writerHtml);
     expect(mainHtml).not.toEqual(analystHtml);
   });

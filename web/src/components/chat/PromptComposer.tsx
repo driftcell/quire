@@ -251,6 +251,9 @@ export function PromptComposer({
 
   const isRunning = runStatus === "running";
   const canRetry = runStatus === "interrupted" || runStatus === "failed";
+  const composerPlaceholder = isRunning
+    ? "任务进行中，输入后按 Enter 排队（Shift + Enter 换行）…"
+    : placeholder;
 
   const used = contextUsage?.context_used ?? 0;
   const limit = contextUsage?.context_limit ?? 0;
@@ -407,17 +410,14 @@ export function PromptComposer({
         </div>
       )}
 
-      {isRunning && (
-        <div className="px-1 text-[11px] text-muted-foreground">
-          正在处理当前任务，新发送的内容将自动排队
-        </div>
-      )}
-
       <InputGroup className="rounded-2xl bg-card shadow-xs">
         <InputGroupTextarea
           ref={textareaRef}
+          name="prompt"
+          autoComplete="off"
+          aria-label={isRunning ? "输入排队消息" : "输入问题或修改要求"}
           value={text}
-          placeholder={placeholder}
+          placeholder={composerPlaceholder}
           rows={2}
           disabled={disabled || sending}
           className="max-h-40 min-h-12 resize-none px-3.5 pt-3 text-sm"

@@ -418,7 +418,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
 
   const rightPane = (
     <SessionRightPane
-      title={sessionQuery.data?.title ?? "加载中…"}
       openCommentsCount={openCommentsCount}
       activeTab={rightTab}
       onTabChange={setRightTab}

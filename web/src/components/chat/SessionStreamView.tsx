@@ -314,7 +314,7 @@ export function SessionStreamView({
     >
       <MessageScroller className="h-full">
         <MessageScrollerViewport className="px-4 data-[pending-scroll]:opacity-0">
-          <MessageScrollerContent className={`${contentClassName} gap-5 py-5`}>
+          <MessageScrollerContent className={`${contentClassName} gap-6 py-6`}>
             {visibleMessages.map((msg) => {
               const trace = msg.run_id
                 ? traceByRunId.get(msg.run_id)

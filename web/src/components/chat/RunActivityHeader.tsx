@@ -4,18 +4,13 @@ import {
   CheckIcon,
   ChevronDownIcon,
   CompassIcon,
+  MinusIcon,
 } from "lucide-react";
 import { cn } from "cn";
 import {
-  AgentPlan,
-  type AgentPlanStep,
-} from "@/components/assistant-ui/elements/agent-plan";
-import {
-  SubagentList,
-  type SubagentItem,
-} from "@/components/assistant-ui/elements/subagent-list";
-import { mono, paper } from "@/components/assistant-ui/elements/surfaces";
-import { resolveAgentIdentity } from "@/components/chat/agentAvatar";
+  AgentAvatar,
+  resolveAgentIdentity,
+} from "@/components/chat/agentAvatar";
 import { StopTurnButton } from "@/components/chat/StopTurnButton";
 import type { RunStatusModel } from "@/components/chat/traceSegments";
 
@@ -28,11 +23,224 @@ export interface RunActivityHeaderProps {
   onInterrupt?: () => Promise<void>;
 }
 
+type LedgerStepStatus = "pending" | "in_progress" | "completed" | "skipped";
+
+interface LedgerStep {
+  id: string;
+  label: string;
+  description?: string;
+  status: LedgerStepStatus;
+}
+
+function LedgerStepIcon({ status }: { status: LedgerStepStatus }) {
+  if (status === "completed") {
+    return <CheckIcon aria-hidden className="size-3.5 text-emerald-600" />;
+  }
+  if (status === "skipped") {
+    return (
+      <MinusIcon aria-hidden className="size-3 text-muted-foreground/50" />
+    );
+  }
+  if (status === "in_progress") {
+    return (
+      <span
+        aria-hidden
+        className="size-1.5 rounded-full bg-[#1D4ED8] ring-2 ring-[#1D4ED8]/15"
+      />
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="size-1.5 rounded-full border border-foreground/25"
+    />
+  );
+}
+
+function PlanLedger({
+  steps,
+  expanded,
+}: {
+  steps: LedgerStep[];
+  expanded: boolean;
+}) {
+  const activeIndex = steps.findIndex((step) => step.status === "in_progress");
+  const pendingIndex = steps.findIndex((step) => step.status === "pending");
+  const startIndex =
+    activeIndex >= 0
+      ? activeIndex
+      : pendingIndex >= 0
+        ? pendingIndex
+        : Math.max(0, steps.length - 1);
+  const visibleSteps = expanded
+    ? steps
+    : steps.slice(startIndex, startIndex + 2);
+
+  return (
+    <ol
+      data-slot="agent-plan"
+      data-presentation="ledger"
+      aria-label={`执行计划，共 ${steps.length} 步，当前第 ${startIndex + 1} 步`}
+      className="mt-3 flex flex-col gap-2"
+    >
+      {visibleSteps.map((step) => (
+        <li
+          key={step.id}
+          data-step-status={step.status}
+          className="flex items-start gap-2.5 text-[12.5px] leading-5"
+        >
+          <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center">
+            <LedgerStepIcon status={step.status} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <span
+              className={cn(
+                "block break-words",
+                step.status === "completed" && "text-muted-foreground",
+                step.status === "in_progress" && "font-medium text-foreground",
+                step.status === "pending" && "text-muted-foreground/75",
+                step.status === "skipped" &&
+                  "text-muted-foreground/50 line-through",
+              )}
+            >
+              {step.label}
+            </span>
+            {step.status === "in_progress" && step.description && (
+              <span className="mt-0.5 block text-xs leading-5 text-pretty text-muted-foreground">
+                {step.description}
+              </span>
+            )}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function SubagentLedger({
+  model,
+  expanded,
+  onExpand,
+}: {
+  model: RunStatusModel;
+  expanded: boolean;
+  onExpand: () => void;
+}) {
+  const visibleSubagents = expanded
+    ? model.subagents
+    : model.subagents.slice(0, 4);
+  const hiddenCount = model.subagents.length - visibleSubagents.length;
+
+  return (
+    <div
+      data-slot="subagent-list"
+      data-presentation="ledger"
+      className="mt-3.5 flex flex-col gap-3"
+    >
+      {visibleSubagents.map((sub) => {
+        const identity = resolveAgentIdentity(sub.actor);
+        const statusLabel =
+          sub.status === "running"
+            ? "进行中"
+            : sub.status === "failed"
+              ? "未完成"
+              : "已完成";
+
+        return (
+          <div
+            key={sub.id}
+            data-subagent-pill={sub.id}
+            data-status={sub.status}
+            className="flex items-start gap-2.5"
+          >
+            <AgentAvatar actor={sub.actor} size="xs" className="mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+                  {identity.label}
+                </span>
+                <span
+                  className={cn(
+                    "shrink-0 text-[11px] text-muted-foreground tabular-nums",
+                    sub.status === "failed" && "text-destructive",
+                  )}
+                >
+                  {statusLabel}
+                </span>
+              </div>
+              {sub.status === "running" && (
+                <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-pretty break-words text-muted-foreground">
+                  {sub.activityText}
+                </p>
+              )}
+              {expanded && sub.todos.length > 0 && (
+                <ol
+                  data-slot="subagent-todo-list"
+                  className="mt-2 flex flex-col gap-1.5"
+                >
+                  {sub.todos.map((todo, index) => (
+                    <li
+                      key={todo.id ?? `${sub.id}-todo-${index}`}
+                      data-step-status={todo.status}
+                      className="flex items-start gap-2 text-xs leading-5"
+                    >
+                      <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
+                        <LedgerStepIcon status={todo.status} />
+                      </span>
+                      <span
+                        className={cn(
+                          "min-w-0 break-words",
+                          todo.status === "completed" &&
+                            "text-muted-foreground",
+                          todo.status === "in_progress" &&
+                            "font-medium text-foreground",
+                          todo.status === "pending" &&
+                            "text-muted-foreground/75",
+                          todo.status === "skipped" &&
+                            "text-muted-foreground/50 line-through",
+                        )}
+                      >
+                        {todo.title}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          data-slot="subagent-ledger-more"
+          onClick={onExpand}
+          className="ml-7.5 w-fit rounded-md px-1 py-0.5 text-left text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          另有 {hiddenCount} 位协同角色，展开查看
+        </button>
+      )}
+    </div>
+  );
+}
+
+function settledTitle(model: RunStatusModel): string {
+  if (model.status !== "completed") {
+    return model.title;
+  }
+  if (model.title.startsWith("正在")) {
+    return `已完成${model.title.slice(2)}`;
+  }
+  if (model.title.includes("完成")) {
+    return model.title;
+  }
+  return `已完成${model.title}`;
+}
+
 /**
- * Disciplined, User-Centric Agent Activity Card:
- * 1. NEVER sticky (`sticky top-0` removed): scrolls naturally in the document flow so it never occludes `QuestionCard` or streaming answers.
- * 2. Single restrained motion indicator: uses ONE subtle breathing blue dot (`animate-pulse`) when running—no `shimmer` text paired with spinning `Loader2Icon`, and zero multiple spinners on screen.
- * 3. Clear focus on WHAT the Agent is doing right now (`model.title` & `model.detail`), the research checklist (`AgentPlan`), and parallel specialist tasks (`SubagentList`).
+ * Borderless editorial run ledger. Live work stays visible as a calm left-rule
+ * checklist; settled runs collapse to a one-line receipt so the answer remains
+ * the primary content. It intentionally never uses sticky positioning.
  */
 export const RunActivityHeader = memo(function RunActivityHeader({
   model,
@@ -42,138 +250,68 @@ export const RunActivityHeader = memo(function RunActivityHeader({
   onJumpToSection,
   onInterrupt,
 }: RunActivityHeaderProps) {
-  const completedSubagents = model.subagents.filter(
-    (s) => s.status !== "running",
-  ).length;
   const subCount = model.subagents.length;
-  const isFailed =
-    model.status === "failed" || model.status === "interrupted";
+  const isFailed = model.status === "failed" || model.status === "interrupted";
 
-  const planSteps: AgentPlanStep[] =
+  const planSteps: LedgerStep[] =
     model.todos.length > 0
-      ? model.todos.map((todo, idx) => ({
-          id: todo.id ?? `todo-${idx}`,
+      ? model.todos.map((todo, index) => ({
+          id: todo.id ?? `todo-${index}`,
           label: todo.title,
           description: todo.detail ?? undefined,
           status: todo.status,
         }))
-      : model.milestones.length > 0
-        ? model.milestones.map((ms) => ({
-            id: ms.id,
-            label: ms.title,
-            description: ms.detail,
+      : model.milestones
+          .filter((milestone) => milestone.isExplicitStage)
+          .map((milestone) => ({
+            id: milestone.id,
+            label: milestone.title,
+            description: milestone.detail,
             status:
-              ms.status === "running"
-                ? ("in_progress" as const)
-                : ("completed" as const),
-          }))
-        : [
-            {
-              id: "default-plan-step",
-              label: model.title,
-              description: model.detail,
-              status: isStreaming
-                ? ("in_progress" as const)
-                : ("completed" as const),
-            },
-          ];
+              milestone.status === "running"
+                ? "in_progress"
+                : milestone.status === "failed"
+                  ? "pending"
+                  : "completed",
+          }));
 
-  const hasMultiStepPlan =
-    model.todos.length > 0 || planSteps.length > 1;
-
-  const activeTodoIndex = planSteps.findIndex(
-    (s) => s.status === "in_progress",
-  );
-  const activePlanIndex = isStreaming
-    ? activeTodoIndex >= 0
-      ? activeTodoIndex
-      : Math.max(
-          0,
-          planSteps.filter(
-            (s) => s.status === "completed" || s.status === "skipped",
-          ).length,
-        )
-    : planSteps.length;
-
-  const subagentItems: SubagentItem[] = model.subagents.map((sub) => {
-    const identity = resolveAgentIdentity(sub.actor);
-    const subTodos: AgentPlanStep[] = sub.todos.map((t, idx) => ({
-      id: t.id ?? `${sub.id}-todo-${idx}`,
-      label: t.title,
-      description: t.detail ?? undefined,
-      status: t.status,
-    }));
-    const completedTodos = subTodos.filter(
-      (t) => t.status === "completed" || t.status === "skipped",
-    ).length;
-
-    const progressBadge =
-      subTodos.length > 0
-        ? `${completedTodos}/${subTodos.length}`
-        : identity.role;
-
-    return {
-      id: sub.id,
-      actor: sub.actor,
-      name: `${identity.label} · ${sub.activityText}`,
-      model: progressBadge,
-      status: sub.status,
-      detail: sub.task,
-      todos: subTodos.length > 0 ? subTodos : undefined,
-    };
-  });
-
-  const subagentProgress: number[] = model.subagents.map((sub) => {
-    if (sub.todos.length > 0) {
-      const doneCount = sub.todos.filter(
-        (t) => t.status === "completed" || t.status === "skipped",
-      ).length;
-      return Math.min(100, Math.round((doneCount / sub.todos.length) * 100));
-    }
-    if (sub.toolCount > 0) {
-      return Math.min(
-        100,
-        Math.round((sub.completedToolCount / sub.toolCount) * 100),
-      );
-    }
-    return sub.status === "running" ? 45 : 100;
-  });
-
-  const hasExpandableStages =
-    model.milestones.some(
-      (ms) => ms.semanticPills.length > 0 || ms.subagents.length > 0,
-    ) || model.milestones.length > 1;
+  const hasMultiStepPlan = model.todos.length > 0 || planSteps.length > 1;
+  const hasExpandableStages = planSteps.length > 0 || subCount > 0;
 
   return (
-    <div
+    <section
       data-live-header="true"
       data-agent-canvas="true"
       data-status={model.status}
+      data-presentation={isStreaming ? "ledger" : "receipt"}
+      aria-label={isStreaming ? "当前执行进度" : "执行回执"}
       className={cn(
-        paper,
-        "relative flex w-full flex-col gap-2.5 overflow-hidden rounded-xl px-3.5 py-2.5 text-xs leading-5 transition-colors",
-        isStreaming && "border-foreground/15 bg-card shadow-2xs",
-        isFailed && "border-destructive/35 bg-destructive/5",
+        "relative w-full border-l-2 py-0.5 pl-3.5 text-xs",
+        isStreaming
+          ? "border-[#1D4ED8]"
+          : isFailed
+            ? "border-destructive/60"
+            : "border-border/80",
       )}
     >
-      {/* Top Bar: Single Restrained Status Indicator + Current Agent Action + Elapsed Time */}
-      <div className="flex min-h-6 w-full items-center gap-2">
+      <div className="flex min-w-0 items-start gap-1.5">
         <button
           type="button"
           data-live-header-toggle="true"
           data-activity-trigger="true"
           aria-expanded={detailsOpen}
+          aria-label={detailsOpen ? "收起执行过程" : "展开执行过程"}
           onClick={onToggleDetails}
-          className="group/canvas flex min-w-0 flex-1 items-center gap-2.5 rounded-md text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="group/canvas flex min-w-0 flex-1 items-start gap-2.5 rounded-sm py-0.5 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           <span
             data-slot="agent-status"
-            className="flex size-4 shrink-0 items-center justify-center"
+            className="mt-1 flex size-4 shrink-0 items-center justify-center"
           >
             {isStreaming ? (
               <span
                 aria-hidden
-                className="size-2 rounded-full bg-[#1D4ED8] ring-4 ring-[#1D4ED8]/15 animate-pulse motion-reduce:animate-none"
+                className="size-2 animate-pulse rounded-full bg-[#1D4ED8] ring-4 ring-[#1D4ED8]/15 motion-reduce:animate-none"
               />
             ) : isFailed ? (
               <AlertCircleIcon
@@ -181,55 +319,31 @@ export const RunActivityHeader = memo(function RunActivityHeader({
                 className="size-3.5 text-destructive"
               />
             ) : (
-              <CheckIcon aria-hidden className="size-3.5 text-emerald-500" />
+              <CheckIcon aria-hidden className="size-3.5 text-emerald-600" />
             )}
           </span>
 
-          <div className="flex min-w-0 flex-1 flex-col">
+          <span className="min-w-0 flex-1">
             <span
-              className="min-w-0 truncate text-[13px] font-medium text-foreground"
               title={model.title}
+              className={cn(
+                "block break-words text-[13px] font-medium text-foreground",
+                isStreaming ? "text-pretty leading-5" : "truncate leading-5.5",
+              )}
             >
-              {model.title}
+              {isStreaming ? model.title : settledTitle(model)}
             </span>
-            {model.detail && (
-              <span
-                className="min-w-0 truncate text-[11.5px] text-muted-foreground"
-                title={model.detail}
-              >
-                {model.detail}
-              </span>
-            )}
-          </div>
+          </span>
 
-          <span
-            className={cn(
-              mono,
-              "ml-auto flex shrink-0 items-center gap-2 text-muted-foreground tabular-nums",
-            )}
-          >
-            {model.toolCount > 0 && (
-              <span data-live-progress-tools="true" className="sr-only">
-                {isStreaming
-                  ? `工具 ${model.completedToolCount}/${model.toolCount}`
-                  : `${model.toolCount} 次工具`}
-              </span>
-            )}
-            {subCount > 0 && (
-              <span data-live-progress-subagents="true" className="sr-only">
-                {isStreaming
-                  ? `子代理 ${completedSubagents}/${subCount}`
-                  : `${subCount} 个子代理`}
-              </span>
-            )}
-            {model.elapsedLabel && (
+          <span className="ml-auto flex shrink-0 items-center gap-1.5 pt-0.5 text-[11px] text-muted-foreground tabular-nums">
+            {!isStreaming && model.elapsedLabel && (
               <span data-live-elapsed="true">{model.elapsedLabel}</span>
             )}
             {hasExpandableStages && (
               <ChevronDownIcon
                 aria-hidden
                 className={cn(
-                  "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-200 group-hover/canvas:text-foreground",
+                  "size-3.5 text-muted-foreground/60 transition-transform duration-200 group-hover/canvas:text-foreground motion-reduce:transition-none",
                   detailsOpen && "rotate-180",
                 )}
               />
@@ -237,64 +351,79 @@ export const RunActivityHeader = memo(function RunActivityHeader({
           </span>
         </button>
 
-        {model.sectionId && onJumpToSection && (
+        {!isStreaming && model.sectionId && onJumpToSection && (
           <button
             type="button"
             data-live-header-jump="true"
-            aria-label="跳转到当前章节"
+            aria-label="定位至对应报告章节"
             title="定位至对应报告章节"
             onClick={() => {
               if (model.sectionId) {
                 onJumpToSection(model.sectionId);
               }
             }}
-            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border/70 bg-foreground/[0.03] px-2 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground"
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             <CompassIcon className="size-3" aria-hidden="true" />
-            <span className="hidden sm:inline">定位章节</span>
+            <span className="hidden @min-[420px]:inline">定位章节</span>
           </button>
         )}
-
-        {isStreaming && onInterrupt && (
-          <StopTurnButton onInterrupt={onInterrupt} />
-        )}
       </div>
 
-      {/* Dynamic Todo-List AgentPlan: visible when multi-step todos or stages exist */}
-      <div
-        className={cn(
-          hasMultiStepPlan ? "border-t border-border/50 pt-2.5" : "sr-only",
-        )}
-      >
-        <AgentPlan
-          steps={planSteps}
-          activeIndex={activePlanIndex}
-          hideSingleStepList={!hasMultiStepPlan}
-          className="max-w-none"
-        />
-      </div>
-
-      {/* Parallel Subagent Workstation Roster */}
-      {subCount > 0 && (
-        <div
-          data-slot="subagent-activity-strip"
-          className="border-t border-border/50 pt-2.5"
-        >
-          <SubagentList
-            agents={subagentItems}
-            completedCount={completedSubagents}
-            progress={subagentProgress}
-            showSummary={
-              isStreaming && subCount > 0 && completedSubagents === subCount
-            }
-            summaryAgent={{
-              name: model.title || "汇总各部分分析结果",
-              model: "汇总中",
-            }}
-            className="max-w-none"
-          />
+      {isStreaming && (
+        <div className="ml-6.5">
+          {model.detail && (
+            <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
+              {model.detail}
+            </p>
+          )}
+          {(model.elapsedLabel ||
+            (model.sectionId && onJumpToSection) ||
+            onInterrupt) && (
+            <div className="mt-1 flex min-h-6 items-center gap-1">
+              {model.elapsedLabel && (
+                <span
+                  data-live-elapsed="true"
+                  className="text-[11px] text-muted-foreground tabular-nums"
+                >
+                  {model.elapsedLabel}
+                </span>
+              )}
+              <span className="flex-1" />
+              {model.sectionId && onJumpToSection && (
+                <button
+                  type="button"
+                  data-live-header-jump="true"
+                  aria-label="定位至对应报告章节"
+                  title="定位至对应报告章节"
+                  onClick={() => {
+                    if (model.sectionId) {
+                      onJumpToSection(model.sectionId);
+                    }
+                  }}
+                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                >
+                  <CompassIcon className="size-3" aria-hidden="true" />
+                  <span className="hidden @min-[420px]:inline">定位章节</span>
+                </button>
+              )}
+              {onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
+            </div>
+          )}
         </div>
       )}
-    </div>
+
+      {((isStreaming && hasMultiStepPlan) ||
+        (!isStreaming && detailsOpen && planSteps.length > 0)) && (
+        <PlanLedger steps={planSteps} expanded={detailsOpen} />
+      )}
+      {(isStreaming || detailsOpen) && subCount > 0 && (
+        <SubagentLedger
+          model={model}
+          expanded={detailsOpen}
+          onExpand={onToggleDetails}
+        />
+      )}
+    </section>
   );
 });

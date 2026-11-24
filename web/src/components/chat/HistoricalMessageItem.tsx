@@ -132,7 +132,7 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
           <time
             dateTime={msg.created_at}
             title={sentAt.full}
-            className="self-end px-1 text-[10.5px] leading-none text-muted-foreground/60 tabular-nums opacity-0 transition-opacity group-hover/user:opacity-100"
+            className="self-end px-1 text-[10.5px] leading-none text-muted-foreground/60 tabular-nums opacity-0 transition-opacity group-hover/user:opacity-100 group-focus-within/user:opacity-100"
           >
             {sentAt.label}
           </time>
@@ -167,19 +167,17 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
               className={CHAT_PROSE}
             />
           )}
-          <div className="flex w-full items-center gap-2 pt-0.5">
+          <div className="flex min-h-5 w-full items-center justify-end gap-2 pt-0.5 opacity-0 transition-opacity group-hover/assistant:opacity-100 group-focus-within/assistant:opacity-100">
             {sentAt && (
               <time
                 dateTime={msg.created_at}
                 title={sentAt.full}
-                className="text-[11px] text-muted-foreground/60 tabular-nums"
+                className="text-[10.5px] text-muted-foreground/60 tabular-nums"
               >
                 {sentAt.label}
               </time>
             )}
-            <div className="ml-auto flex items-center gap-1 opacity-70 transition-opacity group-hover/assistant:opacity-100">
-              <CopyMessageButton content={copyContent} />
-            </div>
+            <CopyMessageButton content={copyContent} />
           </div>
         </MessageContent>
       </Message>

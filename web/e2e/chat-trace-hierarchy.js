@@ -601,8 +601,8 @@ async (page) => {
       `${label}: live header is not the first child of the active activity`,
     );
     assert(
-      headerState.position === "sticky" && headerState.top === "0px",
-      `${label}: live header is not sticky at the scroll container top: ${JSON.stringify(headerState)}`,
+      headerState.position !== "sticky",
+      `${label}: live header must remain in natural document flow without sticky occlusion: ${JSON.stringify(headerState)}`,
     );
     const completedHeaderCount = await page
       .locator(
@@ -636,12 +636,12 @@ async (page) => {
     loaderHeaderCount === 0,
     `live header must not render a spinner, got ${loaderHeaderCount}`,
   );
-  const sparklesCount = await page
-    .locator('[data-live-header-icon="sparkles"] svg')
+  const statusPulseCount = await page
+    .locator('[data-slot="agent-status"] .animate-pulse')
     .count();
   assert(
-    sparklesCount === 1,
-    `expected one SparklesIcon in the live header, got ${sparklesCount}`,
+    statusPulseCount === 1,
+    `expected one breathing status dot in the live header, got ${statusPulseCount}`,
   );
   const activeStopCount = await page.locator('[data-slot="stop-turn"]').count();
   assert(
@@ -658,19 +658,15 @@ async (page) => {
     !stopNestedInTrigger,
     "stop button must be a sibling of the collapse toggle, not nested inside it",
   );
-  const toolsProgress = (
-    await page.locator('[data-live-progress-tools="true"]').innerText()
-  ).trim();
-  const subagentsProgress = (
-    await page.locator('[data-live-progress-subagents="true"]').innerText()
-  ).trim();
+  const toolsProgress = "not-rendered";
+  const subagentsProgress = "not-rendered";
   assert(
-    toolsProgress === "工具 3/3",
-    `live header tool progress mismatch: ${toolsProgress}`,
-  );
-  assert(
-    subagentsProgress === "子代理 0/2",
-    `live header subagent progress mismatch: ${subagentsProgress}`,
+    (await liveHeader.locator('[data-live-progress-tools="true"]').count()) ===
+      0 &&
+      (await liveHeader
+        .locator('[data-live-progress-subagents="true"]')
+        .count()) === 0,
+    "live header must not expose low-level tool or subagent counters",
   );
   await page.waitForFunction(
     () => {
@@ -780,12 +776,12 @@ async (page) => {
     toolIcons: mainReadIcons,
     liveHeaderCount,
     loaderHeaderCount,
-    sparklesCount,
+    statusPulseCount,
     activeStopCount,
     stopNestedInTrigger,
     activeActivityTriggerCount,
     headerOwnedByActive: true,
-    stickyHeader: true,
+    stickyHeader: false,
   };
 
   const runningToggle = page.locator("[data-live-header-toggle]").first();
@@ -838,48 +834,28 @@ async (page) => {
     "finished scenario did not start with expanded live details",
   );
   await assertActiveHeader("finished initial");
-  const initialToolsProgress = (
-    await page.locator('[data-live-progress-tools="true"]').innerText()
-  ).trim();
-  const initialSubagentsProgress = (
-    await page.locator('[data-live-progress-subagents="true"]').innerText()
-  ).trim();
+  const initialToolsProgress = "not-rendered";
+  const initialSubagentsProgress = "not-rendered";
   assert(
-    initialToolsProgress === "工具 3/3",
-    `unexpected initial tool progress: ${initialToolsProgress}`,
-  );
-  assert(
-    initialSubagentsProgress === "子代理 0/2",
-    `unexpected initial subagent progress: ${initialSubagentsProgress}`,
+    (await page.locator('[data-live-progress-tools="true"]').count()) === 0 &&
+      (await page.locator('[data-live-progress-subagents="true"]').count()) ===
+        0,
+    "initial live header exposed low-level execution counters",
   );
 
   releaseMidRun();
   await page.waitForFunction(
-    () => {
-      const tools =
-        document.querySelector('[data-live-progress-tools="true"]')
-          ?.textContent ?? "";
-      return (
-        document.body.innerText.includes("阶段性正文：已完成章节结构梳理。") &&
-        tools.includes("工具 3/4")
-      );
-    },
+    () => document.body.innerText.includes("阶段性正文：已完成章节结构梳理。"),
     undefined,
     { timeout: 15000 },
   );
-  const midToolsProgress = (
-    await page.locator('[data-live-progress-tools="true"]').innerText()
-  ).trim();
-  const midSubagentsProgress = (
-    await page.locator('[data-live-progress-subagents="true"]').innerText()
-  ).trim();
+  const midToolsProgress = "not-rendered";
+  const midSubagentsProgress = "not-rendered";
   assert(
-    midToolsProgress === "工具 3/4",
-    `tool progress did not update after the second tool call: ${midToolsProgress}`,
-  );
-  assert(
-    midSubagentsProgress === "子代理 0/2",
-    `subagent progress changed before completion: ${midSubagentsProgress}`,
+    (await page.locator('[data-live-progress-tools="true"]').count()) === 0 &&
+      (await page.locator('[data-live-progress-subagents="true"]').count()) ===
+        0,
+    "streaming updates exposed low-level execution counters",
   );
   const intermediateTextNestedInActivity = await page.evaluate(() =>
     Array.from(document.querySelectorAll('[data-slot="activity"]')).some(
@@ -1003,7 +979,7 @@ async (page) => {
     midSubagentsProgress,
     intermediateTextTopLevel: true,
     headerOwnedByActive: true,
-    stickyHeader: true,
+    stickyHeader: false,
     liveHeaderRemoved: true,
   };
 
@@ -1083,8 +1059,8 @@ async (page) => {
   const smoothLiveHeaderCount = await page
     .locator('[data-live-header="true"]')
     .count();
-  const smoothSparklesCount = await page
-    .locator('[data-live-header-icon="sparkles"] svg')
+  const smoothStatusPulseCount = await page
+    .locator('[data-slot="agent-status"] .animate-pulse')
     .count();
   const smoothLoaderCount = await page
     .locator('[data-live-header="true"] .animate-spin')
@@ -1095,11 +1071,11 @@ async (page) => {
   const smoothStopCount = await page.locator('[data-slot="stop-turn"]').count();
   assert(
     smoothLiveHeaderCount === 1 &&
-      smoothSparklesCount === 1 &&
+      smoothStatusPulseCount === 1 &&
       smoothLoaderCount === 0 &&
       smoothActiveCount === 0 &&
       smoothStopCount === 1,
-    `streaming body header mismatch: header=${smoothLiveHeaderCount} sparkles=${smoothSparklesCount} loader=${smoothLoaderCount} active=${smoothActiveCount} stop=${smoothStopCount}`,
+    `streaming body header mismatch: header=${smoothLiveHeaderCount} statusPulse=${smoothStatusPulseCount} loader=${smoothLoaderCount} active=${smoothActiveCount} stop=${smoothStopCount}`,
   );
   const smoothActivityTrigger = page.locator("[data-activity-trigger]").first();
   await smoothActivityTrigger.waitFor({ state: "visible", timeout: 15000 });
@@ -1163,7 +1139,7 @@ async (page) => {
     autoScrolled: smoothMetrics.atBottom,
     consoleErrors: 0,
     liveHeaderCount: smoothLiveHeaderCount,
-    sparklesCount: smoothSparklesCount,
+    statusPulseCount: smoothStatusPulseCount,
     loaderHeaderCount: smoothLoaderCount,
     activeActivityCount: smoothActiveCount,
     stopCount: smoothStopCount,
