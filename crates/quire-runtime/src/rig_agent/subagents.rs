@@ -59,7 +59,10 @@ pub(super) struct SubagentParent {
     cancellation: tokio_util::sync::CancellationToken,
 }
 
-/// Launch one or more specialized subagents concurrently in a JoinSet and wait for their structured outcomes.
+/// Launch the requested specialized subagents and wait for their structured outcomes.
+/// Independent tasks run concurrently; a single task is valid and common.
+/// Never add placeholder, backup, disabled, duplicate, or no-op tasks to make the call appear parallel.
+/// The number of items in `tasks` must exactly match the number of real subagents to launch.
 ///
 /// Call `list_subagents` first if you need valid subagent names. Outcomes are returned in the exact
 /// input `tasks` order with `agent_name`, `status` (`"completed" | "failed" | "cancelled"`), `summary`,
@@ -68,7 +71,10 @@ pub(super) struct SubagentParent {
 #[rig_tool(name = "spawn_subagents")]
 pub(super) async fn run_subagents_tool(
     #[rig(context)] context: &mut ToolContext,
-    /// Subagent tasks to execute concurrently. Assign disjoint `block_id` prefixes when multiple subagents write to the same report in parallel.
+    /// Real, actionable subagent tasks. When dispatching one subagent, pass exactly one item.
+    /// Every item must represent work that should actually execute. Placeholder, backup, disabled,
+    /// duplicate, and no-op items are invalid. Assign disjoint `block_id` prefixes when multiple
+    /// subagents write to the same report in parallel.
     tasks: Vec<SubagentTask>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
