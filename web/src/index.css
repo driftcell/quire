@@ -458,3 +458,12 @@
     transform: translateX(-50%);
   }
 }
+
+.shimmer-bg {
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--foreground) 55%, transparent) 0%,
+    color-mix(in oklab, var(--foreground) 25%, transparent) 50%,
+    color-mix(in oklab, var(--foreground) 55%, transparent) 100%
+  );
+}

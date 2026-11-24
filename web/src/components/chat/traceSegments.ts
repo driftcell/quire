@@ -1,4 +1,9 @@
 import type { ToolCallTraceItem } from "@/components/chat/ToolCallTrace";
+import {
+  buildHistoricalMilestones,
+  buildLiveMilestones,
+  type TaskMilestoneNode,
+} from "@/components/chat/taskMilestones";
 import { getToolMeta, isVisibleTraceTool } from "@/components/chat/toolMeta";
 import type {
   RunTraceSubagent,
@@ -429,6 +434,7 @@ export interface RunStatusModel {
   completedToolCount: number;
   recentMainTools: string[];
   subagents: SubagentActivityPill[];
+  milestones: TaskMilestoneNode[];
   elapsedLabel?: string;
 }
 
@@ -468,6 +474,8 @@ export function buildLiveRunStatusModel(
   elapsedSeconds: number,
 ): RunStatusModel {
   const progress = summarizeLiveProgress(trace, subagents);
+  const milestones = buildLiveMilestones(trace, subagents);
+  const lastMilestone = milestones[milestones.length - 1];
   const lastSeg = trace.segments[trace.segments.length - 1];
   let fallbackTitle = trace.isStreaming ? "正在处理" : "本轮执行已完成";
   if (trace.isStreaming && lastSeg) {
@@ -517,14 +525,20 @@ export function buildLiveRunStatusModel(
   });
 
   return {
-    title: trace.taskFocus?.title?.trim() || fallbackTitle,
-    detail: trace.taskFocus?.detail ?? undefined,
-    sectionId: trace.taskFocus?.sectionId ?? undefined,
+    title:
+      trace.taskFocus?.title?.trim() ||
+      lastMilestone?.title ||
+      fallbackTitle,
+    detail:
+      trace.taskFocus?.detail ?? lastMilestone?.detail ?? undefined,
+    sectionId:
+      trace.taskFocus?.sectionId ?? lastMilestone?.sectionId ?? undefined,
     status: trace.isStreaming ? "running" : "completed",
     toolCount: progress.toolCount,
     completedToolCount: progress.completedToolCount,
     recentMainTools: recentToolLabels(mainTools),
     subagents: pills,
+    milestones,
     elapsedLabel: formatLiveElapsed(elapsedSeconds),
   };
 }
@@ -533,6 +547,8 @@ export function buildHistoricalRunStatusModel(
   trace: RunTraceSummary,
 ): RunStatusModel {
   const status = normalizeTerminalStatus(trace.status);
+  const milestones = buildHistoricalMilestones(trace);
+  const lastMilestone = milestones[milestones.length - 1];
   const tools: ToolCallTraceItem[] = [];
   const pills: SubagentActivityPill[] = [];
 
@@ -586,14 +602,20 @@ export function buildHistoricalRunStatusModel(
       : undefined;
 
   return {
-    title: trace.task_focus?.title?.trim() || defaultTitle,
-    detail: trace.task_focus?.detail ?? undefined,
-    sectionId: trace.task_focus?.section_id ?? undefined,
+    title:
+      trace.task_focus?.title?.trim() ||
+      lastMilestone?.title ||
+      defaultTitle,
+    detail:
+      trace.task_focus?.detail ?? lastMilestone?.detail ?? undefined,
+    sectionId:
+      trace.task_focus?.section_id ?? lastMilestone?.sectionId ?? undefined,
     status,
     toolCount: tools.length,
     completedToolCount: tools.filter((t) => t.status !== "running").length,
     recentMainTools: recentToolLabels(tools),
     subagents: pills,
+    milestones,
     elapsedLabel,
   };
 }

@@ -88,9 +88,13 @@ function LiveRunSection({
 
       <LiveTraceSegments
         sessionId={sessionId}
+        trace={trace}
+        subagents={subagents}
         segments={segments}
         questionSlots={questionSlots}
         detailsOpen={detailsOpen}
+        onOpenChange={setDetailsOpen}
+        onJumpToSection={onJumpToSection}
       />
     </div>
   );
