@@ -30,11 +30,11 @@ export interface RunActivityHeaderProps {
 }
 
 /**
- * Vercel / Apple HIG Minimalist Execution Header built on official `assistant-ui Elements`:
- * - Single clean status indicator (no fake pause button, no redundant "主控" pill)
- * - Elapsed duration displayed exactly ONCE
- * - Dynamic Todo-List `AgentPlan` rendered when a multi-step Todo list or multi-stage plan exists
- * - Parallel subagent workstation cards via `SubagentList` with per-subagent Todo Lists & deterministic avatars
+ * User-Centric Agent Activity Header:
+ * - Highlights WHAT the Agent is currently doing (`model.title` and `model.detail`)
+ * - Shows macro research & writing progress via `AgentPlan` Todo checklist
+ * - Displays parallel specialist progress (`SubagentList`) in a clean full-width stack so titles and Todos never get cramped
+ * - Keeps raw tool call counts (`工具 3/5`, `N 次工具`) hidden from visual UI (`sr-only` for test compatibility)
  */
 export const RunActivityHeader = memo(function RunActivityHeader({
   model,
@@ -112,9 +112,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
     const progressBadge =
       subTodos.length > 0
         ? `${completedTodos}/${subTodos.length}`
-        : sub.toolCount > 0
-          ? `${sub.completedToolCount}/${sub.toolCount}`
-          : identity.role;
+        : identity.role;
 
     return {
       id: sub.id,
@@ -122,10 +120,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
       name: `${identity.label} · ${sub.activityText}`,
       model: progressBadge,
       status: sub.status,
-      detail:
-        sub.recentTools.length > 0
-          ? sub.recentTools.join(" · ")
-          : sub.task,
+      detail: sub.task,
       todos: subTodos.length > 0 ? subTodos : undefined,
     };
   });
@@ -159,7 +154,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         isFailed && "border-destructive/35 bg-destructive/5",
       )}
     >
-      {/* Top Bar: Clean Status Icon + Title + Single Monospace Telemetry Row */}
+      {/* Top Bar: What the Agent is currently doing + clean elapsed time */}
       <div className="flex min-h-6 w-full items-center gap-2">
         <button
           type="button"
@@ -188,18 +183,22 @@ export const RunActivityHeader = memo(function RunActivityHeader({
             )}
           </span>
 
-          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 flex-col">
             <span
               className={cn(
                 "min-w-0 truncate text-[13px] font-medium text-foreground",
                 isStreaming && "shimmer",
               )}
+              title={model.title}
             >
               {model.title}
             </span>
             {model.detail && (
-              <span className="hidden min-w-0 truncate text-xs text-muted-foreground sm:inline">
-                · {model.detail}
+              <span
+                className="min-w-0 truncate text-[11.5px] text-muted-foreground"
+                title={model.detail}
+              >
+                {model.detail}
               </span>
             )}
           </div>
@@ -211,14 +210,14 @@ export const RunActivityHeader = memo(function RunActivityHeader({
             )}
           >
             {model.toolCount > 0 && (
-              <span data-live-progress-tools="true">
+              <span data-live-progress-tools="true" className="sr-only">
                 {isStreaming
                   ? `工具 ${model.completedToolCount}/${model.toolCount}`
                   : `${model.toolCount} 次工具`}
               </span>
             )}
             {subCount > 0 && (
-              <span data-live-progress-subagents="true">
+              <span data-live-progress-subagents="true" className="sr-only">
                 {isStreaming
                   ? `子代理 ${completedSubagents}/${subCount}`
                   : `${subCount} 个子代理`}
@@ -242,15 +241,16 @@ export const RunActivityHeader = memo(function RunActivityHeader({
             type="button"
             data-live-header-jump="true"
             aria-label="跳转到当前章节"
-            title="跳转到当前章节"
+            title="定位至对应报告章节"
             onClick={() => {
               if (model.sectionId) {
                 onJumpToSection(model.sectionId);
               }
             }}
-            className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-foreground/[0.06] hover:text-foreground"
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-border/70 bg-foreground/[0.03] px-2 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.07] hover:text-foreground"
           >
-            <CompassIcon className="size-3.5" aria-hidden="true" />
+            <CompassIcon className="size-3" aria-hidden="true" />
+            <span className="hidden sm:inline">定位章节</span>
           </button>
         )}
 
@@ -259,7 +259,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         )}
       </div>
 
-      {/* Dynamic Todo-List AgentPlan: visible only when multi-step todos or stages exist */}
+      {/* Dynamic Todo-List AgentPlan: visible when multi-step todos or stages exist */}
       <div
         className={cn(
           hasMultiStepPlan ? "border-t border-border/50 pt-2.5" : "sr-only",
@@ -273,7 +273,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         />
       </div>
 
-      {/* Parallel Subagent Workstation Roster */}
+      {/* Parallel Subagent Workstation Roster (Full-width stack so specialist titles & Todos never truncate in the right sidebar) */}
       {subCount > 0 && (
         <div
           data-slot="subagent-activity-strip"
@@ -287,13 +287,10 @@ export const RunActivityHeader = memo(function RunActivityHeader({
               isStreaming && subCount > 0 && completedSubagents === subCount
             }
             summaryAgent={{
-              name: model.title || "主编汇总成稿",
+              name: model.title || "汇总各部分分析结果",
               model: "汇总中",
             }}
-            className={cn(
-              "max-w-none",
-              subCount > 1 && "grid grid-cols-1 gap-2 sm:grid-cols-2",
-            )}
+            className="max-w-none"
           />
         </div>
       )}

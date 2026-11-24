@@ -13,10 +13,6 @@ import {
   TaskCard,
   type TaskCardState,
 } from "@/components/assistant-ui/elements/task-card";
-import {
-  ToolTimeline,
-  type TimelineStep,
-} from "@/components/assistant-ui/elements/tool-timeline";
 import { resolveAgentIdentity } from "@/components/chat/agentAvatar";
 import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
@@ -24,12 +20,10 @@ import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import {
   buildHistoricalMilestones,
   buildLiveMilestones,
-  extractToolTargetHint,
   type MilestoneSubagentCard,
   type SemanticActionPill,
   type TaskMilestoneNode,
 } from "@/components/chat/taskMilestones";
-import { getToolMeta } from "@/components/chat/toolMeta";
 import {
   buildHistoricalRunStatusModel,
   buildHistoricalSegments,
@@ -62,6 +56,11 @@ function collectQuestionNodes(
   return nodes;
 }
 
+/**
+ * Clean, domain-level semantic action tags (e.g., "查询高教全景数据 · 浙江大学",
+ * "登记数据来源", "写入报告内容") without raw `×N` tool repeat multipliers or
+ * `#block_id` strings.
+ */
 function SemanticPillBar({ pills }: { pills: SemanticActionPill[] }) {
   if (pills.length === 0) {
     return null;
@@ -101,16 +100,9 @@ function SemanticPillBar({ pills }: { pills: SemanticActionPill[] }) {
             />
           )}
           <span className="font-medium">{pill.label}</span>
-          {pill.count > 1 && (
-            <span className={cn(mono, "text-muted-foreground")}>
-              ×{pill.count}
-            </span>
-          )}
           {pill.targets.length > 0 && (
-            <span
-              className={cn(mono, "max-w-44 truncate text-muted-foreground")}
-            >
-              · {pill.targets.join(", ")}
+            <span className="max-w-44 truncate text-muted-foreground">
+              · {pill.targets.join("、")}
             </span>
           )}
         </span>
@@ -126,7 +118,6 @@ function SubagentTaskCardItem({
   sub: MilestoneSubagentCard;
   onJumpToSection?: (sectionId: string) => void;
 }) {
-  const [timelineOpen, setTimelineOpen] = useState(false);
   const identity = resolveAgentIdentity(sub.actor);
   const cardState: TaskCardState =
     sub.status === "running"
@@ -135,19 +126,11 @@ function SubagentTaskCardItem({
         ? "failed"
         : "done";
 
-  const steps: TimelineStep[] = useMemo(
-    () =>
-      sub.rawTools.map((tool) => {
-        const meta = getToolMeta(tool.toolName);
-        return {
-          id: tool.toolCallId,
-          verb: meta.label,
-          chip: extractToolTargetHint(tool) ?? tool.toolName,
-          icon: meta.icon,
-        };
-      }),
-    [sub.rawTools],
-  );
+  const completedTodos = sub.todos.filter(
+    (t) => t.status === "completed" || t.status === "skipped",
+  ).length;
+  const todoProgressLabel =
+    sub.todos.length > 0 ? `${completedTodos}/${sub.todos.length}` : undefined;
 
   const resultContent =
     sub.todos.length > 0 ||
@@ -192,84 +175,69 @@ function SubagentTaskCardItem({
         )}
         <SemanticPillBar pills={sub.semanticPills} />
         {sub.summaryText && (
-          <p className="line-clamp-2 text-xs text-muted-foreground">
+          <p className="line-clamp-3 text-xs leading-relaxed text-muted-foreground">
             {sub.summaryText}
           </p>
         )}
       </div>
     ) : undefined;
 
+  const hasExpandableDetail =
+    Boolean(sub.task) || sub.milestones.length > 1 || Boolean(sub.sectionId);
+
   return (
     <TaskCard
       label={`${identity.label} · ${sub.focusTitle || sub.task}`}
       meta={identity.role}
       state={cardState}
-      elapsed={
-        sub.toolCount > 0
-          ? `${sub.completedToolCount}/${sub.toolCount} 步`
-          : undefined
-      }
+      elapsed={todoProgressLabel}
       result={resultContent}
       className="max-w-none rounded-xl"
     >
-      <div className="flex flex-col gap-2.5 text-xs">
-        <div className="flex items-start justify-between gap-2">
-          <p className="leading-relaxed text-muted-foreground">{sub.task}</p>
-          {sub.sectionId && onJumpToSection && (
-            <button
-              type="button"
-              onClick={() => {
-                if (sub.sectionId) {
-                  onJumpToSection(sub.sectionId);
-                }
-              }}
-              className={cn(
-                mono,
-                "inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-foreground/[0.04] px-2 py-0.5 text-foreground/80 hover:bg-foreground/[0.08]",
-              )}
-            >
-              <CompassIcon className="size-3" aria-hidden />#{sub.sectionId}
-            </button>
+      {hasExpandableDetail ? (
+        <div className="flex flex-col gap-2.5 text-xs">
+          <div className="flex items-start justify-between gap-2">
+            <p className="leading-relaxed text-muted-foreground">{sub.task}</p>
+            {sub.sectionId && onJumpToSection && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (sub.sectionId) {
+                    onJumpToSection(sub.sectionId);
+                  }
+                }}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/60 bg-foreground/[0.04] px-2 py-0.5 text-xs text-foreground/80 hover:bg-foreground/[0.08]"
+              >
+                <CompassIcon className="size-3" aria-hidden />
+                <span>定位章节</span>
+              </button>
+            )}
+          </div>
+
+          {sub.milestones.length > 1 && (
+            <div className="flex flex-col gap-1.5 border-l border-border/60 pl-2.5">
+              {sub.milestones.map((ms) => (
+                <div key={ms.id} className="flex flex-col gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className={cn(mono, "text-muted-foreground")}>
+                      0{ms.stepNumber}
+                    </span>
+                    <span className="font-medium text-foreground/90">
+                      {ms.title}
+                    </span>
+                    {ms.detail && (
+                      <span className="truncate text-muted-foreground">
+                        · {ms.detail}
+                      </span>
+                    )}
+                  </div>
+                  <SemanticPillBar pills={ms.semanticPills} />
+                </div>
+              ))}
+            </div>
           )}
         </div>
-
-        {sub.milestones.length > 0 && (
-          <div className="flex flex-col gap-1.5 border-l border-border/60 pl-2.5">
-            {sub.milestones.map((ms) => (
-              <div key={ms.id} className="flex flex-col gap-1">
-                <div className="flex items-center gap-1.5">
-                  <span className={cn(mono, "text-muted-foreground")}>
-                    0{ms.stepNumber}
-                  </span>
-                  <span className="font-medium text-foreground/90">
-                    {ms.title}
-                  </span>
-                  {ms.detail && (
-                    <span className="truncate text-muted-foreground">
-                      · {ms.detail}
-                    </span>
-                  )}
-                </div>
-                <SemanticPillBar pills={ms.semanticPills} />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {steps.length > 0 && (
-          <ToolTimeline
-            steps={steps}
-            visibleSteps={steps.length}
-            streaming={sub.status === "running"}
-            open={timelineOpen}
-            onOpenChange={setTimelineOpen}
-            restingLabel={`查看 ${steps.length} 项工具调用`}
-            activeLabel={`正在执行 (${steps.length})…`}
-            stats={[]}
-            className="max-w-none"
-          />
-        )}
-      </div>
+      ) : null}
     </TaskCard>
   );
 }
@@ -277,32 +245,12 @@ function SubagentTaskCardItem({
 function MilestoneStageCard({
   milestone,
   showStageIndex,
-  defaultToolTimelineOpen = false,
   onJumpToSection,
 }: {
   milestone: TaskMilestoneNode;
   showStageIndex: boolean;
-  defaultToolTimelineOpen?: boolean;
   onJumpToSection?: (sectionId: string) => void;
 }) {
-  const [toolTimelineOpen, setToolTimelineOpen] = useState(
-    defaultToolTimelineOpen,
-  );
-
-  const timelineSteps: TimelineStep[] = useMemo(
-    () =>
-      milestone.rawTools.map((tool) => {
-        const meta = getToolMeta(tool.toolName);
-        return {
-          id: tool.toolCallId,
-          verb: meta.label,
-          chip: extractToolTargetHint(tool) ?? tool.toolName,
-          icon: meta.icon,
-        };
-      }),
-    [milestone.rawTools],
-  );
-
   return (
     <div
       data-slot="describe-task-milestone"
@@ -343,13 +291,10 @@ function MilestoneStageCard({
                   onJumpToSection(milestone.sectionId);
                 }
               }}
-              className={cn(
-                mono,
-                "inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 bg-foreground/[0.03] px-2 py-0.5 text-foreground/80 transition-colors hover:bg-foreground/[0.08]",
-              )}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border/60 bg-foreground/[0.03] px-2.5 py-0.5 text-xs text-foreground/80 transition-colors hover:bg-foreground/[0.08]"
             >
-              <CompassIcon className="size-3" aria-hidden />#
-              {milestone.sectionId}
+              <CompassIcon className="size-3" aria-hidden />
+              <span>定位章节</span>
             </button>
           )}
         </div>
@@ -369,25 +314,11 @@ function MilestoneStageCard({
         </div>
       )}
 
-      {timelineSteps.length > 0 && (
-        <ToolTimeline
-          steps={timelineSteps}
-          visibleSteps={timelineSteps.length}
-          streaming={milestone.status === "running"}
-          open={toolTimelineOpen}
-          onOpenChange={setToolTimelineOpen}
-          restingLabel={`查看 ${timelineSteps.length} 项底层调用`}
-          activeLabel={`正在执行 (${timelineSteps.length})…`}
-          stats={[]}
-          className="max-w-none"
-        />
-      )}
-
       {milestone.rawThinking && (
         <details className="group/thinking text-xs text-muted-foreground">
           <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md py-0.5 text-xs text-muted-foreground/80 transition-colors hover:text-foreground [&::-webkit-details-marker]:hidden">
             <SparklesIcon className="size-3 shrink-0" aria-hidden />
-            <span>查看思考摘录</span>
+            <span>查看分析思路</span>
           </summary>
           <div className="mt-1.5 rounded-lg border border-border/50 bg-foreground/[0.02] p-2.5 text-xs leading-relaxed whitespace-pre-wrap text-muted-foreground">
             {milestone.rawThinking}
@@ -424,9 +355,6 @@ const MilestoneExpandedList = memo(function MilestoneExpandedList({
           key={ms.id}
           milestone={ms}
           showStageIndex={showStageIndex}
-          defaultToolTimelineOpen={
-            milestones.length === 1 && ms.subagents.length === 0
-          }
           onJumpToSection={onJumpToSection}
         />
       ))}

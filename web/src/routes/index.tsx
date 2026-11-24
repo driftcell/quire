@@ -24,59 +24,54 @@ export const Route = createFileRoute("/")({
   component: HomePage,
 });
 
-interface EditorialBriefPreset {
+interface TopicStarter {
   category: string;
   title: string;
   prompt: string;
-  deliverable: string;
   icon: typeof CompassIcon;
 }
 
-const EDITORIAL_BRIEFS: readonly EditorialBriefPreset[] = [
+const TOPIC_STARTERS: readonly TopicStarter[] = [
   {
-    category: "学科竞争力诊断",
-    title: "核心学科三年建设成效与 ESI 潜势评估",
+    category: "学科建设",
+    title: "近三年核心学科建设成效梳理",
     prompt:
-      "帮我梳理浙江大学近三年的学科建设成果，结合高水平论文、国家级项目与学科梯队给出结构化诊断报告",
-    deliverable: "A4 分页报告 · 对标矩阵",
+      "帮我梳理浙江大学近三年的学科建设成果，结合高水平论文、国家级项目与学科平台给出分析报告",
     icon: CompassIcon,
   },
   {
-    category: "省域高校对标",
-    title: "2025 年省域高校国自然基金立项全景对比",
+    category: "科研项目",
+    title: "省内高校 2025 年国自然立项对比",
     prompt:
-      "对比浙江省高校2025年国自然基金立项情况，并用图表展示重点高校面上与青年项目结构差异",
-    deliverable: "统计图表 · 梯队对比表",
+      "对比浙江省高校 2025 年国自然基金立项情况，并用图表展示重点高校面上与青年项目结构差异",
     icon: BarChart3Icon,
   },
   {
-    category: "专项规划论证",
-    title: "地方高校博士学位授权点建设与冲刺方案",
+    category: "学位点与双优",
+    title: "浙江海洋大学冲刺双优建设对标分析",
     prompt:
-      "写一份地方高校博士学位点建设调研报告，梳理核心指标缺口、师资引育路径与三年攻坚时间表",
-    deliverable: "专项调研报告 · 指标核查",
+      "写一份关于浙江海洋大学冲刺双优建设的对标分析报告，梳理核心指标表现与下一步建设重点",
     icon: BookOpenCheckIcon,
   },
   {
-    category: "人才与经费效度",
-    title: "对标院校高层次人才结构与科研产出比测算",
+    category: "师资与人才",
+    title: "对标高校高层次人才与基金产出对比",
     prompt:
-      "对比浙江大学与浙江工业大学的高层次人才数量及近五年国家社科与自科基金产出趋势",
-    deliverable: "多维趋势图 · 效度评估",
+      "对比浙江大学与浙江工业大学的高层次人才数量及近五年国家社科与自科基金立项趋势",
     icon: LayersIcon,
   },
 ];
 
-const QUICK_PROBES: readonly string[] = [
-  "告诉我2025年浙江大学国自然基金立项总数有多少",
-  "我想写一份关于浙江海洋大学冲刺双优建设的报告",
-  "分析浙江省内高校学科评估的等级分布",
-  "用图表展示浙江高校近五年国家社科基金趋势",
+const QUICK_QUERIES: readonly string[] = [
+  "2025 年浙江大学国自然基金立项总数有多少",
+  "分析浙江省内高校学科评估的档位分布",
+  "用图表展示浙江高校近五年国家社科基金立项趋势",
+  "梳理地方高校博士学位授权点申报核心指标",
 ];
 
 function deriveSessionTitle(text: string): string {
   const cleaned = text.trim().replace(/\s+/g, " ");
-  if (!cleaned) return "新报告会话";
+  if (!cleaned) return "新对话";
   return cleaned.length > 28 ? `${cleaned.slice(0, 28)}…` : cleaned;
 }
 
@@ -112,7 +107,7 @@ function HomePage() {
         params: { sessionId: session.session_id },
       });
     } catch (err) {
-      toast.error(errorMessage(err, "创建会话失败"));
+      toast.error(errorMessage(err, "创建对话失败"));
     }
   };
 
@@ -125,7 +120,7 @@ function HomePage() {
               type="button"
               size="icon-sm"
               variant="ghost"
-              aria-label="切换左侧会话栏"
+              aria-label="切换左侧对话栏"
               onClick={toggleSidebar}
             >
               <PanelLeftIcon className="size-4" />
@@ -134,9 +129,6 @@ function HomePage() {
               Quire
             </span>
           </div>
-          <span className="text-[11px] text-muted-foreground">
-            研究与报告工作台
-          </span>
         </header>
       )}
 
@@ -145,118 +137,83 @@ function HomePage() {
           <SidebarEdgeHandle
             side="left"
             open={leftSidebarOpen}
-            label={leftSidebarOpen ? "收起左侧会话栏" : "展开左侧会话栏"}
+            label={leftSidebarOpen ? "收起左侧对话栏" : "展开左侧对话栏"}
             onToggle={toggleSidebar}
           />
         )}
 
-        <div className="mx-auto flex w-full max-w-3xl flex-col justify-center px-5 py-10 sm:px-8 sm:py-14">
-          {/* Editorial Masthead Header */}
-          <header className="mb-7 border-b border-border/90 pb-5">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-              <div className="inline-flex items-center gap-2">
-                <BrandMark className="size-5 shrink-0" />
-                <span className="font-serif text-sm font-bold tracking-tight text-foreground">
-                  Quire
-                </span>
-                <span className="text-border" aria-hidden="true">
-                  /
-                </span>
-                <span>多智能体研究与结构化报告出版系统</span>
-              </div>
-              <span className="font-mono text-[11px] text-muted-foreground/80 tabular-nums">
-                A4 出版排版 · 溯源引证 · 划词审校
+        <div className="mx-auto flex w-full max-w-2xl flex-col justify-center px-5 py-10 sm:px-8 sm:py-16">
+          {/* Minimalist Centered Greeting */}
+          <header className="mb-6 flex flex-col items-center text-center">
+            <div className="mb-3 inline-flex items-center gap-2">
+              <BrandMark className="size-6 shrink-0" />
+              <span className="font-serif text-base font-bold tracking-tight text-foreground">
+                Quire
               </span>
             </div>
-
-            <h1 className="font-serif text-2xl leading-snug font-bold tracking-tight text-balance text-foreground sm:text-[30px]">
-              从原始数据与多维对标，直接成稿可付印的研究报告
+            <h1 className="font-serif text-2xl leading-snug font-semibold tracking-tight text-balance text-foreground sm:text-[26px]">
+              有什么高教数据或报告需求？
             </h1>
-            <p className="mt-2 max-w-[68ch] text-sm leading-relaxed text-muted-foreground">
-              输入研究课题、上传数据附件或指定对标维度。Quire
-              将自动调度检索、量化制图与写作审校代理，在画布中实时生成带精确引证的出版级文档。
-            </p>
           </header>
 
-          {/* Primary Composer Desk */}
-          <section aria-label="研究指令输入区" className="mb-7">
+          {/* Primary Composer */}
+          <section aria-label="输入研究或查询需求" className="mb-6">
             <PromptComposer
-              placeholder="描述你的研究课题、对标机构或分析维度（Shift + Enter 换行，支持拖拽或粘贴数据截图）…"
+              placeholder="输入高校名称、学科领域或报告主题（支持上传表格与附件，Shift + Enter 换行）…"
               onSend={startConversation}
             />
 
-            {/* Quick single-line factual probes */}
-            <div className="mt-3 flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 text-[11px] font-medium text-muted-foreground">
-                快速提问：
-              </span>
-              {QUICK_PROBES.map((probe) => (
+            {/* Quick Queries */}
+            <div className="mt-3 flex flex-wrap items-center justify-center gap-1.5">
+              {QUICK_QUERIES.map((query) => (
                 <button
-                  key={probe}
+                  key={query}
                   type="button"
                   onClick={() => {
-                    void startConversation(probe, []);
+                    void startConversation(query, []);
                   }}
-                  className="inline-flex items-center rounded-md border border-border/80 bg-secondary/70 px-2.5 py-1 text-left text-xs text-foreground/85 transition-colors hover:border-foreground/30 hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  className="inline-flex items-center rounded-full border border-border/80 bg-card/80 px-3 py-1 text-left text-xs text-muted-foreground transition-colors hover:border-foreground/25 hover:bg-card hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
-                  {probe}
+                  {query}
                 </button>
               ))}
             </div>
           </section>
 
-          {/* Structured Editorial Brief Blueprints */}
-          <section aria-label="典型研究课题范式">
-            <div className="mb-2.5 flex items-center justify-between">
-              <h2 className="text-xs font-semibold text-foreground/90">
-                精选研究简报范式
-              </h2>
-              <span className="text-[11px] text-muted-foreground">
-                点击直接启动完整多章节报告编撰
-              </span>
-            </div>
-
+          {/* Clean 2x2 Topic Starters without Feature Bragging */}
+          <section aria-label="常用报告课题">
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-              {EDITORIAL_BRIEFS.map((brief) => {
-                const Icon = brief.icon;
+              {TOPIC_STARTERS.map((starter) => {
+                const Icon = starter.icon;
                 return (
                   <button
-                    key={brief.title}
+                    key={starter.title}
                     type="button"
-                    aria-label={`${brief.category}：${brief.title}`}
+                    aria-label={`${starter.category}：${starter.title}`}
                     onClick={() => {
-                      void startConversation(brief.prompt, []);
+                      void startConversation(starter.prompt, []);
                     }}
-                    className="group flex flex-col justify-between rounded-xl border border-border/90 bg-card p-3.5 text-left transition-colors hover:border-foreground/35 hover:bg-secondary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                    className="group flex flex-col justify-between rounded-xl border border-border/85 bg-card/90 p-3.5 text-left transition-colors hover:border-foreground/30 hover:bg-card focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                   >
-                    <div>
-                      <div className="mb-1.5 flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#1D4ED8]">
-                          <Icon
-                            className="size-3.5 shrink-0"
-                            aria-hidden="true"
-                          />
-                          {brief.category}
-                        </span>
-                        <ArrowUpRightIcon
-                          className="size-3.5 shrink-0 text-muted-foreground/50 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-foreground"
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                        <Icon
+                          className="size-3.5 shrink-0 text-[#1D4ED8]"
                           aria-hidden="true"
                         />
-                      </div>
-                      <div className="font-serif text-[14px] leading-snug font-semibold text-foreground">
-                        {brief.title}
-                      </div>
-                      <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
-                        {brief.prompt}
-                      </p>
-                    </div>
-
-                    <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-[11px] text-muted-foreground">
-                      <span>交付形式</span>
-                      <span className="font-mono text-[10.5px] text-foreground/80">
-                        {brief.deliverable}
+                        {starter.category}
                       </span>
+                      <ArrowUpRightIcon
+                        className="size-3.5 shrink-0 text-muted-foreground/40 transition-transform duration-150 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-foreground"
+                        aria-hidden="true"
+                      />
                     </div>
+                    <div className="text-[13.5px] leading-snug font-medium text-foreground">
+                      {starter.title}
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-muted-foreground">
+                      {starter.prompt}
+                    </p>
                   </button>
                 );
               })}

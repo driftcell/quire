@@ -48,12 +48,42 @@ export interface TaskMilestoneNode {
   detail?: string;
   sectionId?: string;
   status: "running" | "completed" | "failed";
-   isExplicitStage?: boolean;
+  isExplicitStage?: boolean;
   semanticPills: SemanticActionPill[];
   subagents: MilestoneSubagentCard[];
   rawTools: ToolCallTraceItem[];
   rawThinking: string;
   durationMs?: number;
+}
+
+/**
+ * Low-level protocol and internal reading plumbing tools that Qingta service
+ * analysts and higher-ed faculty do not need to see as semantic action pills
+ * unless a stage has no domain-level tools at all.
+ */
+const LOW_SIGNAL_PLUMBING_TOOLS = new Set<string>([
+  "get_protocol_guide",
+  "list_skills",
+  "load_skill",
+  "read_skill_resource",
+  "list_subagents",
+  "get_document_digest",
+  "read_blocks",
+  "read_as_markdown",
+  "list_reports",
+  "list_sources",
+  "list_comments",
+  "list_attachments",
+]);
+
+export function isDomainMeaningfulTool(tool: ToolCallTraceItem): boolean {
+  if (!isVisibleTraceTool(tool)) {
+    return false;
+  }
+  if (tool.status === "failed") {
+    return true;
+  }
+  return !LOW_SIGNAL_PLUMBING_TOOLS.has(tool.toolName);
 }
 
 function extractJsonStringField(raw: string, field: string): string | undefined {
@@ -183,36 +213,50 @@ export function finalizeTodos(
   );
 }
 
+/**
+ * Extract a human-readable domain target (such as a university name, search
+ * keyword, or report title) without leaking internal `#block_id` strings or
+ * sandbox file paths to end users.
+ */
 export function extractToolTargetHint(
   tool: ToolCallTraceItem,
 ): string | undefined {
   const raw = tool.inputPreview || "";
   if (!raw) return undefined;
-  const section =
-    extractJsonStringField(raw, "section_id") ??
-    extractJsonStringField(raw, "block_id") ??
-    extractJsonStringField(raw, "target_id");
-  if (section) {
-    return `#${section}`;
-  }
-  return (
+  const candidate =
+    extractJsonStringField(raw, "university") ??
+    extractJsonStringField(raw, "school_name") ??
     extractJsonStringField(raw, "keyword") ??
-    extractJsonStringField(raw, "title") ??
     extractJsonStringField(raw, "query") ??
-    extractJsonStringField(raw, "name") ??
-    extractJsonStringField(raw, "path")
-  );
+    extractJsonStringField(raw, "title") ??
+    extractJsonStringField(raw, "subject_name");
+  if (!candidate) {
+    return undefined;
+  }
+  // Never surface raw block IDs (#c2-1) or internal file paths
+  if (
+    candidate.startsWith("#") ||
+    candidate.startsWith("/") ||
+    /^[a-z0-9_-]+$/i.test(candidate)
+  ) {
+    return undefined;
+  }
+  return candidate;
 }
 
 /**
- * Group low-level tool calls inside a milestone into high-signal semantic
- * pills (e.g. "登记数据来源 ×3", "写入报告内容 · #c2-1") so the user sees
- * editorial actions rather than a wall of raw tool calls.
+ * Group tool calls inside a milestone into clean, user-meaningful semantic
+ * action tags (e.g. "查询高教全景数据 · 浙江大学", "登记数据来源", "写入报告内容")
+ * while filtering out internal protocol plumbing (`get_protocol_guide`,
+ * `load_skill`, `read_blocks`) when domain actions exist.
  */
 export function buildSemanticActionPills(
   tools: ToolCallTraceItem[],
 ): SemanticActionPill[] {
   const visible = tools.filter(isVisibleTraceTool);
+  const meaningful = visible.filter(isDomainMeaningfulTool);
+  const sourceTools = meaningful.length > 0 ? meaningful : visible;
+
   const groups = new Map<
     string,
     {
@@ -223,7 +267,7 @@ export function buildSemanticActionPills(
     }
   >();
 
-  for (const tool of visible) {
+  for (const tool of sourceTools) {
     const meta = getToolMeta(tool.toolName);
     const existing = groups.get(meta.label);
     const target = extractToolTargetHint(tool);
@@ -271,12 +315,15 @@ function defaultPhaseTitle(
   isFirst: boolean,
 ): string {
   const visible = tools.filter(isVisibleTraceTool);
-  if (hasSubagents && visible.length === 0) {
-    return "派发子代理协同执行";
+  const meaningful = visible.filter(isDomainMeaningfulTool);
+  const pool = meaningful.length > 0 ? meaningful : visible;
+
+  if (hasSubagents && pool.length === 0) {
+    return "多角色协同调研与撰写";
   }
-  if (visible.length > 0) {
+  if (pool.length > 0) {
     const distinctLabels: string[] = [];
-    for (const tool of visible) {
+    for (const tool of pool) {
       const label = getToolMeta(tool.toolName).label;
       if (!distinctLabels.includes(label)) {
         distinctLabels.push(label);
@@ -288,7 +335,7 @@ function defaultPhaseTitle(
   if (hasThinking) {
     return isFirst ? "需求拆解与研究规划" : "阶段研判与统筹";
   }
-  return "任务执行";
+  return "处理研究任务";
 }
 
 function buildSubagentMilestonesFromSegments(

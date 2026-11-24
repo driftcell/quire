@@ -7,6 +7,7 @@ import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
 import {
   buildHistoricalMilestones,
   buildLiveMilestones,
+  buildSemanticActionPills,
 } from "@/components/chat/taskMilestones";
 import {
   buildHistoricalRunStatusModel,
@@ -252,6 +253,7 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     expect(html).toContain("1 个子代理");
     expect(html).toContain("完成数据核验");
     expect(html).toContain('data-live-header-jump="true"');
+    expect(html).toContain("定位章节");
     expect(html.split("14秒").length - 1).toBe(1);
 
     const traceHtml = renderToStaticMarkup(
@@ -270,6 +272,48 @@ describe("RunStatusModel, Dynamic Todo Lists & Vercel Minimalist UI", () => {
     expect(moeSource?.title).toBe("2024年全国教育事业发展统计公报");
     expect(moeSource?.publisher).toBe("中华人民共和国教育部");
     expect(moeSource?.excerpt).toBe("全国共有高等学校 3119 所。");
+  });
+
+  test("buildSemanticActionPills filters out low-signal plumbing tools and hides raw #block_ids", () => {
+    const pills = buildSemanticActionPills([
+      {
+        toolCallId: "t1",
+        toolName: "get_protocol_guide",
+        status: "completed",
+        inputPreview: "{}",
+      },
+      {
+        toolCallId: "t2",
+        toolName: "load_skill",
+        status: "completed",
+        inputPreview: JSON.stringify({ name: "higher-education-research" }),
+      },
+      {
+        toolCallId: "t3",
+        toolName: "read_blocks",
+        status: "completed",
+        inputPreview: JSON.stringify({ block_id: "c2-1" }),
+      },
+      {
+        toolCallId: "t4",
+        toolName: "panorama_report_universities",
+        status: "completed",
+        inputPreview: JSON.stringify({ university: "浙江大学" }),
+      },
+      {
+        toolCallId: "t5",
+        toolName: "apply_operations",
+        status: "completed",
+        inputPreview: JSON.stringify({ section_id: "c2-1" }),
+      },
+    ]);
+
+    expect(pills.map((p) => p.label)).toEqual([
+      "查询高教全景数据",
+      "写入报告内容",
+    ]);
+    expect(pills[0]?.targets).toEqual(["浙江大学"]);
+    expect(pills[1]?.targets).toEqual([]);
   });
 
   test("AgentAvatar renders deterministic unique character SVG per agent without pulsing dots", () => {

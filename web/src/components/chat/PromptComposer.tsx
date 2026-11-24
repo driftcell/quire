@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   ArrowUpIcon,
-  CoinsIcon,
   FileIcon,
   Minimize2Icon,
   PlusIcon,
@@ -100,73 +99,6 @@ export function formatSessionCostRmb(costRmb: number): string {
   return `¥${safe.toFixed(3)}`;
 }
 
-/**
- * Smooth "gas-pump odometer" interpolation hook. When the session's cumulative
- * cost increases (from main agent or subagent turns), it smoothly rolls the
- * displayed value at 60fps over ~560ms with cubic ease-out.
- */
-function useGasPumpCostOdometer(targetCostRmb: number | null | undefined): {
-  displayedCost: number;
-  isRolling: boolean;
-} {
-  const target =
-    typeof targetCostRmb === "number" &&
-    Number.isFinite(targetCostRmb) &&
-    targetCostRmb >= 0
-      ? targetCostRmb
-      : 0;
-  const [displayedCost, setDisplayedCost] = useState(target);
-  const [isRolling, setIsRolling] = useState(false);
-  const currentRef = useRef(target);
-
-  useEffect(() => {
-    const startValue = currentRef.current;
-    const diff = target - startValue;
-    if (Math.abs(diff) < 1e-8) {
-      currentRef.current = target;
-      return undefined;
-    }
-    if (
-      typeof window === "undefined" ||
-      typeof window.requestAnimationFrame !== "function"
-    ) {
-      currentRef.current = target;
-      // oxlint-disable-next-line react/set-state-in-effect -- SSR/non-DOM fallback
-      setDisplayedCost(target);
-      return undefined;
-    }
-
-    const durationMs = 560;
-    const startedAt = window.performance.now();
-    let frameId = 0;
-    setIsRolling(true);
-
-    const step = (now: number) => {
-      const elapsed = Math.max(0, now - startedAt);
-      const progress = Math.min(1, elapsed / durationMs);
-      const eased = 1 - (1 - progress) ** 3;
-      const nextValue = startValue + diff * eased;
-      currentRef.current = nextValue;
-      setDisplayedCost(nextValue);
-      if (progress < 1) {
-        frameId = window.requestAnimationFrame(step);
-      } else {
-        currentRef.current = target;
-        setDisplayedCost(target);
-        setIsRolling(false);
-      }
-    };
-
-    frameId = window.requestAnimationFrame(step);
-    return () => {
-      window.cancelAnimationFrame(frameId);
-      setIsRolling(false);
-    };
-  }, [target]);
-
-  return { displayedCost, isRolling };
-}
-
 function ContextRing({ pct }: { pct: number }) {
   const radius = 6;
   const circumference = 2 * Math.PI * radius;
@@ -205,7 +137,7 @@ function ContextRing({ pct }: { pct: number }) {
 }
 
 export function PromptComposer({
-  placeholder = "Shift + Enter 换行 · 支持拖拽或粘贴截图",
+  placeholder = "输入问题或修改要求（Shift + Enter 换行，支持拖拽或粘贴附件）…",
   runStatus = "idle",
   compacting = false,
   contextUsage,
@@ -231,8 +163,6 @@ export function PromptComposer({
 
   useEffect(() => {
     if (prefill) {
-      // Recalling a queued message is an external event that refills the
-      // composer; there is no render-time equivalent for the focus handoff.
       // oxlint-disable-next-line react/set-state-in-effect -- draft refill is driven by an outside queue action
       setText(prefill.text);
       textareaRef.current?.focus();
@@ -251,12 +181,6 @@ export function PromptComposer({
   const used = contextUsage?.context_used ?? 0;
   const limit = contextUsage?.context_limit ?? 0;
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-  const rawCostRmb = contextUsage?.cost_rmb;
-  const hasCost =
-    rawCostRmb !== undefined &&
-    rawCostRmb !== null &&
-    Number.isFinite(rawCostRmb);
-  const { displayedCost, isRolling } = useGasPumpCostOdometer(rawCostRmb);
 
   const submit = async () => {
     const trimmed = text.trim();
@@ -360,7 +284,7 @@ export function PromptComposer({
             <QuoteIcon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
             <div className="min-w-0">
               <div className="text-[10px] font-medium text-muted-foreground">
-                引用报告块 {selectionRangeLabel(quotedSnippet)}
+                引用报告内容
               </div>
               <div className="line-clamp-2 text-muted-foreground">
                 “{quotedSnippet.exact}”
@@ -405,7 +329,7 @@ export function PromptComposer({
 
       {isRunning && (
         <div className="px-1 text-[11px] text-muted-foreground">
-          Agent 正在运行，发送后将进入队列
+          正在处理当前任务，新发送的内容将自动排队
         </div>
       )}
 
@@ -462,7 +386,7 @@ export function PromptComposer({
               <PlusIcon className="size-4" />
             </InputGroupButton>
 
-            {contextUsage && (limit > 0 || hasCost) && (
+            {contextUsage && limit > 0 && used > 0 && (
               <HoverCard>
                 <HoverCardTrigger
                   render={
@@ -475,62 +399,20 @@ export function PromptComposer({
                     />
                   }
                 >
-                  {limit > 0 && (
-                    <>
-                      <ContextRing pct={pct} />
-                      <span>{pct}%</span>
-                    </>
-                  )}
-                  {(hasCost || used > 0) && (
-                    <>
-                      {limit > 0 && (
-                        <span className="text-border" aria-hidden="true">
-                          ·
-                        </span>
-                      )}
-                      <span
-                        data-slot="session-cost-odometer"
-                        data-rolling={isRolling ? "true" : "false"}
-                        className={`inline-flex items-center gap-1 font-mono text-[11.5px] tabular-nums transition-colors duration-200 ${
-                          isRolling
-                            ? "font-medium text-emerald-600 dark:text-emerald-400"
-                            : "text-muted-foreground"
-                        }`}
-                      >
-                        <CoinsIcon className="size-3 shrink-0 opacity-75" />
-                        <span>{formatSessionCostRmb(displayedCost)}</span>
-                      </span>
-                    </>
-                  )}
+                  <ContextRing pct={pct} />
+                  <span>{pct}%</span>
                 </HoverCardTrigger>
-                <HoverCardContent className="w-68 space-y-2.5">
+                <HoverCardContent className="w-64 space-y-2.5">
                   <div className="flex items-center justify-between text-xs font-medium">
-                    <span>上下文占用</span>
+                    <span>对话上下文容量</span>
                     <span className="tabular-nums">
                       {formatTokens(used)} / {formatTokens(limit)}
                     </span>
                   </div>
                   <Progress value={pct} aria-label="Context used" />
-                  <div className="grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
-                    <div>
-                      <div>Input</div>
-                      <div className="font-medium text-foreground tabular-nums">
-                        {formatTokens(contextUsage.input_tokens)}
-                      </div>
-                    </div>
-                    <div>
-                      <div>Output</div>
-                      <div className="font-medium text-foreground tabular-nums">
-                        {formatTokens(contextUsage.output_tokens)}
-                      </div>
-                    </div>
-                    <div>
-                      <div>Cached</div>
-                      <div className="font-medium text-emerald-600 tabular-nums">
-                        {formatTokens(contextUsage.cached_tokens)}
-                      </div>
-                    </div>
-                  </div>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    长对话或大体量报告编写过程中，可随时压缩历史记录以释放上下文空间。
+                  </p>
                   {onCompact && (
                     <Tooltip>
                       <TooltipTrigger
@@ -569,19 +451,17 @@ export function PromptComposer({
                           <Minimize2Icon className="size-3" />
                           <span>
                             {compacting || compactingRequest
-                              ? "正在压缩上下文…"
-                              : "压缩上下文 (/compact)"}
+                              ? "正在整理上下文…"
+                              : "整理并压缩上下文"}
                           </span>
                         </Button>
                       </TooltipTrigger>
                       <TooltipContent>
                         {isRunning
-                          ? "Agent 运行中暂不可压缩"
+                          ? "任务执行中暂不可压缩"
                           : compacting
-                            ? "服务端正在压缩上下文"
-                            : compactingRequest
-                              ? "正在生成结构化交接摘要"
-                              : "压缩历史并切换到最新系统提示词"}
+                            ? "正在整理历史上下文"
+                            : "压缩早期对话记录并保留核心结论"}
                       </TooltipContent>
                     </Tooltip>
                   )}

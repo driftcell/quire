@@ -66,7 +66,7 @@ function RegisterPage() {
         display_name: displayName.trim() || undefined,
         password,
       });
-      toast.success("账号创建成功，已进入 Quire 工作台");
+      toast.success("账号创建成功");
       await navigate({ to: "/" });
     } catch (error) {
       const msg = errorMessage(error, "创建账号失败，请检查填写内容");
@@ -78,26 +78,17 @@ function RegisterPage() {
   };
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-background px-4 py-10">
+    <main className="flex min-h-svh flex-col items-center justify-center bg-background px-5 py-10">
       <div className="w-full max-w-sm space-y-5">
-        <div className="flex items-center gap-2.5">
-          <BrandMark className="size-7 shrink-0" />
-          <div>
-            <div className="font-serif text-lg leading-none font-bold tracking-tight text-foreground">
+        <header className="flex flex-col items-center space-y-2 text-center">
+          <div className="inline-flex items-center gap-2.5">
+            <BrandMark className="size-7 shrink-0" />
+            <span className="font-serif text-xl font-bold tracking-tight text-foreground">
               Quire
-            </div>
-            <div className="mt-0.5 text-[11px] text-muted-foreground">
-              深度研究与报告出版工作台
-            </div>
+            </span>
           </div>
-        </div>
-
-        <header className="space-y-1">
-          <h1 className="font-serif text-xl font-bold tracking-tight text-foreground">
-            创建研究员账号
-          </h1>
           <p className="text-xs text-muted-foreground">
-            配置你的专属研究空间与报告归档库
+            注册工作账号以开始数据查询与报告编写
           </p>
         </header>
 
@@ -169,14 +160,14 @@ function RegisterPage() {
 
           <div className="space-y-1.5">
             <Label htmlFor="reg-display" className="text-xs font-medium">
-              署名 / 显示名称（可选）
+              姓名 / 显示名称（可选）
             </Label>
             <Input
               id="reg-display"
               name="display_name"
               type="text"
               autoComplete="name"
-              placeholder="例如：张研究员…"
+              placeholder="例如：张老师…"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               disabled={submitting}
@@ -238,12 +229,12 @@ function RegisterPage() {
                 aria-hidden="true"
               />
             )}
-            {submitting ? "正在创建账号…" : "创建账号并进入工作台"}
+            {submitting ? "正在注册…" : "注册并登录"}
           </Button>
         </form>
 
         <p className="text-center text-xs text-muted-foreground">
-          已有工作台账号？{" "}
+          已有账号？{" "}
           <Link
             to="/login"
             className="font-medium text-foreground underline underline-offset-4 hover:text-[#1D4ED8]"
@@ -252,6 +243,6 @@ function RegisterPage() {
           </Link>
         </p>
       </div>
-    </div>
+    </main>
   );
 }

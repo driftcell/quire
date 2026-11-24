@@ -51,7 +51,7 @@ function GridLoader() {
   return (
     <output
       className="ml-auto grid shrink-0 grid-cols-5 gap-[1.5px]"
-      aria-label="Agent 正在运行"
+      aria-label="正在执行"
     >
       {Array.from({ length: 25 }, (_, index) => {
         const row = Math.floor(index / 5);
@@ -107,7 +107,7 @@ export function AppSidebar() {
       }
     },
     onError: (error) => {
-      toast.error(errorMessage(error, "删除会话失败"));
+      toast.error(errorMessage(error, "删除对话失败"));
     },
     onSettled: () => {
       setDeletingSessionId(null);
@@ -143,7 +143,7 @@ export function AppSidebar() {
         queryClient.setQueryData(["sessions"], context.previous);
       }
       toast.error(
-        errorMessage(error, variables.pinned ? "置顶会话失败" : "取消置顶失败"),
+        errorMessage(error, variables.pinned ? "置顶对话失败" : "取消置顶失败"),
       );
     },
     onSettled: () => {
@@ -167,7 +167,7 @@ export function AppSidebar() {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return all;
     return all.filter((s) =>
-      (s.title || "未命名会话").toLowerCase().includes(q),
+      (s.title || "未命名对话").toLowerCase().includes(q),
     );
   }, [sessionsQuery.data, searchQuery]);
 
@@ -188,14 +188,6 @@ export function AppSidebar() {
           >
             <ProductBrand />
           </Link>
-          {totalCount > 0 && (
-            <span
-              className="rounded-md border border-sidebar-border bg-background/70 px-1.5 py-0.5 font-mono text-[10px] font-medium text-muted-foreground tabular-nums"
-              title={`共 ${totalCount} 份研究卷宗`}
-            >
-              {totalCount}
-            </span>
-          )}
         </div>
 
         <Button
@@ -207,7 +199,7 @@ export function AppSidebar() {
           className="h-9 w-full justify-start gap-2 rounded-lg border-sidebar-border bg-card px-2.5 text-xs font-medium text-foreground shadow-2xs transition-colors hover:bg-background"
         >
           <PlusIcon className="size-3.5 text-[#1D4ED8]" aria-hidden="true" />
-          <span>新建研究卷宗</span>
+          <span>新建对话</span>
           <span
             className="ml-auto hidden items-center gap-0.5 md:flex"
             aria-label="Command or Control plus N"
@@ -229,8 +221,8 @@ export function AppSidebar() {
               name="sidebar-session-filter"
               autoComplete="off"
               spellCheck={false}
-              aria-label="筛选研究会话"
-              placeholder="筛选研究卷宗…"
+              aria-label="搜索历史对话"
+              placeholder="搜索历史对话或报告…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="h-8 w-full rounded-lg border border-sidebar-border/90 bg-background/70 pr-7 pl-8 text-xs text-foreground placeholder:text-muted-foreground/70 focus-visible:border-ring focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring/25 focus-visible:outline-none"
@@ -238,7 +230,7 @@ export function AppSidebar() {
             {searchQuery && (
               <button
                 type="button"
-                aria-label="清空筛选"
+                aria-label="清空搜索"
                 onClick={() => setSearchQuery("")}
                 className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               >
@@ -268,7 +260,7 @@ export function AppSidebar() {
                     pinMutation.isPending &&
                     pinMutation.variables?.sessionId === session.session_id;
                   const isActive = activeSessionId === session.session_id;
-                  const title = session.title || "未命名会话";
+                  const title = session.title || "未命名对话";
                   const hasDoc = Boolean(session.doc_id);
 
                   return (
@@ -326,7 +318,7 @@ export function AppSidebar() {
                         {session.active_run_status === "awaiting_input" && (
                           <span
                             className="ml-auto size-2 shrink-0 rounded-full bg-amber-500"
-                            title="等待确认"
+                            title="等待你的确认"
                           />
                         )}
                       </Button>
@@ -349,8 +341,8 @@ export function AppSidebar() {
                                   ? "pointer-events-auto opacity-100"
                                   : "pointer-events-none opacity-0 group-hover/session:pointer-events-auto group-hover/session:opacity-100 aria-expanded:pointer-events-auto aria-expanded:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
                               }`}
-                              aria-label={`会话操作 ${title}`}
-                              title="会话操作"
+                              aria-label={`对话操作 ${title}`}
+                              title="对话操作"
                               disabled={deleting}
                             />
                           }
@@ -393,7 +385,7 @@ export function AppSidebar() {
                               ) : (
                                 <PinIcon aria-hidden="true" />
                               )}
-                              {isPinned ? "取消置顶" : "置顶会话"}
+                              {isPinned ? "取消置顶" : "置顶对话"}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -423,7 +415,7 @@ export function AppSidebar() {
                                 ? "正在删除…"
                                 : confirming
                                   ? "再次点击确认删除"
-                                  : "删除会话"}
+                                  : "删除对话"}
                             </DropdownMenuItem>
                           </DropdownMenuGroup>
                         </DropdownMenuContent>
@@ -438,22 +430,22 @@ export function AppSidebar() {
 
         {sessionsQuery.data?.length === 0 && (
           <div className="mx-2 my-6 rounded-xl border border-dashed border-sidebar-border bg-background/50 px-3.5 py-5 text-center">
-            <FileTextIcon
+            <MessageSquareIcon
               className="mx-auto mb-2 size-4 text-muted-foreground/60"
               aria-hidden="true"
             />
             <p className="text-xs font-medium text-foreground/80">
-              尚无研究卷宗
+              暂无历史对话
             </p>
             <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-              在右侧工作台输入研究命题，开启第一份结构化报告。
+              在右侧输入高校数据查询或报告分析需求，即可开启新对话。
             </p>
           </div>
         )}
 
         {(sessionsQuery.data?.length ?? 0) > 0 && groups.length === 0 && (
           <div className="px-4 py-6 text-center text-xs text-muted-foreground">
-            未找到匹配“{searchQuery}”的研究卷宗
+            未找到匹配“{searchQuery}”的记录
           </div>
         )}
       </SidebarContent>
