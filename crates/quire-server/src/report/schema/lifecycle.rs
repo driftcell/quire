@@ -148,7 +148,7 @@ impl From<ReportSummary> for ReportSummaryView {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DigestParams {
-    /// Target report `doc_id` (check `<runtime_session_state>` or `list_reports`).
+    /// Target report `doc_id` (check `create_report` output or `list_reports`).
     pub doc_id: String,
     /// Optional case-insensitive keyword filter matched against block `id`, block `type`, or visible text. Omit to return the full block outline.
     #[serde(default)]

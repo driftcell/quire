@@ -3425,6 +3425,7 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
             context_used: 133,
             context_limit: 123_456,
             cost_rmb: None,
+            output_price_rmb: None,
         }),
     ];
     let (provider, requests) = RecordingStreamProvider::new(events);
@@ -3560,6 +3561,7 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
                 context_used: 15,
                 context_limit: 64_000,
                 cost_rmb: None,
+                output_price_rmb: None,
             }),
         ],
     ]);
@@ -3682,6 +3684,7 @@ async fn ask_user_skip_marks_skipped_and_continues() {
                 context_used: 12,
                 context_limit: 64_000,
                 cost_rmb: None,
+                output_price_rmb: None,
             }),
         ],
     ]);

@@ -275,6 +275,7 @@ pub(crate) fn sample_model_stream_events() -> Vec<ModelStreamEvent> {
             context_used: 2,
             context_limit: 100,
             cost_rmb: None,
+            output_price_rmb: None,
         }),
         ModelStreamEvent::Superseded,
     ]

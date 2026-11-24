@@ -344,6 +344,7 @@ export function useSessionEventStream({
     liveDocId: liveState.liveDocId,
     liveRunStatus: liveState.liveRunStatus,
     liveUsage: liveState.liveUsage,
+    streamingEstimatedOutputTokens: liveState.streamingEstimatedOutputTokens,
     liveMain: liveState.liveMain,
     liveSubagents: liveState.liveSubagents,
     effectivePendingQuestion,

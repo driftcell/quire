@@ -56,6 +56,7 @@ export interface SessionChatPaneProps {
   runStatus: ActiveRunStatus;
   compacting?: boolean;
   contextUsage?: ContextUsage;
+  streamingEstimatedOutputTokens?: number;
   quotedSnippet: QuotedChatSnippet | null;
   pendingCommentRefs: SessionCommentRef[];
   prefill: { key: string; text: string } | null;
@@ -95,6 +96,7 @@ export function SessionChatPane({
   runStatus,
   compacting = false,
   contextUsage,
+  streamingEstimatedOutputTokens = 0,
   quotedSnippet,
   pendingCommentRefs,
   prefill,
@@ -162,6 +164,7 @@ export function SessionChatPane({
             runStatus={runStatus}
             compacting={compacting}
             contextUsage={contextUsage}
+            streamingEstimatedOutputTokens={streamingEstimatedOutputTokens}
             quotedSnippet={quotedSnippet}
             pendingCommentRefs={pendingCommentRefs}
             prefill={prefill}

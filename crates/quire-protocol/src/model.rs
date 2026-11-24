@@ -287,29 +287,35 @@ impl Default for ReferencesConfig {
 /// A citation source. Source IDs live in the key of [`ReportDocument::sources`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SourceEntry {
-    /// Source title. Required when registering a new source; may be omitted when partially
-    /// updating an already-registered source by `id` via `upsert_sources`.
+    /// Official title of the document, announcement, or dataset. Required when registering a new
+    /// source; may be omitted when partially updating an existing source by `id`.
+    /// Good: `"2025年国家自然科学基金集中接收申请项目评审结果通告"`; Bad: `"国自然官网"` or a raw URL.
     #[serde(default)]
     pub title: String,
+    /// Direct canonical URL of the original webpage, PDF, or official announcement (never an internal query API URL).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Individual or institutional authors when explicitly named in the source.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authors: Vec<String>,
+    /// Full name of the publishing institution or journal (never a bare domain or URL).
+    /// Good: `"国家自然科学基金委员会"`; Bad: `"nsfc.gov.cn"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publisher: Option<String>,
-    /// Publication date, preferably ISO-8601 (`2026-03-01`) but free-form is accepted.
+    /// Original publication date, preferably ISO-8601 (`"2025-08-27"`). Do not put retrieval date here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
+    /// Date when the agent retrieved or verified this source, preferably ISO-8601 (`"2026-11-24"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accessed: Option<String>,
-    /// Optional concise human-readable provenance note for scope, time windows, statistical calibers
-    /// and material limitations. Do not use it for raw query parameters, internal IDs or full datasets.
+    /// Optional concise provenance note stating statistical scope, time window, or limitations.
+    /// Good: `"统计口径：2025年国自然集中接收期资助项目，不含后期补充立项。"`; Bad: raw SQL/API params or internal IDs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
-    /// Optional short verbatim passage from one original document, included only when it helps a
-    /// human reader understand or verify a specific claim. Omit it for structured database/API
-    /// records or whenever no meaningful original passage exists; never fill it with full query
-    /// results, derived analysis, editorial notes, or a synthetic verification dossier.
+    /// Optional short verbatim quote from one original prose/policy document to help a human reader
+    /// verify a claim. Omit for structured database tables or when no crisp quote exists.
+    /// Good: `"到2025年，浙江省力争新增博士学位授予单位2—3个，省属高校优势特色学科进入全国前列。"`;
+    /// Bad: `"经查询数据库，浙江大学2025年立项..."` (never write query logs, derived analysis, or synthetic summaries).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub excerpt: Option<String>,
 }

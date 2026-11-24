@@ -21,17 +21,18 @@ pub(crate) async fn get_protocol_guide_tool(
     #[rig(context)] context: &mut ToolContext,
     /// Protocol topic to disclose.
     topic: quire_server::guide::GuideTopic,
-) -> Result<contracts::GuideReceipt, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    runtime
+    let receipt = runtime
         .report
         .get_protocol_guide(contracts::GuideParams { topic })
         .await
-        .map_err(mcp_error_to_tool_error)
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_protocol_guide(&receipt)
 }
 
 /// Initialize a new report at revision 1 and bind it to the active session.
-/// Use only when `<runtime_session_state>` has no bound `doc_id`; inspect an existing binding with
+/// Use only when no report is bound to this session yet; inspect an existing binding with
 /// `get_document_digest` or `list_reports` instead of creating a duplicate. Pass the agreed prose
 /// target when one exists. Initial block IDs must be unique semantic slugs, never UUIDs.
 #[allow(
@@ -101,13 +102,14 @@ pub(crate) async fn list_reports_tool(
     query: Option<String>,
     /// Maximum number of summaries (`1..=100`, defaults to 20).
     limit: Option<i64>,
-) -> Result<contracts::ListReportsReceipt, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    runtime
+    let receipt = runtime
         .report
         .list_reports(contracts::ListReportsParams { query, limit })
         .await
-        .map_err(mcp_error_to_tool_error)
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_list_reports(&receipt)
 }
 
 /// Return a low-token report outline with revision, configuration, prose metrics and block metadata.
@@ -122,9 +124,9 @@ pub(crate) async fn get_document_digest_tool(
     query: Option<String>,
     /// Optional comparison target for older reports without a stored prose target.
     target_prose_chars: Option<NonZeroU32>,
-) -> Result<contracts::DigestReceipt, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    runtime
+    let receipt = runtime
         .report
         .get_document_digest(contracts::DigestParams {
             doc_id,
@@ -132,7 +134,8 @@ pub(crate) async fn get_document_digest_tool(
             target_prose_chars,
         })
         .await
-        .map_err(mcp_error_to_tool_error)
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_document_digest(&receipt)
 }
 
 /// Project a report, section or block subset into Markdown with exact block anchors.
@@ -151,9 +154,9 @@ pub(crate) async fn read_as_markdown_tool(
     block_ids: Option<Vec<String>>,
     /// Whether to expand ECharts series into Markdown data tables (`true` by default).
     include_chart_data: Option<bool>,
-) -> Result<contracts::ReadMarkdownReceipt, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    runtime
+    let receipt = runtime
         .report
         .read_as_markdown(contracts::ReadMarkdownParams {
             doc_id,
@@ -163,7 +166,8 @@ pub(crate) async fn read_as_markdown_tool(
             include_chart_data,
         })
         .await
-        .map_err(mcp_error_to_tool_error)
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_read_as_markdown(&receipt)
 }
 
 /// Fetch full canonical Block AST JSON for exact block IDs plus the current revision.
@@ -284,18 +288,15 @@ pub(crate) async fn resolve_existing_session_doc_id(
     Ok(None)
 }
 
-/// Register or update bibliography sources with URL and normalized-title deduplication.
-/// Register only sources actually retrieved and read. `excerpt` is optional and reader-facing:
-/// include a short verbatim passage from one natural-language document only when directly useful;
-/// omit it for structured records and never substitute query results, multi-document compilations,
-/// analysis, rankings, internal IDs or editorial notes. Use `note` for concise scope and caliber.
-/// Inspect `canonical_id_map` and cite mapped IDs. Chat claims use `<citation id="SOURCE_ID"/>`.
+/// Register or update bibliography sources actually retrieved during research, deduplicating by URL
+/// and normalized title. Call before citing new sources in report blocks or `<citation id="SOURCE_ID"/>`
+/// chat tags, and always cite the mapped IDs from `canonical_id_map`.
 #[rig_tool(name = "upsert_sources", required(sources))]
 pub(crate) async fn upsert_sources_tool(
     #[rig(context)] context: &mut ToolContext,
     /// Report ID; omit to use the session's currently bound report.
     doc_id: String,
-    /// Non-empty list of real sources. Include a short excerpt only when useful to a human reader.
+    /// Non-empty list of source records. Fill `url`, `publisher`, `date`, `accessed`, `note`, and `excerpt` per `SourceEntry` rules.
     sources: Vec<contracts::SourceInput>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -555,9 +556,9 @@ pub(crate) async fn lint_document_tool(
     select: Vec<String>,
     /// Optional suppressible rule codes, names or prefixes to hide during this check.
     ignore: Vec<String>,
-) -> Result<contracts::LintReceipt, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    runtime
+    let receipt = runtime
         .report
         .lint_document(contracts::LintParams {
             doc_id,
@@ -565,7 +566,8 @@ pub(crate) async fn lint_document_tool(
             ignore,
         })
         .await
-        .map_err(mcp_error_to_tool_error)
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_lint_document(&receipt)
 }
 
 /// List side-channel review threads anchored to report blocks.
@@ -580,9 +582,9 @@ pub(crate) async fn list_comments_tool(
     status: Option<quire_protocol::CommentStatus>,
     /// Optional block ID filter.
     block_id: Option<String>,
-) -> Result<contracts::ListCommentsReceipt, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    runtime
+    let receipt = runtime
         .report
         .list_comments(contracts::ListCommentsParams {
             doc_id,
@@ -590,7 +592,8 @@ pub(crate) async fn list_comments_tool(
             block_id,
         })
         .await
-        .map_err(mcp_error_to_tool_error)
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_list_comments(&receipt)
 }
 
 /// Create a review comment thread anchored to one or more blocks without changing the revision.
@@ -611,7 +614,8 @@ pub(crate) async fn add_comment_tool(
     end_block_id: Option<String>,
     /// Optional ordered list of all selected blocks.
     anchor_blocks: Vec<String>,
-    /// Actionable review finding and expected fix.
+    /// Actionable review finding stating both the specific defect and expected fix.
+    /// Good: `"此处仅列出2024年总数，建议补充同比增幅并注明统计口径。"`; Bad: `"需要修改。"`.
     body: String,
     /// Optional exact text-quote selector in the starting block.
     quote: Option<quire_protocol::TextQuoteSelector>,

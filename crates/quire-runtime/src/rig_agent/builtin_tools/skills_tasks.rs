@@ -77,19 +77,21 @@ pub(crate) async fn read_skill_resource_tool(
     })
 }
 
-/// Report the current work stage and dynamic todo-list plan to the user interface without cluttering the tool trace.
-/// Both the lead agent and subagents should pass and dynamically update `todos` at phase transitions so the UI can render an accurate step-by-step todo list and progress bar.
+/// Report the current work stage and dynamic todo-list progress to the user interface.
+/// Both the lead agent and subagents should call this at phase transitions so users can track progress without reading raw tool traces.
 #[rig_tool(name = "describe_task")]
 pub(crate) async fn describe_task_tool(
     #[rig(context)] context: &mut ToolContext,
-    /// Short Chinese status phrase for the active stage, ideally at most 16 characters (no internal tool names or raw IDs).
+    /// Short Chinese status phrase (`<= 16` chars) with zero internal tool names or raw IDs.
+    /// Good: `"核对省属高校国自然立项口径"`; Bad: `"调用 apply_operations 更新 sec_2"`.
     title: String,
-    /// Optional clarification of the current focus or blocker.
+    /// Optional concise Chinese note on the current focus or blocker (e.g. `"对比2021—2025年面上与青年项目增量"`).
     detail: Option<String>,
     /// Optional `block_id` of the report heading currently being worked on to highlight the active chapter in the UI.
     section_id: Option<String>,
-    /// Optional ordered todo list for this agent (`status`: `"pending" | "in_progress" | "completed" | "skipped"`). Pass the full planned todo list on start and dynamically adjust statuses or items as stages complete.
-    todos: Option<Vec<quire_session_protocol::TaskTodoItem>>,
+    /// Ordered todo list (`status`: `"pending" | "in_progress" | "completed" | "skipped"`). Keep titles as parallel 8–16 char Chinese verb-object phrases and mark at most one item `in_progress` at a time.
+    /// Good: `[{"title":"梳理近五年立项数据","status":"completed"},{"title":"撰写学科对标分析","status":"in_progress"}]`; Bad: marking multiple items `in_progress` simultaneously.
+    todos: Option<Vec<TaskTodoInput>>,
 ) -> Result<DescribeTaskReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let title = title.trim().to_string();
@@ -101,7 +103,8 @@ pub(crate) async fn describe_task_tool(
     let normalized_todos: Vec<quire_session_protocol::TaskTodoItem> = todos
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|mut item| {
+        .filter_map(|item| {
+            let mut item = quire_session_protocol::TaskTodoItem::from(item);
             item.title = item.title.trim().to_string();
             if item.title.is_empty() {
                 None
@@ -169,15 +172,13 @@ pub(crate) async fn set_session_title_tool(
 }
 
 /// Present a one-shot structured questionnaire to the user and immediately suspend the current turn
-/// (any sibling tool calls in the same model turn are skipped without execution). Available only
-/// to the lead agent.
-///
-/// Reserve this for genuinely ambiguous scope or direction decisions that cannot be resolved from
-/// the user's prompt, existing workspace data, or sensible defaults.
+/// (sibling tool calls in the same turn are skipped). Available only to the lead agent when scope or
+/// direction is genuinely ambiguous and cannot be inferred from context.
 #[rig_tool(name = "ask_user")]
 pub(crate) fn ask_user_tool(
     #[rig(context)] context: &mut ToolContext,
-    /// Non-empty list of structured questions; each question must provide a non-empty `id`, `title`, and at least one preset option in `options` (place your recommended option first).
+    /// Non-empty list of 1–4 structured questions. Each question needs a concise Chinese `title` and concrete `options` with the recommended choice first (the UI provides custom input automatically, so do not add a filler `"其他"` option).
+    /// Good `title`: `"本次对标分析优先选取哪组参照高校？"`; Bad: `"请问您有什么具体要求？"`.
     questions: Vec<QuestionItem>,
 ) -> Result<AskUserReceipt, ToolExecutionError> {
     if questions.is_empty() {

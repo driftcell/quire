@@ -1,8 +1,9 @@
 //! Concrete receipts returned by runtime built-in tools.
 
 use quire_protocol::{Diagnostic, LintSummary};
+use quire_session_protocol::{TaskTodoItem, TaskTodoStatus};
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct SandboxExecuteReceipt {
@@ -62,6 +63,33 @@ pub struct ReadSkillResourceReceipt {
     pub skill: String,
     pub path: String,
     pub content: String,
+}
+
+/// One `describe_task` todo argument. Unlike the wire-level [`TaskTodoItem`], missing `status`
+/// defaults to `pending` so the model may omit it when adding a new item.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TaskTodoInput {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub title: String,
+    #[serde(default)]
+    pub status: TaskTodoStatus,
+    #[serde(default)]
+    pub detail: Option<String>,
+    #[serde(default)]
+    pub section_id: Option<String>,
+}
+
+impl From<TaskTodoInput> for TaskTodoItem {
+    fn from(input: TaskTodoInput) -> Self {
+        Self {
+            id: input.id,
+            title: input.title,
+            status: input.status,
+            detail: input.detail,
+            section_id: input.section_id,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

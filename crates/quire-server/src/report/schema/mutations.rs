@@ -13,7 +13,7 @@ pub struct ApplyOperationsParams {
     pub doc_id: String,
     /// Base document revision you read from `get_document_digest`, `read_as_markdown`, or `read_blocks`. Smart CAS automatically rebases non-overlapping concurrent edits and returns a conflict error with valid IDs if overlapping blocks changed.
     pub expected_revision: i64,
-    /// Concise audit summary of this mutation batch (e.g. `"author ch2 revenue analysis and KPI table"`).
+    /// Concise audit summary of this mutation batch. Good: `"撰写第二章基金立项对比及数据表"`; Bad: `"update"`.
     pub summary: String,
     /// Ordered declarative patch operations (`append`, `insert_before`, `insert_after`, `patch_block`, `replace_range`, `delete_blocks`, `move_block`). Prefer `patch_block` for in-place edits so review comment anchors are preserved.
     pub ops: Vec<PatchOp>,
@@ -92,7 +92,7 @@ pub struct UpsertSourcesParams {
     /// Target report `doc_id` that owns the bibliography registry (optional in chat sessions; if omitted, uses or auto-creates the session's bound document).
     #[serde(default)]
     pub doc_id: String,
-    /// Non-empty list of real sources actually read during research. Include `title`, optional `url`/`author`/`published_at`/`publisher`/`note`, and an optional short verbatim `excerpt` only when it is useful to a human reader. Omit excerpts for structured records; never substitute full query results or synthetic dossiers. Duplicate URLs or normalized titles coalesce into one canonical source ID returned in `canonical_id_map`.
+    /// Non-empty list of real sources actually retrieved and read. Duplicate URLs or normalized titles coalesce into one canonical ID returned in `canonical_id_map`.
     pub sources: Vec<SourceInput>,
 }
 

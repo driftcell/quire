@@ -84,9 +84,11 @@ pub(crate) async fn preview_echarts_tool(
     height: Option<u32>,
     /// Outer chart block title. Do not duplicate the main title inside `option.title`.
     title: Option<String>,
-    /// Concise chart caption/note (`<= 120` characters) stating measurement units and scope.
+    /// Concise Chinese caption (`<= 120` chars) stating units and statistical scope.
+    /// Good: `"单位：项；统计范围为2021—2025年集中接收期立项数。"`; Bad: `"如图所示"`.
     note: Option<String>,
-    /// Required one-sentence quantitative takeaway stating extremes, deltas, or trends (missing summary triggers a lint warning).
+    /// Required one-sentence Chinese quantitative takeaway stating subject, extremes, delta, or trend.
+    /// Good: `"2021—2025年浙江工业大学国自然立项由142项增至198项（+39.4%），增速居省属高校首位。"`; Bad: `"展示了各高校立项趋势变化。"`.
     fallback_summary: Option<String>,
     /// Registered canonical `source_id`s persisted with the preview so `commit_chart` inherits attribution automatically.
     source_ids: Option<Vec<String>>,

@@ -205,6 +205,61 @@ describe("run lifecycle guards", () => {
     }
   });
 
+
+  test("streaming deltas accumulate estimated output tokens and reconcile on context_usage", () => {
+    let state = reduceSessionEvent(emptyLiveSessionState(), {
+      seq: 1,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:00Z",
+      event: "turn_started",
+    }).state;
+    expect(state.streamingEstimatedOutputTokens).toBe(0);
+
+    state = reduceSessionEvent(state, {
+      seq: 2,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:01Z",
+      event: "thinking_delta",
+      delta: "正在分析高校学科建设数据",
+    }).state;
+    expect(state.streamingEstimatedOutputTokens).toBeGreaterThan(5);
+
+    const afterThinking = state.streamingEstimatedOutputTokens;
+    state = reduceSessionEvent(state, {
+      seq: 3,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:02Z",
+      event: "text_delta",
+      delta: "hello world",
+    }).state;
+    expect(state.streamingEstimatedOutputTokens).toBeGreaterThan(afterThinking);
+
+    state = reduceSessionEvent(state, {
+      seq: 4,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:03Z",
+      event: "context_usage",
+      input_tokens: 100,
+      output_tokens: 24,
+      cached_tokens: 0,
+      context_used: 124,
+      context_limit: 128000,
+      cost_rmb: 0.0012,
+      output_price_rmb: 8.0,
+    }).state;
+    expect(state.streamingEstimatedOutputTokens).toBe(0);
+    expect(state.liveUsage?.cost_rmb).toBe(0.0012);
+    expect(state.liveUsage?.output_price_rmb).toBe(8.0);
+  });
+
   test("subagent usage never updates the session meter", () => {
     const usage: SessionEvent = {
       seq: 2,

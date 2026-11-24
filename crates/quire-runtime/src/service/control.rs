@@ -234,18 +234,14 @@ impl RuntimeService {
             .system_prompt_for(session.kb_branch.as_deref())
             .await?;
         let latest_version = self.kb.current_version().await?;
-        let compaction_cost = self
-            .models
-            .resolve(&model_route)
-            .await
-            .ok()
-            .and_then(|resolved| {
-                resolved.calculate_cost_rmb(
-                    response.usage.input_tokens.unwrap_or(0),
-                    response.usage.output_tokens.unwrap_or(0),
-                    response.usage.cached_input_tokens.unwrap_or(0),
-                )
-            });
+        let resolved_model = self.models.resolve(&model_route).await.ok();
+        let compaction_cost = resolved_model.as_ref().and_then(|resolved| {
+            resolved.calculate_cost_rmb(
+                response.usage.input_tokens.unwrap_or(0),
+                response.usage.output_tokens.unwrap_or(0),
+                response.usage.cached_input_tokens.unwrap_or(0),
+            )
+        });
         let cost_rmb = match (session.context_usage.cost_rmb, compaction_cost) {
             (Some(prev), Some(delta)) => Some(prev + delta),
             (Some(prev), None) => Some(prev),
@@ -260,6 +256,10 @@ impl RuntimeService {
             context_used: estimated_tokens,
             context_limit: session.context_usage.context_limit,
             cost_rmb,
+            output_price_rmb: resolved_model
+                .as_ref()
+                .and_then(|model| model.cost_output)
+                .or(session.context_usage.output_price_rmb),
         };
         self.store
             .apply_compaction(&CompactionWrite {

@@ -157,6 +157,49 @@ pub(super) fn update_doc_id(doc_id: &SharedDocId, value: Option<String>) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
 }
 
+pub(super) type SharedForkHistory = Arc<RwLock<Vec<Message>>>;
+
+pub(super) fn new_shared_fork_history() -> SharedForkHistory {
+    Arc::new(RwLock::new(Vec::new()))
+}
+
+pub(super) fn current_fork_history(history: &SharedForkHistory) -> Vec<Message> {
+    history
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+pub(super) fn update_fork_history(history: &SharedForkHistory, snapshot: Vec<Message>) {
+    *history
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = snapshot;
+}
+
+pub(super) fn select_initial_history(
+    recorded_history: &[Message],
+    prompt: &Message,
+    prompt_recorded: bool,
+    fork_history: Option<Vec<Message>>,
+) -> RuntimeResult<Vec<Message>> {
+    if prompt_recorded {
+        if recorded_history.last() != Some(prompt) {
+            return Err(RuntimeError::Internal(
+                "canonical prompt is not the latest recorded message".into(),
+            ));
+        }
+        let mut history = recorded_history.to_vec();
+        history.pop();
+        return Ok(history);
+    }
+    if let Some(forked) = fork_history
+        && recorded_history.is_empty()
+    {
+        return Ok(forked);
+    }
+    Ok(recorded_history.to_vec())
+}
+
 #[derive(Clone)]
 struct SubagentScope {
     subagent_run_id: String,
@@ -275,11 +318,16 @@ impl RigModelCore {
             scope,
             request.prompt_recorded,
             request.persist_history,
+            None,
         )
         .await?;
         Ok(())
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "internal turn runner threads explicit history/fork options without extra wrapper allocations"
+    )]
     async fn run_turn(
         self: Arc<Self>,
         execution: AgentExecution,
@@ -288,6 +336,7 @@ impl RigModelCore {
         scope: StreamEventSender,
         prompt_recorded: bool,
         persist_history: bool,
+        fork_history: Option<Vec<Message>>,
     ) -> RuntimeResult<(String, Vec<Message>)> {
         let resolved = self
             .models
@@ -343,25 +392,20 @@ impl RigModelCore {
                 .iter()
                 .map(|message| message.as_ref().clone())
                 .collect();
-            let initial_history = if prompt_recorded {
-                if recorded_history.last() != Some(&prompt) {
-                    return Err(RuntimeError::Internal(format!(
-                        "canonical prompt for run `{}` is not the latest recorded message",
-                        execution.run_id
-                    )));
-                }
-                let mut history = recorded_history.clone();
-                history.pop();
-                history
-            } else {
-                recorded_history.clone()
-            };
+            let initial_history = select_initial_history(
+                &recorded_history,
+                &prompt,
+                prompt_recorded,
+                fork_history,
+            )?;
 
+            let parent_history = new_shared_fork_history();
             let built_in = self.build_tools(ToolBuildContext {
                 execution: execution.clone(),
                 scope: scope.clone(),
                 engine: Arc::clone(&self),
                 sandbox: Arc::clone(&sandbox_lease),
+                parent_history: Arc::clone(&parent_history),
             });
             let mut available_tools = built_in.names.clone();
             let mut remote_tools = Vec::new();
@@ -458,6 +502,7 @@ impl RigModelCore {
                     kb_update_notice,
                     turn_pricing,
                     Arc::clone(&state),
+                    Arc::clone(&parent_history),
                 ))
                 .add_hook(ToolLifecycleHook::new(
                     execution.clone(),
@@ -533,14 +578,13 @@ impl RigModelCore {
 }
 
 fn static_preamble(execution: &AgentExecution) -> String {
-    let mut preamble = execution.system_prompt.clone();
-    preamble.push_str("\n\n<runtime_rules>\n");
-    if let Some(branch) = execution.kb_branch.as_deref() {
-        preamble.push_str(&format!(
-            "Knowledge-base branch for this session: `{branch}`. Agent and skill lookups use this branch.\n"
-        ));
+    if !execution.run_id.starts_with("run_sub_") {
+        return execution.system_prompt.clone();
     }
-    preamble.push_str("</runtime_rules>\n");
+    let mut preamble = execution.system_prompt.clone();
+    preamble.push_str(
+        "\n\n<runtime_rules>\nYou are a derived subagent spawned by the lead agent (not the user-facing lead agent). Complete only your assigned task and return a concise, factual summary to the lead agent; do not address the end user directly or attempt to orchestrate other subagents.\n</runtime_rules>\n",
+    );
     preamble
 }
 
@@ -569,6 +613,7 @@ pub(super) fn context_usage(usage: &Usage, context_limit: u64) -> ContextUsage {
             .unwrap_or_else(|| input_tokens.saturating_add(output_tokens)),
         context_limit,
         cost_rmb: None,
+        output_price_rmb: None,
     }
 }
 

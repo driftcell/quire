@@ -461,14 +461,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
       data-status={model.status}
       data-presentation={isStreaming ? "ledger" : "receipt"}
       aria-label={isStreaming ? "当前执行进度" : "执行回执"}
-      className={cn(
-        "relative w-full border-l-2 py-0.5 pl-3.5 text-xs",
-        isStreaming
-          ? "border-[#1D4ED8]"
-          : isFailed
-            ? "border-destructive/60"
-            : "border-border/80",
-      )}
+      className="relative w-full py-0.5 text-xs"
     >
       <div className="flex min-w-0 items-start gap-1.5">
         <button

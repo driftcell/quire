@@ -41,6 +41,12 @@ pub struct SubagentTask {
     /// Pass a previous `subagent_run_id` to resume that child run's persistent multi-turn conversation memory (e.g. re-invoking the same `reviewer` after fixes).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_run_id: Option<String>,
+    /// Inherit a snapshot of the parent agent's conversation history up to this point (defaults to `false`).
+    /// Set `true` for research or writing/revision tasks that need prior multi-turn context or user-uploaded
+    /// attachments without duplicating them in `task`. Keep `false` for independent `reviewer` QA passes
+    /// (to avoid confirmation bias) and narrow parallel lookups (to save input tokens). Ignored when `resume_run_id` is set.
+    #[serde(default)]
+    pub fork: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +63,7 @@ pub(super) struct SubagentParent {
     kb_branch: Option<String>,
     doc_id: SharedDocId,
     cancellation: tokio_util::sync::CancellationToken,
+    fork_history: Option<Vec<Message>>,
 }
 
 /// Launch the requested specialized subagents and wait for their structured outcomes.
@@ -79,11 +86,16 @@ pub(super) async fn run_subagents_tool(
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
+    let parent_history = tasks
+        .iter()
+        .any(|task| task.fork && task.resume_run_id.is_none())
+        .then(|| super::current_fork_history(&runtime.parent_history));
     let parent = SubagentParent {
         session_id: turn.session_id,
         kb_branch: turn.kb_branch,
         doc_id: Arc::clone(&runtime.doc_id),
         cancellation: runtime.cancellation.clone(),
+        fork_history: parent_history,
     };
     let task_count = tasks.len();
     let mut joinset = JoinSet::new();
@@ -215,6 +227,11 @@ impl RigModelCore {
                 cancellation: parent.cancellation.clone(),
             };
             let scope = parent_scope.child(subagent_run_id.clone(), task.agent_name.clone());
+            let fork_history = if task.fork && task.resume_run_id.is_none() {
+                parent.fork_history.clone()
+            } else {
+                None
+            };
             let (outcome, _) = self
                 .clone()
                 .run_turn(
@@ -224,6 +241,7 @@ impl RigModelCore {
                     scope,
                     false,
                     true,
+                    fork_history,
                 )
                 .await?;
             Ok::<String, RuntimeError>(outcome)
@@ -305,4 +323,45 @@ mod tests {
             Some("failed")
         );
     }
+}
+
+#[test]
+fn subagent_task_fork_defaults_false_and_select_initial_history_respects_resume() {
+    let omitted: SubagentTask = serde_json::from_value(serde_json::json!({
+        "agent_name": "reviewer",
+        "task": "Review ch1"
+    }))
+    .expect("deserialize task without fork");
+    assert!(!omitted.fork);
+
+    let forked: SubagentTask = serde_json::from_value(serde_json::json!({
+        "agent_name": "writer",
+        "task": "Write ch1",
+        "fork": true
+    }))
+    .expect("deserialize task with fork");
+    assert!(forked.fork);
+
+    let parent_snapshot = vec![Message::user("parent turn 1"), Message::assistant("ok")];
+    let fresh = super::select_initial_history(
+        &[],
+        &Message::user("Write ch1"),
+        false,
+        Some(parent_snapshot.clone()),
+    )
+    .expect("fresh fork");
+    assert_eq!(fresh, parent_snapshot);
+
+    let existing_subagent = vec![
+        Message::user("previous review"),
+        Message::assistant("issues"),
+    ];
+    let resumed = super::select_initial_history(
+        &existing_subagent,
+        &Message::user("Re-check"),
+        false,
+        Some(parent_snapshot),
+    )
+    .expect("resumed subagent keeps own history");
+    assert_eq!(resumed, existing_subagent);
 }

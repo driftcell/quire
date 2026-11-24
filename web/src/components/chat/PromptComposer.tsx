@@ -64,6 +64,7 @@ export interface PromptComposerProps {
   runStatus?: ActiveRunStatus;
   compacting?: boolean;
   contextUsage?: ContextUsage;
+  streamingEstimatedOutputTokens?: number;
   quotedSnippet?: QuotedChatSnippet | null;
   pendingCommentRefs?: SessionCommentRef[];
   prefill?: { key: string; text: string } | null;
@@ -215,6 +216,7 @@ export function PromptComposer({
   runStatus = "idle",
   compacting = false,
   contextUsage,
+  streamingEstimatedOutputTokens = 0,
   quotedSnippet,
   pendingCommentRefs = [],
   prefill,
@@ -259,11 +261,32 @@ export function PromptComposer({
   const limit = contextUsage?.context_limit ?? 0;
   const pct = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
   const rawCostRmb = contextUsage?.cost_rmb;
-  const hasCost =
+  const outputPriceRmb = contextUsage?.output_price_rmb;
+  const hasSettledCost =
     rawCostRmb !== undefined &&
     rawCostRmb !== null &&
     Number.isFinite(rawCostRmb);
-  const { displayedCost, isRolling } = useGasPumpCostOdometer(rawCostRmb);
+  const hasOutputPrice =
+    outputPriceRmb !== undefined &&
+    outputPriceRmb !== null &&
+    Number.isFinite(outputPriceRmb) &&
+    outputPriceRmb > 0;
+  const estimatedPendingTokens = isRunning
+    ? Math.max(0, streamingEstimatedOutputTokens)
+    : 0;
+  const estimatedPendingCostRmb =
+    hasOutputPrice && estimatedPendingTokens > 0
+      ? (estimatedPendingTokens / 1_000_000) * outputPriceRmb
+      : 0;
+  const targetCostRmb =
+    (hasSettledCost ? rawCostRmb : 0) + estimatedPendingCostRmb;
+  const hasCost =
+    hasSettledCost || (hasOutputPrice && estimatedPendingTokens > 0);
+  const { displayedCost, isRolling } = useGasPumpCostOdometer(
+    hasCost ? targetCostRmb : undefined,
+  );
+  const displayedOutputTokens =
+    (contextUsage?.output_tokens ?? 0) + Math.round(estimatedPendingTokens);
 
   const submit = async () => {
     const trimmed = text.trim();
@@ -528,7 +551,7 @@ export function PromptComposer({
                     <div>
                       <div className="text-muted-foreground">输出 Token</div>
                       <div className="mt-0.5 font-mono font-medium text-foreground tabular-nums">
-                        {formatTokens(contextUsage.output_tokens)}
+                        {formatTokens(displayedOutputTokens)}
                       </div>
                     </div>
                     <div>

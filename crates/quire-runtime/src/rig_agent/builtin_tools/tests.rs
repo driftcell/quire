@@ -55,6 +55,17 @@ fn describe_task_schema_advertises_status_and_parameters() {
 }
 
 #[test]
+fn describe_task_input_defaults_missing_status_to_pending() {
+    let input: TaskTodoInput = serde_json::from_value(json!({"title": "梳理立项数据"})).unwrap();
+    assert_eq!(
+        input.status,
+        quire_session_protocol::TaskTodoStatus::Pending
+    );
+    let item = quire_session_protocol::TaskTodoItem::from(input);
+    assert_eq!(item.status, quire_session_protocol::TaskTodoStatus::Pending);
+}
+
+#[test]
 fn exact_allow_list_stays_scoped() {
     let allowed = vec!["spawn_subagents".to_string(), "lint_document".to_string()];
     assert!(allow_list_matches(&allowed, "spawn_subagents"));

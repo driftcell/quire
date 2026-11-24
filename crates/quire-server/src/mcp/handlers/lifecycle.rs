@@ -30,7 +30,7 @@ impl QuireMcpServer {
     /// Initialize a new Quire report document at revision 1 and bind it to the active session.
     ///
     /// When to use:
-    /// - Only when starting a brand-new report and `<runtime_session_state>` does not already bind a `doc_id`.
+    /// - Only when starting a brand-new report and the session does not already bind a `doc_id`.
     /// - When a session already has a bound report (or you need to check existing reports first), call `get_document_digest` or `list_reports` instead of creating a duplicate document.
     ///
     /// Key contracts:

@@ -40,6 +40,8 @@ export interface LiveSessionState {
   liveDocId: string | null;
   liveRunStatus: ActiveRunStatus | null;
   liveUsage: ContextUsage | null;
+  /** Estimated output tokens accumulated from streaming deltas since the last exact `context_usage` frame. */
+  streamingEstimatedOutputTokens: number;
   liveMain: LiveAgentTrace | null;
   liveSubagents: LiveSubagentRun[];
   livePendingQuestion: PendingQuestion | null;
@@ -47,6 +49,24 @@ export interface LiveSessionState {
   pendingQueue: PendingQueueItem[] | null;
   afterSeq: number;
   liveRunOwnerId: string | null;
+}
+
+/**
+ * Lightweight O(N) streaming token estimator for mixed CJK/ASCII deltas.
+ * ASCII runs ~0.25 tokens/char; non-ASCII (CJK) runs ~0.65 tokens/char.
+ */
+export function estimateDeltaTokens(delta: string): number {
+  if (!delta) return 0;
+  let ascii = 0;
+  let nonAscii = 0;
+  for (let i = 0; i < delta.length; i += 1) {
+    if (delta.charCodeAt(i) <= 0x7f) {
+      ascii += 1;
+    } else {
+      nonAscii += 1;
+    }
+  }
+  return ascii * 0.25 + nonAscii * 0.65;
 }
 
 export type SessionEventEffect =
@@ -69,6 +89,7 @@ export function emptyLiveSessionState(afterSeq = 0): LiveSessionState {
     liveDocId: null,
     liveRunStatus: null,
     liveUsage: null,
+    streamingEstimatedOutputTokens: 0,
     liveMain: null,
     liveSubagents: [],
     livePendingQuestion: null,
@@ -146,6 +167,7 @@ export function resetLiveRun(
   }
   return {
     ...state,
+    streamingEstimatedOutputTokens: 0,
     liveMain: null,
     liveSubagents: [],
     liveRunOwnerId: null,
@@ -245,12 +267,18 @@ export function reduceSessionEvent(
         ...next,
         liveRunStatus: "running",
         liveRunOwnerId: event.run_id,
+        streamingEstimatedOutputTokens: 0,
         liveMain: emptyLiveTrace("main", event.run_id, eventTs),
         liveSubagents: [],
       };
       effects.push({ type: "set-run-status", value: "running" });
       break;
     case "thinking_delta":
+      next = {
+        ...next,
+        streamingEstimatedOutputTokens:
+          next.streamingEstimatedOutputTokens + estimateDeltaTokens(event.delta),
+      };
       if (isSubagentEvent) {
         next = {
           ...next,
@@ -275,6 +303,11 @@ export function reduceSessionEvent(
       }
       break;
     case "text_delta":
+      next = {
+        ...next,
+        streamingEstimatedOutputTokens:
+          next.streamingEstimatedOutputTokens + estimateDeltaTokens(event.delta),
+      };
       if (isSubagentEvent) {
         next = {
           ...next,
@@ -504,6 +537,7 @@ export function reduceSessionEvent(
       if (shouldApplySessionUsage(event)) {
         next = {
           ...next,
+          streamingEstimatedOutputTokens: 0,
           liveUsage: {
             input_tokens: event.input_tokens,
             output_tokens: event.output_tokens,
@@ -511,6 +545,10 @@ export function reduceSessionEvent(
             context_used: event.context_used,
             context_limit: event.context_limit,
             cost_rmb: event.cost_rmb ?? next.liveUsage?.cost_rmb ?? undefined,
+            output_price_rmb:
+              event.output_price_rmb ??
+              next.liveUsage?.output_price_rmb ??
+              undefined,
           },
         };
       } else if (
@@ -520,9 +558,14 @@ export function reduceSessionEvent(
       ) {
         next = {
           ...next,
+          streamingEstimatedOutputTokens: 0,
           liveUsage: {
             ...next.liveUsage,
             cost_rmb: event.cost_rmb,
+            output_price_rmb:
+              event.output_price_rmb ??
+              next.liveUsage.output_price_rmb ??
+              undefined,
           },
         };
       }
@@ -591,6 +634,7 @@ export function reduceSessionEvent(
       next = {
         ...next,
         ...finishAllThinking(next, eventTs),
+        streamingEstimatedOutputTokens: 0,
         liveRunStatus: "idle",
       };
       effects.push({ type: "refetch-and-clear", runId: event.run_id });
@@ -600,6 +644,7 @@ export function reduceSessionEvent(
       next = {
         ...next,
         ...finishAllThinking(next, eventTs),
+        streamingEstimatedOutputTokens: 0,
         liveRunStatus: "idle",
       };
       effects.push({ type: "refetch-and-clear", runId: event.run_id });
@@ -610,6 +655,7 @@ export function reduceSessionEvent(
       next = {
         ...next,
         ...finishAllThinking(next, eventTs),
+        streamingEstimatedOutputTokens: 0,
         liveRunStatus: event.recoverable ? "interrupted" : "failed",
       };
       next = {

@@ -78,7 +78,8 @@ pub struct AddCommentParams {
     /// Optional ordered list of all selected `block_id`s in a multi-block selection.
     #[serde(default)]
     pub anchor_blocks: Vec<String>,
-    /// Actionable review comment text explaining the issue and expected fix.
+    /// Actionable review finding stating both the specific defect and expected fix.
+    /// Good: `"此处仅列出2024年立项总数，建议补充与2023年的同比增幅并注明统计口径。"`; Bad: `"数据有问题，请修改。"`.
     pub body: String,
     /// Optional exact text-quote selector (`exact`, optional `prefix`/`suffix`) inside `block_id`.
     #[serde(default)]

@@ -54,6 +54,7 @@ async fn model_turn_finished_emits_per_call_usage_and_cost() {
             cost_cache_read: Some(0.5),
         }),
         state: SharedTurnState::default(),
+        parent_history: super::super::new_shared_fork_history(),
     });
     harness.set_turn(1);
     let content = Vec::new();
@@ -385,4 +386,66 @@ async fn question_batch_stops_at_next_completion_without_losing_tool_results() {
         event,
         ModelStreamEvent::ToolCallFinished { status, .. } if status == "skipped"
     )));
+}
+
+#[tokio::test]
+async fn completion_call_captures_main_history_snapshot_and_skips_subagents() {
+    use super::super::current_fork_history;
+
+    let parent_history = super::super::new_shared_fork_history();
+    let (sender, _receiver) = mpsc::channel(8);
+    let main_hook = TurnControlHook {
+        execution: execution(),
+        scope: StreamEventSender::top(sender.clone()),
+        queue: None,
+        kb_update_notice: None,
+        pricing: None,
+        state: SharedTurnState::default(),
+        parent_history: Arc::clone(&parent_history),
+    };
+    let harness = HookTestHarness::new();
+    harness.set_turn(1);
+
+    let prior = [Arc::new(Message::user("先前的多轮对话背景"))];
+    let prompt = Message::user("请派生子代理调研");
+    let _ = main_hook
+        .on_completion_call(
+            harness.context(),
+            CompletionCallEvent {
+                prompt: &prompt,
+                history: &prior,
+                turn: 1,
+            },
+        )
+        .await;
+    let captured = current_fork_history(&parent_history);
+    assert_eq!(captured.len(), 2);
+    assert_eq!(captured[0], Message::user("先前的多轮对话背景"));
+    assert_eq!(captured[1], Message::user("请派生子代理调研"));
+
+    let mut sub_exec = execution();
+    sub_exec.run_id = "run_sub_child".into();
+    let sub_hook = TurnControlHook {
+        execution: sub_exec,
+        scope: StreamEventSender::top(sender),
+        queue: None,
+        kb_update_notice: None,
+        pricing: None,
+        state: SharedTurnState::default(),
+        parent_history: Arc::clone(&parent_history),
+    };
+    let sub_harness = HookTestHarness::new();
+    sub_harness.set_turn(1);
+    let sub_prompt = Message::user("子代理内部提示");
+    let _ = sub_hook
+        .on_completion_call(
+            sub_harness.context(),
+            CompletionCallEvent {
+                prompt: &sub_prompt,
+                history: &[],
+                turn: 1,
+            },
+        )
+        .await;
+    assert_eq!(current_fork_history(&parent_history).len(), 2);
 }

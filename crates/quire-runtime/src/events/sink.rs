@@ -114,6 +114,7 @@ impl<L: SessionEventLog> EventSink<L> {
                     context_used: usage.context_used,
                     context_limit: usage.context_limit,
                     cost_rmb: usage.cost_rmb,
+                    output_price_rmb: usage.output_price_rmb,
                 };
                 self.emit(scope, kind).await?;
                 Ok(ApplyOutcome {
@@ -318,6 +319,7 @@ mod tests {
             context_used: 120,
             context_limit: 200_000,
             cost_rmb: None,
+            output_price_rmb: None,
         }
     }
 

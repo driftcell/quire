@@ -44,6 +44,7 @@ rig.workspace = true
 rmcp.workspace = true
 http.workspace = true
 reqwest = { workspace = true, features = ["multipart", "stream"] }
+askama = { version = "0.16.1", default-features = false, features = ["derive", "std"] }
 
 [dev-dependencies]
 rig = { workspace = true, features = ["test-utils"] }

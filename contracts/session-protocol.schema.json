@@ -413,6 +413,13 @@
                 "null"
               ],
               "format": "double"
+            },
+            "output_price_rmb": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
             }
           },
           "required": [
@@ -614,8 +621,7 @@
           "type": "string"
         },
         "status": {
-          "$ref": "#/$defs/TaskTodoStatus",
-          "default": "pending"
+          "$ref": "#/$defs/TaskTodoStatus"
         },
         "detail": {
           "type": [
@@ -631,7 +637,8 @@
         }
       },
       "required": [
-        "title"
+        "title",
+        "status"
       ]
     },
     "TaskTodoStatus": {
@@ -994,6 +1001,14 @@
         },
         "cost_rmb": {
           "description": "Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "output_price_rmb": {
+          "description": "Output token price in RMB (CNY) per 1,000,000 tokens for the active model route.",
           "type": [
             "number",
             "null"

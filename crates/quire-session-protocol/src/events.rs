@@ -120,6 +120,8 @@ pub enum SessionEventKind {
         context_limit: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cost_rmb: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        output_price_rmb: Option<f64>,
     },
     QuestionnaireRequested {
         question_id: String,
@@ -278,6 +280,7 @@ impl SessionEventKind {
                 context_used: 2,
                 context_limit: 100,
                 cost_rmb: None,
+                output_price_rmb: None,
             },
             Self::QuestionnaireRequested {
                 question_id: "q_1".into(),
@@ -372,6 +375,7 @@ mod tests {
                 context_used: 120,
                 context_limit: 200_000,
                 cost_rmb: Some(0.0125),
+                output_price_rmb: Some(8.0),
             },
         );
         let json = serde_json::to_value(&event).unwrap();

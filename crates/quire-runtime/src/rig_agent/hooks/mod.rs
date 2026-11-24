@@ -21,11 +21,11 @@ use tokio::sync::Mutex;
 use crate::{kb::KbService, model_stream::ModelStreamEvent, service::PendingQueueCoordinator};
 
 use super::{
-    AgentExecution, StreamEventSender,
+    AgentExecution, SharedForkHistory, StreamEventSender,
     context::AskUserRequestedMeta,
-    current_doc_id, preview_json,
+    preview_json,
     preview_stream::{PreviewState, inject_preview_ids},
-    tool_output_value, update_doc_id,
+    tool_output_value, update_doc_id, update_fork_history,
 };
 
 pub(super) const CANCELLED_REASON: &str = "quire:cancelled";
@@ -111,6 +111,7 @@ pub(super) struct TurnControlHook {
     kb_update_notice: Option<String>,
     pricing: Option<ModelTurnPricing>,
     state: SharedTurnState,
+    parent_history: SharedForkHistory,
 }
 
 impl TurnControlHook {
@@ -121,6 +122,7 @@ impl TurnControlHook {
         kb_update_notice: Option<String>,
         pricing: ModelTurnPricing,
         state: SharedTurnState,
+        parent_history: SharedForkHistory,
     ) -> Self {
         Self {
             execution,
@@ -129,6 +131,7 @@ impl TurnControlHook {
             kb_update_notice,
             pricing: Some(pricing),
             state,
+            parent_history,
         }
     }
 
@@ -145,25 +148,12 @@ impl TurnControlHook {
             kb_update_notice: None,
             pricing: None,
             state,
+            parent_history: super::new_shared_fork_history(),
         }
     }
 
     pub(super) fn session_documents(&self) -> Vec<Document> {
-        let doc_id = current_doc_id(&self.execution.doc_id);
-        let text = match doc_id {
-            Some(doc_id) => format!(
-                "<runtime_session_state>\ndoc_id: {doc_id}\nUse this doc_id for document tools and do not call create_report for this session.\n</runtime_session_state>"
-            ),
-            None if self.execution.run_id.starts_with("run_sub_") =>
-                "<runtime_session_state>\ndoc_id: none\n</runtime_session_state>".to_string(),
-            None =>
-                "<runtime_session_state>\ndoc_id: none\nNo Quire report is bound yet. If the user asks to write or generate a report, choose an appropriate formal report title and call create_report first; for pure Q&A, reply directly without creating a report.\n</runtime_session_state>".to_string(),
-        };
-        let mut documents = vec![Document {
-            id: "quire-session-state".into(),
-            text,
-            additional_props: Default::default(),
-        }];
+        let mut documents = Vec::new();
         if let Some(notice) = self.kb_update_notice.as_ref() {
             documents.push(Document {
                 id: "quire-knowledge-update".into(),
@@ -188,7 +178,7 @@ impl AgentHook for TurnControlHook {
     async fn on_completion_call(
         &self,
         ctx: &HookContext,
-        _event: CompletionCallEvent<'_>,
+        event: CompletionCallEvent<'_>,
     ) -> CompletionCallAction {
         if self.execution.cancellation.is_cancelled() {
             terminate(&self.state, RunTermination::Cancelled).await;
@@ -208,7 +198,21 @@ impl AgentHook for TurnControlHook {
             terminate(&self.state, RunTermination::Superseded).await;
             return CompletionCallAction::stop(SUPERSEDED_REASON);
         }
-        CompletionCallAction::patch(RequestPatch::new().extra_context(self.session_documents()))
+        if !self.execution.run_id.starts_with("run_sub_") {
+            let mut snapshot: Vec<rig::message::Message> = event
+                .history
+                .iter()
+                .map(|message| message.as_ref().clone())
+                .collect();
+            snapshot.push(event.prompt.clone());
+            update_fork_history(&self.parent_history, snapshot);
+        }
+        let documents = self.session_documents();
+        if documents.is_empty() {
+            CompletionCallAction::continue_run()
+        } else {
+            CompletionCallAction::patch(RequestPatch::new().extra_context(documents))
+        }
     }
 
     async fn on_model_turn_finished(
@@ -227,6 +231,7 @@ impl AgentHook for TurnControlHook {
                 usage.output_tokens,
                 usage.cached_tokens,
             );
+            usage.output_price_rmb = pricing.cost_output;
             if usage.input_tokens > 0 || usage.output_tokens > 0 || usage.cached_tokens > 0 {
                 self.scope.send(ModelStreamEvent::Usage(usage)).await;
             }

@@ -37,7 +37,7 @@ use super::{
         ListAttachmentsReceipt, ListSkillsReceipt, ListSubagentsReceipt, PreviewEchartsReceipt,
         ReadSkillResourceReceipt, SandboxExecuteReceipt, SandboxMountAttachmentReceipt,
         SandboxReadFileReceipt, SandboxWriteFileReceipt, SetSessionTitleReceipt, SkillSummaryView,
-        SubagentSummaryView,
+        SubagentSummaryView, TaskTodoInput,
     },
 };
 
@@ -160,6 +160,7 @@ pub(super) struct ToolBuildContext {
     pub(super) scope: StreamEventSender,
     pub(super) engine: Arc<RigModelCore>,
     pub(super) sandbox: Arc<SandboxLease>,
+    pub(super) parent_history: super::SharedForkHistory,
 }
 
 pub(super) struct BuiltInTools {
@@ -177,6 +178,8 @@ pub(super) struct RuntimeToolScope {
     /// Latest bound report ID, shared across the turn so subagents spawned
     /// after a lazy `create_report` inherit the new document.
     pub(super) doc_id: SharedDocId,
+    /// Snapshot of the parent agent's live conversation history for `fork: true` subagents.
+    pub(super) parent_history: super::SharedForkHistory,
 }
 
 pub(super) fn runtime_tool_scope(
@@ -220,6 +223,7 @@ mod preview;
 mod report_inproc;
 mod sandbox;
 mod skills_tasks;
+mod templates;
 #[cfg(test)]
 mod tests;
 
@@ -230,6 +234,7 @@ impl RigModelCore {
             scope,
             engine,
             sandbox,
+            parent_history,
         } = context;
         let report = self.build_report_service();
         let runtime = Arc::new(RuntimeToolScope {
@@ -239,6 +244,7 @@ impl RigModelCore {
             sandbox,
             cancellation: execution.cancellation.clone(),
             doc_id: Arc::clone(&execution.doc_id),
+            parent_history,
         });
         let mut server = ToolServer::new();
         let mut names = BTreeSet::new();

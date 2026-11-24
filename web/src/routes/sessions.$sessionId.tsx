@@ -74,6 +74,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
     liveDocId,
     liveRunStatus,
     liveUsage,
+    streamingEstimatedOutputTokens,
     liveMain,
     liveSubagents,
     effectivePendingQuestion,
@@ -301,6 +302,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       runStatus={effectiveRunStatus}
       compacting={sessionQuery.data?.compacting ?? false}
       contextUsage={effectiveUsage}
+      streamingEstimatedOutputTokens={streamingEstimatedOutputTokens}
       quotedSnippet={quotedForChat}
       pendingCommentRefs={pendingCommentRefs}
       prefill={composerPrefill}

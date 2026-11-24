@@ -134,6 +134,26 @@ fn ask_user_answer_payload_is_structured_and_resolves_labels() {
 }
 
 #[test]
+fn task_todo_status_is_required_in_the_wire_contract() {
+    let schema = serde_json::to_value(schemars::schema_for!(TaskTodoItem)).unwrap();
+    let required = schema["required"]
+        .as_array()
+        .expect("TaskTodoItem schema should declare required fields");
+    assert!(
+        required.iter().any(|field| field == "status"),
+        "status must be required for frontend wire types"
+    );
+    assert!(
+        schema["properties"]["status"].get("default").is_none(),
+        "status must not be optional or defaulted in the wire schema"
+    );
+    assert!(
+        serde_json::from_value::<TaskTodoItem>(serde_json::json!({"title": "缺少状态"})).is_err(),
+        "wire payloads must carry status explicitly"
+    );
+}
+
+#[test]
 fn status_helpers_match_wire_values() {
     assert_eq!(SessionStatus::parse("active"), Some(SessionStatus::Active));
     assert_eq!(

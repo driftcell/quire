@@ -55,6 +55,29 @@ impl RuntimeService {
         let main_resolved_model = self.models.resolve(&model_route).await.ok();
         let mut cumulative_cost_rmb = session.context_usage.cost_rmb;
         let mut latest_main_usage = session.context_usage.clone();
+        if let Some(resolved) = main_resolved_model.as_ref() {
+            let limit = u64::try_from(resolved.context_limit).unwrap_or(0);
+            if resolved.cost_output.is_some() || (limit > 0 && latest_main_usage.context_limit == 0)
+            {
+                if limit > 0 {
+                    latest_main_usage.context_limit = limit;
+                }
+                latest_main_usage.output_price_rmb = resolved.cost_output;
+                sink.emit(
+                    main_scope.clone(),
+                    SessionEventKind::ContextUsage {
+                        input_tokens: latest_main_usage.input_tokens,
+                        output_tokens: latest_main_usage.output_tokens,
+                        cached_tokens: latest_main_usage.cached_tokens,
+                        context_used: latest_main_usage.context_used,
+                        context_limit: latest_main_usage.context_limit,
+                        cost_rmb: latest_main_usage.cost_rmb,
+                        output_price_rmb: latest_main_usage.output_price_rmb,
+                    },
+                )
+                .await?;
+            }
+        }
         let mut stream = self.model_stream.stream_turn(request).await?;
         let mut tick = tokio::time::interval(Duration::from_millis(50));
         let mut response = String::new();
@@ -78,6 +101,11 @@ impl RuntimeService {
                             }
                             let mut subagent_cost_updated = false;
                             if let crate::events::EventAction::Usage { scope, usage } = &mut action {
+                                if usage.output_price_rmb.is_none() {
+                                    usage.output_price_rmb = main_resolved_model
+                                        .as_ref()
+                                        .and_then(|resolved| resolved.cost_output);
+                                }
                                 if usage.cost_rmb.is_none()
                                     && let Some(resolved) = main_resolved_model.as_ref()
                                 {
@@ -186,6 +214,7 @@ impl RuntimeService {
                         context_used: usage.context_used,
                         context_limit: usage.context_limit,
                         cost_rmb: usage.cost_rmb,
+                        output_price_rmb: usage.output_price_rmb,
                     },
                 )
                 .await?;
@@ -251,6 +280,7 @@ impl RuntimeService {
             .unwrap_or(0),
             context_limit,
             cost_rmb,
+            output_price_rmb: resolved.as_ref().and_then(|model| model.cost_output),
         }
     }
 

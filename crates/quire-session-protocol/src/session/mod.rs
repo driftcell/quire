@@ -133,6 +133,9 @@ pub struct ContextUsage {
     /// Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_rmb: Option<f64>,
+    /// Output token price in RMB (CNY) per 1,000,000 tokens for the active model route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_price_rmb: Option<f64>,
 }
 
 /// Why a message is waiting in the per-session queue.
@@ -351,7 +354,6 @@ pub struct TaskTodoItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub title: String,
-    #[serde(default)]
     pub status: TaskTodoStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,

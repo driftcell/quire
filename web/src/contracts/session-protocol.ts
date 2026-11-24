@@ -103,6 +103,7 @@ export type SessionEvent1 =
       context_used: number;
       context_limit: number;
       cost_rmb?: number | null;
+      output_price_rmb?: number | null;
       [k: string]: unknown;
     }
   | {
@@ -155,6 +156,7 @@ export type SessionEvent1 =
       success: boolean;
       [k: string]: unknown;
     };
+export type TaskTodoStatus = "pending" | "in_progress" | "completed" | "skipped";
 /**
  * Why a message is waiting in the per-session queue.
  */
@@ -210,6 +212,14 @@ export interface QuireSessionProtocol {
   questionnaire_resolution_status: QuestionnaireResolutionStatus;
   resolved_question_item_answer: ResolvedQuestionItemAnswer;
   run_trace_summary: RunTraceSummary;
+  [k: string]: unknown;
+}
+export interface TaskTodoItem {
+  id?: string | null;
+  title: string;
+  status: TaskTodoStatus;
+  detail?: string | null;
+  section_id?: string | null;
   [k: string]: unknown;
 }
 /**
@@ -298,6 +308,9 @@ export interface SessionCommentRef {
 }
 export interface SessionSummary {
   session_id: string;
+  /**
+   * Owning SaaS user ID (`None` for legacy/system sessions).
+   */
   user_id?: string | null;
   title: string;
   /**
@@ -334,10 +347,18 @@ export interface ContextUsage {
    * Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.
    */
   cost_rmb?: number | null;
+  /**
+   * Output token price in RMB (CNY) per 1,000,000 tokens for the active model route.
+   */
+  output_price_rmb?: number | null;
   [k: string]: unknown;
 }
 export interface SessionDetail {
   session_id: string;
+  /**
+   * Owning SaaS user ID (`None` for legacy/system sessions).
+   */
+  user_id?: string | null;
   title: string;
   /**
    * Quire report bound to this session. `None` until the first run auto-binds.
@@ -395,6 +416,10 @@ export interface ContextUsage1 {
    * Cumulative session cost in RMB (CNY) across main agent, subagents, and compaction.
    */
   cost_rmb?: number | null;
+  /**
+   * Output token price in RMB (CNY) per 1,000,000 tokens for the active model route.
+   */
+  output_price_rmb?: number | null;
   [k: string]: unknown;
 }
 export interface SessionMessage {
@@ -444,20 +469,6 @@ export interface RunTraceSummary {
   segments?: RunTraceSegment[];
   [k: string]: unknown;
 }
-export type TaskTodoStatus =
-  | "pending"
-  | "in_progress"
-  | "completed"
-  | "skipped";
-
-export interface TaskTodoItem {
-  id?: string | null;
-  title: string;
-  status: TaskTodoStatus;
-  detail?: string | null;
-  section_id?: string | null;
-}
-
 export interface RunTaskFocus {
   title: string;
   detail?: string | null;
