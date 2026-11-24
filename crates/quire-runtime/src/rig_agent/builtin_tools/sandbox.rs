@@ -115,6 +115,33 @@ pub(crate) async fn sandbox_write_file_tool(
     })
 }
 
+/// List all attachments uploaded to the current session, returning each attachment's
+/// `attachment_id`, `filename`, `mime_type`, and `size_bytes`. Pass `attachment_id`
+/// to `sandbox_mount_attachment` when you need to inspect or process a file in the sandbox.
+#[rig_tool(name = "list_attachments")]
+pub(crate) async fn list_attachments_tool(
+    #[rig(context)] context: &mut ToolContext,
+) -> Result<ListAttachmentsReceipt, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
+    let attachments = runtime
+        .engine
+        .kb
+        .store()
+        .list_attachments(&turn.session_id)
+        .await
+        .map_err(tool_other)?
+        .into_iter()
+        .map(|att| AttachmentSummaryView {
+            attachment_id: att.attachment_id,
+            filename: att.filename,
+            mime_type: att.mime_type,
+            size_bytes: att.size_bytes,
+        })
+        .collect();
+    Ok(ListAttachmentsReceipt { attachments })
+}
+
 /// Mount an attachment uploaded to the current session into the run's sandbox at
 /// `/workspace/attachments/{attachment_id}/{filename}`.
 ///

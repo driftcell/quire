@@ -291,8 +291,8 @@ pub(crate) async fn commit_chart_tool(
     #[rig(context)] context: &mut ToolContext,
     /// Cached `preview_id` returned by `preview_echarts` (valid for 30 minutes).
     preview_id: String,
-    /// Target report document ID.
-    doc_id: String,
+    /// Target report document ID (optional; if omitted, uses or auto-creates the session's bound document so the chart can also be rendered in chat via `<echarts id="..."/>`).
+    doc_id: Option<String>,
     /// Short semantic block ID for the chart (e.g. `"ch2_funding_chart"`). Updates in place if an ECharts block with this ID already exists.
     block_id: String,
     /// Insert or move the chart immediately after this existing `block_id` (mutually exclusive with `before_block_id`).
@@ -318,12 +318,8 @@ pub(crate) async fn commit_chart_tool(
             "`preview_id` must not be empty",
         ));
     }
-    let doc_id = doc_id.trim().to_string();
-    if doc_id.is_empty() {
-        return Err(ToolExecutionError::invalid_args(
-            "`doc_id` must not be empty",
-        ));
-    }
+    let raw_doc_id = doc_id.unwrap_or_default();
+    let doc_id = ensure_session_doc_id(context, &runtime, &raw_doc_id).await?;
     let preview = runtime
         .engine
         .kb

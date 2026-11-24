@@ -5,6 +5,7 @@ fn session_detail_roundtrips_and_flattens_summary() {
     let now = Utc::now();
     let detail = SessionDetail {
         summary: SessionSummary {
+            user_id: None,
             session_id: "sess_1".into(),
             title: "Q3 review".into(),
             doc_id: Some("q3-review".into()),

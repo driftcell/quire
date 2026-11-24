@@ -117,6 +117,16 @@ export function SidebarUserFooter() {
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-52">
             <DropdownMenuGroup>
+              {isAdmin && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    void navigate({ to: "/admin" });
+                  }}
+                >
+                  <ShieldCheckIcon aria-hidden="true" />
+                  管理控制台
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onClick={() => setPwdOpen(true)}>
                 <KeyRoundIcon aria-hidden="true" />
                 修改密码

@@ -89,7 +89,8 @@ pub struct SourceInput {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct UpsertSourcesParams {
-    /// Target report `doc_id` that owns the bibliography registry.
+    /// Target report `doc_id` that owns the bibliography registry (optional in chat sessions; if omitted, uses or auto-creates the session's bound document).
+    #[serde(default)]
     pub doc_id: String,
     /// Non-empty list of real sources actually read during research. Include `title`, optional `url`/`author`/`published_at`/`publisher`/`note`, and a verbatim `evidence` excerpt supporting the cited claim. Duplicate URLs or normalized titles coalesce into one canonical source ID returned in `canonical_id_map`.
     pub sources: Vec<SourceInput>,
@@ -114,7 +115,8 @@ pub struct UpsertSourcesReceipt {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListSourcesParams {
-    /// Target report `doc_id`.
+    /// Target report `doc_id` (optional in chat sessions; if omitted, uses the session's bound document).
+    #[serde(default)]
     pub doc_id: String,
     /// Optional list of exact `SourceId`s to fetch. Omit to list all registered sources on the report; any unknown ID returns an error with the valid registered IDs.
     #[serde(default)]

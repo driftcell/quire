@@ -10,7 +10,6 @@
     "suspicious": "error"
   },
   "options": {
-    "typeAware": true,
     "reportUnusedDisableDirectives": "error"
   },
   "ignorePatterns": [

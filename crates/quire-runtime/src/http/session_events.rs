@@ -1,3 +1,6 @@
+use crate::auth::{AuthUser, UserRole};
+use axum::Extension;
+
 use super::*;
 
 #[derive(Debug, Deserialize)]
@@ -19,9 +22,17 @@ pub(crate) struct PruneEventsResponse {
 
 pub(crate) async fn prune_events(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     Json(request): Json<PruneEventsRequest>,
 ) -> RuntimeResult<Json<PruneEventsResponse>> {
+    service
+        .ensure_session_access(
+            &session_id,
+            &auth_user.user_id,
+            auth_user.role == UserRole::Admin,
+        )
+        .await?;
     let (deleted, min_available_seq) = service
         .store()
         .prune_session_events(&session_id, request.keep_events.unwrap_or(1_000))
@@ -34,9 +45,17 @@ pub(crate) async fn prune_events(
 
 pub(crate) async fn session_events(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     Query(query): Query<EventsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, RuntimeError> {
+    service
+        .ensure_session_access(
+            &session_id,
+            &auth_user.user_id,
+            auth_user.role == UserRole::Admin,
+        )
+        .await?;
     let summary = service.store().get_session_summary(&session_id).await?;
     let min_available_seq = service.store().min_available_seq(&session_id).await?;
     let after_seq = query.after_seq.unwrap_or(0);

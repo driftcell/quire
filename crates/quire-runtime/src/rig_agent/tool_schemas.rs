@@ -95,3 +95,28 @@ pub struct SubagentSummaryView {
 pub struct ListSubagentsReceipt {
     pub subagents: Vec<SubagentSummaryView>,
 }
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillSummaryView {
+    pub name: String,
+    pub description: String,
+    pub resources: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListSkillsReceipt {
+    pub skills: Vec<SkillSummaryView>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AttachmentSummaryView {
+    pub attachment_id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ListAttachmentsReceipt {
+    pub attachments: Vec<AttachmentSummaryView>,
+}

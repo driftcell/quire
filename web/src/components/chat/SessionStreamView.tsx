@@ -6,8 +6,6 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDownIcon, CompassIcon } from "lucide-react";
-import { cn } from "cn";
 import { AgentAvatar } from "@/components/chat/agentAvatar";
 import {
   HistoricalRunTrace,
@@ -16,11 +14,10 @@ import {
 import { HistoricalMessageItem } from "@/components/chat/HistoricalMessageItem";
 import { PendingUserBubble } from "@/components/chat/PendingUserBubble";
 import { QuestionCard } from "@/components/chat/QuestionCard";
-import { StopTurnButton } from "@/components/chat/StopTurnButton";
+import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
 import {
+  buildLiveRunStatusModel,
   buildLiveSegments,
-  formatLiveElapsed,
-  summarizeLiveProgress,
 } from "@/components/chat/traceSegments";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
@@ -42,97 +39,6 @@ import type {
 } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 
-function LiveRunStatusBar({
-  title,
-  detail,
-  sectionId,
-  isStreaming,
-  progress,
-  elapsedLabel,
-  detailsOpen,
-  onToggleDetails,
-  onJumpToSection,
-  onInterrupt,
-}: {
-  title: string;
-  detail?: string;
-  sectionId?: string;
-  isStreaming: boolean;
-  progress: ReturnType<typeof summarizeLiveProgress>;
-  elapsedLabel: string;
-  detailsOpen: boolean;
-  onToggleDetails: () => void;
-  onJumpToSection?: (sectionId: string) => void;
-  onInterrupt?: () => Promise<void>;
-}) {
-  return (
-    <div
-      data-live-header="true"
-      className={cn(
-        "sticky top-0 z-10 flex min-h-8 w-full items-center justify-between gap-2 rounded-lg border px-2.5 py-1 text-xs leading-5 backdrop-blur-xs transition-colors",
-        isStreaming
-          ? "border-border/80 bg-background/95 text-foreground shadow-2xs"
-          : "border-border/50 bg-muted/35 text-muted-foreground",
-      )}
-    >
-      <button
-        type="button"
-        data-live-header-toggle="true"
-        aria-expanded={detailsOpen}
-        title={detailsOpen ? "折叠执行过程" : "展开执行过程"}
-        onClick={onToggleDetails}
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-      >
-        <ChevronDownIcon
-          className={cn(
-            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-150",
-            !detailsOpen && "-rotate-90",
-          )}
-        />
-        <span
-          className={cn(
-            "min-w-0 truncate font-medium",
-            isStreaming && "shimmer",
-          )}
-        >
-          {title}
-        </span>
-        {detail && (
-          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
-            — {detail}
-          </span>
-        )}
-        <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px] tabular-nums text-muted-foreground">
-          {progress.toolCount > 0 && (
-            <span data-live-progress-tools="true">
-              {`工具 ${progress.completedToolCount}/${progress.toolCount}`}
-            </span>
-          )}
-          {progress.subagentCount > 0 && (
-            <span data-live-progress-subagents="true">
-              {`子代理 ${progress.completedSubagentCount}/${progress.subagentCount}`}
-            </span>
-          )}
-          <span data-live-elapsed="true">{elapsedLabel}</span>
-        </span>
-      </button>
-      {sectionId && onJumpToSection && (
-        <button
-          type="button"
-          data-live-header-jump="true"
-          aria-label="跳转到当前章节"
-          title="跳转到当前章节"
-          onClick={() => onJumpToSection(sectionId)}
-          className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        >
-          <CompassIcon className="size-3.5" aria-hidden="true" />
-        </button>
-      )}
-      {isStreaming && onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
-    </div>
-  );
-}
-
 function LiveRunSection({
   sessionId,
   trace,
@@ -150,7 +56,7 @@ function LiveRunSection({
   onJumpToSection?: (sectionId: string) => void;
   onInterrupt?: () => Promise<void>;
 }) {
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [fallbackStartedAt] = useState(() => Date.now());
   const [now, setNow] = useState(fallbackStartedAt);
   const startedAt = trace.startedAtMs ?? fallbackStartedAt;
@@ -166,21 +72,14 @@ function LiveRunSection({
     };
   }, [trace.isStreaming]);
 
-  const progress = summarizeLiveProgress(trace, subagents);
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const headerModel = buildLiveRunStatusModel(trace, subagents, elapsed);
 
   return (
     <div className="w-full space-y-2.5">
-      <LiveRunStatusBar
-        title={
-          trace.taskFocus?.title ??
-          (trace.isStreaming ? "正在处理" : "本轮执行已完成")
-        }
-        detail={trace.taskFocus?.detail}
-        sectionId={trace.taskFocus?.sectionId}
+      <RunActivityHeader
+        model={headerModel}
         isStreaming={trace.isStreaming}
-        progress={progress}
-        elapsedLabel={formatLiveElapsed(elapsed)}
         detailsOpen={detailsOpen}
         onToggleDetails={() => setDetailsOpen((open) => !open)}
         onJumpToSection={onJumpToSection}
@@ -191,7 +90,7 @@ function LiveRunSection({
         sessionId={sessionId}
         segments={segments}
         questionSlots={questionSlots}
-        showActiveDetails={detailsOpen}
+        detailsOpen={detailsOpen}
       />
     </div>
   );
@@ -443,6 +342,7 @@ export function SessionStreamView({
                           sessionId={sessionId}
                           trace={trace}
                           questionSlots={questionSlots}
+                          onJumpToSection={onJumpToSection}
                         />
                       </MessageContent>
                     </Message>

@@ -28,7 +28,9 @@ export default defineConfig({
     proxy: {
       // Unified Quire backend (:8081 serves both /api/docs/* and /api/sessions/*).
       "/api/docs": "http://127.0.0.1:8081",
-      // quire-runtime: sessions, knowledge bases, models, MCP and attachments.
+      // quire-runtime: auth, admin, sessions, knowledge bases, models, MCP and attachments.
+      "/api/auth": "http://127.0.0.1:8081",
+      "/api/admin": "http://127.0.0.1:8081",
       "/api/sessions": "http://127.0.0.1:8081",
       "/api/kb": "http://127.0.0.1:8081",
       "/api/models": "http://127.0.0.1:8081",

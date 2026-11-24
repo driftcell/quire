@@ -54,6 +54,7 @@ pub(crate) fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
     let usage_raw: Value = row.try_get("context_usage")?;
     Ok(SessionSummary {
         session_id: row.try_get("session_id")?,
+        user_id: row.try_get("user_id").ok().flatten(),
         title: row.try_get("title")?,
         doc_id: row.try_get("doc_id")?,
         linked_doc_id: row.try_get("linked_doc_id")?,

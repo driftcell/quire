@@ -31,8 +31,8 @@ function RegisterPage() {
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!username.trim() || !password) {
-      toast.error("请填写用户名和密码");
+    if (!email.trim() || !username.trim() || !password) {
+      toast.error("请填写邮箱、用户名和密码");
       return;
     }
     if (password.length < 6) {
@@ -47,7 +47,7 @@ function RegisterPage() {
     try {
       await register({
         username,
-        email: email.trim() || undefined,
+        email: email.trim(),
         display_name: displayName.trim() || undefined,
         password,
       });
@@ -76,6 +76,24 @@ function RegisterPage() {
           <CardContent>
             <form onSubmit={(e) => void handleSubmit(e)} className="space-y-3.5">
               <div className="space-y-1.5">
+                <Label htmlFor="reg-email" className="text-xs">
+                  邮箱 *
+                </Label>
+                <div className="relative">
+                  <MailIcon className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    id="reg-email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="name@example.com"
+                    className="pl-8"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={submitting}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
                 <Label htmlFor="reg-username" className="text-xs">
                   用户名 *
                 </Label>
@@ -89,24 +107,6 @@ function RegisterPage() {
                     className="pl-8"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    disabled={submitting}
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="reg-email" className="text-xs">
-                  邮箱（可选）
-                </Label>
-                <div className="relative">
-                  <MailIcon className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="reg-email"
-                    type="email"
-                    autoComplete="email"
-                    placeholder="name@example.com"
-                    className="pl-8"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
                     disabled={submitting}
                   />
                 </div>

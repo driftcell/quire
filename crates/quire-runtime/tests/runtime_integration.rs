@@ -29,6 +29,7 @@ use quire_runtime::{
     Config, KbService, MockStreamProvider, ModelEventStream, ModelRegistry, ModelStreamEvent,
     ModelStreamProvider, ModelTurnRequest, ModelsDevImportRequest, ProviderInput, ProviderProtocol,
     RigModelStreamProvider, RuntimeError, RuntimeService, RuntimeStore,
+    auth::{UserPublic, UserRole},
     bus::{InterruptCommand, RedisBus},
     control::RunRegistry,
     kb::{KbBranchStatus, KbItemKind, KbPromoteMode, UpsertKbAgentCommand},
@@ -2795,12 +2796,25 @@ async fn branch_edits_are_isolated_and_sessions_use_the_selected_branch() {
                 && document.content == "BRANCH ONLY BODY")
     );
 
+    let password_hash = quire_runtime::auth::hash_password("integration-admin").unwrap();
+    let admin = store
+        .create_user(
+            &unique("branch-admin"),
+            None,
+            "Branch Admin",
+            UserRole::Admin,
+            &password_hash,
+        )
+        .await
+        .unwrap();
+    let admin_jwt =
+        quire_runtime::auth::issue_user_jwt(service.config(), &UserPublic::from(admin)).unwrap();
     let app = quire_runtime::http::router(service.clone());
     let (status, session) = http_json(
         &app,
         axum::http::Method::POST,
         "/api/sessions",
-        &test_admin_jwt(),
+        &admin_jwt,
         Some(json!({
             "title": unique("branch-session"),
             "doc_id": "runtime-doc",

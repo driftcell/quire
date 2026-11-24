@@ -271,6 +271,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       attachments={sessionQuery.data?.attachments ?? []}
       traces={tracesQuery.data ?? []}
       hasReportData={hasReportData}
+      documentView={docQuery.data}
       liveMain={liveMain}
       liveSubagents={liveSubagents}
       pendingQuestion={effectivePendingQuestion}

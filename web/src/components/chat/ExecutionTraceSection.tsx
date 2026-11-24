@@ -2,6 +2,7 @@ import { memo, useState, type ReactNode } from "react";
 import { ChevronRightIcon, SparklesIcon } from "lucide-react";
 import { cn } from "cn";
 import { HistoricalSubagent } from "@/components/chat/HistoricalSubagent";
+import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
 import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import { SubagentTrace } from "@/components/chat/SubagentTrace";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
@@ -9,8 +10,10 @@ import { ToolCallList } from "@/components/chat/ToolCallList";
 import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import {
   activityHasQuestion,
+  buildHistoricalRunStatusModel,
   buildHistoricalSegments,
   extractSubagentLiveView,
+  hasTraceActivity,
   summarizeActivity,
   type ActivityItem,
   type ActivityRenderSegment,
@@ -207,25 +210,106 @@ const RenderSegments = memo(function RenderSegments({
   );
 });
 
+function collectQuestionNodes(
+  segments: RenderSegment[],
+  questionSlots?: Map<string, ReactNode>,
+): ReactNode[] {
+  if (!questionSlots || questionSlots.size === 0) {
+    return [];
+  }
+  const nodes: ReactNode[] = [];
+  for (const seg of segments) {
+    if (seg.kind !== "activity") continue;
+    for (const item of seg.items) {
+      if (item.kind !== "execution") continue;
+      for (const tool of item.tools) {
+        const slot = questionSlots.get(tool.toolCallId);
+        if (slot) {
+          nodes.push(slot);
+        }
+      }
+    }
+  }
+  return nodes;
+}
+
 export function HistoricalRunTrace({
   sessionId,
   trace,
   questionSlots,
+  onJumpToSection,
 }: {
   sessionId: string;
   trace: RunTraceSummary;
   questionSlots?: Map<string, ReactNode>;
+  onJumpToSection?: (sectionId: string) => void;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const segments = buildHistoricalSegments(trace);
-  if (segments.length === 0) {
+  const showHeader = hasTraceActivity(segments) || Boolean(trace.task_focus);
+
+  if (segments.length === 0 && !showHeader) {
     return null;
   }
+
+  const headerModel = buildHistoricalRunStatusModel(trace);
+  const lastTextSegment = [...segments]
+    .reverse()
+    .find((seg) => seg.kind === "text");
+  const compactQuestions = collectQuestionNodes(segments, questionSlots);
+
+  if (!showHeader) {
+    return (
+      <RenderSegments
+        sessionId={sessionId}
+        segments={segments}
+        questionSlots={questionSlots}
+      />
+    );
+  }
+
   return (
-    <RenderSegments
-      sessionId={sessionId}
-      segments={segments}
-      questionSlots={questionSlots}
-    />
+    <div className="w-full space-y-2.5">
+      <RunActivityHeader
+        model={headerModel}
+        isStreaming={false}
+        detailsOpen={detailsOpen}
+        onToggleDetails={() => setDetailsOpen((open) => !open)}
+        onJumpToSection={onJumpToSection}
+      />
+
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+          detailsOpen
+            ? "grid-rows-[1fr] opacity-100"
+            : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          {detailsOpen && (
+            <RenderSegments
+              sessionId={sessionId}
+              segments={segments}
+              questionSlots={questionSlots}
+            />
+          )}
+        </div>
+      </div>
+
+      {!detailsOpen && compactQuestions.length > 0 && (
+        <div className="space-y-2">{compactQuestions}</div>
+      )}
+
+      {!detailsOpen && lastTextSegment && lastTextSegment.kind === "text" && (
+        <SmoothStreamdown
+          key={lastTextSegment.key}
+          text={lastTextSegment.text}
+          isStreaming={false}
+          className={CHAT_PROSE}
+        />
+      )}
+    </div>
   );
 }
 
@@ -271,19 +355,52 @@ export function LiveTraceSegments({
   sessionId,
   segments,
   questionSlots,
-  showActiveDetails = true,
+  detailsOpen = false,
 }: {
   sessionId: string;
   segments: RenderSegment[];
   questionSlots?: Map<string, ReactNode>;
-  showActiveDetails?: boolean;
+  detailsOpen?: boolean;
 }) {
+  const lastTextSegment = [...segments]
+    .reverse()
+    .find((seg) => seg.kind === "text");
+  const compactQuestions = collectQuestionNodes(segments, questionSlots);
+
   return (
-    <RenderSegments
-      sessionId={sessionId}
-      segments={segments}
-      questionSlots={questionSlots}
-      showActiveDetails={showActiveDetails}
-    />
+    <>
+      <div
+        className={cn(
+          "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+          detailsOpen
+            ? "grid-rows-[1fr] opacity-100"
+            : "grid-rows-[0fr] opacity-0",
+        )}
+      >
+        <div className="min-h-0 overflow-hidden">
+          {detailsOpen && (
+            <RenderSegments
+              sessionId={sessionId}
+              segments={segments}
+              questionSlots={questionSlots}
+              showActiveDetails
+            />
+          )}
+        </div>
+      </div>
+
+      {!detailsOpen && compactQuestions.length > 0 && (
+        <div className="space-y-2">{compactQuestions}</div>
+      )}
+
+      {!detailsOpen && lastTextSegment && lastTextSegment.kind === "text" && (
+        <SmoothStreamdown
+          key={lastTextSegment.key}
+          text={lastTextSegment.text}
+          isStreaming={lastTextSegment.isStreaming}
+          className={CHAT_PROSE}
+        />
+      )}
+    </>
   );
 }

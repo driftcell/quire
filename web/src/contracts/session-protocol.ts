@@ -297,6 +297,7 @@ export interface SessionCommentRef {
 }
 export interface SessionSummary {
   session_id: string;
+  user_id?: string | null;
   title: string;
   /**
    * Quire report bound to this session. `None` until the first run auto-binds.

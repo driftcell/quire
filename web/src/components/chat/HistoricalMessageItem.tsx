@@ -1,14 +1,11 @@
 import { memo, type ReactNode } from "react";
 import { CopyIcon } from "lucide-react";
 import { toast } from "sonner";
-import { Streamdown } from "streamdown";
+import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import { AgentAvatar } from "@/components/chat/agentAvatar";
 import { HistoricalRunTrace } from "@/components/chat/ExecutionTraceSection";
 import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
-import {
-  CHAT_PROSE,
-  STREAMDOWN_CONTROLS,
-} from "@/components/chat/chatMarkdown";
+import { CHAT_PROSE } from "@/components/chat/chatMarkdown";
 import { Button } from "@/components/ui/button";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
@@ -162,19 +159,15 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
               sessionId={sessionId}
               trace={trace}
               questionSlots={questionSlots}
+              onJumpToSection={onJumpToSection}
             />
           )}
           {!hasTextSegment && msg.content.trim().length > 0 && (
-            <div className={CHAT_PROSE}>
-              <Streamdown
-                mode="static"
-                isAnimating={false}
-                animated={false}
-                controls={STREAMDOWN_CONTROLS}
-              >
-                {msg.content}
-              </Streamdown>
-            </div>
+            <SmoothStreamdown
+              text={msg.content}
+              isStreaming={false}
+              className={CHAT_PROSE}
+            />
           )}
           <div className="flex w-full items-center gap-2 pt-0.5">
             {sentAt && (

@@ -1,4 +1,21 @@
+use crate::auth::{AuthUser, UserRole};
+use axum::Extension;
+
 use super::*;
+
+async fn ensure_access(
+    service: &RuntimeService,
+    session_id: &str,
+    auth_user: &AuthUser,
+) -> RuntimeResult<()> {
+    service
+        .ensure_session_access(
+            session_id,
+            &auth_user.user_id,
+            auth_user.role == UserRole::Admin,
+        )
+        .await
+}
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct PageQuery {
@@ -8,20 +25,28 @@ pub(crate) struct PageQuery {
 
 pub(crate) async fn list_sessions(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Query(query): Query<PageQuery>,
 ) -> RuntimeResult<Json<Vec<SessionSummary>>> {
     service
-        .list_sessions(query.limit.unwrap_or(50), query.offset.unwrap_or(0))
+        .list_sessions_for_user(
+            Some(&auth_user.user_id),
+            auth_user.role == UserRole::Admin,
+            query.limit.unwrap_or(50),
+            query.offset.unwrap_or(0),
+        )
         .await
         .map(Json)
 }
 
 pub(crate) async fn create_session(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Json(request): Json<CreateSessionRequest>,
 ) -> RuntimeResult<Json<SessionSummary>> {
     service
-        .create_session_on_branch(
+        .create_session_for_user(
+            Some(&auth_user.user_id),
             &request.title,
             request.doc_id.as_deref(),
             request.kb_branch.as_deref(),
@@ -32,8 +57,10 @@ pub(crate) async fn create_session(
 
 pub(crate) async fn get_session(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
 ) -> RuntimeResult<Json<SessionDetail>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service.session_detail(&session_id).await.map(Json)
 }
 
@@ -52,8 +79,10 @@ pub(crate) async fn get_chart_preview(
 
 pub(crate) async fn list_session_traces(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
 ) -> RuntimeResult<Json<Vec<RunTraceSummary>>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service.list_run_traces(&session_id).await.map(Json)
 }
 
@@ -69,9 +98,11 @@ pub(crate) struct UpdateSessionRequest {
 
 pub(crate) async fn update_session(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     Json(request): Json<UpdateSessionRequest>,
 ) -> RuntimeResult<Json<SessionSummary>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service
         .update_session(
             &session_id,
@@ -87,8 +118,10 @@ pub(crate) async fn update_session(
 
 pub(crate) async fn delete_session(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
 ) -> RuntimeResult<StatusCode> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service.delete_session(&session_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -107,9 +140,11 @@ pub(crate) struct PostMessageResponse {
 
 pub(crate) async fn post_message(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     Json(request): Json<SendMessageRequest>,
 ) -> RuntimeResult<Json<PostMessageResponse>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     let outcome = service.post_message(&session_id, &request).await?;
     let response = match outcome {
         PostMessageOutcome::Started { message, run_id } => PostMessageResponse {
@@ -225,9 +260,13 @@ fn store_comment_error(error: quire_store::StoreError) -> CommentProxyError {
 
 pub(crate) async fn create_session_comment(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     Json(request): Json<SessionCommentCreateRequest>,
 ) -> Result<Json<CommentThread>, CommentProxyError> {
+    ensure_access(&service, &session_id, &auth_user)
+        .await
+        .map_err(proxy_runtime_error)?;
     let raw_doc_id = session_comment_doc_id(&service, &session_id)
         .await
         .map_err(proxy_runtime_error)?;
@@ -288,9 +327,13 @@ pub(crate) async fn create_session_comment(
 
 pub(crate) async fn reply_session_comment(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path((session_id, thread_id)): Path<(String, String)>,
     Json(request): Json<SessionCommentReplyRequest>,
 ) -> Result<Json<CommentThread>, CommentProxyError> {
+    ensure_access(&service, &session_id, &auth_user)
+        .await
+        .map_err(proxy_runtime_error)?;
     let raw_doc_id = session_comment_doc_id(&service, &session_id)
         .await
         .map_err(proxy_runtime_error)?;
@@ -337,9 +380,13 @@ pub(crate) async fn reply_session_comment(
 
 pub(crate) async fn update_session_comment_status(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path((session_id, thread_id)): Path<(String, String)>,
     Json(request): Json<SessionCommentStatusRequest>,
 ) -> Result<Json<CommentThread>, CommentProxyError> {
+    ensure_access(&service, &session_id, &auth_user)
+        .await
+        .map_err(proxy_runtime_error)?;
     let raw_doc_id = session_comment_doc_id(&service, &session_id)
         .await
         .map_err(proxy_runtime_error)?;
@@ -366,8 +413,10 @@ pub(crate) async fn update_session_comment_status(
 
 pub(crate) async fn delete_session_comment(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path((session_id, thread_id)): Path<(String, String)>,
 ) -> RuntimeResult<StatusCode> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     let raw_doc_id = session_comment_doc_id(&service, &session_id).await?;
     let doc_id = quire_protocol::DocId::parse(raw_doc_id)
         .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?;
@@ -393,16 +442,20 @@ pub(crate) async fn delete_session_comment(
 
 pub(crate) async fn list_session_queue(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
 ) -> RuntimeResult<Json<Vec<PendingQueueItem>>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service.list_pending_queue(&session_id).await.map(Json)
 }
 
 pub(crate) async fn update_session_queue_item(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path((session_id, queue_id)): Path<(String, String)>,
     Json(request): Json<UpdatePendingMessageRequest>,
 ) -> RuntimeResult<Json<PendingQueueItem>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service
         .update_pending_message(
             &session_id,
@@ -416,8 +469,10 @@ pub(crate) async fn update_session_queue_item(
 
 pub(crate) async fn delete_session_queue_item(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path((session_id, queue_id)): Path<(String, String)>,
 ) -> RuntimeResult<StatusCode> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     if service
         .delete_pending_message(&session_id, &queue_id)
         .await?
@@ -489,9 +544,11 @@ pub(crate) struct AnswerQuestionRequest {
 
 pub(crate) async fn answer_question(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path((session_id, question_id)): Path<(String, String)>,
     Json(request): Json<AnswerQuestionRequest>,
 ) -> RuntimeResult<Json<SessionDetail>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service
         .answer_question(&session_id, &question_id, &request.answers, request.skipped)
         .await
@@ -506,24 +563,30 @@ pub(crate) struct InterruptRequest {
 
 pub(crate) async fn interrupt(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     request: Option<Json<InterruptRequest>>,
 ) -> RuntimeResult<Json<SessionDetail>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     let run_id = request.as_ref().and_then(|json| json.0.run_id.as_deref());
     service.interrupt(&session_id, run_id).await.map(Json)
 }
 
 pub(crate) async fn retry(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
 ) -> RuntimeResult<Json<SessionDetail>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service.retry(&session_id).await.map(Json)
 }
 
 pub(crate) async fn compact(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
 ) -> RuntimeResult<Json<SessionDetail>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     let task = tokio::spawn(async move { service.compact(&session_id).await });
     task.await
         .map_err(|error| RuntimeError::Internal(format!("compaction task failed: {error}")))?
@@ -555,9 +618,11 @@ pub(crate) struct AttachmentUpload {
 
 pub(crate) async fn presign_session_attachment(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     Json(request): Json<AttachmentPresignRequest>,
 ) -> RuntimeResult<Json<AttachmentPresign>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service
         .presign_attachment(
             &session_id,
@@ -571,19 +636,23 @@ pub(crate) async fn presign_session_attachment(
 
 pub(crate) async fn post_attachment(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Json(request): Json<AttachmentUpload>,
 ) -> RuntimeResult<Json<AttachmentMeta>> {
     let session_id = request.session_id.clone().ok_or_else(|| {
         RuntimeError::InvalidRequest("session_id is required for /attachments".into())
     })?;
+    ensure_access(&service, &session_id, &auth_user).await?;
     attach(&service, &session_id, request).await
 }
 
 pub(crate) async fn post_session_attachment(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(session_id): Path<String>,
     Json(request): Json<AttachmentUpload>,
 ) -> RuntimeResult<Json<AttachmentMeta>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     attach(&service, &session_id, request).await
 }
 
@@ -608,8 +677,10 @@ pub(crate) async fn attach(
 
 pub(crate) async fn get_tool_call(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path((session_id, tool_call_id)): Path<(String, String)>,
 ) -> RuntimeResult<Json<ToolCallDetail>> {
+    ensure_access(&service, &session_id, &auth_user).await?;
     service
         .get_tool_call(&session_id, &tool_call_id)
         .await

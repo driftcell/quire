@@ -400,10 +400,36 @@ impl RuntimeService {
         doc_id: Option<&str>,
         kb_branch: Option<&str>,
     ) -> RuntimeResult<SessionSummary> {
+        self.create_session_for_user(None, title, doc_id, kb_branch)
+            .await
+    }
+
+    pub async fn create_session_for_user(
+        &self,
+        user_id: Option<&str>,
+        title: &str,
+        doc_id: Option<&str>,
+        kb_branch: Option<&str>,
+    ) -> RuntimeResult<SessionSummary> {
         let branch = self.kb.session_branch(kb_branch).await?;
         self.store
-            .create_session_on_branch(title, doc_id, &branch)
+            .create_session_for_user(user_id, title, doc_id, &branch)
             .await
+    }
+
+    pub async fn ensure_session_access(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        is_admin: bool,
+    ) -> RuntimeResult<()> {
+        let owner = self.store.get_session_owner(session_id).await?;
+        if is_admin || owner.as_deref() == Some(user_id) {
+            return Ok(());
+        }
+        Err(RuntimeError::Forbidden(
+            "you do not have permission to access this session".into(),
+        ))
     }
 
     pub async fn inspect_session(&self, session_id: &str) -> RuntimeResult<SessionInspection> {
@@ -418,6 +444,18 @@ impl RuntimeService {
         offset: i64,
     ) -> RuntimeResult<Vec<SessionSummary>> {
         self.store.list_sessions(limit, offset).await
+    }
+
+    pub async fn list_sessions_for_user(
+        &self,
+        user_id: Option<&str>,
+        include_unowned: bool,
+        limit: i64,
+        offset: i64,
+    ) -> RuntimeResult<Vec<SessionSummary>> {
+        self.store
+            .list_sessions_for_user(user_id, include_unowned, limit, offset)
+            .await
     }
 
     pub async fn session_detail(&self, session_id: &str) -> RuntimeResult<SessionDetail> {

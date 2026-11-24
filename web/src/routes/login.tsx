@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { LoaderCircleIcon, LockIcon, UserIcon } from "lucide-react";
+import { LoaderCircleIcon, LockIcon, MailIcon } from "lucide-react";
 import { toast } from "sonner";
 import { ProductBrand } from "@/components/layout/ProductBrand";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ function LoginPage() {
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!identifier.trim() || !password) {
-      toast.error("请输入用户名或邮箱以及密码");
+      toast.error("请输入邮箱和密码");
       return;
     }
     setSubmitting(true);
@@ -33,7 +33,7 @@ function LoginPage() {
       toast.success("登录成功");
       await navigate({ to: "/" });
     } catch (error) {
-      toast.error(errorMessage(error, "登录失败，请检查账号或密码"));
+      toast.error(errorMessage(error, "登录失败，请检查邮箱或密码"));
     } finally {
       setSubmitting(false);
     }
@@ -49,22 +49,22 @@ function LoginPage() {
           <CardHeader className="space-y-1 pb-4">
             <CardTitle className="text-lg font-semibold">登录 Quire</CardTitle>
             <p className="text-xs text-muted-foreground">
-              使用管理员或个人账号登录工作台
+              使用邮箱登录智能报告工作台
             </p>
           </CardHeader>
           <CardContent>
             <form onSubmit={(e) => void handleSubmit(e)} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="login-identifier" className="text-xs">
-                  用户名或邮箱
+                  邮箱
                 </Label>
                 <div className="relative">
-                  <UserIcon className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <MailIcon className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     id="login-identifier"
-                    type="text"
-                    autoComplete="username"
-                    placeholder="admin 或 name@example.com"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="name@example.com"
                     className="pl-8"
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}

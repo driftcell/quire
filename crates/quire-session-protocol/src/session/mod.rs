@@ -426,6 +426,9 @@ pub struct RunTraceSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSummary {
     pub session_id: String,
+    /// Owning SaaS user ID (`None` for legacy/system sessions).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
     pub title: String,
     /// Quire report bound to this session. `None` until the first run auto-binds.
     #[serde(default, skip_serializing_if = "Option::is_none")]

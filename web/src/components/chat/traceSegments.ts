@@ -1,5 +1,5 @@
 import type { ToolCallTraceItem } from "@/components/chat/ToolCallTrace";
-import { isVisibleTraceTool } from "@/components/chat/toolMeta";
+import { getToolMeta, isVisibleTraceTool } from "@/components/chat/toolMeta";
 import type {
   RunTraceSubagent,
   RunTraceSummary,
@@ -407,4 +407,197 @@ export function buildLiveSegments(
 
   flushActivity();
   return result;
+}
+
+export interface SubagentActivityPill {
+  id: string;
+  actor: string;
+  task?: string;
+  status: "running" | "completed" | "failed";
+  activityText: string;
+  toolCount: number;
+  completedToolCount: number;
+  recentTools: string[];
+}
+
+export interface RunStatusModel {
+  title: string;
+  detail?: string;
+  sectionId?: string;
+  status: "running" | "completed" | "failed" | "interrupted";
+  toolCount: number;
+  completedToolCount: number;
+  recentMainTools: string[];
+  subagents: SubagentActivityPill[];
+  elapsedLabel?: string;
+}
+
+function recentToolLabels(tools: ToolCallTraceItem[], maxCount = 3): string[] {
+  const labels: string[] = [];
+  for (let i = tools.length - 1; i >= 0 && labels.length < maxCount; i -= 1) {
+    const tool = tools[i];
+    if (!tool) continue;
+    const label = getToolMeta(tool.toolName).label;
+    if (!labels.includes(label)) {
+      labels.unshift(label);
+    }
+  }
+  return labels;
+}
+
+function latestToolLabel(tools: ToolCallTraceItem[]): string | undefined {
+  const running = [...tools].reverse().find((t) => t.status === "running");
+  if (running) {
+    return getToolMeta(running.toolName).label;
+  }
+  const last = tools[tools.length - 1];
+  return last ? getToolMeta(last.toolName).label : undefined;
+}
+
+function normalizeTerminalStatus(
+  raw: string,
+): "completed" | "failed" | "interrupted" {
+  if (raw === "failed") return "failed";
+  if (raw === "interrupted") return "interrupted";
+  return "completed";
+}
+
+export function buildLiveRunStatusModel(
+  trace: LiveAgentTrace,
+  subagents: LiveSubagentRun[],
+  elapsedSeconds: number,
+): RunStatusModel {
+  const progress = summarizeLiveProgress(trace, subagents);
+  const lastSeg = trace.segments[trace.segments.length - 1];
+  let fallbackTitle = trace.isStreaming ? "正在处理" : "本轮执行已完成";
+  if (trace.isStreaming && lastSeg) {
+    if (lastSeg.kind === "thinking") {
+      fallbackTitle = "正在思考规划";
+    } else if (lastSeg.kind === "text") {
+      fallbackTitle = "正在撰写回复";
+    } else if (lastSeg.kind === "execution") {
+      const visible = lastSeg.tools.filter(isVisibleTraceTool);
+      const toolLabel = latestToolLabel(visible);
+      if (toolLabel) {
+        fallbackTitle = `正在${toolLabel}`;
+      } else if (subagents.some((s) => s.status === "running")) {
+        fallbackTitle = "正在协调子代理执行";
+      }
+    }
+  }
+
+  const mainTools = trace.segments.flatMap((segment) =>
+    segment.kind === "execution"
+      ? segment.tools.filter(isVisibleTraceTool)
+      : [],
+  );
+
+  const pills: SubagentActivityPill[] = subagents.map((sub) => {
+    const view = extractSubagentLiveView(sub.trace);
+    const toolLabel = latestToolLabel(view.tools);
+    const activityText =
+      sub.trace.taskFocus?.title?.trim() ||
+      (sub.status === "running" && toolLabel ? `正在${toolLabel}` : toolLabel) ||
+      (sub.status === "running"
+        ? "协作执行中"
+        : sub.status === "failed"
+          ? "执行失败"
+          : "已完成");
+    return {
+      id: sub.subagentRunId,
+      actor: sub.displayName?.trim() || sub.agentName,
+      task: sub.task,
+      status: sub.status,
+      activityText,
+      toolCount: view.tools.length,
+      completedToolCount: view.tools.filter((t) => t.status !== "running")
+        .length,
+      recentTools: recentToolLabels(view.tools),
+    };
+  });
+
+  return {
+    title: trace.taskFocus?.title?.trim() || fallbackTitle,
+    detail: trace.taskFocus?.detail ?? undefined,
+    sectionId: trace.taskFocus?.sectionId ?? undefined,
+    status: trace.isStreaming ? "running" : "completed",
+    toolCount: progress.toolCount,
+    completedToolCount: progress.completedToolCount,
+    recentMainTools: recentToolLabels(mainTools),
+    subagents: pills,
+    elapsedLabel: formatLiveElapsed(elapsedSeconds),
+  };
+}
+
+export function buildHistoricalRunStatusModel(
+  trace: RunTraceSummary,
+): RunStatusModel {
+  const status = normalizeTerminalStatus(trace.status);
+  const tools: ToolCallTraceItem[] = [];
+  const pills: SubagentActivityPill[] = [];
+
+  for (const seg of trace.segments ?? []) {
+    if (seg.kind === "execution") {
+      tools.push(...toToolTraceItems(seg.tools).filter(isVisibleTraceTool));
+      for (const sub of seg.subagents ?? []) {
+        const subTools: ToolCallTraceItem[] = [];
+        for (const sSeg of sub.segments ?? []) {
+          if (sSeg.kind === "execution") {
+            subTools.push(
+              ...toToolTraceItems(sSeg.tools).filter(isVisibleTraceTool),
+            );
+          }
+        }
+        const subStatus =
+          sub.status === "failed"
+            ? "failed"
+            : sub.status === "running"
+              ? "running"
+              : "completed";
+        const activityText =
+          sub.task_focus?.title?.trim() ||
+          latestToolLabel(subTools) ||
+          (subStatus === "failed" ? "执行失败" : "已完成");
+        pills.push({
+          id: sub.subagent_run_id,
+          actor: sub.display_name?.trim() || sub.agent_name,
+          task: sub.task,
+          status: subStatus,
+          activityText,
+          toolCount: subTools.length,
+          completedToolCount: subTools.filter((t) => t.status !== "running")
+            .length,
+          recentTools: recentToolLabels(subTools),
+        });
+      }
+    }
+  }
+
+  const defaultTitle =
+    status === "failed"
+      ? "执行失败"
+      : status === "interrupted"
+        ? "已中断"
+        : "本轮执行已完成";
+
+  const elapsedLabel =
+    typeof trace.duration_ms === "number" && trace.duration_ms > 0
+      ? formatLiveElapsed(Math.max(1, Math.round(trace.duration_ms / 1000)))
+      : undefined;
+
+  return {
+    title: trace.task_focus?.title?.trim() || defaultTitle,
+    detail: trace.task_focus?.detail ?? undefined,
+    sectionId: trace.task_focus?.section_id ?? undefined,
+    status,
+    toolCount: tools.length,
+    completedToolCount: tools.filter((t) => t.status !== "running").length,
+    recentMainTools: recentToolLabels(tools),
+    subagents: pills,
+    elapsedLabel,
+  };
+}
+
+export function hasTraceActivity(segments: RenderSegment[]): boolean {
+  return segments.some((seg) => seg.kind === "activity");
 }

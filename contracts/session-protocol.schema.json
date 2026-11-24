@@ -810,6 +810,13 @@
         "session_id": {
           "type": "string"
         },
+        "user_id": {
+          "description": "Owning SaaS user ID (`None` for legacy/system sessions).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "title": {
           "type": "string"
         },
@@ -959,6 +966,13 @@
       "properties": {
         "session_id": {
           "type": "string"
+        },
+        "user_id": {
+          "description": "Owning SaaS user ID (`None` for legacy/system sessions).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "title": {
           "type": "string"

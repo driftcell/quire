@@ -21,6 +21,17 @@ impl RuntimeStore {
         doc_id: Option<&str>,
         kb_branch: &str,
     ) -> RuntimeResult<SessionSummary> {
+        self.create_session_for_user(None, title, doc_id, kb_branch)
+            .await
+    }
+
+    pub async fn create_session_for_user(
+        &self,
+        user_id: Option<&str>,
+        title: &str,
+        doc_id: Option<&str>,
+        kb_branch: &str,
+    ) -> RuntimeResult<SessionSummary> {
         let title = title.trim();
         if title.is_empty() {
             return Err(RuntimeError::InvalidRequest(
@@ -30,10 +41,11 @@ impl RuntimeStore {
         let session_id = short_id("sess");
         sqlx::query(
             r#"INSERT INTO agent_sessions
-               (session_id, title, doc_id, linked_doc_id, kb_branch, status, active_run_status)
-               VALUES ($1, $2, $3, $3, $4, 'active', 'idle')"#,
+               (session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status, active_run_status)
+               VALUES ($1, $2, $3, $4, $4, $5, 'active', 'idle')"#,
         )
         .bind(&session_id)
+        .bind(user_id)
         .bind(title)
         .bind(doc_id)
         .bind(kb_branch)
@@ -42,9 +54,18 @@ impl RuntimeStore {
         self.get_session_summary(&session_id).await
     }
 
+    pub async fn get_session_owner(&self, session_id: &str) -> RuntimeResult<Option<String>> {
+        let owner: Option<Option<String>> =
+            sqlx::query_scalar("SELECT user_id FROM agent_sessions WHERE session_id = $1")
+                .bind(session_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        owner.ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))
+    }
+
     pub async fn get_session_summary(&self, session_id: &str) -> RuntimeResult<SessionSummary> {
         let row = sqlx::query(
-            r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
+            r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                       active_run_status, context_usage, compaction_started_at,
                       compacted_at, pinned_at, created_at, updated_at
                FROM agent_sessions WHERE session_id = $1"#,
@@ -185,21 +206,68 @@ impl RuntimeStore {
         limit: i64,
         offset: i64,
     ) -> RuntimeResult<Vec<SessionSummary>> {
-        let rows = sqlx::query(
-            r#"SELECT session_id, title, doc_id, linked_doc_id, kb_branch, status,
-                      active_run_status, context_usage, compaction_started_at,
-                      compacted_at, pinned_at, created_at, updated_at
-               FROM agent_sessions
-               ORDER BY (pinned_at IS NOT NULL) DESC,
-                        pinned_at DESC NULLS LAST,
-                        updated_at DESC,
-                        session_id ASC
-               LIMIT $1 OFFSET $2"#,
-        )
-        .bind(limit.clamp(1, 200))
-        .bind(offset.max(0))
-        .fetch_all(&self.pool)
-        .await?;
+        self.list_sessions_for_user(None, true, limit, offset).await
+    }
+
+    pub async fn list_sessions_for_user(
+        &self,
+        user_id: Option<&str>,
+        include_unowned: bool,
+        limit: i64,
+        offset: i64,
+    ) -> RuntimeResult<Vec<SessionSummary>> {
+        let rows =
+            match user_id {
+                Some(uid) if include_unowned => sqlx::query(
+                    r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
+                              active_run_status, context_usage, compaction_started_at,
+                              compacted_at, pinned_at, created_at, updated_at
+                       FROM agent_sessions
+                       WHERE user_id = $1 OR user_id IS NULL
+                       ORDER BY (pinned_at IS NOT NULL) DESC,
+                                pinned_at DESC NULLS LAST,
+                                updated_at DESC,
+                                session_id ASC
+                       LIMIT $2 OFFSET $3"#,
+                )
+                .bind(uid)
+                .bind(limit.clamp(1, 200))
+                .bind(offset.max(0))
+                .fetch_all(&self.pool)
+                .await?,
+                Some(uid) => sqlx::query(
+                    r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
+                              active_run_status, context_usage, compaction_started_at,
+                              compacted_at, pinned_at, created_at, updated_at
+                       FROM agent_sessions
+                       WHERE user_id = $1
+                       ORDER BY (pinned_at IS NOT NULL) DESC,
+                                pinned_at DESC NULLS LAST,
+                                updated_at DESC,
+                                session_id ASC
+                       LIMIT $2 OFFSET $3"#,
+                )
+                .bind(uid)
+                .bind(limit.clamp(1, 200))
+                .bind(offset.max(0))
+                .fetch_all(&self.pool)
+                .await?,
+                None => sqlx::query(
+                    r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
+                              active_run_status, context_usage, compaction_started_at,
+                              compacted_at, pinned_at, created_at, updated_at
+                       FROM agent_sessions
+                       ORDER BY (pinned_at IS NOT NULL) DESC,
+                                pinned_at DESC NULLS LAST,
+                                updated_at DESC,
+                                session_id ASC
+                       LIMIT $1 OFFSET $2"#,
+                )
+                .bind(limit.clamp(1, 200))
+                .bind(offset.max(0))
+                .fetch_all(&self.pool)
+                .await?,
+            };
         let mut sessions = Vec::with_capacity(rows.len());
         for row in &rows {
             let mut summary = row_to_summary(row)?;

@@ -33,10 +33,11 @@ use super::{
     context::{AskUserRequestedMeta, QuireTurnMeta},
     subagents::RunSubagentsTool,
     tool_schemas::{
-        AskUserReceipt, CommitChartReceipt, DescribeTaskReceipt, ListSubagentsReceipt,
-        PreviewEchartsReceipt, ReadSkillResourceReceipt, SandboxExecuteReceipt,
-        SandboxMountAttachmentReceipt, SandboxReadFileReceipt, SandboxWriteFileReceipt,
-        SetSessionTitleReceipt, SubagentSummaryView,
+        AskUserReceipt, AttachmentSummaryView, CommitChartReceipt, DescribeTaskReceipt,
+        ListAttachmentsReceipt, ListSkillsReceipt, ListSubagentsReceipt, PreviewEchartsReceipt,
+        ReadSkillResourceReceipt, SandboxExecuteReceipt, SandboxMountAttachmentReceipt,
+        SandboxReadFileReceipt, SandboxWriteFileReceipt, SetSessionTitleReceipt, SkillSummaryView,
+        SubagentSummaryView,
     },
 };
 
@@ -52,6 +53,7 @@ fn image_media_type(mime_type: &str) -> ImageMediaType {
 }
 
 pub const BUILTIN_TOOLS: &[&str] = &[
+    "list_skills",
     "load_skill",
     "read_skill_resource",
     "describe_task",
@@ -65,6 +67,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "sandbox_execute",
     "sandbox_read_file",
     "sandbox_write_file",
+    "list_attachments",
     "sandbox_mount_attachment",
     "get_protocol_guide",
     "create_report",
@@ -279,9 +282,21 @@ impl RigModelCore {
             SandboxWriteFileTool
         );
         register!(
+            "list_attachments",
+            allow_list_matches(&execution.allowed_tools, "list_attachments")
+                || allow_list_matches(&execution.allowed_tools, "sandbox_mount_attachment"),
+            ListAttachmentsTool
+        );
+        register!(
             "sandbox_mount_attachment",
             allow_list_matches(&execution.allowed_tools, "sandbox_mount_attachment"),
             SandboxMountAttachmentTool
+        );
+        register!(
+            "list_skills",
+            allow_list_matches(&execution.allowed_tools, "list_skills")
+                || allow_list_matches(&execution.allowed_tools, "load_skill"),
+            ListSkillsTool
         );
         register!(
             "load_skill",

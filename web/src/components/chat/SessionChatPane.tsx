@@ -1,4 +1,10 @@
+import { useMemo } from "react";
+import {
+  buildChatRichContext,
+  ChatRichContext,
+} from "@/components/chat/chatRichContext";
 import { SessionStreamView } from "@/components/chat/SessionStreamView";
+import type { DocumentResponse } from "@/lib/document";
 import {
   PromptComposer,
   type QuotedChatSnippet,
@@ -25,6 +31,7 @@ export interface SessionChatPaneProps {
   attachments: AttachmentMeta[];
   traces: RunTraceSummary[];
   hasReportData: boolean;
+  documentView?: DocumentResponse | null;
   liveMain: LiveAgentTrace | null;
   liveSubagents: LiveSubagentRun[];
   pendingQuestion: PendingQuestion | null;
@@ -71,6 +78,7 @@ export function SessionChatPane({
   attachments,
   traces,
   hasReportData,
+  documentView,
   liveMain,
   liveSubagents,
   pendingQuestion,
@@ -97,7 +105,13 @@ export function SessionChatPane({
   onRetry,
   onCompact,
 }: SessionChatPaneProps) {
+  const richContext = useMemo(
+    () => buildChatRichContext(documentView),
+    [documentView],
+  );
+
   return (
+    <ChatRichContext.Provider value={richContext}>
     <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
       <div className="min-h-0 flex-1">
         {isLoading ? (
@@ -161,5 +175,6 @@ export function SessionChatPane({
         </div>
       </div>
     </div>
+    </ChatRichContext.Provider>
   );
 }

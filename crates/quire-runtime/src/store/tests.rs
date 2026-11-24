@@ -13,6 +13,7 @@ fn trace_summary(run_id: &str, status: &str) -> RunTraceSummary {
 
 fn running_summary(status: ActiveRunStatus) -> SessionSummary {
     SessionSummary {
+        user_id: None,
         session_id: "sess_1".into(),
         title: "title".into(),
         doc_id: None,

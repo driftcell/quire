@@ -1,5 +1,30 @@
 use super::*;
 
+/// List all enabled skills available on the current session's knowledge-base branch,
+/// returning each skill's `name`, `description`, and bundled `resources` paths.
+#[rig_tool(name = "list_skills")]
+pub(crate) async fn list_skills_tool(
+    #[rig(context)] context: &mut ToolContext,
+) -> Result<ListSkillsReceipt, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let turn = quire_turn_meta(context)?;
+    let skills = runtime
+        .engine
+        .kb
+        .list_skills_on(turn.kb_branch.as_deref())
+        .await
+        .map_err(tool_other)?
+        .into_iter()
+        .filter(|skill| skill.enabled)
+        .map(|skill| SkillSummaryView {
+            name: skill.name,
+            description: skill.description,
+            resources: skill.resources.into_iter().map(|r| r.path).collect(),
+        })
+        .collect();
+    Ok(ListSkillsReceipt { skills })
+}
+
 /// Load a skill definition (`SKILL.md` body and list of bundled resource file paths) from the
 /// session's knowledge-base branch. Follow up with `read_skill_resource` to read specific
 /// bundled reference files listed in the skill.
