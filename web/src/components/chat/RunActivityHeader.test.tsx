@@ -12,6 +12,7 @@ import {
 import {
   buildHistoricalRunStatusModel,
   buildLiveRunStatusModel,
+  type RunStatusModel,
 } from "@/components/chat/traceSegments";
 import type { RunTraceSummary } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
@@ -152,11 +153,19 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     expect(html).not.toContain('data-slot="agent-plan-progress"');
     expect(html).not.toContain('data-slot="subagent-progress"');
     expect(html).not.toContain('data-live-progress-tools="true"');
-    expect(html).not.toContain("第一阶段：构建报告框架");
+    expect(html).toContain("第一阶段：构建报告框架");
     expect(html).toContain("正在统筹撰写双优建设报告");
     expect(html).toContain("第三阶段：全局质检与终审");
     expect(html).toContain("执行计划，共 3 步，当前第 2 步");
+    expect(html).toContain('data-presentation="todo-window"');
+    expect(html).toContain('data-presentation="avatar-stack"');
+    expect(html.split('data-slot="main-todo-item"').length - 1).toBe(3);
+    expect(html).toContain('data-focus="true"');
+    expect(html).toContain("主代理");
     expect(html).toContain('data-subagent-pill="sub_1"');
+    expect(html).toContain("展开并定位");
+    expect(html).toContain("ring-[#1D4ED8]");
+    expect(html).not.toContain("grayscale");
     expect(html).toContain("检索国自然立项数据");
     // Never sticky (prevents occluding QuestionCard on scroll)
     expect(html).not.toContain("sticky");
@@ -175,7 +184,9 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
       />,
     );
     expect(expandedHtml).toContain("第一阶段：构建报告框架");
-
+    expect(expandedHtml).toContain('data-presentation="full-todos"');
+    expect(expandedHtml).toContain('data-subagent-id="sub_1"');
+    expect(expandedHtml).toContain('tabindex="-1"');
     expect(expandedHtml).toContain('data-slot="subagent-todo-list"');
     expect(expandedHtml).toContain("查询教育部经费公报");
     expect(expandedHtml).toContain("检索国自然立项数据");
@@ -187,6 +198,85 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     // Raw chain-of-thought thinking must never leak into the user-facing UI
     expect(expandedHtml).not.toContain("内部推理过程不应在用户聊天界面中暴露");
     expect(expandedHtml).not.toContain("animate-spin");
+  });
+
+  test("collapsed todo windows handle boundaries and subagent resume coloring", () => {
+    const makeModel = (
+      statuses: Array<RunStatusModel["todos"][number]["status"]>,
+      subagentStatus: RunStatusModel["subagents"][number]["status"] = "running",
+    ): RunStatusModel => ({
+      title: "当前任务",
+      status: "running",
+      toolCount: 0,
+      completedToolCount: 0,
+      recentMainTools: [],
+      subagents: [
+        {
+          id: "sub_1",
+          actor: "researcher",
+          status: subagentStatus,
+          activityText: "核对高校数据",
+          toolCount: 0,
+          completedToolCount: 0,
+          recentTools: [],
+          todos: [],
+        },
+      ],
+      milestones: [],
+      todos: statuses.map((status, index) => ({
+        id: `todo-${index + 1}`,
+        title: `任务 ${index + 1}`,
+        status,
+      })),
+    });
+    const renderCollapsed = (model: RunStatusModel) =>
+      renderToStaticMarkup(
+        <RunActivityHeader
+          model={model}
+          isStreaming={true}
+          detailsOpen={false}
+          onToggleDetails={() => {}}
+        />,
+      );
+
+    const first = renderCollapsed(
+      makeModel(["in_progress", "pending", "pending"]),
+    );
+    expect(first.split('data-slot="main-todo-item"').length - 1).toBe(3);
+    expect(first.indexOf('data-focus="true"')).toBeLessThan(
+      first.indexOf("任务 2"),
+    );
+
+    const last = renderCollapsed(
+      makeModel(["completed", "completed", "in_progress"]),
+    );
+    expect(last.split('data-slot="main-todo-item"').length - 1).toBe(3);
+    expect(last.indexOf('data-focus="true"')).toBeGreaterThan(
+      last.indexOf("任务 2"),
+    );
+
+    const single = renderCollapsed(makeModel(["in_progress"]));
+    expect(single.split('data-slot="main-todo-item"').length - 1).toBe(1);
+
+    const completed = renderCollapsed(makeModel(["in_progress"], "completed"));
+    expect(completed).toContain("grayscale");
+    const resumed = renderCollapsed(makeModel(["in_progress"], "running"));
+    expect(resumed).not.toContain("grayscale");
+
+    const crowded = makeModel(["in_progress"]);
+    crowded.subagents = Array.from({ length: 9 }, (_, index) => ({
+      id: `sub-${index + 1}`,
+      actor: `researcher-${index + 1}`,
+      status: "completed",
+      activityText: "核对高校数据",
+      toolCount: 0,
+      completedToolCount: 0,
+      recentTools: [],
+      todos: [],
+    }));
+    const stack = renderCollapsed(crowded);
+    expect(stack.split("data-subagent-pill=").length - 1).toBe(6);
+    expect(stack).toContain("+3");
   });
 
   test("buildHistoricalRunStatusModel preserves structure after completion and supports chat-only upsert_sources", () => {
