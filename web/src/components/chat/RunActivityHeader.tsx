@@ -11,7 +11,6 @@ import {
   AgentAvatar,
   resolveAgentIdentity,
 } from "@/components/chat/agentAvatar";
-import { StopTurnButton } from "@/components/chat/StopTurnButton";
 import type { RunStatusModel } from "@/components/chat/traceSegments";
 
 export interface RunActivityHeaderProps {
@@ -20,7 +19,6 @@ export interface RunActivityHeaderProps {
   detailsOpen: boolean;
   onToggleDetails: () => void;
   onJumpToSection?: (sectionId: string) => void;
-  onInterrupt?: () => Promise<void>;
 }
 
 type LedgerStepStatus = "pending" | "in_progress" | "completed" | "skipped";
@@ -392,7 +390,6 @@ export const RunActivityHeader = memo(function RunActivityHeader({
   detailsOpen,
   onToggleDetails,
   onJumpToSection,
-  onInterrupt,
 }: RunActivityHeaderProps) {
   const subCount = model.subagents.length;
   const isFailed = model.status === "failed" || model.status === "interrupted";
@@ -461,7 +458,12 @@ export const RunActivityHeader = memo(function RunActivityHeader({
       data-status={model.status}
       data-presentation={isStreaming ? "ledger" : "receipt"}
       aria-label={isStreaming ? "当前执行进度" : "执行回执"}
-      className="relative w-full py-0.5 text-xs"
+      className={cn(
+        "relative w-full text-xs",
+        isStreaming
+          ? "rounded-xl border border-border/80 bg-card/70 px-3 py-2.5 shadow-2xs"
+          : "py-0.5",
+      )}
     >
       <div className="flex min-w-0 items-start gap-1.5">
         <button
@@ -498,20 +500,14 @@ export const RunActivityHeader = memo(function RunActivityHeader({
               className={cn(
                 "block break-words text-[13px] font-medium text-foreground",
                 isStreaming ? "text-pretty leading-5" : "truncate leading-5.5",
-                collapsedTodoFocus &&
-                  "text-[11px] font-normal text-muted-foreground",
               )}
             >
-              {collapsedTodoFocus
-                ? "主代理"
-                : isStreaming
-                  ? model.title
-                  : settledTitle(model)}
+              {isStreaming ? model.title : settledTitle(model)}
             </span>
           </span>
 
           <span className="ml-auto flex shrink-0 items-center gap-1.5 pt-0.5 text-[11px] text-muted-foreground tabular-nums">
-            {!isStreaming && model.elapsedLabel && (
+            {model.elapsedLabel && (
               <span data-live-elapsed="true">{model.elapsedLabel}</span>
             )}
             {hasExpandableStages && (
@@ -526,7 +522,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
           </span>
         </button>
 
-        {!isStreaming && model.sectionId && onJumpToSection && (
+        {model.sectionId && onJumpToSection && (
           <button
             type="button"
             data-live-header-jump="true"
@@ -545,47 +541,11 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         )}
       </div>
 
-      {(isStreaming || (detailsOpen && model.detail)) && (
+      {(isStreaming || detailsOpen) && !collapsedTodoFocus && model.detail && (
         <div className="ml-6.5">
-          {!collapsedTodoFocus && model.detail && (
-            <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
-              {model.detail}
-            </p>
-          )}
-          {isStreaming &&
-            (model.elapsedLabel ||
-              (model.sectionId && onJumpToSection) ||
-              onInterrupt) && (
-              <div className="mt-1 flex min-h-6 items-center gap-1">
-                {model.elapsedLabel && (
-                  <span
-                    data-live-elapsed="true"
-                    className="text-[11px] text-muted-foreground tabular-nums"
-                  >
-                    {model.elapsedLabel}
-                  </span>
-                )}
-                <span className="flex-1" />
-                {model.sectionId && onJumpToSection && (
-                  <button
-                    type="button"
-                    data-live-header-jump="true"
-                    aria-label="定位至对应报告章节"
-                    title="定位至对应报告章节"
-                    onClick={() => {
-                      if (model.sectionId) {
-                        onJumpToSection(model.sectionId);
-                      }
-                    }}
-                    className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                  >
-                    <CompassIcon className="size-3" aria-hidden="true" />
-                    <span className="hidden @min-[420px]:inline">定位章节</span>
-                  </button>
-                )}
-                {onInterrupt && <StopTurnButton onInterrupt={onInterrupt} />}
-              </div>
-            )}
+          <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
+            {model.detail}
+          </p>
         </div>
       )}
 

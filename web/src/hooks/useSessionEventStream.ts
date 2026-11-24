@@ -188,7 +188,6 @@ export function useSessionEventStream({
     const current = liveStateRef.current.liveMain;
     const isStreaming =
       serverActiveRunStatus === "running" ||
-      serverActiveRunStatus === "awaiting_input" ||
       activeRunTrace.status === "running";
     const afterSeq = hydrationCursor(
       liveStateRef.current.afterSeq,

@@ -5,6 +5,8 @@ import {
   LiveTraceSegments,
 } from "@/components/chat/ExecutionTraceSection";
 import { HistoricalMessageItem } from "@/components/chat/HistoricalMessageItem";
+import { SessionStreamView } from "@/components/chat/SessionStreamView";
+import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
 import { PromptComposer } from "@/components/chat/PromptComposer";
 import { QuestionCard } from "@/components/chat/QuestionCard";
 import type { RenderSegment } from "@/components/chat/traceSegments";
@@ -83,6 +85,7 @@ describe("Borderless editorial chat", () => {
           cost_rmb: 0.1128,
         }}
         onSend={async () => {}}
+        onInterrupt={async () => {}}
       />,
     );
 
@@ -93,6 +96,7 @@ describe("Borderless editorial chat", () => {
     expect(html).toContain('data-slot="session-cost-odometer"');
     expect(html).toContain("19%");
     expect(html).toContain("¥0.1128");
+    expect(html).toContain('data-slot="stop-turn"');
     expect(html).not.toContain("正在处理当前任务，新发送的内容将自动排队");
   });
 
@@ -184,5 +188,89 @@ describe("Borderless editorial chat", () => {
       />,
     );
     expect(completedHtml).toContain("成功完成后的正文");
+  });
+  test("awaiting_input hydration renders a single question card and bordered user bubble", () => {
+    const bubbleHtml = renderToStaticMarkup(
+      <UserMessageBubble body="帮我梳理学科成果" attachmentMap={new Map()} />,
+    );
+    expect(bubbleHtml).toContain("border-border/80");
+
+    const awaitingTrace: RunTraceSummary = {
+      run_id: "run-awaiting",
+      status: "completed",
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            {
+              tool_call_id: "tc_ask",
+              tool_name: "ask_user",
+              status: "awaiting_input",
+              input_preview: "{}",
+            },
+          ],
+          subagent_run_ids: [],
+        },
+      ],
+    };
+    const streamHtml = renderToStaticMarkup(
+      <SessionStreamView
+        sessionId="session-1"
+        messages={[
+          {
+            message_id: "m_user",
+            session_id: "session-1",
+            role: "user",
+            content: "帮我梳理学科成果",
+            created_at: "2026-11-24T08:00:00Z",
+          },
+          {
+            message_id: "m_tool",
+            session_id: "session-1",
+            role: "tool",
+            run_id: "run-awaiting",
+            content: "",
+            created_at: "2026-11-24T08:00:01Z",
+          },
+        ]}
+        traces={[awaitingTrace]}
+        liveMain={{
+          runId: "run-awaiting",
+          agentId: "main",
+          isStreaming: false,
+          segments: [
+            {
+              kind: "execution",
+              tools: [
+                {
+                  toolCallId: "tc_ask",
+                  toolName: "ask_user",
+                  status: "completed",
+                  inputPreview: "{}",
+                },
+              ],
+              subagentRunIds: [],
+            },
+          ],
+        }}
+        liveSubagents={[]}
+        pendingQuestion={{
+          question_id: "q_1",
+          run_id: "run-awaiting",
+          tool_call_id: "tc_ask",
+          created_at: "2026-11-24T08:00:01Z",
+          questions: [
+            {
+              id: "peers",
+              title: "选取哪组参照高校？",
+              options: [{ id: "top5", label: "清北复交南" }],
+            },
+          ],
+        }}
+        isAnsweringQuestion={false}
+        onAnswerQuestion={() => {}}
+      />,
+    );
+    expect(streamHtml.match(/aria-label="需要你的确认"/g)?.length).toBe(1);
   });
 });

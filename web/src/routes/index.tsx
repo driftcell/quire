@@ -142,7 +142,7 @@ function HomePage() {
           />
         )}
 
-        <div className="mx-auto flex w-full max-w-2xl flex-col justify-center px-5 py-10 sm:px-8 sm:py-16">
+        <div className="mx-auto my-auto flex w-full max-w-2xl flex-col px-5 py-8 sm:px-8 sm:py-12">
           {/* Minimalist Centered Greeting */}
           <header className="mb-6 flex flex-col items-center text-center">
             <div className="mb-3 inline-flex items-center gap-2">

@@ -161,7 +161,8 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     expect(html).toContain('data-presentation="avatar-stack"');
     expect(html.split('data-slot="main-todo-item"').length - 1).toBe(3);
     expect(html).toContain('data-focus="true"');
-    expect(html).toContain("主代理");
+    expect(html).toContain("正在统筹撰写双优建设报告");
+    expect(html).not.toContain("主代理");
     expect(html).toContain('data-subagent-pill="sub_1"');
     expect(html).toContain("展开并定位");
     expect(html).toContain("ring-[#1D4ED8]");

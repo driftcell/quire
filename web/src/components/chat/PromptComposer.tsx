@@ -7,6 +7,7 @@ import {
   PlusIcon,
   QuoteIcon,
   RotateCcwIcon,
+  SquareIcon,
   UploadCloudIcon,
   XIcon,
 } from "lucide-react";
@@ -77,6 +78,7 @@ export interface PromptComposerProps {
     files: File[],
     commentRefs: SessionCommentRef[],
   ) => Promise<void>;
+  onInterrupt?: () => Promise<void>;
   onRetry?: () => Promise<void>;
   onCompact?: () => Promise<void>;
 }
@@ -225,12 +227,14 @@ export function PromptComposer({
   onClearCommentRefs,
   disabled = false,
   onSend,
+  onInterrupt,
   onRetry,
   onCompact,
 }: PromptComposerProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
   const [compactingRequest, setCompactingRequest] = useState(false);
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -252,6 +256,12 @@ export function PromptComposer({
   }, [quotedSnippet]);
 
   const isRunning = runStatus === "running";
+  const hasDraftContent =
+    text.trim().length > 0 ||
+    files.length > 0 ||
+    Boolean(quotedSnippet) ||
+    pendingCommentRefs.length > 0;
+  const showStopButton = isRunning && !hasDraftContent && Boolean(onInterrupt);
   const canRetry = runStatus === "interrupted" || runStatus === "failed";
   const composerPlaceholder = isRunning
     ? "任务进行中，输入后按 Enter 排队（Shift + Enter 换行）…"
@@ -443,7 +453,7 @@ export function PromptComposer({
           placeholder={composerPlaceholder}
           rows={2}
           disabled={disabled || sending}
-          className="max-h-40 min-h-12 resize-none px-3.5 pt-3 text-sm"
+          className="max-h-40 min-h-15 resize-none px-3.5 py-2.5 text-sm leading-6"
           onChange={(event) => setText(event.target.value)}
           onCompositionStart={ime.onCompositionStart}
           onCompositionEnd={ime.onCompositionEnd}
@@ -647,25 +657,44 @@ export function PromptComposer({
                 <span>重试</span>
               </Button>
             )}
-            <Button
-              type="button"
-              size="icon-sm"
-              aria-label={isRunning ? "排队发送消息" : "发送消息"}
-              title={isRunning ? "加入等待队列" : "发送消息"}
-              disabled={
-                disabled ||
-                sending ||
-                (text.trim().length === 0 &&
-                  files.length === 0 &&
-                  !quotedSnippet &&
-                  pendingCommentRefs.length === 0)
-              }
-              onClick={() => {
-                void submit();
-              }}
-            >
-              <ArrowUpIcon className="size-4" />
-            </Button>
+            {showStopButton ? (
+              <Button
+                type="button"
+                size="icon-sm"
+                data-slot="stop-turn"
+                aria-label="停止当前任务"
+                title="停止当前任务"
+                disabled={disabled || interrupting}
+                onClick={() => {
+                  if (!onInterrupt || interrupting) return;
+                  void (async () => {
+                    setInterrupting(true);
+                    try {
+                      await onInterrupt();
+                    } catch (err) {
+                      toast.error(errorMessage(err, "停止任务失败，请重试"));
+                    } finally {
+                      setInterrupting(false);
+                    }
+                  })();
+                }}
+              >
+                <SquareIcon className="size-3 fill-current" aria-hidden="true" />
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="icon-sm"
+                aria-label={isRunning ? "排队发送消息" : "发送消息"}
+                title={isRunning ? "加入等待队列" : "发送消息"}
+                disabled={disabled || sending || !hasDraftContent}
+                onClick={() => {
+                  void submit();
+                }}
+              >
+                <ArrowUpIcon className="size-4" />
+              </Button>
+            )}
           </div>
         </InputGroupAddon>
       </InputGroup>

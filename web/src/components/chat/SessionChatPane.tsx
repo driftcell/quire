@@ -131,7 +131,6 @@ export function SessionChatPane({
             contentClassName={
               hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"
             }
-            onInterrupt={onInterrupt}
             attachments={attachments}
             traces={traces}
             liveMain={liveMain}
@@ -172,6 +171,7 @@ export function SessionChatPane({
             onRemoveCommentRef={onRemoveCommentRef}
             onClearCommentRefs={onClearCommentRefs}
             onSend={onSend}
+            onInterrupt={onInterrupt}
             onRetry={onRetry}
             onCompact={onCompact}
           />

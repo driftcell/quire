@@ -45,7 +45,6 @@ function LiveRunSection({
   segments,
   questionSlots,
   onJumpToSection,
-  onInterrupt,
   showFinalText,
 }: {
   sessionId: string;
@@ -54,7 +53,6 @@ function LiveRunSection({
   segments: ReturnType<typeof buildLiveSegments>;
   questionSlots: Map<string, ReactNode>;
   onJumpToSection?: (sectionId: string) => void;
-  onInterrupt?: () => Promise<void>;
   showFinalText: boolean;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -84,7 +82,6 @@ function LiveRunSection({
         detailsOpen={detailsOpen}
         onToggleDetails={() => setDetailsOpen((open) => !open)}
         onJumpToSection={onJumpToSection}
-        onInterrupt={onInterrupt}
       />
 
       <LiveTraceSegments
@@ -147,7 +144,6 @@ export interface SessionStreamViewProps {
   ) => Promise<void>;
   onRecallPending?: (item: PendingQueueItem) => Promise<void>;
   onDeletePending?: (queueId: string) => Promise<void>;
-  onInterrupt?: () => Promise<void>;
   contentClassName?: string;
 }
 
@@ -168,7 +164,6 @@ export function SessionStreamView({
   onEditPending,
   onRecallPending,
   onDeletePending,
-  onInterrupt,
   contentClassName,
 }: SessionStreamViewProps) {
   const attachmentMap = useMemo(() => {
@@ -397,7 +392,6 @@ export function SessionStreamView({
                           segments={liveSegments}
                           questionSlots={questionSlots}
                           onJumpToSection={onJumpToSection}
-                          onInterrupt={onInterrupt}
                           showFinalText={liveRunCompleted}
                         />
                       </MessageContent>
