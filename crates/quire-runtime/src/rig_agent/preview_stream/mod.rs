@@ -423,7 +423,7 @@ impl PreviewState {
             report_store,
             base_url: config.quire_base_url.clone(),
             token: SecretString::from(String::new()),
-            actor: execution.agent_id.clone(),
+            actor: execution.actor(),
             throttle_ms: config.preview_throttle_ms,
             streams: HashMap::new(),
             previews_by_call: HashMap::new(),

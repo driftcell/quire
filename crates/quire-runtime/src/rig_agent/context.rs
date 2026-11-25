@@ -10,6 +10,7 @@ pub struct QuireTurnMeta {
     pub session_id: String,
     pub run_id: String,
     pub agent_id: String,
+    pub display_name: Option<String>,
     pub kb_branch: Option<String>,
     pub supports_vision: bool,
 }

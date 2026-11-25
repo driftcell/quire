@@ -437,9 +437,16 @@ pub(crate) fn in_process_request_context(
     let turn = quire_turn_meta(context)?;
     let session_id = quire_protocol::SessionId::parse(turn.session_id)
         .map_err(|error| ToolExecutionError::invalid_args(error.to_string()))?;
+    let actor = turn
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&turn.agent_id)
+        .to_string();
     Ok(quire_server::auth::RequestContext {
         session_id: Some(session_id),
-        actor: turn.agent_id,
+        actor,
     })
 }
 

@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { BookOpenIcon } from "lucide-react";
+import { BookOpenIcon, BotIcon } from "lucide-react";
 import { cn } from "cn";
 
 export interface AgentIdentity {
@@ -176,7 +176,7 @@ export function resolveAgentIdentity(rawActor: string): AgentIdentity {
   const actor = rawActor.trim() || "main";
   const lower = actor.toLowerCase();
 
-  if (lower === "main" || lower === "orchestrator" || lower === "主笔") {
+  if (lower === "main") {
     const mainTheme = MAIN_AVATAR_THEME;
     return {
       actor,
@@ -358,17 +358,21 @@ export const AgentAvatar = memo(function AgentAvatar({
   className?: string;
 }) {
   const identity = resolveAgentIdentity(actor);
+  const isMain = identity.iconKind === "main";
   const boxSize =
     size === "xs"
       ? "size-5 text-[10px]"
       : size === "md"
         ? "size-7 text-xs"
         : "size-6 text-[11px]";
+  const iconSize =
+    size === "xs" ? "size-3" : size === "md" ? "size-4" : "size-3.5";
 
   return (
     <span
       data-slot="agent-avatar"
       data-actor={identity.actor}
+      data-avatar-kind={isMain ? "agent-icon" : "identicon"}
       title={
         identity.role
           ? `${identity.label} · ${identity.role}`
@@ -376,11 +380,20 @@ export const AgentAvatar = memo(function AgentAvatar({
       }
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-border/70 select-none",
+        isMain && `${identity.bgClass} ${identity.textClass}`,
         boxSize,
         className,
       )}
     >
-      <DeterministicIdenticonSvg actor={identity.actor} />
+      {isMain ? (
+        <BotIcon
+          data-slot="main-agent-icon"
+          aria-hidden="true"
+          className={iconSize}
+        />
+      ) : (
+        <DeterministicIdenticonSvg actor={identity.actor} />
+      )}
     </span>
   );
 });

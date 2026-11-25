@@ -486,7 +486,7 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     expect(pills[1]?.targets).toEqual([]);
   });
 
-  test("AgentAvatar renders deterministic mirrored Identicons without pulsing dots", () => {
+  test("AgentAvatar renders fixed Agent Icon for main and deterministic mirrored Identicons for subagents", () => {
     const mainHtml = renderToStaticMarkup(
       <AgentAvatar actor="main" active={true} />,
     );
@@ -497,12 +497,16 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
       <AgentAvatar actor="writer" active={true} />,
     );
     expect(mainHtml).toContain("<svg");
+    expect(mainHtml).toContain('data-avatar-kind="agent-icon"');
+    expect(mainHtml).toContain('data-slot="main-agent-icon"');
     expect(mainHtml).not.toContain("animate-pulse");
     expect(
       renderToStaticMarkup(<AgentAvatar actor="main" active={true} />),
     ).toBe(mainHtml);
+
+    expect(analystHtml).toContain('data-avatar-kind="identicon"');
     const cells = Array.from(
-      mainHtml.matchAll(/<rect x="(\d+)" y="(\d+)" width="6"/g),
+      analystHtml.matchAll(/<rect x="(\d+)" y="(\d+)" width="6"/g),
       (match) => ({ x: Number(match[1]), y: Number(match[2]) }),
     );
     expect(cells.length).toBeGreaterThan(0);

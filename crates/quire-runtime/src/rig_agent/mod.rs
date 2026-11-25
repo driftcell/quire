@@ -128,6 +128,7 @@ struct RigModelCore {
 #[derive(Clone)]
 struct AgentExecution {
     agent_id: String,
+    display_name: Option<String>,
     model_route: String,
     allowed_tools: Vec<String>,
     system_prompt: String,
@@ -136,6 +137,17 @@ struct AgentExecution {
     session_id: String,
     run_id: String,
     cancellation: CancellationToken,
+}
+
+impl AgentExecution {
+    pub(super) fn actor(&self) -> String {
+        self.display_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(&self.agent_id)
+            .to_string()
+    }
 }
 
 pub(super) type SharedDocId = Arc<RwLock<Option<String>>>;
@@ -308,6 +320,7 @@ impl RigModelCore {
         };
         let execution = AgentExecution {
             agent_id: request.agent_id,
+            display_name: None,
             model_route,
             allowed_tools,
             system_prompt: request.system_prompt,
@@ -484,6 +497,7 @@ impl RigModelCore {
                     session_id: execution.session_id.clone(),
                     run_id: execution.run_id.clone(),
                     agent_id: execution.agent_id.clone(),
+                    display_name: execution.display_name.clone(),
                     kb_branch: execution.kb_branch.clone(),
                     supports_vision,
                 })

@@ -268,6 +268,7 @@ impl RigModelCore {
                 })?;
             let execution = AgentExecution {
                 agent_id: task.agent_name.clone(),
+                display_name: task.display_name.clone(),
                 model_route: task.model.clone().unwrap_or(definition.model),
                 allowed_tools: definition.allowed_tools,
                 system_prompt: definition.system_prompt,
