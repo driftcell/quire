@@ -143,6 +143,14 @@ pub struct UpsertSourcesResult {
 }
 
 #[derive(Debug, Clone)]
+pub struct DeleteSourcesResult {
+    pub revision: Revision,
+    pub changed: bool,
+    pub deleted_ids: Vec<SourceId>,
+    pub source_count: usize,
+}
+
+#[derive(Debug, Clone)]
 pub struct StreamRevision {
     pub stream_id: String,
     pub event: RevisionEvent,

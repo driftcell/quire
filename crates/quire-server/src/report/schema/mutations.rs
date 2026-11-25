@@ -123,6 +123,32 @@ pub struct ListSourcesParams {
     pub source_ids: Option<Vec<String>>,
 }
 
+/// Input for `delete_sources`.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteSourcesParams {
+    /// Target report `doc_id` that owns the bibliography registry.
+    pub doc_id: String,
+    /// Exact `SourceId`s to remove. Any ID still cited by a block is rejected with the referencing block IDs.
+    #[serde(default)]
+    pub source_ids: Vec<String>,
+    /// Set true to delete all uncited orphan sources in one call.
+    #[serde(default)]
+    pub prune_unused: bool,
+}
+
+/// Output for `delete_sources`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DeleteSourcesReceipt {
+    pub doc_id: String,
+    pub revision: i64,
+    pub changed: bool,
+    pub deleted_ids: Vec<String>,
+    pub source_count: usize,
+    #[serde(rename = "_next_hint")]
+    pub _next_hint: String,
+}
+
 /// Output for `list_sources`, including optional evidence excerpts for claim-level review. Missing excerpts are valid.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ListSourcesReceipt {

@@ -73,6 +73,7 @@ pub use events::{
     RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 pub use ids::{BlockId, DocId, Rank, Revision, SessionId, SourceId};
+pub use inline::inline_citations;
 pub use json::merge_optional_json;
 pub use lint::{Diagnostic, LintConfig, LintReport, LintSummary, Severity};
 pub use markdown::{

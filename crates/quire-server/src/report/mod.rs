@@ -22,6 +22,7 @@ pub const REPORT_TOOL_NAMES: &[&str] = &[
     "apply_operations",
     "rollback_revision",
     "upsert_sources",
+    "delete_sources",
     "list_sources",
     "set_cover",
     "configure_toc",

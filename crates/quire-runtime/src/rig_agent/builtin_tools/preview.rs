@@ -313,6 +313,8 @@ pub(crate) async fn commit_chart_tool(
     source_ids: Option<Vec<String>>,
     /// Optional source attribution note overriding the one stored during `preview_echarts`.
     source_note: Option<String>,
+    /// Where the chart will be used: `"document"` (default; commits into `doc_id` when a report is bound) or `"chat"` (persists the chart for inline chat rendering via `<echarts id="..."/>` without modifying the report or triggering report lint).
+    scope: Option<super::report_inproc::TargetScope>,
 ) -> Result<CommitChartReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let req_ctx = in_process_request_context(context)?;
@@ -323,7 +325,11 @@ pub(crate) async fn commit_chart_tool(
         ));
     }
     let raw_doc_id = doc_id.unwrap_or_default();
-    let resolved_doc_id = resolve_existing_session_doc_id(context, &runtime, &raw_doc_id).await?;
+    let resolved_doc_id = if scope.unwrap_or_default() == super::report_inproc::TargetScope::Chat {
+        None
+    } else {
+        resolve_existing_session_doc_id(context, &runtime, &raw_doc_id).await?
+    };
     let preview = runtime
         .engine
         .kb
@@ -350,14 +356,21 @@ pub(crate) async fn commit_chart_tool(
         if let Some(override_note) = normalize_optional_text(source_note) {
             aliased.source_note = Some(override_note);
         }
+        let turn = quire_turn_meta(context)?;
         runtime
+            .engine
+            .kb
+            .store()
+            .save_chat_chart(&turn.session_id, &aliased)
+            .await
+            .map_err(tool_other)?;
+        let _ = runtime
             .engine
             .kb
             .store()
             .bus()
             .store_chart_preview(&aliased)
-            .await
-            .map_err(tool_other)?;
+            .await;
         return Ok(CommitChartReceipt {
             mutation: quire_server::report::ApplyOperationsReceipt {
                 new_revision: 0,

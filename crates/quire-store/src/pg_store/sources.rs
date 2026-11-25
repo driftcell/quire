@@ -185,6 +185,123 @@ impl PgReportStore {
         })
     }
 
+    pub async fn delete_sources(
+        &self,
+        doc_id: &DocId,
+        actor: &str,
+        source_ids: Vec<SourceId>,
+        prune_unused: bool,
+    ) -> Result<DeleteSourcesResult, StoreError> {
+        if !prune_unused && source_ids.is_empty() {
+            return Err(StoreError::InvalidRequest(
+                "supply `source_ids` or set `prune_unused: true`".into(),
+            ));
+        }
+        let _guard = self.document_guard(doc_id.as_str()).await;
+        let mut tx = self.pool.begin().await?;
+        let current_rev = lock_current_revision(&mut tx, doc_id.as_str()).await?;
+        let loaded = load_document_in_tx(&mut tx, doc_id.as_str()).await?;
+        let before = loaded.document.clone();
+
+        let cited_by = collect_source_references(&before);
+        let mut to_delete: Vec<SourceId> = Vec::new();
+        for sid in &source_ids {
+            if !before.sources.contains_key(sid) {
+                return Err(StoreError::InvalidRequest(format!(
+                    "source `{sid}` is not registered on `{doc_id}`"
+                )));
+            }
+            if let Some(blocks) = cited_by.get(sid) {
+                let block_list = blocks
+                    .iter()
+                    .map(|b| b.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                return Err(StoreError::InvalidRequest(format!(
+                    "cannot delete source `{sid}` because it is still cited by block(s): {block_list}"
+                )));
+            }
+            if !to_delete.contains(sid) {
+                to_delete.push(sid.clone());
+            }
+        }
+        if prune_unused {
+            for sid in before.sources.keys() {
+                if !cited_by.contains_key(sid) && !to_delete.contains(sid) {
+                    to_delete.push(sid.clone());
+                }
+            }
+        }
+
+        if to_delete.is_empty() {
+            tx.commit().await?;
+            return Ok(DeleteSourcesResult {
+                revision: current_rev,
+                changed: false,
+                deleted_ids: Vec::new(),
+                source_count: before.sources.len(),
+            });
+        }
+
+        let mut after = before.clone();
+        for sid in &to_delete {
+            after.sources.shift_remove(sid);
+        }
+        let new_revision = current_rev.next();
+        after.revision = new_revision;
+        let forward = vec![PatchOp::SetSources {
+            sources: after.sources.clone(),
+        }];
+        let inverse = vec![PatchOp::SetSources {
+            sources: before.sources.clone(),
+        }];
+        let forward_json = ops_to_json(&forward)?;
+        let inverse_json = ops_to_json(&inverse)?;
+        let delete_strs: Vec<String> = to_delete.iter().map(|id| id.to_string()).collect();
+
+        sqlx::query!(
+            r#"DELETE FROM report_sources
+               WHERE doc_id = $1 AND source_id = ANY($2)"#,
+            doc_id.as_str(),
+            &delete_strs
+        )
+        .execute(&mut *tx)
+        .await?;
+        update_document_row(&mut tx, doc_id.as_str(), &after, new_revision).await?;
+        sqlx::query!(
+            r#"INSERT INTO report_revisions
+               (doc_id, rev_num, actor, summary, forward_ops, inverse_ops, affected_block_ids)
+               VALUES ($1, $2, $3, 'delete_sources', $4, $5, '{}')"#,
+            doc_id.as_str(),
+            new_revision.get(),
+            actor,
+            forward_json,
+            inverse_json
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+
+        let event = RevisionEvent::new(
+            doc_id.clone(),
+            new_revision,
+            actor,
+            "delete_sources",
+            forward_json,
+        );
+        if let Err(error) = self.bus.publish_revision(&event).await {
+            warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish source deletion revision");
+        }
+        self.maybe_snapshot(doc_id.as_str(), new_revision, after.clone());
+
+        Ok(DeleteSourcesResult {
+            revision: new_revision,
+            changed: true,
+            deleted_ids: to_delete,
+            source_count: after.sources.len(),
+        })
+    }
+
     /// Convenience for validating a doc before creating it.
     pub fn validate_document_for_create(document: &ReportDocument) -> Result<(), StoreError> {
         validate_doc_id(document.doc_id.as_str())?;
@@ -358,4 +475,55 @@ pub(crate) fn validate_source_registry(
         }
     }
     Ok(())
+}
+
+fn collect_source_references(document: &ReportDocument) -> BTreeMap<SourceId, Vec<BlockId>> {
+    let mut map: BTreeMap<SourceId, Vec<BlockId>> = BTreeMap::new();
+    let mut record = |sid: SourceId, bid: &BlockId| {
+        let entry = map.entry(sid).or_default();
+        if !entry.contains(bid) {
+            entry.push(bid.clone());
+        }
+    };
+    for block in &document.blocks {
+        for sid in &block.source_ids {
+            record(sid.clone(), &block.id);
+        }
+        if let Some(note) = block.source_note.as_deref() {
+            for sid in quire_protocol::inline_citations(note) {
+                record(sid, &block.id);
+            }
+        }
+        match &block.body {
+            quire_protocol::BlockKind::Paragraph { text }
+            | quire_protocol::BlockKind::Quote { text } => {
+                for sid in quire_protocol::inline_citations(text) {
+                    record(sid, &block.id);
+                }
+            }
+            quire_protocol::BlockKind::Table(t) => {
+                if let Some(note) = t.note.as_deref() {
+                    for sid in quire_protocol::inline_citations(note) {
+                        record(sid, &block.id);
+                    }
+                }
+            }
+            quire_protocol::BlockKind::Echarts(c) => {
+                if let Some(note) = c.note.as_deref() {
+                    for sid in quire_protocol::inline_citations(note) {
+                        record(sid, &block.id);
+                    }
+                }
+            }
+            quire_protocol::BlockKind::CustomHtml(h) => {
+                if let Some(note) = h.note.as_deref() {
+                    for sid in quire_protocol::inline_citations(note) {
+                        record(sid, &block.id);
+                    }
+                }
+            }
+            quire_protocol::BlockKind::Heading { .. } => {}
+        }
+    }
+    map
 }

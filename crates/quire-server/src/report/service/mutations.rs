@@ -170,6 +170,48 @@ impl QuireReportService {
         })
     }
 
+    pub async fn exec_delete_sources(
+        &self,
+        context: RequestContext,
+        request: DeleteSourcesParams,
+    ) -> Result<DeleteSourcesReceipt, ErrorData> {
+        let actor = context.actor;
+        let doc_id = parse_doc_id(&request.doc_id)?;
+        let parsed_ids: Vec<SourceId> = request
+            .source_ids
+            .iter()
+            .map(|raw| SourceId::parse(raw).map_err(protocol_error))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = self
+            .state
+            .store
+            .delete_sources(&doc_id, &actor, parsed_ids, request.prune_unused)
+            .await
+            .map_err(mcp_error)?;
+        let deleted_ids: Vec<String> = result
+            .deleted_ids
+            .into_iter()
+            .map(|id| id.to_string())
+            .collect();
+        let _next_hint = if result.changed {
+            format!(
+                "Deleted {} unused source(s) at revision {}. Run lint_document to verify.",
+                deleted_ids.len(),
+                result.revision
+            )
+        } else {
+            "No unused sources matched for deletion.".to_string()
+        };
+        Ok(DeleteSourcesReceipt {
+            doc_id: doc_id.to_string(),
+            revision: result.revision.get(),
+            changed: result.changed,
+            deleted_ids,
+            source_count: result.source_count,
+            _next_hint,
+        })
+    }
+
     pub(crate) async fn apply_with_reload<F>(
         &self,
         doc_id: &DocId,

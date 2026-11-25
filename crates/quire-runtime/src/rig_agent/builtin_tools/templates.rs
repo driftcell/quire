@@ -499,6 +499,32 @@ pub(super) fn render_upsert_sources(
     })
 }
 
+#[derive(Template)]
+#[template(path = "tools/delete_sources.md", escape = "none")]
+struct DeleteSourcesTemplate<'a> {
+    doc_id: &'a str,
+    revision: i64,
+    changed: bool,
+    deleted_ids: &'a [String],
+    deleted_ids_str: String,
+    source_count: usize,
+    next_hint: &'a str,
+}
+
+pub(super) fn render_delete_sources(
+    receipt: &contracts::DeleteSourcesReceipt,
+) -> Result<String, ToolExecutionError> {
+    render_template(&DeleteSourcesTemplate {
+        doc_id: &receipt.doc_id,
+        revision: receipt.revision,
+        changed: receipt.changed,
+        deleted_ids: &receipt.deleted_ids,
+        deleted_ids_str: receipt.deleted_ids.join(", "),
+        source_count: receipt.source_count,
+        next_hint: &receipt._next_hint,
+    })
+}
+
 struct SourceRow<'a> {
     id: &'a str,
     title: &'a str,
@@ -763,5 +789,17 @@ mod tests {
         };
         let apply_text = render_apply_operations(&apply).expect("render apply_operations");
         assert!(apply_text.contains("OK — rev 4 -> 5"));
+
+        let del = contracts::DeleteSourcesReceipt {
+            doc_id: "doc_1".into(),
+            revision: 6,
+            changed: true,
+            deleted_ids: vec!["old_src".into()],
+            source_count: 1,
+            _next_hint: "Run lint_document.".into(),
+        };
+        let del_text = render_delete_sources(&del).expect("render delete_sources");
+        assert!(del_text.contains("OK — doc_1 rev=6 (changed=true, deleted=1, remaining=1)"));
+        assert!(del_text.contains("Deleted: old_src"));
     }
 }

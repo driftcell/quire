@@ -223,7 +223,7 @@ SOURCES
 - Register via `upsert_sources(doc_id, sources)`: `[{ "id":"sec_10k_25", "title":"Annual filing 10-K", "url":"https://...", "authors":["Jane Smith"], "date":"2025-02-01" }]`.
 - Prefer concise 2-word + 2-digit year `source_id`s (`moe_forum_26`, `zj_nsfc_25`) for BPE token efficiency.
 - Dedup key: normalized URL first, else normalized title; cite IDs from `canonical_id_map`. Partial updates by `id` are allowed without repeating `title`.
-- `list_sources(doc_id, source_ids?)` inspects registered sources; never guess IDs.
+- `list_sources(doc_id, source_ids?)` inspects registered sources; `delete_sources(doc_id, source_ids?, prune_unused?)` removes uncited orphan sources after restructuring (never guess IDs).
 - `excerpt` is optional short verbatim prose passage; omit for structured DB/API records and use `note` for statistical scope/time window.
 - Read original pages before citing; never attach sources just to pad counts.
 - Cite inline `[^id]` or block-level `source_ids:["id"]`; bibliography orders by first appearance. `configure_references(doc_id, enabled=true, style="author_year")` switches to (Smith, 2025).
@@ -244,6 +244,7 @@ STYLE & ATTRIBUTION
 "##.into(),
         recommended_tools: vec![
             "upsert_sources".into(),
+            "delete_sources".into(),
             "list_sources".into(),
             "configure_references".into(),
             "configure_page_chrome".into(),

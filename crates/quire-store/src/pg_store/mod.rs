@@ -23,9 +23,10 @@ use crate::{
     error::{InlineWarnings, RevisionConflict, StoreError, ops_to_json},
     redis_stream::RedisStreamBus,
     types::{
-        ApplyResult, CommitExtras, CreateResult, DocumentDiff, DocumentSnapshot, NewCommentReply,
-        NewCommentThread, ReportList, ReportSummary, RevisionEvent, RevisionRecord, RollbackResult,
-        SessionEvent, SourceUpsert, UpsertSourcesResult,
+        ApplyResult, CommitExtras, CreateResult, DeleteSourcesResult, DocumentDiff,
+        DocumentSnapshot, NewCommentReply, NewCommentThread, ReportList, ReportSummary,
+        RevisionEvent, RevisionRecord, RollbackResult, SessionEvent, SourceUpsert,
+        UpsertSourcesResult,
     },
 };
 

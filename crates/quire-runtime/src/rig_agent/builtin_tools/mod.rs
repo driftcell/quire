@@ -74,6 +74,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "apply_operations",
     "rollback_revision",
     "upsert_sources",
+    "delete_sources",
     "list_sources",
     "set_cover",
     "configure_toc",
@@ -384,6 +385,11 @@ impl RigModelCore {
             "upsert_sources",
             allow_list_matches(&execution.allowed_tools, "upsert_sources"),
             UpsertSourcesTool
+        );
+        register!(
+            "delete_sources",
+            allow_list_matches(&execution.allowed_tools, "delete_sources"),
+            DeleteSourcesTool
         );
         register!(
             "list_sources",

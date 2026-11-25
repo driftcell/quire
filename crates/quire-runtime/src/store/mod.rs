@@ -190,6 +190,7 @@ impl RuntimeStore {
 }
 
 mod attachments;
+mod chat_charts;
 mod events;
 mod helpers;
 mod queue;

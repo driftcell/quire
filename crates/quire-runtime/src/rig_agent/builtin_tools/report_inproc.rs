@@ -289,6 +289,15 @@ pub(crate) async fn resolve_existing_session_doc_id(
     Ok(None)
 }
 
+/// Target destination for chat-only vs report-bound citations and charts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TargetScope {
+    #[default]
+    Document,
+    Chat,
+}
+
 /// Register or update bibliography sources actually retrieved during research, deduplicating by URL
 /// and normalized title. Call before citing new sources in report blocks or `<citation id="SOURCE_ID"/>`
 /// chat tags, and always cite the mapped IDs from `canonical_id_map`.
@@ -305,9 +314,14 @@ pub(crate) async fn upsert_sources_tool(
     doc_id: String,
     /// Non-empty list of source records (`url`, `publisher`, `date`, `accessed`, `note` for statistical caliber/scope, and optional verbatim `excerpt` for prose documents).
     sources: Vec<contracts::SourceInput>,
+    /// Where the sources will be cited: `"document"` (default; writes to report bibliography and participates in `QR102` lint / `delete_sources`) or `"chat"` (chat-only `<citation id="..."/>` badges without polluting the report bibliography or triggering `QR102`).
+    scope: Option<TargetScope>,
 ) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
-    if let Some(doc_id) = resolve_existing_session_doc_id(context, &runtime, &doc_id).await? {
+    let chat_only = scope.unwrap_or_default() == TargetScope::Chat;
+    if !chat_only
+        && let Some(doc_id) = resolve_existing_session_doc_id(context, &runtime, &doc_id).await?
+    {
         let request_context = in_process_request_context(context)?;
         let receipt = runtime
             .report
@@ -324,10 +338,40 @@ pub(crate) async fn upsert_sources_tool(
         .filter_map(|entry| entry.id.as_ref().map(|id| id.as_str()))
         .collect();
     Ok(format!(
-        "OK — chat_session upserted {} source(s): {}",
+        "OK — chat upserted {} source(s): {}",
         sources.len(),
         upserted_ids.join(", ")
     ))
+}
+
+/// Remove unused bibliography sources from a report (`source_ids` and/or `prune_unused: true`).
+/// Call after restructuring or removing sections to clean up `QR102` orphan sources. Refuses to
+/// delete any source still cited by a block or inline `[^id]` marker.
+#[rig_tool(name = "delete_sources", required(doc_id))]
+pub(crate) async fn delete_sources_tool(
+    #[rig(context)] context: &mut ToolContext,
+    /// Target report `doc_id`.
+    doc_id: String,
+    /// Specific `SourceId`s to remove (must be uncited).
+    source_ids: Vec<String>,
+    /// Set true to delete all uncited orphan sources in one call.
+    prune_unused: Option<bool>,
+) -> Result<String, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let request_context = in_process_request_context(context)?;
+    let receipt = runtime
+        .report
+        .exec_delete_sources(
+            request_context,
+            contracts::DeleteSourcesParams {
+                doc_id,
+                source_ids,
+                prune_unused: prune_unused.unwrap_or(false),
+            },
+        )
+        .await
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_delete_sources(&receipt)
 }
 
 /// List registered bibliography sources and optional reader-focused evidence excerpts.

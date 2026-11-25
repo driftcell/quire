@@ -68,6 +68,18 @@ impl QuireMcpServer {
         self.exec_upsert_sources(context, request).await.map(Json)
     }
 
+    /// Remove unused bibliography sources from a report (`source_ids` and/or `prune_unused: true`).
+    /// Refuses to delete any source still cited by a block or inline `[^id]` marker.
+    #[tool(name = "delete_sources")]
+    pub async fn delete_sources(
+        &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        Parameters(request): Parameters<DeleteSourcesParams>,
+    ) -> Result<Json<DeleteSourcesReceipt>, ErrorData> {
+        let context = request_context(&context)?;
+        self.exec_delete_sources(context, request).await.map(Json)
+    }
+
     // ---------------------------------------------------------------------
     // Tool 10: list sources
     // ---------------------------------------------------------------------
