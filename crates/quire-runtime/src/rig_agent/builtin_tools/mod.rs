@@ -6,7 +6,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use quire_lint::lint_echarts_block;
 use quire_protocol::{
     Block, BlockId, BlockKind, EchartsBlock, PatchOp, chart_data_tables_for_block,
-    chart_requirements, merge_chart_option_patch, short_id,
+    chart_requirements, merge_chart_option_patch,
 };
 use quire_session_protocol::QuestionItem;
 use rig::tool::server::ToolServer;

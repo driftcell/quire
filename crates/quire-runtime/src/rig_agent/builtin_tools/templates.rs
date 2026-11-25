@@ -1,5 +1,5 @@
 use askama::Template;
-use quire_protocol::{CommentStatus, Severity};
+use quire_protocol::{CommentStatus, Diagnostic, Severity};
 use quire_server::{guide::GuideTopic, report as contracts};
 use rig::tool::ToolExecutionError;
 
@@ -57,10 +57,30 @@ pub(super) fn render_protocol_guide(
     })
 }
 
+struct ReportSummaryRow<'a> {
+    doc_id: &'a str,
+    title: &'a str,
+    current_rev: i64,
+    block_count: i64,
+    updated_at: String,
+    session_id: Option<&'a str>,
+}
+
+fn compact_timestamp(raw: &str) -> String {
+    // Convert `2026-11-24T16:31:37.829618+00:00` -> `2026-11-24 16:31`
+    if raw.len() >= 16 && raw.as_bytes().get(10) == Some(&b'T') {
+        let mut s = raw[..16].to_string();
+        s.replace_range(10..11, " ");
+        s
+    } else {
+        raw.to_string()
+    }
+}
+
 #[derive(Template)]
 #[template(path = "tools/list_reports.md", escape = "none")]
 struct ListReportsTemplate<'a> {
-    reports: &'a [contracts::ReportSummaryView],
+    reports: Vec<ReportSummaryRow<'a>>,
     total: i64,
     next_hint: &'a str,
 }
@@ -68,8 +88,20 @@ struct ListReportsTemplate<'a> {
 pub(super) fn render_list_reports(
     receipt: &contracts::ListReportsReceipt,
 ) -> Result<String, ToolExecutionError> {
+    let reports = receipt
+        .reports
+        .iter()
+        .map(|r| ReportSummaryRow {
+            doc_id: &r.doc_id,
+            title: &r.title,
+            current_rev: r.current_rev,
+            block_count: r.block_count,
+            updated_at: compact_timestamp(&r.updated_at),
+            session_id: r.session_id.as_deref(),
+        })
+        .collect();
     render_template(&ListReportsTemplate {
-        reports: &receipt.reports,
+        reports,
         total: receipt.total,
         next_hint: &receipt._next_hint,
     })
@@ -77,11 +109,29 @@ pub(super) fn render_list_reports(
 
 struct DigestBlockRow<'a> {
     id: &'a str,
-    block_type: &'a str,
-    level: Option<u8>,
+    short_type: &'static str,
     char_count: Option<usize>,
     preview: Option<&'a str>,
     source_ids: String,
+}
+
+fn short_block_type(block_type: &str, level: Option<u8>) -> &'static str {
+    match block_type {
+        "heading" => match level {
+            Some(1) => "h1",
+            Some(2) => "h2",
+            Some(3) => "h3",
+            Some(4) => "h4",
+            Some(5) => "h5",
+            _ => "h6",
+        },
+        "paragraph" => "p",
+        "quote" => "quote",
+        "table" => "tbl",
+        "echarts" => "chart",
+        "custom_html" => "html",
+        _ => "blk",
+    }
 }
 
 #[derive(Template)]
@@ -113,11 +163,15 @@ pub(super) fn render_document_digest(
         .iter()
         .map(|block| DigestBlockRow {
             id: &block.id,
-            block_type: &block.block_type,
-            level: block.level,
+            short_type: short_block_type(&block.block_type, block.level),
             char_count: block.char_count,
             preview: block.preview.as_deref(),
-            source_ids: block.source_ids.join(", "),
+            source_ids: block
+                .source_ids
+                .iter()
+                .map(|id| format!("^{id}"))
+                .collect::<Vec<_>>()
+                .join(" "),
         })
         .collect();
     render_template(&DocumentDigestTemplate {
@@ -152,7 +206,142 @@ struct LintDiagnosticGroup<'a> {
     rule: &'a str,
     shared_hint: &'a str,
     shared_valid_values: String,
+    compact_targets: String,
     items: Vec<LintDiagnosticRow<'a>>,
+}
+
+fn extract_compact_targets(items: &[LintDiagnosticRow<'_>]) -> String {
+    if items.len() < 2 || items.iter().any(|i| i.block_id.is_some()) {
+        return String::new();
+    }
+    let Some((first_item, rest)) = items.split_first() else {
+        return String::new();
+    };
+    let first = first_item.message;
+    let mut prefix_len = first.len();
+    for item in rest {
+        let m = item.message;
+        prefix_len = first
+            .char_indices()
+            .zip(m.char_indices())
+            .take_while(|((_, a), (_, b))| a == b)
+            .last()
+            .map_or(0, |((idx, ch), _)| idx + ch.len_utf8())
+            .min(prefix_len);
+    }
+    let mut suffix_len = 0usize;
+    let Some(first_rem) = first.get(prefix_len..) else {
+        return String::new();
+    };
+    let first_rev: Vec<char> = first_rem.chars().rev().collect();
+    let mut max_suffix_chars = first_rev.len();
+    for item in rest {
+        let Some(m_rem) = item.message.get(prefix_len..) else {
+            return String::new();
+        };
+        let common_chars = first_rev
+            .iter()
+            .zip(m_rem.chars().rev())
+            .take_while(|(a, b)| *a == b)
+            .count();
+        max_suffix_chars = max_suffix_chars.min(common_chars);
+    }
+    if max_suffix_chars > 0 {
+        suffix_len = first_rem
+            .char_indices()
+            .rev()
+            .nth(max_suffix_chars - 1)
+            .map_or(0, |(idx, _)| first_rem.len() - idx);
+    }
+    // Snap prefix_len back to a whitespace or backtick boundary so shared prefixes like `src_` stay part of the token.
+    while prefix_len > 0 {
+        let prev = first[..prefix_len].chars().next_back();
+        if matches!(prev, Some(' ' | '\t' | '`')) {
+            break;
+        }
+        prefix_len -= prev.map_or(1, char::len_utf8);
+    }
+    while suffix_len > 0 {
+        let suf_start = first.len() - suffix_len;
+        let next = first[suf_start..].chars().next();
+        if matches!(next, Some(' ' | '\t' | '`')) {
+            break;
+        }
+        suffix_len -= next.map_or(1, char::len_utf8);
+    }
+    if prefix_len == 0 && suffix_len == 0 {
+        return String::new();
+    }
+    let mut targets = Vec::with_capacity(items.len());
+    for item in items {
+        let m = item.message;
+        let Some(end) = m.len().checked_sub(suffix_len) else {
+            return String::new();
+        };
+        if end <= prefix_len {
+            return String::new();
+        }
+        let Some(slice) = m.get(prefix_len..end) else {
+            return String::new();
+        };
+        let mid = slice.trim().trim_matches('`');
+        if mid.is_empty() || mid.contains(char::is_whitespace) {
+            return String::new();
+        }
+        targets.push(mid);
+    }
+    targets.join(", ")
+}
+
+fn group_diagnostics(diagnostics: &[Diagnostic]) -> Vec<LintDiagnosticGroup<'_>> {
+    let mut groups: Vec<LintDiagnosticGroup<'_>> = Vec::new();
+    for d in diagnostics {
+        let severity = match d.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        };
+        let item = LintDiagnosticRow {
+            block_id: d.block_id.as_ref().map(|id| id.as_str()),
+            message: &d.message,
+            hint: &d.hint,
+            valid_values: d.valid_values.join(", "),
+        };
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|g| g.severity == severity && g.code == d.code.as_str())
+        {
+            group.items.push(item);
+        } else {
+            groups.push(LintDiagnosticGroup {
+                severity,
+                code: &d.code,
+                rule: &d.rule,
+                shared_hint: "",
+                shared_valid_values: String::new(),
+                compact_targets: String::new(),
+                items: vec![item],
+            });
+        }
+    }
+
+    for group in &mut groups {
+        if let Some(first) = group.items.first() {
+            if !first.hint.is_empty() && group.items.iter().all(|item| item.hint == first.hint) {
+                group.shared_hint = first.hint;
+            }
+            if !first.valid_values.is_empty()
+                && group
+                    .items
+                    .iter()
+                    .all(|item| item.valid_values == first.valid_values)
+            {
+                group.shared_valid_values = first.valid_values.clone();
+            }
+        }
+        group.compact_targets = extract_compact_targets(&group.items);
+    }
+    groups
 }
 
 struct SuppressedRuleGroup<'a> {
@@ -183,52 +372,7 @@ pub(super) fn render_lint_document(
     let clean =
         receipt.ok && receipt.diagnostics.is_empty() && receipt.suppressed_blocks.is_empty();
     let summary = receipt.summary.as_ref();
-
-    let mut groups: Vec<LintDiagnosticGroup<'_>> = Vec::new();
-    for d in &receipt.diagnostics {
-        let severity = match d.severity {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Info => "info",
-        };
-        let item = LintDiagnosticRow {
-            block_id: d.block_id.as_ref().map(|id| id.as_str()),
-            message: &d.message,
-            hint: &d.hint,
-            valid_values: d.valid_values.join(", "),
-        };
-        if let Some(group) = groups
-            .iter_mut()
-            .find(|g| g.severity == severity && g.code == d.code.as_str())
-        {
-            group.items.push(item);
-        } else {
-            groups.push(LintDiagnosticGroup {
-                severity,
-                code: &d.code,
-                rule: &d.rule,
-                shared_hint: "",
-                shared_valid_values: String::new(),
-                items: vec![item],
-            });
-        }
-    }
-
-    for group in &mut groups {
-        if let Some(first) = group.items.first() {
-            if !first.hint.is_empty() && group.items.iter().all(|item| item.hint == first.hint) {
-                group.shared_hint = first.hint;
-            }
-            if !first.valid_values.is_empty()
-                && group
-                    .items
-                    .iter()
-                    .all(|item| item.valid_values == first.valid_values)
-            {
-                group.shared_valid_values = first.valid_values.clone();
-            }
-        }
-    }
+    let groups = group_diagnostics(&receipt.diagnostics);
 
     let mut blocks_by_code: std::collections::BTreeMap<String, Vec<&str>> =
         std::collections::BTreeMap::new();
@@ -248,11 +392,7 @@ pub(super) fn render_lint_document(
                 .find(|meta| meta.code == code)
                 .map_or("", |meta| meta.name);
             let count = block_ids.len();
-            let block_ids = block_ids
-                .into_iter()
-                .map(|id| format!("`{id}`"))
-                .collect::<Vec<_>>()
-                .join(", ");
+            let block_ids = block_ids.join(", ");
             SuppressedRuleGroup {
                 code,
                 rule,
@@ -304,7 +444,7 @@ pub(super) fn render_list_comments(
             thread_id: &thread.thread_id,
             status: match thread.status {
                 CommentStatus::Open => "open",
-                CommentStatus::Addressed => "addressed",
+                CommentStatus::Addressed => "done",
                 CommentStatus::Archived => "archived",
             },
             block_id: thread.block_id.as_str(),
@@ -325,11 +465,131 @@ pub(super) fn render_list_comments(
     })
 }
 
+#[derive(Template)]
+#[template(path = "tools/upsert_sources.md", escape = "none")]
+struct UpsertSourcesTemplate<'a> {
+    doc_id: &'a str,
+    revision: i64,
+    changed: bool,
+    source_count: usize,
+    remapped: String,
+    groups: Vec<LintDiagnosticGroup<'a>>,
+    next_hint: &'a str,
+}
+
+pub(super) fn render_upsert_sources(
+    receipt: &contracts::UpsertSourcesReceipt,
+) -> Result<String, ToolExecutionError> {
+    let remapped = receipt
+        .canonical_id_map
+        .iter()
+        .filter(|(from, to)| from != to)
+        .map(|(from, to)| format!("{from}->{to}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let groups = group_diagnostics(&receipt.inline_warnings);
+    render_template(&UpsertSourcesTemplate {
+        doc_id: &receipt.doc_id,
+        revision: receipt.revision,
+        changed: receipt.changed,
+        source_count: receipt.source_count,
+        remapped,
+        groups,
+        next_hint: &receipt._next_hint,
+    })
+}
+
+struct SourceRow<'a> {
+    id: &'a str,
+    title: &'a str,
+    url: Option<&'a str>,
+    date: Option<&'a str>,
+    note: Option<&'a str>,
+    excerpt: Option<&'a str>,
+}
+
+#[derive(Template)]
+#[template(path = "tools/list_sources.md", escape = "none")]
+struct ListSourcesTemplate<'a> {
+    doc_id: &'a str,
+    revision: i64,
+    count: usize,
+    sources: Vec<SourceRow<'a>>,
+    next_hint: &'a str,
+}
+
+pub(super) fn render_list_sources(
+    receipt: &contracts::ListSourcesReceipt,
+) -> Result<String, ToolExecutionError> {
+    let sources = receipt
+        .sources
+        .iter()
+        .map(|(id, entry)| SourceRow {
+            id: id.as_str(),
+            title: &entry.title,
+            url: entry.url.as_deref(),
+            date: entry.date.as_deref(),
+            note: entry.note.as_deref(),
+            excerpt: entry.excerpt.as_deref(),
+        })
+        .collect();
+    render_template(&ListSourcesTemplate {
+        doc_id: &receipt.doc_id,
+        revision: receipt.revision,
+        count: receipt.count,
+        sources,
+        next_hint: &receipt._next_hint,
+    })
+}
+
+#[derive(Template)]
+#[template(path = "tools/apply_operations.md", escape = "none")]
+struct ApplyOperationsTemplate<'a> {
+    base_revision: i64,
+    new_revision: i64,
+    rebased: bool,
+    rebased_over: usize,
+    assigned_ids: String,
+    error_groups: Vec<LintDiagnosticGroup<'a>>,
+    warning_groups: Vec<LintDiagnosticGroup<'a>>,
+    next_hint: &'a str,
+}
+
+pub(super) fn render_apply_operations(
+    receipt: &contracts::ApplyOperationsReceipt,
+) -> Result<String, ToolExecutionError> {
+    let assigned_ids = receipt
+        .assigned_ids
+        .iter()
+        .map(|a| {
+            format!(
+                "{}->{}",
+                a.requested.as_ref().map_or("<auto>", |id| id.as_str()),
+                a.assigned
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let error_groups = group_diagnostics(&receipt.blocking_errors);
+    let warning_groups = group_diagnostics(&receipt.inline_warnings);
+    render_template(&ApplyOperationsTemplate {
+        base_revision: receipt.base_revision,
+        new_revision: receipt.new_revision,
+        rebased: receipt.rebased,
+        rebased_over: receipt.rebased_over,
+        assigned_ids,
+        error_groups,
+        warning_groups,
+        next_hint: &receipt._next_hint,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use quire_protocol::{BlockId, Diagnostic, LintSummary};
+    use indexmap::IndexMap;
+    use quire_protocol::{BlockId, Diagnostic, LintSummary, SourceEntry, SourceId};
 
     use super::*;
 
@@ -362,7 +622,7 @@ mod tests {
             _next_hint: None,
         };
         let clean_text = render_lint_document(&clean).expect("render clean lint");
-        assert_eq!(clean_text.trim(), "OK — `rev: 5`, 0 diagnostics.");
+        assert_eq!(clean_text.trim(), "OK — rev=5, 0 diagnostics.");
 
         let dirty = contracts::LintReceipt {
             ok: false,
@@ -388,7 +648,7 @@ mod tests {
             _next_hint: Some("Fix errors first.".into()),
         };
         let dirty_text = render_lint_document(&dirty).expect("render dirty lint");
-        assert!(dirty_text.contains("[error] `QR201` (missing-source) @ `sec_1`"));
+        assert!(dirty_text.contains("[error] QR201 (missing-source) @sec_1"));
         assert!(dirty_text.contains("Call upsert_sources first."));
         assert!(dirty_text.contains("> Next: Fix errors first."));
 
@@ -429,7 +689,9 @@ mod tests {
             _next_hint: None,
         };
         let grouped_text = render_lint_document(&grouped).expect("render grouped lint");
-        assert!(grouped_text.contains("[warning] `QR102` (unused-source) × 2"));
+        assert!(grouped_text.contains("[warning] QR102 (unused-source) × 2"));
+        assert!(grouped_text.contains("Targets: src_a, src_b"));
+        assert!(!grouped_text.contains("registered but never cited"));
         assert_eq!(
             grouped_text.matches("add [^<source_id>] to prose").count(),
             1
@@ -452,8 +714,54 @@ mod tests {
             _next_hint: None,
         };
         let sup_text = render_lint_document(&suppressed_only).expect("render suppressed lint");
-        assert!(
-            sup_text.contains("`QR423` (higher-ed-policy-term-format) × 2: `c12_p05`, `c21_p01`")
+        assert!(sup_text.contains("QR423 (higher-ed-policy-term-format) × 2: c12_p05, c21_p01"));
+    }
+
+    #[test]
+    fn upsert_list_sources_and_apply_operations_render_compactly() {
+        let mut canonical_id_map = BTreeMap::new();
+        canonical_id_map.insert("a".into(), "a".into());
+        canonical_id_map.insert("b_dup".into(), "b".into());
+        let upsert = contracts::UpsertSourcesReceipt {
+            doc_id: "doc_1".into(),
+            revision: 4,
+            changed: true,
+            canonical_id_map,
+            source_count: 2,
+            inline_warnings: Vec::new(),
+            _next_hint: "Cite sources.".into(),
+        };
+        let up_text = render_upsert_sources(&upsert).expect("render upsert_sources");
+        assert!(up_text.contains("OK — doc_1 rev=4 (changed=true, total=2)"));
+        assert!(up_text.contains("Mapped: b_dup->b"));
+
+        let mut sources = IndexMap::new();
+        sources.insert(
+            SourceId::parse("moe_26").unwrap(),
+            SourceEntry::new("教育部工作要点"),
         );
+        let list = contracts::ListSourcesReceipt {
+            doc_id: "doc_1".into(),
+            revision: 4,
+            sources,
+            count: 1,
+            _next_hint: "Verify claims.".into(),
+        };
+        let list_text = render_list_sources(&list).expect("render list_sources");
+        assert!(list_text.contains("- [^moe_26] 教育部工作要点"));
+
+        let apply = contracts::ApplyOperationsReceipt {
+            new_revision: 5,
+            base_revision: 4,
+            rebased: false,
+            rebased_over: 0,
+            committed: true,
+            assigned_ids: Vec::new(),
+            inline_warnings: Vec::new(),
+            blocking_errors: Vec::new(),
+            _next_hint: "Continue.".into(),
+        };
+        let apply_text = render_apply_operations(&apply).expect("render apply_operations");
+        assert!(apply_text.contains("OK — rev 4 -> 5"));
     }
 }

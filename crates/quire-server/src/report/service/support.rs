@@ -22,7 +22,7 @@ pub(crate) fn parse_revision(value: i64) -> Result<Revision, ErrorData> {
 
 pub(crate) fn generate_doc_id(title: &str) -> Result<DocId, ErrorData> {
     let slug = slugify_title(title);
-    let suffix = short_token(8);
+    let suffix = quire_protocol::bpe_word_pair('-');
     let prefix: String = slug.chars().take(48).collect();
     DocId::parse(format!("{prefix}-{suffix}")).map_err(protocol_error)
 }

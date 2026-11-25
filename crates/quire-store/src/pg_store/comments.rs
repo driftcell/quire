@@ -74,7 +74,7 @@ impl PgReportStore {
             .map(serde_json::to_value)
             .transpose()?;
         let now = Utc::now();
-        let thread_id = short_id("th");
+        let thread_id = quire_protocol::compact_id("th");
         let message_id = short_id("msg");
         let status = CommentStatus::Open;
 

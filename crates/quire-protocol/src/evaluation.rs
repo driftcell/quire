@@ -389,6 +389,8 @@ pub fn segment_prose_sentences(
         .filter(|line| {
             let t = line.trim();
             !(t.starts_with("<!--") && t.ends_with("-->"))
+                && !t.starts_with("@block ")
+                && !t.starts_with("@report ")
                 && !(t.starts_with("[^") && t.contains("]:"))
         })
         .collect();

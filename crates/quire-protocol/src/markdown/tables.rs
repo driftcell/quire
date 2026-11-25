@@ -13,8 +13,8 @@ pub(crate) fn write_markdown_table(output: &mut String, header: &[String], body:
     }
     output.push('\n');
     output.push('|');
-    for index in 0..header.len() {
-        output.push_str(if index == 0 { " :--- |" } else { " ---: |" });
+    for _ in 0..header.len() {
+        output.push_str(" --- |");
     }
     output.push('\n');
     for row in body.iter().take(MAX_CHART_ROWS) {

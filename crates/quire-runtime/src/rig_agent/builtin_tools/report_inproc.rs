@@ -212,10 +212,10 @@ pub(crate) async fn apply_operations_tool(
     sources: Option<SourceInputMap>,
     /// Runtime-managed streamed preview IDs superseded by this commit; normally omit.
     preview_ids: Vec<String>,
-) -> Result<contracts::ApplyOperationsReceipt, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let request_context = in_process_request_context(context)?;
-    runtime
+    let receipt = runtime
         .report
         .exec_apply_operations(
             request_context,
@@ -229,7 +229,8 @@ pub(crate) async fn apply_operations_tool(
             },
         )
         .await
-        .map_err(mcp_error_to_tool_error)
+        .map_err(mcp_error_to_tool_error)?;
+    templates::render_apply_operations(&receipt)
 }
 
 /// Restore a report to an earlier revision by committing a new forward revision.
@@ -302,10 +303,9 @@ pub(crate) async fn upsert_sources_tool(
     doc_id: String,
     /// Non-empty list of source records (`url`, `publisher`, `date`, `accessed`, `note` for statistical caliber/scope, and optional verbatim `excerpt` for prose documents).
     sources: Vec<contracts::SourceInput>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     if let Some(doc_id) = resolve_existing_session_doc_id(context, &runtime, &doc_id).await? {
-        let saved_sources = sources.clone();
         let request_context = in_process_request_context(context)?;
         let receipt = runtime
             .report
@@ -315,26 +315,17 @@ pub(crate) async fn upsert_sources_tool(
             )
             .await
             .map_err(mcp_error_to_tool_error)?;
-        let mut value = serde_json::to_value(receipt).map_err(tool_other)?;
-        if let Some(object) = value.as_object_mut() {
-            object.insert(
-                "sources".to_string(),
-                serde_json::to_value(saved_sources).unwrap_or(Value::Null),
-            );
-        }
-        return Ok(value);
+        return templates::render_upsert_sources(&receipt);
     }
-    let upserted_ids: Vec<String> = sources
+    let upserted_ids: Vec<&str> = sources
         .iter()
-        .filter_map(|entry| entry.id.as_ref().map(|id| id.as_str().to_string()))
+        .filter_map(|entry| entry.id.as_ref().map(|id| id.as_str()))
         .collect();
-    Ok(serde_json::json!({
-        "mode": "chat_session",
-        "doc_id": Value::Null,
-        "upserted_ids": upserted_ids,
-        "total_sources": sources.len(),
-        "sources": sources,
-    }))
+    Ok(format!(
+        "OK — chat_session upserted {} source(s): {}",
+        sources.len(),
+        upserted_ids.join(", ")
+    ))
 }
 
 /// List registered bibliography sources and optional reader-focused evidence excerpts.
@@ -348,7 +339,7 @@ pub(crate) async fn list_sources_tool(
     doc_id: String,
     /// Optional exact source IDs to fetch; omit to list all registered sources.
     source_ids: Option<Vec<String>>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     if let Some(doc_id) = resolve_existing_session_doc_id(context, &runtime, &doc_id).await? {
         let receipt = runtime
@@ -356,13 +347,9 @@ pub(crate) async fn list_sources_tool(
             .list_sources(contracts::ListSourcesParams { doc_id, source_ids })
             .await
             .map_err(mcp_error_to_tool_error)?;
-        return serde_json::to_value(receipt).map_err(tool_other);
+        return templates::render_list_sources(&receipt);
     }
-    Ok(serde_json::json!({
-        "mode": "chat_session",
-        "doc_id": Value::Null,
-        "sources": [],
-    }))
+    Ok("_No sources registered in chat_session._".into())
 }
 
 /// Partially update report cover configuration.

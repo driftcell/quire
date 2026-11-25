@@ -82,16 +82,17 @@ fn sample() -> ReportDocument {
 #[test]
 fn full_projection_has_anchors_expanded_citations_and_flattened_tables() {
     let output = project_markdown(&sample(), &MarkdownOptions::default()).unwrap();
-    assert!(output.contains("<!-- report:md-report | revision:4 -->"));
-    assert!(output.contains("<!-- block:summary | type:paragraph -->"));
+    assert!(output.contains("@report md-report rev=4"));
+    assert!(output.contains("@block summary [p]"));
     assert!(output.contains("Revenue grew **18%** [^sec10] with `automation` momentum."));
-    assert!(output.contains("Sources: [^sec10] (Annual filing 10-K)"));
+    assert!(output.contains("## Sources\n- [^sec10]: Annual filing 10-K"));
+    assert_eq!(output.matches("Annual filing 10-K").count(), 1);
     assert!(!output.contains("[^sec10:"));
     assert!(output.contains("**表 1 — Revenue by region**"));
     assert!(output.contains("| Region | Revenue / Q1 | Revenue / Q2 |"));
-    assert!(output.contains("| :--- | ---: | ---: |"));
+    assert!(output.contains("| --- | --- | --- |"));
     assert!(output.contains("| **Total** | **180** | **215** |"));
-    assert!(output.contains("<!-- block:chart | type:echarts -->"));
+    assert!(output.contains("@block chart [chart]"));
     assert!(output.contains("**图 1 — Revenue trend**"));
     assert!(output.contains("| Q1 | 100 |"));
 }
@@ -218,7 +219,7 @@ fn projects_multi_panel_chart_and_multiple_chart_blocks() {
     assert!(output.contains("| Q1 | 10 |"));
     assert!(output.contains("_Chart data: Share (line) · panel 2_"));
     assert!(output.contains("| East | 30 |"));
-    assert!(output.contains("<!-- block:chart2 | type:echarts -->"));
+    assert!(output.contains("@block chart2 [chart]"));
     assert!(output.contains("_Chart data: Mix (pie)_"));
     assert!(output.contains("| A | 60 |"));
     assert!(output.contains("| B | 40 |"));
@@ -330,27 +331,27 @@ fn projects_multidimensional_series_dimensions() {
 #[test]
 fn section_projection_stops_at_same_level_heading() {
     let output = project_section(&sample(), "introduction", &MarkdownOptions::default()).unwrap();
-    assert!(output.contains("block:intro"));
-    assert!(output.contains("block:chart"));
-    assert!(!output.contains("block:appendix"));
+    assert!(output.contains("@block intro [h1]"));
+    assert!(output.contains("@block chart [chart]"));
+    assert!(!output.contains("@block appendix"));
 
     // Match by exact heading block_id (`intro`) and by ordinal chapter label (`第一章`, `第2章`).
     let by_id = project_section(&sample(), "intro", &MarkdownOptions::default()).unwrap();
-    assert!(by_id.contains("block:intro"));
-    assert!(!by_id.contains("block:appendix"));
+    assert!(by_id.contains("@block intro [h1]"));
+    assert!(!by_id.contains("@block appendix"));
 
     let by_ordinal_1 = project_section(&sample(), "第一章", &MarkdownOptions::default()).unwrap();
-    assert!(by_ordinal_1.contains("block:intro"));
-    assert!(!by_ordinal_1.contains("block:appendix"));
+    assert!(by_ordinal_1.contains("@block intro [h1]"));
+    assert!(!by_ordinal_1.contains("@block appendix"));
 
     let by_ordinal_2 = project_section(&sample(), "第二章", &MarkdownOptions::default()).unwrap();
-    assert!(by_ordinal_2.contains("block:appendix"));
-    assert!(!by_ordinal_2.contains("block:intro"));
+    assert!(by_ordinal_2.contains("@block appendix [h1]"));
+    assert!(!by_ordinal_2.contains("@block intro"));
 
     // Truncated digest preview ending with `…` or `...` matches the full heading.
     let by_truncated_preview =
         project_section(&sample(), "Intro…", &MarkdownOptions::default()).unwrap();
-    assert!(by_truncated_preview.contains("block:intro"));
+    assert!(by_truncated_preview.contains("@block intro [h1]"));
 }
 
 #[test]
@@ -374,9 +375,9 @@ fn section_id_reads_the_requested_heading_and_text_ambiguity_fails_closed() {
     let by_id = projector
         .render_section_by_id(&block_id("intro_appendix"))
         .unwrap();
-    assert!(by_id.contains("block:intro_appendix"));
-    assert!(by_id.contains("block:appendix_body"));
-    assert!(!by_id.contains("block:intro_body"));
+    assert!(by_id.contains("@block intro_appendix [h1]"));
+    assert!(by_id.contains("@block appendix_body [p]"));
+    assert!(!by_id.contains("@block intro_body"));
 
     let error = project_section(&doc, "Introduction", &MarkdownOptions::default()).unwrap_err();
     assert!(matches!(error, MarkdownError::AmbiguousSection { .. }));
@@ -393,8 +394,8 @@ fn section_id_reads_the_requested_heading_and_text_ambiguity_fails_closed() {
         },
     )
     .unwrap();
-    assert!(heading_only.contains("block:intro"));
-    assert!(!heading_only.contains("block:intro_body"));
+    assert!(heading_only.contains("@block intro [h1]"));
+    assert!(!heading_only.contains("@block intro_body"));
 }
 
 #[test]
@@ -408,8 +409,8 @@ fn block_projection_preserves_document_order_and_missing_ids_self_heal() {
         },
     )
     .unwrap();
-    let summary_pos = output.find("block:summary").unwrap();
-    let chart_pos = output.find("block:chart").unwrap();
+    let summary_pos = output.find("@block summary [p]").unwrap();
+    let chart_pos = output.find("@block chart [chart]").unwrap();
     assert!(summary_pos < chart_pos);
     let error = project_blocks(
         &sample(),

@@ -201,7 +201,7 @@ pub(crate) async fn preview_echarts_tool(
         }
     };
 
-    let preview_id = short_id("chart");
+    let preview_id = quire_protocol::compact_id("chart");
     let preview_block_id = BlockId::parse("chart_preview").map_err(tool_other)?;
     let mut lint = lint_echarts_block(preview_block_id, &chart);
     let has_preview_source = !effective_source_ids.is_empty()

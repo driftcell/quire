@@ -156,14 +156,16 @@ impl<'a> MarkdownProjector<'a> {
         if self.options.include_front_matter {
             self.write_front_matter(&mut output);
         }
+        let mut cited_sources: Vec<String> = Vec::new();
         for (position, index) in selected_indices.iter().enumerate() {
             if let Some(block) = self.document.blocks.get(*index) {
-                self.write_block(&mut output, block)?;
+                self.write_block(&mut output, block, &mut cited_sources)?;
             }
             if position + 1 < selected_indices.len() {
                 output.push('\n');
             }
         }
+        self.write_section_sources(&mut output, &cited_sources);
         Ok(output.trim_end().to_string() + "\n")
     }
 
@@ -205,7 +207,7 @@ impl<'a> MarkdownProjector<'a> {
     fn write_front_matter(&self, output: &mut String) {
         let _ = writeln!(
             output,
-            "<!-- report:{} | revision:{} -->",
+            "@report {} rev={}",
             self.document.doc_id, self.document.revision
         );
         let title = self.document.title();
@@ -234,13 +236,44 @@ impl<'a> MarkdownProjector<'a> {
         }
     }
 
-    fn write_block(&self, output: &mut String, block: &Block) -> Result<(), MarkdownError> {
-        let _ = writeln!(
-            output,
-            "<!-- block:{} | type:{} -->",
-            block.id,
-            block.block_type()
-        );
+    fn write_block(
+        &self,
+        output: &mut String,
+        block: &Block,
+        cited_sources: &mut Vec<String>,
+    ) -> Result<(), MarkdownError> {
+        let (inline_ids, block_only_ids) = self.collect_block_sources(block);
+        for id in inline_ids.iter().chain(block_only_ids.iter()) {
+            if !cited_sources.iter().any(|existing| existing == id) {
+                cited_sources.push(id.clone());
+            }
+        }
+        let short_type = match &block.body {
+            BlockKind::Heading { level, .. } => match level {
+                1 => "h1",
+                2 => "h2",
+                3 => "h3",
+                4 => "h4",
+                5 => "h5",
+                _ => "h6",
+            },
+            BlockKind::Paragraph { .. } => "p",
+            BlockKind::Quote { .. } => "quote",
+            BlockKind::Table(_) => "tbl",
+            BlockKind::Echarts(_) => "chart",
+            BlockKind::CustomHtml(_) => "html",
+        };
+        if block_only_ids.is_empty() {
+            let _ = writeln!(output, "@block {} [{short_type}]", block.id);
+        } else {
+            let markers: Vec<String> = block_only_ids.iter().map(|id| format!("^{id}")).collect();
+            let _ = writeln!(
+                output,
+                "@block {} [{short_type}] {}",
+                block.id,
+                markers.join(" ")
+            );
+        }
         match &block.body {
             BlockKind::Heading { level, text } => {
                 let level = (*level).clamp(1, 6);
@@ -301,7 +334,6 @@ impl<'a> MarkdownProjector<'a> {
                 output.push('\n');
             }
         }
-        self.write_block_sources(output, block);
         Ok(())
     }
 
@@ -341,13 +373,8 @@ impl<'a> MarkdownProjector<'a> {
         }
         output.push('\n');
         output.push('|');
-        for leaf in &shape.leaves {
-            let alignment = match leaf.align {
-                crate::block::Align::Left => ":---",
-                crate::block::Align::Center => ":---:",
-                crate::block::Align::Right => "---:",
-            };
-            let _ = write!(output, " {alignment} |");
+        for _ in &shape.leaves {
+            output.push_str(" --- |");
         }
         output.push('\n');
         for row in &table.rows {
@@ -427,37 +454,37 @@ impl<'a> MarkdownProjector<'a> {
         }
     }
 
-    fn write_block_sources(&self, output: &mut String, block: &Block) {
-        let mut source_ids: Vec<String> = Vec::new();
-        let mut push_unique = |id: &str| {
-            if !source_ids.iter().any(|existing| existing == id) {
-                source_ids.push(id.to_string());
+    fn collect_block_sources(&self, block: &Block) -> (Vec<String>, Vec<String>) {
+        let mut inline_ids: Vec<String> = Vec::new();
+        let mut push_inline = |id: &str| {
+            if !inline_ids.iter().any(|existing| existing == id) {
+                inline_ids.push(id.to_string());
             }
         };
         match &block.body {
             BlockKind::Paragraph { text } | BlockKind::Quote { text } => {
                 for id in crate::inline::inline_citations(text) {
-                    push_unique(id.as_str());
+                    push_inline(id.as_str());
                 }
             }
             BlockKind::Table(table) => {
                 if let Some(note) = table.note.as_deref() {
                     for id in crate::inline::inline_citations(note) {
-                        push_unique(id.as_str());
+                        push_inline(id.as_str());
                     }
                 }
             }
             BlockKind::Echarts(chart) => {
                 if let Some(note) = chart.note.as_deref() {
                     for id in crate::inline::inline_citations(note) {
-                        push_unique(id.as_str());
+                        push_inline(id.as_str());
                     }
                 }
             }
             BlockKind::CustomHtml(html) => {
                 if let Some(note) = html.note.as_deref() {
                     for id in crate::inline::inline_citations(note) {
-                        push_unique(id.as_str());
+                        push_inline(id.as_str());
                     }
                 }
             }
@@ -465,30 +492,41 @@ impl<'a> MarkdownProjector<'a> {
         }
         if let Some(source_note) = block.source_note.as_deref() {
             for id in crate::inline::inline_citations(source_note) {
-                push_unique(id.as_str());
+                push_inline(id.as_str());
             }
         }
+        let mut block_only_ids: Vec<String> = Vec::new();
         for id in &block.source_ids {
-            push_unique(id.as_str());
+            let s = id.as_str();
+            if !inline_ids.iter().any(|existing| existing == s)
+                && !block_only_ids.iter().any(|existing| existing == s)
+            {
+                block_only_ids.push(s.to_string());
+            }
         }
-        if source_ids.is_empty() {
-            return;
-        }
-        let markers: Vec<String> = source_ids
-            .into_iter()
-            .map(|source_id| self.citation_marker(&source_id))
-            .collect();
-        let _ = writeln!(output, "Sources: {}\n", markers.join(", "));
+        (inline_ids, block_only_ids)
     }
 
-    fn citation_marker(&self, source_id: &str) -> String {
-        let title = self
-            .document
-            .sources
-            .get(source_id)
-            .map(|entry| entry.title.as_str())
-            .unwrap_or("UNRESOLVED SOURCE");
-        format!("[^{source_id}] ({})", escape_footnote(title))
+    fn write_section_sources(&self, output: &mut String, cited_sources: &[String]) {
+        if cited_sources.is_empty() {
+            return;
+        }
+        if !output.ends_with("\n\n") {
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
+            output.push('\n');
+        }
+        output.push_str("## Sources\n");
+        for source_id in cited_sources {
+            let title = self
+                .document
+                .sources
+                .get(source_id.as_str())
+                .map(|entry| entry.title.as_str())
+                .unwrap_or("UNRESOLVED SOURCE");
+            let _ = writeln!(output, "- [^{source_id}]: {}", escape_footnote(title));
+        }
     }
 
     fn render_inline(&self, text: &str) -> String {
