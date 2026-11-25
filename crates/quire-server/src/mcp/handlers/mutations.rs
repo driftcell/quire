@@ -21,9 +21,10 @@ impl QuireMcpServer {
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ApplyOperationsParams>,
-    ) -> Result<Json<ApplyOperationsReceipt>, ErrorData> {
+    ) -> Result<String, ErrorData> {
         let context = request_context(&context)?;
-        self.exec_apply_operations(context, request).await.map(Json)
+        let receipt = self.exec_apply_operations(context, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------
@@ -63,9 +64,10 @@ impl QuireMcpServer {
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<UpsertSourcesParams>,
-    ) -> Result<Json<UpsertSourcesReceipt>, ErrorData> {
+    ) -> Result<String, ErrorData> {
         let context = request_context(&context)?;
-        self.exec_upsert_sources(context, request).await.map(Json)
+        let receipt = self.exec_upsert_sources(context, request).await?;
+        receipt.render_markdown()
     }
 
     /// Remove unused bibliography sources from a report (`source_ids` and/or `prune_unused: true`).
@@ -75,9 +77,10 @@ impl QuireMcpServer {
         &self,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<DeleteSourcesParams>,
-    ) -> Result<Json<DeleteSourcesReceipt>, ErrorData> {
+    ) -> Result<String, ErrorData> {
         let context = request_context(&context)?;
-        self.exec_delete_sources(context, request).await.map(Json)
+        let receipt = self.exec_delete_sources(context, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------
@@ -91,10 +94,9 @@ impl QuireMcpServer {
     pub async fn list_sources(
         &self,
         Parameters(request): Parameters<ListSourcesParams>,
-    ) -> Result<Json<ListSourcesReceipt>, ErrorData> {
-        QuireReportService::list_sources(self, request)
-            .await
-            .map(Json)
+    ) -> Result<String, ErrorData> {
+        let receipt = QuireReportService::list_sources(self, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------
@@ -196,10 +198,9 @@ impl QuireMcpServer {
     pub async fn lint_document(
         &self,
         Parameters(request): Parameters<LintParams>,
-    ) -> Result<Json<LintReceipt>, ErrorData> {
-        QuireReportService::lint_document(self, request)
-            .await
-            .map(Json)
+    ) -> Result<String, ErrorData> {
+        let receipt = QuireReportService::lint_document(self, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------
@@ -212,10 +213,9 @@ impl QuireMcpServer {
     pub async fn list_comments(
         &self,
         Parameters(request): Parameters<ListCommentsParams>,
-    ) -> Result<Json<ListCommentsReceipt>, ErrorData> {
-        QuireReportService::list_comments(self, request)
-            .await
-            .map(Json)
+    ) -> Result<String, ErrorData> {
+        let receipt = QuireReportService::list_comments(self, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------

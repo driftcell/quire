@@ -27,16 +27,16 @@ falls back to host-shell execution.
 
 `SandboxConfig::from_env` and `build_sandbox_provider` support:
 
-| Variable | Default | Contract |
-| --- | --- | --- |
-| `SANDBOX_PROVIDER` | `disabled` | `disabled`/`none`, `local` or `fc` (`aliyun-fc` is an alias) |
-| `SANDBOX_TIMEOUT_SECONDS` | `300` | Remote sandbox TTL, clamped to 60–86400 seconds |
-| `SANDBOX_FC_API_KEY` | — | Required FC data-plane E2B API key; stored as `SecretString` |
-| `SANDBOX_FC_REGION` | `cn-hangzhou` | Region used to derive the default FC endpoints |
-| `SANDBOX_FC_API_URL` | derived from region | Optional platform API override |
-| `SANDBOX_FC_DOMAIN` | derived from region | Optional sandbox routing domain override |
-| `SANDBOX_FC_SANDBOX_URL` | derived from sandbox ID/domain | Optional envd base URL override, primarily for compatible endpoints/tests |
-| `SANDBOX_FC_TEMPLATE` | `code-interpreter-v1` | Template used when the run specification does not override it |
+| Variable                  | Default                        | Contract                                                                  |
+| ------------------------- | ------------------------------ | ------------------------------------------------------------------------- |
+| `SANDBOX_PROVIDER`        | `disabled`                     | `disabled`/`none`, `local` or `fc` (`aliyun-fc` is an alias)              |
+| `SANDBOX_TIMEOUT_SECONDS` | `300`                          | Remote sandbox TTL, clamped to 60–86400 seconds                           |
+| `SANDBOX_FC_API_KEY`      | —                              | Required FC data-plane E2B API key; stored as `SecretString`              |
+| `SANDBOX_FC_REGION`       | `cn-hangzhou`                  | Region used to derive the default FC endpoints                            |
+| `SANDBOX_FC_API_URL`      | derived from region            | Optional platform API override                                            |
+| `SANDBOX_FC_DOMAIN`       | derived from region            | Optional sandbox routing domain override                                  |
+| `SANDBOX_FC_SANDBOX_URL`  | derived from sandbox ID/domain | Optional envd base URL override, primarily for compatible endpoints/tests |
+| `SANDBOX_FC_TEMPLATE`     | `code-interpreter-v1`          | Template used when the run specification does not override it             |
 
 Unknown providers and FC selected without an API key fail runtime startup. Configuration `Debug`
 output redacts the API key. The Alibaba Cloud AccessKey pair used for control-plane administration

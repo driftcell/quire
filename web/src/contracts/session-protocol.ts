@@ -337,6 +337,10 @@ export interface SessionSummary {
   compacting?: boolean;
   compacted_at?: string | null;
   pinned_at?: string | null;
+  /**
+   * How this session was initialized: `"chat"` (built-in workspace conversation) or `"mcp"` (auto-bound when an external MCP harness created a report).
+   */
+  created_via?: string;
   created_at: string;
   updated_at: string;
   [k: string]: unknown;
@@ -384,6 +388,10 @@ export interface SessionDetail {
   compacting?: boolean;
   compacted_at?: string | null;
   pinned_at?: string | null;
+  /**
+   * How this session was initialized: `"chat"` (built-in workspace conversation) or `"mcp"` (auto-bound when an external MCP harness created a report).
+   */
+  created_via?: string;
   created_at: string;
   updated_at: string;
   messages?: SessionMessage[];

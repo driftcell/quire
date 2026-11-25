@@ -483,8 +483,15 @@ pub struct SessionSummary {
     pub compacted_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pinned_at: Option<DateTime<Utc>>,
+    /// How this session was initialized: `"chat"` (built-in workspace conversation) or `"mcp"` (auto-bound when an external MCP harness created a report).
+    #[serde(default = "default_created_via")]
+    pub created_via: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+fn default_created_via() -> String {
+    "chat".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

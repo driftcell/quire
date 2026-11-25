@@ -78,6 +78,14 @@ pub fn router(service: RuntimeService) -> Router {
         .route("/api/auth/me", get(me))
         .route("/api/auth/change-password", post(change_password))
         .route("/api/auth/profile", patch(update_profile))
+        .route(
+            "/api/auth/api-keys",
+            get(list_api_keys).post(create_api_key),
+        )
+        .route(
+            "/api/auth/api-keys/{key_id}",
+            axum::routing::delete(delete_api_key),
+        )
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{session_id}",

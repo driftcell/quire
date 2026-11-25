@@ -7015,3 +7015,216 @@ async fn prune_preserves_a_new_run_before_start_seq_is_recorded() {
         Some(started.seq)
     );
 }
+
+async fn report_mcp_request(
+    app: &axum::Router,
+    token: &str,
+    mcp_session_id: Option<&str>,
+    quire_session_id: Option<&str>,
+    protocol: &str,
+    body: &Value,
+) -> (axum::http::StatusCode, Option<String>, Value) {
+    let mut builder = axum::http::Request::builder()
+        .method(axum::http::Method::POST)
+        .uri("/mcp")
+        .header("authorization", format!("Bearer {token}"))
+        .header("host", "localhost")
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-protocol-version", protocol);
+    if let Some(mcp_session_id) = mcp_session_id {
+        builder = builder.header("mcp-session-id", mcp_session_id);
+    }
+    if let Some(quire_session_id) = quire_session_id {
+        builder = builder.header("x-session-id", quire_session_id);
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            builder
+                .body(axum::body::Body::from(serde_json::to_vec(body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let session = response
+        .headers()
+        .get("mcp-session-id")
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    (status, session, parse_body(response).await)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn user_api_key_authenticates_report_mcp_returns_markdown_and_auto_binds_empty_session() {
+    let _guard = test_lock().lock().await;
+    let (service, _store) = test_service().await;
+    service.seed().await.unwrap();
+    let app = quire_runtime::http::router(service.clone());
+
+    let username = quire_protocol::short_id("hu");
+    let email = format!("{username}@example.com");
+    let auth = service
+        .register_user(&username, Some(&email), Some("Harness User"), "password123")
+        .await
+        .unwrap();
+
+    // Create an API key via REST
+    let (status, created_key) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/auth/api-keys",
+        &auth.token,
+        Some(json!({ "name": "Claude Code Harness" })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::CREATED);
+    let secret_key = created_key["secret_key"].as_str().unwrap().to_string();
+    let key_id = created_key["key_id"].as_str().unwrap().to_string();
+    assert!(secret_key.starts_with("qk_"));
+
+    // List API keys via REST (secret_key must not appear in list response)
+    let (status, listed_keys) = http_json(
+        &app,
+        axum::http::Method::GET,
+        "/api/auth/api-keys",
+        &auth.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let keys_arr = listed_keys.as_array().unwrap();
+    assert_eq!(keys_arr.len(), 1);
+    assert_eq!(keys_arr[0]["key_id"], key_id);
+    assert!(keys_arr[0].get("secret_key").is_none());
+
+    // Initialize /mcp using the user API key without any X-Session-Id
+    let initialize = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "external-harness", "version": "1.0"}
+        }
+    });
+    let (status, mcp_sid, init_body) =
+        report_mcp_request(&app, &secret_key, None, None, "2025-11-25", &initialize).await;
+    assert_eq!(
+        status,
+        axum::http::StatusCode::OK,
+        "init failed: {init_body}"
+    );
+    let mcp_sid = mcp_sid.expect("mcp-session-id");
+    let protocol_version = init_body["result"]["protocolVersion"]
+        .as_str()
+        .unwrap_or("2025-11-25")
+        .to_string();
+    let (status, _, _) = report_mcp_request(
+        &app,
+        &secret_key,
+        Some(&mcp_sid),
+        None,
+        &protocol_version,
+        &json!({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+    )
+    .await;
+    assert!(status.is_success());
+
+    // Call create_report WITHOUT X-Session-Id — should auto-create and bind an empty session for this user
+    let (_, _, create_res) = report_mcp_request(
+        &app,
+        &secret_key,
+        Some(&mcp_sid),
+        None,
+        &protocol_version,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "create_report",
+                "arguments": {
+                    "title": "外部代理学科评估报告"
+                }
+            }
+        }),
+    )
+    .await;
+    let create_text = create_res["result"]["content"][0]["text"]
+        .as_str()
+        .expect("create_report content text");
+    let create_receipt: Value = serde_json::from_str(create_text).expect("create_report json");
+    let doc_id = create_receipt["doc_id"].as_str().unwrap().to_string();
+    let auto_session_id = create_receipt["session_id"]
+        .as_str()
+        .expect("auto-bound session_id")
+        .to_string();
+    assert!(auto_session_id.starts_with("sess_"));
+
+    // Verify the auto-created empty session appears in the user's session list with created_via="mcp" and bound doc_id
+    let (status, user_sessions) = http_json(
+        &app,
+        axum::http::Method::GET,
+        "/api/sessions",
+        &auth.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let matched_session = user_sessions
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["session_id"] == auto_session_id)
+        .expect("auto-created session must belong to the API key owner");
+    assert_eq!(matched_session["doc_id"], doc_id);
+    assert_eq!(matched_session["title"], "外部代理学科评估报告");
+    assert_eq!(matched_session["created_via"], "mcp");
+
+    // Verify markdown-supporting tools on /mcp return Markdown instead of JSON
+    let (_, _, digest_res) = report_mcp_request(
+        &app,
+        &secret_key,
+        Some(&mcp_sid),
+        None,
+        &protocol_version,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "get_document_digest",
+                "arguments": {
+                    "doc_id": doc_id
+                }
+            }
+        }),
+    )
+    .await;
+    let digest_md = digest_res["result"]["content"][0]["text"]
+        .as_str()
+        .expect("digest markdown");
+    assert!(
+        digest_md.starts_with("# 外部代理学科评估报告 (rev=1)"),
+        "expected markdown digest, got: {digest_md}"
+    );
+    assert!(digest_md.contains("> Next:"));
+
+    // Delete the API key and confirm /mcp rejects it afterwards
+    let (status, _) = http_json(
+        &app,
+        axum::http::Method::DELETE,
+        &format!("/api/auth/api-keys/{key_id}"),
+        &auth.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
+
+    let (status, _, _) =
+        report_mcp_request(&app, &secret_key, None, None, "2025-11-25", &initialize).await;
+    assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
+}

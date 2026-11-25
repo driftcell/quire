@@ -6,6 +6,7 @@
 use crate::state::AppState;
 
 mod lint_hint;
+pub mod render;
 pub mod schema;
 mod service;
 

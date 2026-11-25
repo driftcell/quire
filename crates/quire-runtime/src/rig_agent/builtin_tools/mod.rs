@@ -267,7 +267,6 @@ mod preview;
 mod report_inproc;
 mod sandbox;
 mod skills_tasks;
-mod templates;
 #[cfg(test)]
 mod tests;
 

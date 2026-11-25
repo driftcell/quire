@@ -84,6 +84,7 @@ impl QuireReportService {
             blocks,
         }
     }
+
     pub async fn exec_create_report(
         &self,
         context: RequestContext,
@@ -106,13 +107,29 @@ impl QuireReportService {
                 None,
             ));
         }
-        let session_id = context.session_id.ok_or_else(|| {
-            invalid_params(
-                "create_report requires a session identity",
-                "Send X-Session-Id or per-call _meta.quire.session_id.",
-                None,
-            )
-        })?;
+        let session_id = match (
+            context.session_id.as_ref(),
+            self.state.harness_bridge.as_ref(),
+        ) {
+            (requested, Some(bridge)) => bridge
+                .prepare_session_for_report(requested, context.user_id.as_deref(), title)
+                .await
+                .map_err(|error| {
+                    invalid_params(
+                        error,
+                        "Ensure a valid session identity or API key is supplied.",
+                        None,
+                    )
+                })?,
+            (Some(session_id), None) => session_id.clone(),
+            (None, None) => {
+                return Err(invalid_params(
+                    "create_report requires a session identity",
+                    "Send X-Session-Id or per-call _meta.quire.session_id.",
+                    None,
+                ));
+            }
+        };
         let actor = context.actor;
         let scoped_idempotency_key = request.idempotency_key.as_deref().map(|key| {
             let trimmed = key.trim();
@@ -150,7 +167,7 @@ impl QuireReportService {
 
         let mut document = ReportDocument::new(doc_id);
         document.target_prose_chars = request.target_prose_chars;
-        document.session_id = Some(session_id);
+        document.session_id = Some(session_id.clone());
         document.cover.enabled = request.enable_cover.unwrap_or(true);
         document.cover.title = title.to_string();
         if let Some(subtitle) = request
@@ -205,6 +222,20 @@ impl QuireReportService {
             .create_document(&document, &actor, scoped_idempotency_key.as_deref())
             .await
             .map_err(mcp_error)?;
+        if let Some(bridge) = self.state.harness_bridge.as_ref() {
+            let effective_session = result.session_id.as_ref().unwrap_or(&session_id);
+            if let Err(error) = bridge
+                .bind_created_report(
+                    effective_session,
+                    context.user_id.as_deref(),
+                    &result.title,
+                    &result.doc_id,
+                )
+                .await
+            {
+                tracing::warn!(%error, session_id = effective_session.as_str(), doc_id = result.doc_id.as_str(), "failed to bind session to created report");
+            }
+        }
         let stored = self
             .state
             .store

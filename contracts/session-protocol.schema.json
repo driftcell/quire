@@ -948,6 +948,11 @@
           ],
           "format": "date-time"
         },
+        "created_via": {
+          "description": "How this session was initialized: `\"chat\"` (built-in workspace conversation) or `\"mcp\"` (auto-bound when an external MCP harness created a report).",
+          "type": "string",
+          "default": "chat"
+        },
         "created_at": {
           "type": "string",
           "format": "date-time"
@@ -1112,6 +1117,11 @@
             "null"
           ],
           "format": "date-time"
+        },
+        "created_via": {
+          "description": "How this session was initialized: `\"chat\"` (built-in workspace conversation) or `\"mcp\"` (auto-bound when an external MCP harness created a report).",
+          "type": "string",
+          "default": "chat"
         },
         "created_at": {
           "type": "string",

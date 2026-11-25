@@ -26,7 +26,7 @@ fn unauthorized_response(message: &str) -> Response {
         Json(ApiErrorEnvelope::<()>::new(
             "unauthorized",
             message,
-            "Sign in via /api/auth/login and send `Authorization: Bearer <jwt>`.",
+            "Sign in via /api/auth/login or provide a valid API key (`Authorization: Bearer qk_...`).",
             None,
         )),
     )
@@ -51,7 +51,7 @@ fn forbidden_response(message: &str) -> Response {
         .into_response()
 }
 
-/// Authenticate SaaS user/admin requests via HS256 JWT (`Authorization: Bearer <jwt>`).
+/// Authenticate SaaS user/admin requests via HS256 JWT or `qk_...` API key.
 pub(crate) async fn runtime_auth(
     State(service): State<RuntimeService>,
     mut request: Request,
@@ -61,8 +61,17 @@ pub(crate) async fn runtime_auth(
         return next.run(request).await;
     }
     let Some(token) = extract_bearer_token(&request) else {
-        return unauthorized_response("missing bearer JWT");
+        return unauthorized_response("missing bearer token");
     };
+    if token.starts_with("qk_") {
+        match service.store().verify_api_key(token).await {
+            Ok(Some(auth_user)) => {
+                request.extensions_mut().insert(auth_user);
+                return next.run(request).await;
+            }
+            _ => return unauthorized_response("invalid or revoked API key"),
+        }
+    }
     let Ok(claims) = verify_token(service.config(), token) else {
         return unauthorized_response("invalid or expired JWT");
     };

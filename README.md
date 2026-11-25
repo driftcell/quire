@@ -9,15 +9,15 @@ dependency. Rendering and visual preview belong to the external frontend.
 
 ## Crates
 
-| Crate | Purpose |
-| --- | --- |
-| `quire-protocol` | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, lint wire contracts |
-| `quire-lint` | Pure, zero-I/O static lint registry and rule engine with layered select/ignore filters |
-| `quire-store` | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher |
-| `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json` |
-| `quire-server` | Shared report application service and contracts, Axum REST/SSE endpoints, and the optional 19-tool `rmcp` adapter mounted at `/mcp` |
-| `quire-runtime` | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE |
-| `quire-migrate` | Standalone SQLx migration runner for all six PostgreSQL domain schemas |
+| Crate                    | Purpose                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quire-protocol`         | Pure, zero-I/O Block AST, fractional ranks, patch engine, table layout compiler, citation resolver, Markdown projector, lint wire contracts |
+| `quire-lint`             | Pure, zero-I/O static lint registry and rule engine with layered select/ignore filters                                                      |
+| `quire-store`            | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher                              |
+| `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json`                                                                |
+| `quire-server`           | Shared report application service and contracts, Axum REST/SSE endpoints, and the optional 19-tool `rmcp` adapter mounted at `/mcp`         |
+| `quire-runtime`          | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE                                            |
+| `quire-migrate`          | Standalone SQLx migration runner for all six PostgreSQL domain schemas                                                                      |
 
 ## Quickstart
 
@@ -65,39 +65,39 @@ run against `report_core` because they mutate runtime state.
 
 ## Environment
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `DATABASE_URL` | — | PostgreSQL connection string |
-| `REDIS_URL` | — | Redis connection string |
-| `QUIRE_RW_TOKEN` | — | Bearer token for MCP and mutating admin routes |
-| `QUIRE_RO_TOKEN` | — | Bearer token for read-only frontend routes (RW token also accepted) |
-| `BIND_ADDR` | `0.0.0.0:8080` | HTTP bind address |
-| `MCP_ALLOWED_HOSTS` | loopback defaults | Comma-separated Host allowlist for `/mcp` |
-| `CORS_ALLOW_ORIGINS` | permissive | Comma-separated browser origins |
-| `SSE_HEARTBEAT_SECS` | `15` | SSE heartbeat interval |
-| `AUTO_MIGRATE` | `true` | Run embedded SQLx migrations at boot |
-| `MCP_JSON_RESPONSE` | `true` | Prefer JSON responses for simple MCP request/response calls |
-| `RUNTIME_BIND_ADDR` | `127.0.0.1:8081` | Independent agent-runtime HTTP bind address |
-| `RUNTIME_API_TOKEN` | — | Bearer token protecting runtime `/api/*` routes |
-| `RUNTIME_MASTER_KEY` | — | Symmetric key for `enc:` provider credential refs |
-| `QUIRE_BASE_URL` | `http://127.0.0.1:8080` | Quire server used by the runtime for MCP/document calls |
-| `RUNTIME_MODEL` | `stub/echo` | Default model route recorded for runtime agents |
-| `RUNTIME_MODEL_PROVIDER` | `mock` | `mock`, `openai_compatible` or `anthropic` |
-| `MODEL_BASE_URL` | — | Optional provider base URL override |
-| `MODELS_DEV_URL` | `https://models.dev/api.json` | Catalog source for model imports |
-| `RUNTIME_SSE_REPLAY_LIMIT` | `500` | Maximum Session-SSE replay frames before `sync_required` |
-| `RUNTIME_SSE_HEARTBEAT_MS` | `15000` | Session-SSE heartbeat and durable `last_event_seq` reconcile interval |
-| `RUNTIME_PREVIEW_THROTTLE_MS` | `65` | Tool-argument preview throttle (clamped to 50–80 ms) |
-| `PREVIEW_BASE_URL` | `http://127.0.0.1:5173` | Frontend origin loaded by Playwright for `preview_report` |
-| `PREVIEW_PUBLIC_URL` | `http://localhost:5173` | Preview origin returned to the user |
-| `PLAYWRIGHT_MCP_URL` | — | Playwright MCP base URL; the runtime posts JSON-RPC to `<url>/mcp` |
-| `PLAYWRIGHT_MCP_PORT` | `8931` | Host port published by the compose `playwright` service |
-| `SANDBOX_PROVIDER` | `disabled` | Agent sandbox provider: `disabled`, `local` (test stub) or `fc` |
-| `SANDBOX_FC_API_KEY` | — | FC cloud-sandbox data-plane E2B API key, required for `SANDBOX_PROVIDER=fc` |
-| `SANDBOX_FC_REGION` | `cn-hangzhou` | FC region used to derive the API URL and sandbox domain |
-| `SANDBOX_FC_TEMPLATE` | `code-interpreter-v1` | Default FC sandbox template |
-| `SANDBOX_TIMEOUT_SECONDS` | `300` | Remote sandbox TTL; runtime cleanup still runs at the end of each agent run |
-| `RUNTIME_MCP_ALLOWED_HOSTS` | loopback defaults | Comma-separated Host allowlist for `/admin/mcp` |
+| Variable                      | Default                       | Meaning                                                                     |
+| ----------------------------- | ----------------------------- | --------------------------------------------------------------------------- |
+| `DATABASE_URL`                | —                             | PostgreSQL connection string                                                |
+| `REDIS_URL`                   | —                             | Redis connection string                                                     |
+| `QUIRE_RW_TOKEN`              | —                             | Bearer token for MCP and mutating admin routes                              |
+| `QUIRE_RO_TOKEN`              | —                             | Bearer token for read-only frontend routes (RW token also accepted)         |
+| `BIND_ADDR`                   | `0.0.0.0:8080`                | HTTP bind address                                                           |
+| `MCP_ALLOWED_HOSTS`           | loopback defaults             | Comma-separated Host allowlist for `/mcp`                                   |
+| `CORS_ALLOW_ORIGINS`          | permissive                    | Comma-separated browser origins                                             |
+| `SSE_HEARTBEAT_SECS`          | `15`                          | SSE heartbeat interval                                                      |
+| `AUTO_MIGRATE`                | `true`                        | Run embedded SQLx migrations at boot                                        |
+| `MCP_JSON_RESPONSE`           | `true`                        | Prefer JSON responses for simple MCP request/response calls                 |
+| `RUNTIME_BIND_ADDR`           | `127.0.0.1:8081`              | Independent agent-runtime HTTP bind address                                 |
+| `RUNTIME_API_TOKEN`           | —                             | Bearer token protecting runtime `/api/*` routes                             |
+| `RUNTIME_MASTER_KEY`          | —                             | Symmetric key for `enc:` provider credential refs                           |
+| `QUIRE_BASE_URL`              | `http://127.0.0.1:8080`       | Quire server used by the runtime for MCP/document calls                     |
+| `RUNTIME_MODEL`               | `stub/echo`                   | Default model route recorded for runtime agents                             |
+| `RUNTIME_MODEL_PROVIDER`      | `mock`                        | `mock`, `openai_compatible` or `anthropic`                                  |
+| `MODEL_BASE_URL`              | —                             | Optional provider base URL override                                         |
+| `MODELS_DEV_URL`              | `https://models.dev/api.json` | Catalog source for model imports                                            |
+| `RUNTIME_SSE_REPLAY_LIMIT`    | `500`                         | Maximum Session-SSE replay frames before `sync_required`                    |
+| `RUNTIME_SSE_HEARTBEAT_MS`    | `15000`                       | Session-SSE heartbeat and durable `last_event_seq` reconcile interval       |
+| `RUNTIME_PREVIEW_THROTTLE_MS` | `65`                          | Tool-argument preview throttle (clamped to 50–80 ms)                        |
+| `PREVIEW_BASE_URL`            | `http://127.0.0.1:5173`       | Frontend origin loaded by Playwright for `preview_report`                   |
+| `PREVIEW_PUBLIC_URL`          | `http://localhost:5173`       | Preview origin returned to the user                                         |
+| `PLAYWRIGHT_MCP_URL`          | —                             | Playwright MCP base URL; the runtime posts JSON-RPC to `<url>/mcp`          |
+| `PLAYWRIGHT_MCP_PORT`         | `8931`                        | Host port published by the compose `playwright` service                     |
+| `SANDBOX_PROVIDER`            | `disabled`                    | Agent sandbox provider: `disabled`, `local` (test stub) or `fc`             |
+| `SANDBOX_FC_API_KEY`          | —                             | FC cloud-sandbox data-plane E2B API key, required for `SANDBOX_PROVIDER=fc` |
+| `SANDBOX_FC_REGION`           | `cn-hangzhou`                 | FC region used to derive the API URL and sandbox domain                     |
+| `SANDBOX_FC_TEMPLATE`         | `code-interpreter-v1`         | Default FC sandbox template                                                 |
+| `SANDBOX_TIMEOUT_SECONDS`     | `300`                         | Remote sandbox TTL; runtime cleanup still runs at the end of each agent run |
+| `RUNTIME_MCP_ALLOWED_HOSTS`   | loopback defaults             | Comma-separated Host allowlist for `/admin/mcp`                             |
 
 ## Agent sandbox
 
@@ -170,45 +170,45 @@ for transient blocks.
 
 ## MCP tools (18)
 
-| Tool | Purpose |
-| --- | --- |
-| `get_protocol_guide` | progressive quickstart/tables/citations/parallel-workflow guidance |
-| `create_report` | create revision 1; idempotency key + `X-Session-Id` discovery |
-| `list_reports` | paginated/filterable report index |
-| `get_document_digest` | low-token outline + current revision |
-| `read_as_markdown` | full/section/block Markdown projection |
-| `read_blocks` | full protocol JSON for targeted blocks |
-| `apply_operations` | atomic Smart CAS batch patch |
-| `rollback_revision` | replay inverse ops into a new monotonic revision |
-| `upsert_sources` | URL/normalized-title deduplicated citation registry |
-| `set_cover` | partial cover update |
-| `configure_toc` | enable/title/depth/variant and page breaks before/after the TOC |
-| `configure_references` | bibliography style/page break + orphan sources |
+| Tool                    | Purpose                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `get_protocol_guide`    | progressive quickstart/tables/citations/parallel-workflow guidance                                            |
+| `create_report`         | create revision 1; idempotency key + `X-Session-Id` discovery                                                 |
+| `list_reports`          | paginated/filterable report index                                                                             |
+| `get_document_digest`   | low-token outline + current revision                                                                          |
+| `read_as_markdown`      | full/section/block Markdown projection                                                                        |
+| `read_blocks`           | full protocol JSON for targeted blocks                                                                        |
+| `apply_operations`      | atomic Smart CAS batch patch                                                                                  |
+| `rollback_revision`     | replay inverse ops into a new monotonic revision                                                              |
+| `upsert_sources`        | URL/normalized-title deduplicated citation registry                                                           |
+| `set_cover`             | partial cover update                                                                                          |
+| `configure_toc`         | enable/title/depth/variant and page breaks before/after the TOC                                               |
+| `configure_references`  | bibliography style/page break + orphan sources                                                                |
 | `configure_page_chrome` | A4 header/footer slots, first-page visibility and automatic heading page breaks (`none` / `h1` / `h1_and_h2`) |
-| `update_style_and_css` | presets, tokens, validated scoped CSS |
-| `lint_document` | zero-browser static validation |
-| `list_comments` | side-channel review threads with anchors + `anchor_detached` |
-| `add_comment` | agent review comment; never touches revisions or CAS |
-| `reply_comment` | writer reply, optionally advancing `open` to `addressed` |
+| `update_style_and_css`  | presets, tokens, validated scoped CSS                                                                         |
+| `lint_document`         | zero-browser static validation                                                                                |
+| `list_comments`         | side-channel review threads with anchors + `anchor_detached`                                                  |
+| `add_comment`           | agent review comment; never touches revisions or CAS                                                          |
+| `reply_comment`         | writer reply, optionally advancing `open` to `addressed`                                                      |
 
 ## HTTP API
 
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/health` | PostgreSQL + Redis health |
-| GET | `/api/docs?query=&limit=&offset=&page=&page_size=` | report list |
-| GET | `/api/docs/{doc_id}` | canonical `ReportDocument` + `computed` |
-| GET | `/api/docs/{doc_id}/events?sinceRev=N` | replay + live SSE revisions/previews/presence |
-| GET | `/api/docs/{doc_id}/revisions?limit=N` | audit history |
-| GET | `/api/docs/{doc_id}/diff?fromRev=A&toRev=B` | structured block-level diff (`toRev` defaults to current) |
-| GET | `/api/docs/{doc_id}/comments?status=&block_id=` | review threads (default open/addressed; `status=all` includes archived) |
-| POST | `/api/docs/{doc_id}/comments` | create a human review thread |
-| POST | `/api/docs/{doc_id}/comments/{thread_id}/replies` | append a human reply |
-| PATCH | `/api/docs/{doc_id}/comments/{thread_id}` | human-only archive/reopen |
-| POST | `/api/docs/{doc_id}/rollback` | admin rollback `{target_revision, actor?}` |
-| POST | `/api/docs/{doc_id}/ephemeral` | transient preview/presence/clear pub/sub |
-| GET | `/api/sessions/{session_id}/events` | session discovery SSE |
-| POST | `/mcp` | Streamable HTTP MCP transport |
+| Method | Path                                               | Description                                                             |
+| ------ | -------------------------------------------------- | ----------------------------------------------------------------------- |
+| GET    | `/health`                                          | PostgreSQL + Redis health                                               |
+| GET    | `/api/docs?query=&limit=&offset=&page=&page_size=` | report list                                                             |
+| GET    | `/api/docs/{doc_id}`                               | canonical `ReportDocument` + `computed`                                 |
+| GET    | `/api/docs/{doc_id}/events?sinceRev=N`             | replay + live SSE revisions/previews/presence                           |
+| GET    | `/api/docs/{doc_id}/revisions?limit=N`             | audit history                                                           |
+| GET    | `/api/docs/{doc_id}/diff?fromRev=A&toRev=B`        | structured block-level diff (`toRev` defaults to current)               |
+| GET    | `/api/docs/{doc_id}/comments?status=&block_id=`    | review threads (default open/addressed; `status=all` includes archived) |
+| POST   | `/api/docs/{doc_id}/comments`                      | create a human review thread                                            |
+| POST   | `/api/docs/{doc_id}/comments/{thread_id}/replies`  | append a human reply                                                    |
+| PATCH  | `/api/docs/{doc_id}/comments/{thread_id}`          | human-only archive/reopen                                               |
+| POST   | `/api/docs/{doc_id}/rollback`                      | admin rollback `{target_revision, actor?}`                              |
+| POST   | `/api/docs/{doc_id}/ephemeral`                     | transient preview/presence/clear pub/sub                                |
+| GET    | `/api/sessions/{session_id}/events`                | session discovery SSE                                                   |
+| POST   | `/mcp`                                             | Streamable HTTP MCP transport                                           |
 
 SSE event names: `revision`, `ephemeral_preview`, `agent_presence`, `ephemeral_clear`,
 `comment_updated`, `doc_created`, `sync_required`, plus `: heartbeat` comments.
@@ -224,7 +224,7 @@ SSE event names: `revision`, `ephemeral_preview`, `agent_presence`, `ephemeral_c
   "kind": "preview",
   "preview_id": "tool_call_7",
   "actor": "sub-agent-a",
-  "anchor": {"type": "after_block", "block_id": "ch1_placeholder"},
+  "anchor": { "type": "after_block", "block_id": "ch1_placeholder" },
   "status": "streaming",
   "seq": 12,
   "block": {
@@ -292,6 +292,7 @@ rig-core clients for `openai_compatible` or `anthropic` protocols with the regis
 context limit and tool/reasoning capabilities.
 
 ### Review comments
+
 Comments are side-channel data: they never enter `report.blocks`, never increment
 `report.documents.current_rev`, and never participate in Smart CAS. `block_id` is a soft `TEXT`
 reference plus a truncated `anchor_snapshot` and nearest-heading `section_id`; deleting the block
@@ -319,15 +320,29 @@ stores a verbatim evidence quote and is returned in sources and bibliography ent
   "computed": {
     "table_layouts": {
       "financials": {
-        "header_rows": [{"key":"revenue","label":"Revenue","colspan":2,"rowspan":1}],
-        "leaf_columns": [{"key":"q1","width_pct":38.0,"width_css":"38%"}],
+        "header_rows": [
+          { "key": "revenue", "label": "Revenue", "colspan": 2, "rowspan": 1 }
+        ],
+        "leaf_columns": [
+          { "key": "q1", "width_pct": 38.0, "width_css": "38%" }
+        ],
         "header_depth": 2,
         "total_width_pct": 100.0
       }
     },
-    "citation_map": {"sec10": {"number": 1, "label": "[1]", "title": "Annual filing"}},
+    "citation_map": {
+      "sec10": { "number": 1, "label": "[1]", "title": "Annual filing" }
+    },
     "bibliography": [],
-    "toc_tree": [{"block_id":"intro","level":1,"text":"Introduction","number":"1","children":[]}]
+    "toc_tree": [
+      {
+        "block_id": "intro",
+        "level": 1,
+        "text": "Introduction",
+        "number": "1",
+        "children": []
+      }
+    ]
   }
 }
 ```

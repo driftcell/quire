@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import {
@@ -80,6 +81,10 @@ function HomePage() {
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const { open: leftSidebarOpen, toggleSidebar } = useSidebar();
+
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+  }, [queryClient]);
 
   const startConversation = async (
     text: string,

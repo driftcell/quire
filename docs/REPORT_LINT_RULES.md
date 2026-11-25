@@ -19,12 +19,12 @@ or CLI work.
 
 ### Crate ownership
 
-| Crate | Responsibility |
-| --- | --- |
+| Crate            | Responsibility                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `quire-protocol` | Wire contracts: `Diagnostic`, `LintSummary`, `LintReport`, `LintConfig`, `Severity`; `ReportDocument.lint`; `Block.lint_ignore`; `BlockPatch.lint_ignore`; `PatchOp::SetLint`. |
-| `quire-lint` | `RuleId`, `RuleMeta`, `RULES`, `LintOptions`, `lint_document`, `lint_document_with_options`, `lint_echarts_block` and the normalization pass. |
-| `quire-store` | Persists `report.documents.lint` JSONB and block payload `lint_ignore`; runs lint for inline warnings and blocking errors. |
-| `quire-server` | Exposes `lint_document(doc_id, select?, ignore?)` and forwards diagnostics to MCP receipts. |
+| `quire-lint`     | `RuleId`, `RuleMeta`, `RULES`, `LintOptions`, `lint_document`, `lint_document_with_options`, `lint_echarts_block` and the normalization pass.                                  |
+| `quire-store`    | Persists `report.documents.lint` JSONB and block payload `lint_ignore`; runs lint for inline warnings and blocking errors.                                                     |
+| `quire-server`   | Exposes `lint_document(doc_id, select?, ignore?)` and forwards diagnostics to MCP receipts.                                                                                    |
 
 `quire-lint` depends only on `quire-protocol`, `serde_json`, `regex`, `rayon` and `aho-corasick`.
 There is no compatibility module, re-export shim or legacy uppercase diagnostic code in
@@ -84,14 +84,14 @@ ID newtypes; `QR405` was subsumed by `QR411`'s manual-numbering diagnostic.
 
 Category ranges:
 
-| Range | Family | Policy |
-| --- | --- | --- |
-| `QR0xx` | Document/block/table core contract | Non-suppressible |
-| `QR1xx` | Citations and source quality | `QR101` and `QR107` non-suppressible; quality advisories suppressible |
-| `QR2xx` | Table layout risk | Suppressible warnings |
-| `QR3xx` | ECharts safety/data | `QR301`-`QR304` non-suppressible; other chart checks suppressible |
-| `QR4xx` | Structure and text quality | Suppressible except `QR424` internal-identifier safety |
-| `QR5xx` | CSS/HTML/theme/cover/TOC | `QR501` non-suppressible; other style advisories suppressible |
+| Range   | Family                             | Policy                                                                |
+| ------- | ---------------------------------- | --------------------------------------------------------------------- |
+| `QR0xx` | Document/block/table core contract | Non-suppressible                                                      |
+| `QR1xx` | Citations and source quality       | `QR101` and `QR107` non-suppressible; quality advisories suppressible |
+| `QR2xx` | Table layout risk                  | Suppressible warnings                                                 |
+| `QR3xx` | ECharts safety/data                | `QR301`-`QR304` non-suppressible; other chart checks suppressible     |
+| `QR4xx` | Structure and text quality         | Suppressible except `QR424` internal-identifier safety                |
+| `QR5xx` | CSS/HTML/theme/cover/TOC           | `QR501` non-suppressible; other style advisories suppressible         |
 
 ### Source and table integrity
 

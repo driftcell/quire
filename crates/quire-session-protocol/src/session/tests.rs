@@ -22,6 +22,7 @@ fn session_detail_roundtrips_and_flattens_summary() {
             compacting: false,
             compacted_at: None,
             pinned_at: None,
+            created_via: "chat".into(),
             created_at: now,
             updated_at: now,
         },

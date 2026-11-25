@@ -78,6 +78,8 @@ export function AppSidebar() {
     queryKey: ["sessions"],
     queryFn: () => listSessions(50, 0),
     refetchInterval: 10_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -261,7 +263,10 @@ export function AppSidebar() {
                     pinMutation.variables?.sessionId === session.session_id;
                   const isActive = activeSessionId === session.session_id;
                   const title = session.title || "未命名对话";
-                  const hasDoc = Boolean(session.doc_id);
+                  const hasDoc = Boolean(
+                    session.doc_id || session.linked_doc_id,
+                  );
+                  const isExternalMcp = session.created_via === "mcp";
 
                   return (
                     <SidebarMenuItem
@@ -304,6 +309,15 @@ export function AppSidebar() {
                           />
                         )}
                         <span className="min-w-0 flex-1 truncate">{title}</span>
+                        {isExternalMcp && (
+                          <span
+                            translate="no"
+                            title="由外部代理 (MCP) 创建并同步"
+                            className="shrink-0 rounded border border-border/80 bg-muted/55 px-1 py-0.2 font-mono text-[9.5px] leading-tight font-medium text-muted-foreground group-hover/session:opacity-0"
+                          >
+                            MCP
+                          </span>
+                        )}
                         {isPinned &&
                           session.active_run_status !== "running" &&
                           session.active_run_status !== "awaiting_input" && (

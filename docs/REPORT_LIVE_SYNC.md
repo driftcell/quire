@@ -31,14 +31,14 @@ base when it differs, and returns `DocumentSyncDelta`. A `fromRev` ahead of the 
 The generated contract lives in `contracts/report-protocol.schema.json` and
 `web/src/contracts/report-protocol.ts`.
 
-| Field | Contract |
-| --- | --- |
-| `from_revision` / `to_revision` | Exact base and target revisions; a client never applies the delta to another base. |
-| `block_ids` | Complete target block order, including unchanged blocks and all reorder operations. |
-| `upserted_blocks` | Only added or modified blocks in their already-applied form. Empty lists may be omitted. |
-| `removed_block_ids` | IDs absent from the target. Exact target order remains authoritative. Empty lists may be omitted. |
-| `cover`, `toc`, `theme`, `references`, `lint`, `sources` | Present only when the corresponding complete value changed. |
-| `computed` | Canonical Rust `compute_document_meta` output for the target snapshot. |
+| Field                                                    | Contract                                                                                          |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `from_revision` / `to_revision`                          | Exact base and target revisions; a client never applies the delta to another base.                |
+| `block_ids`                                              | Complete target block order, including unchanged blocks and all reorder operations.               |
+| `upserted_blocks`                                        | Only added or modified blocks in their already-applied form. Empty lists may be omitted.          |
+| `removed_block_ids`                                      | IDs absent from the target. Exact target order remains authoritative. Empty lists may be omitted. |
+| `cover`, `toc`, `theme`, `references`, `lint`, `sources` | Present only when the corresponding complete value changed.                                       |
+| `computed`                                               | Canonical Rust `compute_document_meta` output for the target snapshot.                            |
 
 Computed metadata is a complete projection in each sync response; it is not an independent incremental
 projection protocol. This avoids a second TypeScript implementation of citations, table layouts,

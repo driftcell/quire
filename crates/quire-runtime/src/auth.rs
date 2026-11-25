@@ -1,4 +1,4 @@
-//! SaaS user authentication: PBKDF2-SHA256 password hashing and HS256 JWT tokens.
+//! SaaS user authentication: PBKDF2-SHA256 password hashing, HS256 JWT tokens, and user API keys.
 
 use std::num::NonZeroU32;
 
@@ -6,6 +6,7 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use quire_server::jwt::{JwtClaims, sign_jwt, verify_jwt};
 use ring::{
+    digest::{SHA256, digest},
     pbkdf2,
     rand::{SecureRandom, SystemRandom},
 };
@@ -21,6 +22,7 @@ const PBKDF2_ITERATIONS: u32 = 100_000;
 const SALT_LEN: usize = 16;
 const HASH_LEN: usize = 32;
 const PREVIEW_JWT_TTL_SECS: i64 = 300;
+const API_KEY_RANDOM_BYTES: usize = 24;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,12 +89,58 @@ impl From<UserRecord> for UserPublic {
     }
 }
 
-/// Authenticated user context extracted from a verified SaaS JWT.
+/// Authenticated user context extracted from a verified SaaS JWT or user API key.
 #[derive(Debug, Clone)]
 pub struct AuthUser {
     pub user_id: String,
     pub username: String,
     pub role: UserRole,
+}
+
+/// Metadata for a user-created API key (`identity.api_keys`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyPublic {
+    pub key_id: String,
+    pub user_id: String,
+    pub name: String,
+    pub key_prefix: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Newly created API key with its one-time plaintext secret.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatedApiKey {
+    #[serde(flatten)]
+    pub key: ApiKeyPublic,
+    pub secret_key: String,
+}
+
+pub fn generate_api_key_secret() -> RuntimeResult<(String, String, String)> {
+    let rng = SystemRandom::new();
+    let mut raw = [0u8; API_KEY_RANDOM_BYTES];
+    rng.fill(&mut raw)
+        .map_err(|_| RuntimeError::Internal("failed to generate API key entropy".into()))?;
+    let body = URL_SAFE_NO_PAD.encode(raw);
+    let secret = format!("qk_{body}");
+    let prefix_head: String = secret.chars().take(7).collect();
+    let suffix_tail: String = secret
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    let key_prefix = format!("{prefix_head}…{suffix_tail}");
+    let key_hash = hash_api_key(&secret);
+    Ok((secret, key_prefix, key_hash))
+}
+
+pub fn hash_api_key(raw_key: &str) -> String {
+    let digest = digest(&SHA256, raw_key.trim().as_bytes());
+    URL_SAFE_NO_PAD.encode(digest.as_ref())
 }
 
 pub fn hash_password(password: &str) -> RuntimeResult<String> {

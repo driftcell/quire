@@ -1,4 +1,4 @@
-//! Dual-layer bearer-token auth and request-scoped agent context.
+//! Dual-layer bearer-token auth, user API key verification, and request-scoped agent context.
 
 use axum::{
     Json,
@@ -12,18 +12,20 @@ use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
-use crate::state::AppState;
+use crate::state::{AppState, VerifiedExternalIdentity};
 
-/// Per-request identity extracted from trusted HTTP headers.
+/// Per-request identity extracted from trusted HTTP headers and verified auth credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestContext {
     pub session_id: Option<SessionId>,
     /// Audit actor for revision history. Defaults to `agent`.
     pub actor: String,
+    /// Authenticated user ID when authorized via a user API key or JWT.
+    pub user_id: Option<String>,
 }
 
 impl RequestContext {
-    /// Extract `X-Session-Id` and `X-Actor` (legacy `X-Agent-Id`) from request headers.
+    /// Extract `X-Session-Id`, `X-Actor` (legacy `X-Agent-Id`), and any verified user identity from request parts.
     pub fn from_parts(parts: &Parts) -> Result<Self, ProtocolError> {
         let session_id = parts
             .headers
@@ -33,6 +35,7 @@ impl RequestContext {
             .filter(|value| !value.is_empty())
             .map(SessionId::parse)
             .transpose()?;
+        let verified_user = parts.extensions.get::<VerifiedExternalIdentity>();
         let actor = parts
             .headers
             .get("x-actor")
@@ -46,9 +49,23 @@ impl RequestContext {
                         ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':' | ' ')
                     })
             })
+            .or_else(|| {
+                verified_user.map(|u| u.username.as_str()).filter(|name| {
+                    !name.is_empty()
+                        && name.len() <= 64
+                        && name.chars().all(|ch| {
+                            ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | ':' | ' ')
+                        })
+                })
+            })
             .unwrap_or("agent")
             .to_string();
-        Ok(Self { session_id, actor })
+        let user_id = verified_user.map(|u| u.user_id.clone());
+        Ok(Self {
+            session_id,
+            actor,
+            user_id,
+        })
     }
 
     /// Resolve one MCP call's identity from transport headers and trusted per-call metadata.
@@ -116,7 +133,7 @@ fn valid_actor(value: &str) -> Option<String> {
     .then(|| value.to_string())
 }
 
-/// Extractor that requires the read-write token (`QUIRE_RW_TOKEN`).
+/// Extractor that requires the read-write token (`QUIRE_RW_TOKEN`), user JWT, or user API key.
 ///
 /// Use on mutating handlers; middleware remains available for nested services such as `/mcp`
 /// that cannot participate in Axum's extractor pipeline.
@@ -130,14 +147,17 @@ impl FromRequestParts<AppState> for RwAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        authorize(state, &parts.headers, Access::Rw)
+        let identity = authorize(state, &parts.headers, Access::Rw)
             .await
             .map_err(|response| *response)?;
+        if let Some(identity) = identity {
+            parts.extensions.insert(identity);
+        }
         Ok(Self)
     }
 }
 
-/// Extractor that accepts either the read-only token or the read-write token.
+/// Extractor that accepts either the read-only token, read-write token, user JWT, or user API key.
 #[derive(Debug, Clone, Copy)]
 pub struct RoAuth;
 
@@ -148,9 +168,12 @@ impl FromRequestParts<AppState> for RoAuth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        authorize(state, &parts.headers, Access::Ro)
+        let identity = authorize(state, &parts.headers, Access::Ro)
             .await
             .map_err(|response| *response)?;
+        if let Some(identity) = identity {
+            parts.extensions.insert(identity);
+        }
         Ok(Self)
     }
 }
@@ -176,11 +199,15 @@ async fn authorize(
     state: &AppState,
     headers: &HeaderMap,
     access: Access,
-) -> Result<(), Box<Response>> {
+) -> Result<Option<VerifiedExternalIdentity>, Box<Response>> {
     let configured_rw = state.config.rw_token.as_ref();
     let configured_ro = state.config.ro_token.as_ref();
     let configured_jwt = state.config.jwt_secret.as_ref();
-    if configured_rw.is_none() && configured_ro.is_none() && configured_jwt.is_none() {
+    if configured_rw.is_none()
+        && configured_ro.is_none()
+        && configured_jwt.is_none()
+        && state.harness_bridge.is_none()
+    {
         return Err(Box::new(auth_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "auth_not_configured",
@@ -198,8 +225,17 @@ async fn authorize(
             Access::Ro => true,
         };
         if allowed {
-            return Ok(());
+            let identity = (claims.role != "preview").then_some(VerifiedExternalIdentity {
+                user_id: claims.sub,
+                username: claims.username,
+            });
+            return Ok(identity);
         }
+    }
+    if let Some(bridge) = state.harness_bridge.as_ref()
+        && let Some(identity) = bridge.verify_api_key(presented).await
+    {
+        return Ok(Some(identity));
     }
     let is_rw = configured_rw.is_some_and(|token| token_matches(token, presented));
     let allowed = match access {
@@ -207,7 +243,7 @@ async fn authorize(
         Access::Ro => is_rw || configured_ro.is_some_and(|token| token_matches(token, presented)),
     };
     if allowed {
-        Ok(())
+        Ok(None)
     } else {
         Err(Box::new(missing_token()))
     }
@@ -241,7 +277,7 @@ fn missing_token() -> Response {
     let mut response = auth_error(
         StatusCode::UNAUTHORIZED,
         "unauthorized",
-        "Provide `Authorization: Bearer <token>` with a read-only or read-write token.",
+        "Provide `Authorization: Bearer <api_key_or_token>` with a valid Quire API key or token.",
     );
     response.headers_mut().insert(
         header::WWW_AUTHENTICATE,
@@ -259,23 +295,33 @@ fn auth_error(status: StatusCode, code: &str, hint: &str) -> Response {
 }
 
 /// Middleware for MCP and mutating routes.
-pub async fn rw_auth(State(state): State<AppState>, request: Request, next: Next) -> Response {
+pub async fn rw_auth(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     if request.method() == axum::http::Method::OPTIONS {
         return next.run(request).await;
     }
     match authorize(&state, request.headers(), Access::Rw).await {
-        Ok(()) => next.run(request).await,
+        Ok(identity) => {
+            if let Some(identity) = identity {
+                request.extensions_mut().insert(identity);
+            }
+            next.run(request).await
+        }
         Err(response) => *response,
     }
 }
 
 /// Middleware for read-only frontend routes (RO or RW token accepted).
-pub async fn ro_auth(State(state): State<AppState>, request: Request, next: Next) -> Response {
+pub async fn ro_auth(State(state): State<AppState>, mut request: Request, next: Next) -> Response {
     if request.method() == axum::http::Method::OPTIONS {
         return next.run(request).await;
     }
     match authorize(&state, request.headers(), Access::Ro).await {
-        Ok(()) => next.run(request).await,
+        Ok(identity) => {
+            if let Some(identity) = identity {
+                request.extensions_mut().insert(identity);
+            }
+            next.run(request).await
+        }
         Err(response) => *response,
     }
 }
@@ -320,6 +366,7 @@ mod tests {
             Some("sess_01")
         );
         assert_eq!(context.actor, "lead-agent");
+        assert!(context.user_id.is_none());
 
         let request = axum::http::Request::builder().body(()).expect("request");
         let (parts, ()) = request.into_parts();

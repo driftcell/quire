@@ -12,7 +12,7 @@
 agent needs to edit documents, agents and skills in isolation, run real sessions against the draft,
 then release with a Smart-CAS-style merge. The design had to answer four coupled questions:
 
-- Whether promoting a branch changes the active branch *name* or only the active *content*.
+- Whether promoting a branch changes the active branch _name_ or only the active _content_.
 - How to compare a draft against active without storing a second baseline copy of every item.
 - How an administrator actually resolves a reported same-item conflict and retries.
 - How `http.rs` and MCP can share behavior without duplicating merge or session logic.

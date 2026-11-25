@@ -20,7 +20,7 @@ The reset `migrations/0003_catalog.sql` adds:
 
 - `catalog.mcp_servers(server_id PK, name, url, auth_token_ref, enabled, created_at, updated_at)`
 - `catalog.mcp_tools(server_id FK ON DELETE CASCADE, tool_name, description, input_schema, enabled,
-  updated_at, PRIMARY KEY(server_id, tool_name))`
+updated_at, PRIMARY KEY(server_id, tool_name))`
 
 `auth_token_ref` follows the same secret-ref rules as model providers: `env:VAR` references or
 AES-256-GCM `enc:...` values encrypted with `RUNTIME_MASTER_KEY`. Public records expose

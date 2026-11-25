@@ -1,7 +1,7 @@
 use axum::Extension;
 
 use super::*;
-use crate::auth::{AuthUser, UserPublic, UserRole};
+use crate::auth::{ApiKeyPublic, AuthUser, CreatedApiKey, UserPublic, UserRole};
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +51,13 @@ pub(crate) struct AdminUpdateUserRequest {
     pub role: Option<UserRole>,
     #[serde(default)]
     pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct CreateApiKeyRequest {
+    #[serde(default)]
+    pub name: String,
 }
 
 pub(crate) async fn register(
@@ -121,6 +128,34 @@ pub(crate) async fn update_profile(
         )
         .await?;
     Ok(Json(user))
+}
+
+pub(crate) async fn list_api_keys(
+    State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
+) -> RuntimeResult<Json<Vec<ApiKeyPublic>>> {
+    let keys = service.list_api_keys(&auth_user.user_id).await?;
+    Ok(Json(keys))
+}
+
+pub(crate) async fn create_api_key(
+    State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
+    Json(body): Json<CreateApiKeyRequest>,
+) -> RuntimeResult<(StatusCode, Json<CreatedApiKey>)> {
+    let created = service
+        .create_api_key(&auth_user.user_id, &body.name)
+        .await?;
+    Ok((StatusCode::CREATED, Json(created)))
+}
+
+pub(crate) async fn delete_api_key(
+    State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(key_id): Path<String>,
+) -> RuntimeResult<StatusCode> {
+    service.delete_api_key(&auth_user.user_id, &key_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub(crate) async fn admin_list_users(

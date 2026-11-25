@@ -6,9 +6,12 @@ import {
   LoaderCircleIcon,
   LogOutIcon,
   ShieldCheckIcon,
+  SlidersHorizontalIcon,
+  TerminalIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { changePassword } from "@/api/auth";
+import { ExternalAgentDialog } from "@/components/layout/ExternalAgentDialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -35,6 +38,7 @@ import { errorMessage } from "@/lib/errors";
 export function SidebarUserFooter() {
   const navigate = useNavigate();
   const { user, isAdmin, logout } = useAuth();
+  const [externalOpen, setExternalOpen] = useState(false);
   const [pwdOpen, setPwdOpen] = useState(false);
   const [currentPwd, setCurrentPwd] = useState("");
   const [newPwd, setNewPwd] = useState("");
@@ -80,7 +84,27 @@ export function SidebarUserFooter() {
 
   return (
     <>
-      <SidebarFooter className="border-t border-sidebar-border/60 p-2">
+      <SidebarFooter className="gap-1.5 border-t border-sidebar-border/60 p-2">
+        <button
+          type="button"
+          onClick={() => setExternalOpen(true)}
+          className="flex w-full items-center justify-between gap-2 rounded-lg border border-sidebar-border/80 bg-background/65 px-2.5 py-1.5 text-left text-xs font-medium text-foreground/85 transition-colors hover:border-sidebar-border hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <TerminalIcon
+              className="size-3.5 shrink-0 text-[#1D4ED8]"
+              aria-hidden="true"
+            />
+            <span className="truncate">使用外部代理</span>
+          </span>
+          <span
+            translate="no"
+            className="shrink-0 rounded border border-border/80 bg-muted/60 px-1.5 py-0.2 font-mono text-[10px] font-medium text-muted-foreground"
+          >
+            MCP
+          </span>
+        </button>
+
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
@@ -117,19 +141,27 @@ export function SidebarUserFooter() {
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-52">
             <DropdownMenuGroup>
-              {isAdmin && (
-                <DropdownMenuItem
-                  onClick={() => {
-                    void navigate({ to: "/admin" });
-                  }}
+              <DropdownMenuItem
+                onClick={() => {
+                  void navigate({ to: "/admin" });
+                }}
+              >
+                <SlidersHorizontalIcon aria-hidden="true" />
+                <span>控制台</span>
+                <span
+                  translate="no"
+                  className="ml-auto rounded border border-border/80 bg-muted/60 px-1 py-0.2 font-mono text-[10px] text-muted-foreground"
                 >
-                  <ShieldCheckIcon aria-hidden="true" />
-                  管理控制台
-                </DropdownMenuItem>
-              )}
+                  API Key
+                </span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setExternalOpen(true)}>
+                <TerminalIcon aria-hidden="true" />
+                <span>使用外部代理</span>
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setPwdOpen(true)}>
                 <KeyRoundIcon aria-hidden="true" />
-                修改密码
+                <span>修改密码</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -140,12 +172,14 @@ export function SidebarUserFooter() {
                 }}
               >
                 <LogOutIcon aria-hidden="true" />
-                退出登录
+                <span>退出登录</span>
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarFooter>
+
+      <ExternalAgentDialog open={externalOpen} onOpenChange={setExternalOpen} />
 
       <Dialog open={pwdOpen} onOpenChange={setPwdOpen}>
         <DialogContent className="sm:max-w-sm">

@@ -29,10 +29,19 @@ http.workspace = true
 async-stream.workspace = true
 base64.workspace = true
 ring.workspace = true
+askama = { version = "0.16.1", default-features = false, features = [
+  "derive",
+  "std",
+] }
 
 [dev-dependencies]
 tokio = { workspace = true }
-reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "charset", "http2"] }
+reqwest = { version = "0.13", default-features = false, features = [
+  "json",
+  "stream",
+  "charset",
+  "http2",
+] }
 futures = { workspace = true }
 serde_json = { workspace = true }
 

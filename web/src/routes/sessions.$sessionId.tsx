@@ -63,6 +63,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
   const sessionQuery = useQuery({
     queryKey: ["session", sessionId],
     queryFn: () => getSession(sessionId),
+    refetchOnMount: "always",
   });
 
   const tracesQuery = useQuery({
@@ -278,6 +279,7 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       attachments={sessionQuery.data?.attachments ?? []}
       traces={tracesQuery.data ?? []}
       hasReportData={hasReportData}
+      createdVia={sessionQuery.data?.created_via}
       documentView={docQuery.data}
       liveMain={liveMain}
       liveSubagents={liveSubagents}

@@ -11,6 +11,43 @@ import {
 } from "@/lib/auth";
 import { isRecord } from "@/lib/guards";
 
+export interface ApiKeyItem {
+  key_id: string;
+  user_id: string;
+  name: string;
+  key_prefix: string;
+  last_used_at?: string | null;
+  created_at: string;
+}
+
+export interface CreatedApiKeyItem extends ApiKeyItem {
+  secret_key: string;
+}
+
+function isApiKeyItem(value: unknown): value is ApiKeyItem {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    typeof value.key_id === "string" &&
+    typeof value.user_id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.key_prefix === "string" &&
+    typeof value.created_at === "string" &&
+    (value.last_used_at === undefined ||
+      value.last_used_at === null ||
+      typeof value.last_used_at === "string")
+  );
+}
+
+function isCreatedApiKeyItem(value: unknown): value is CreatedApiKeyItem {
+  return (
+    isApiKeyItem(value) &&
+    isRecord(value) &&
+    typeof value.secret_key === "string"
+  );
+}
+
 async function parseError(response: Response): Promise<ApiError> {
   let code = `HTTP_${response.status}`;
   let message = response.statusText || "请求失败";
@@ -120,6 +157,60 @@ export async function changePassword(
       new_password: newPassword,
     }),
   });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+}
+
+export async function listApiKeys(): Promise<ApiKeyItem[]> {
+  const token = getAccessToken();
+  const response = await fetch("/api/auth/api-keys", {
+    headers: {
+      "Content-Type": "application/json",
+      ...bearerHeaders(token),
+    },
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const raw: unknown = await response.json();
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter(isApiKeyItem);
+}
+
+export async function createApiKey(name: string): Promise<CreatedApiKeyItem> {
+  const token = getAccessToken();
+  const response = await fetch("/api/auth/api-keys", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...bearerHeaders(token),
+    },
+    body: JSON.stringify({ name: name.trim() }),
+  });
+  if (!response.ok) {
+    throw await parseError(response);
+  }
+  const raw: unknown = await response.json();
+  if (!isCreatedApiKeyItem(raw)) {
+    throw new Error("Invalid API key creation response");
+  }
+  return raw;
+}
+
+export async function deleteApiKey(keyId: string): Promise<void> {
+  const token = getAccessToken();
+  const response = await fetch(
+    `/api/auth/api-keys/${encodeURIComponent(keyId)}`,
+    {
+      method: "DELETE",
+      headers: {
+        ...bearerHeaders(token),
+      },
+    },
+  );
   if (!response.ok) {
     throw await parseError(response);
   }

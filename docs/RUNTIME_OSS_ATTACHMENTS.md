@@ -19,15 +19,15 @@ orphaned objects.
 
 `Config.oss` is an `OssConfig` populated by `OssConfig::from_env`:
 
-| Variable | Contract |
-| --- | --- |
-| `QUIRE_OSS_BUCKET` | Bucket used for every attachment object |
-| `QUIRE_OSS_REGION` | Region ID used in the V4 credential scope |
-| `QUIRE_OSS_PUBLIC_ENDPOINT` | Browser-facing endpoint for presigned `PUT` URLs |
-| `QUIRE_OSS_INTERNAL_ENDPOINT` | Optional VPC endpoint for sandbox `GET` URLs; public endpoint is the fallback |
-| `OSS_ACCESS_KEY_ID` (or `QUIRE_OSS_ACCESS_KEY_ID`) | AccessKey ID |
-| `OSS_ACCESS_KEY_SECRET` (or `QUIRE_OSS_ACCESS_KEY_SECRET`) | AccessKey secret, stored in `SecretString` |
-| `QUIRE_OSS_KEY_PREFIX` | Object prefix, default `quire/attachments` |
+| Variable                                                   | Contract                                                                      |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `QUIRE_OSS_BUCKET`                                         | Bucket used for every attachment object                                       |
+| `QUIRE_OSS_REGION`                                         | Region ID used in the V4 credential scope                                     |
+| `QUIRE_OSS_PUBLIC_ENDPOINT`                                | Browser-facing endpoint for presigned `PUT` URLs                              |
+| `QUIRE_OSS_INTERNAL_ENDPOINT`                              | Optional VPC endpoint for sandbox `GET` URLs; public endpoint is the fallback |
+| `OSS_ACCESS_KEY_ID` (or `QUIRE_OSS_ACCESS_KEY_ID`)         | AccessKey ID                                                                  |
+| `OSS_ACCESS_KEY_SECRET` (or `QUIRE_OSS_ACCESS_KEY_SECRET`) | AccessKey secret, stored in `SecretString`                                    |
+| `QUIRE_OSS_KEY_PREFIX`                                     | Object prefix, default `quire/attachments`                                    |
 
 `OssConfig::is_configured` requires bucket, region, public endpoint, AccessKey ID and secret. Any
 missing value keeps the runtime in local attachment mode. `Debug` output redacts both credential

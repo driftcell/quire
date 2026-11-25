@@ -19,25 +19,25 @@ description: Drafts and reviews Chinese higher-education institutional reports (
 
 ## 按需加载参考文件（一级直连，按任务取用）
 
-| 文件 | 适用场景 | 谁来读 |
-| :--- | :--- | :--- |
+| 文件                                                              | 适用场景                                                                              | 谁来读                |
+| :---------------------------------------------------------------- | :------------------------------------------------------------------------------------ | :-------------------- |
 | **`higher-education-research`** + `references/track-playbooks.md` | Step 1 并行深度调研：按学科、人才、科研平台、双优与外部政策赛道下钻取证并分域登记信源 | `main` / `researcher` |
-| `references/examples.md` | 首次起草正文或撰写四层结语时对齐段落节奏与论证结构 | `main` / `writer` |
-| `references/showcase-and-cases.md` | 撰写或审校“成效展示、亮点总结、典型案例”章节 | `writer` / `reviewer` |
-| `references/gov-documents.md` | 撰写或审校正式政府/校级红头公文 | `writer` / `reviewer` |
-| `references/review-rubric.md` | 成稿后的独立事实核对、结构审查与残余表达问题审校 | **仅 `reviewer`** |
+| `references/examples.md`                                          | 首次起草正文或撰写四层结语时对齐段落节奏与论证结构                                    | `main` / `writer`     |
+| `references/showcase-and-cases.md`                                | 撰写或审校“成效展示、亮点总结、典型案例”章节                                          | `writer` / `reviewer` |
+| `references/gov-documents.md`                                     | 撰写或审校正式政府/校级红头公文                                                       | `writer` / `reviewer` |
+| `references/review-rubric.md`                                     | 成稿后的独立事实核对、结构审查与残余表达问题审校                                      | **仅 `reviewer`**     |
 
 ## 报告类型 ↔ 指标与信源映射矩阵
 
 先判定报告类型，再决定并行 `researcher` 的赛道分工与必查指标组合。内部数据源按 `panorama_report_*`（全景指标，注意 `panorama_report_universities` 参数为单数 `keyword`）、`shuangyou_*`（双优建设）、`subjectcloud_*`（学科评估，注意 `subjectcloud_overview` 的 `subject_ids` 单次上限 10 个）、`subjectcloud_talent_*`（人才数据）取用；外部权威信源只使用 `.gov.cn` / `.edu.cn`、基金委正式公告、ESI 公报或学校正式文件，不使用自媒体补齐核心结论。
 
-| 报告类型 | 必查核心指标组合 | 首选信源 |
-| :--- | :--- | :--- |
-| 冲刺“双一流”报告 | 学科评估档位、国自然/国社科立项与经费、重大重点项目、ESI 学科、国家级平台与奖励、人才队伍 | `subjectcloud_*`、`panorama_report_*`、`shuangyou_*`；教育部/省政府正式文件、基金委、ESI 公报 |
-| 省属“双优”/高水平大学报告 | 双优建设任务完成度、预算执行与专项资金、优势特色学科、平台团队、产教融合成效 | `shuangyou_*`、`panorama_report_*`；省级双优名单、财政专项文件、学校正式材料 |
-| 博硕士学位点申报论证 | 学科评估与学位点梯队、国自然/国社科、导师与团队、平台支撑、代表性成果、人才引育 | `subjectcloud_*`、`subjectcloud_talent_*`、`panorama_report_*`；学位委员会正式文件、基金委、ESI 公报 |
-| 年度科研竞争力对标 | 立项总量与结构、经费与增长率、重大重点项目、平台成果、人才与团队、学科排名变化 | `panorama_report_*`、`subjectcloud_*`、`subjectcloud_talent_*`；基金委、ESI 公报、学校科研年报 |
-| 成效案例/红头公文 | 建设任务、量化成效、典型项目、机制创新、可复制经验 | `panorama_report_*`、`shuangyou_*`；学校/政府正式文件、官方媒体、项目验收材料 |
+| 报告类型                  | 必查核心指标组合                                                                          | 首选信源                                                                                             |
+| :------------------------ | :---------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------- |
+| 冲刺“双一流”报告          | 学科评估档位、国自然/国社科立项与经费、重大重点项目、ESI 学科、国家级平台与奖励、人才队伍 | `subjectcloud_*`、`panorama_report_*`、`shuangyou_*`；教育部/省政府正式文件、基金委、ESI 公报        |
+| 省属“双优”/高水平大学报告 | 双优建设任务完成度、预算执行与专项资金、优势特色学科、平台团队、产教融合成效              | `shuangyou_*`、`panorama_report_*`；省级双优名单、财政专项文件、学校正式材料                         |
+| 博硕士学位点申报论证      | 学科评估与学位点梯队、国自然/国社科、导师与团队、平台支撑、代表性成果、人才引育           | `subjectcloud_*`、`subjectcloud_talent_*`、`panorama_report_*`；学位委员会正式文件、基金委、ESI 公报 |
+| 年度科研竞争力对标        | 立项总量与结构、经费与增长率、重大重点项目、平台成果、人才与团队、学科排名变化            | `panorama_report_*`、`subjectcloud_*`、`subjectcloud_talent_*`；基金委、ESI 公报、学校科研年报       |
+| 成效案例/红头公文         | 建设任务、量化成效、典型项目、机制创新、可复制经验                                        | `panorama_report_*`、`shuangyou_*`；学校/政府正式文件、官方媒体、项目验收材料                        |
 
 ## 10 步弹性写作、正文润色与批注审校工作流（4+ 章报告必须启动集群）
 

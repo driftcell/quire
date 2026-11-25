@@ -28,7 +28,7 @@ pub(crate) async fn get_protocol_guide_tool(
         .get_protocol_guide(contracts::GuideParams { topic })
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_protocol_guide(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// Initialize a new report at revision 1 and bind it to the active session.
@@ -109,7 +109,7 @@ pub(crate) async fn list_reports_tool(
         .list_reports(contracts::ListReportsParams { query, limit })
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_list_reports(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// Return a low-token report outline with revision, configuration, prose metrics and block metadata.
@@ -135,7 +135,7 @@ pub(crate) async fn get_document_digest_tool(
         })
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_document_digest(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// Project a report, section or block subset into Markdown with exact block anchors.
@@ -167,7 +167,7 @@ pub(crate) async fn read_as_markdown_tool(
         })
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_read_as_markdown(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// Fetch full canonical Block AST JSON for exact block IDs plus the current revision.
@@ -230,7 +230,7 @@ pub(crate) async fn apply_operations_tool(
         )
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_apply_operations(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// Restore a report to an earlier revision by committing a new forward revision.
@@ -331,7 +331,7 @@ pub(crate) async fn upsert_sources_tool(
             )
             .await
             .map_err(mcp_error_to_tool_error)?;
-        return templates::render_upsert_sources(&receipt);
+        return receipt.render_markdown().map_err(mcp_error_to_tool_error);
     }
     let upserted_ids: Vec<&str> = sources
         .iter()
@@ -371,7 +371,7 @@ pub(crate) async fn delete_sources_tool(
         )
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_delete_sources(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// List registered bibliography sources and optional reader-focused evidence excerpts.
@@ -393,7 +393,7 @@ pub(crate) async fn list_sources_tool(
             .list_sources(contracts::ListSourcesParams { doc_id, source_ids })
             .await
             .map_err(mcp_error_to_tool_error)?;
-        return templates::render_list_sources(&receipt);
+        return receipt.render_markdown().map_err(mcp_error_to_tool_error);
     }
     Ok("_No sources registered in chat_session._".into())
 }
@@ -604,7 +604,7 @@ pub(crate) async fn lint_document_tool(
         })
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_lint_document(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// List side-channel review threads anchored to report blocks.
@@ -630,7 +630,7 @@ pub(crate) async fn list_comments_tool(
         })
         .await
         .map_err(mcp_error_to_tool_error)?;
-    templates::render_list_comments(&receipt)
+    receipt.render_markdown().map_err(mcp_error_to_tool_error)
 }
 
 /// Create a review comment thread anchored to one or more blocks without changing the revision.

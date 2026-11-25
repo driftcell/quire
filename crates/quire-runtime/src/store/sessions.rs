@@ -54,6 +54,79 @@ impl RuntimeStore {
         self.get_session_summary(&session_id).await
     }
 
+    pub async fn ensure_external_session_for_report(
+        &self,
+        requested_session_id: Option<&str>,
+        user_id: Option<&str>,
+        title: &str,
+        doc_id: Option<&str>,
+    ) -> RuntimeResult<String> {
+        let title = title.trim();
+        let effective_title = if title.is_empty() {
+            "外部代理报告"
+        } else {
+            title
+        };
+        if let Some(existing_id) = requested_session_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM runtime.sessions WHERE session_id = $1)",
+            )
+            .bind(existing_id)
+            .fetch_one(&self.pool)
+            .await?;
+            if exists {
+                if let Some(doc_id) = doc_id {
+                    sqlx::query(
+                        r#"UPDATE runtime.sessions
+                           SET doc_id = $2,
+                               linked_doc_id = $2,
+                               user_id = COALESCE(user_id, $3),
+                               updated_at = NOW()
+                           WHERE session_id = $1"#,
+                    )
+                    .bind(existing_id)
+                    .bind(doc_id)
+                    .bind(user_id)
+                    .execute(&self.pool)
+                    .await?;
+                }
+                return Ok(existing_id.to_string());
+            }
+        }
+        let session_id = requested_session_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| short_id("sess"));
+        let branch: String = sqlx::query_scalar(
+            "SELECT name FROM kb.branches WHERE status = 'active' ORDER BY name ASC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?
+        .unwrap_or_else(|| "main".to_string());
+        sqlx::query(
+            r#"INSERT INTO runtime.sessions
+               (session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status, active_run_status, created_via)
+               VALUES ($1, $2, $3, $4, $4, $5, 'active', 'idle', 'mcp')
+               ON CONFLICT (session_id) DO UPDATE
+               SET doc_id = COALESCE(EXCLUDED.doc_id, runtime.sessions.doc_id),
+                   linked_doc_id = COALESCE(EXCLUDED.linked_doc_id, runtime.sessions.linked_doc_id),
+                   user_id = COALESCE(runtime.sessions.user_id, EXCLUDED.user_id),
+                   updated_at = NOW()"#,
+        )
+        .bind(&session_id)
+        .bind(user_id)
+        .bind(effective_title)
+        .bind(doc_id)
+        .bind(&branch)
+        .execute(&self.pool)
+        .await?;
+        Ok(session_id)
+    }
+
     pub async fn get_session_owner(&self, session_id: &str) -> RuntimeResult<Option<String>> {
         let owner: Option<Option<String>> =
             sqlx::query_scalar("SELECT user_id FROM runtime.sessions WHERE session_id = $1")
@@ -67,7 +140,7 @@ impl RuntimeStore {
         let row = sqlx::query(
             r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                       active_run_status, context_usage, compaction_started_at,
-                      compacted_at, pinned_at, created_at, updated_at
+                      compacted_at, pinned_at, created_via, created_at, updated_at
                FROM runtime.sessions WHERE session_id = $1"#,
         )
         .bind(session_id)
@@ -221,7 +294,7 @@ impl RuntimeStore {
                 Some(uid) if include_unowned => sqlx::query(
                     r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                               active_run_status, context_usage, compaction_started_at,
-                              compacted_at, pinned_at, created_at, updated_at
+                              compacted_at, pinned_at, created_via, created_at, updated_at
                        FROM runtime.sessions
                        WHERE user_id = $1 OR user_id IS NULL
                        ORDER BY (pinned_at IS NOT NULL) DESC,
@@ -238,7 +311,7 @@ impl RuntimeStore {
                 Some(uid) => sqlx::query(
                     r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                               active_run_status, context_usage, compaction_started_at,
-                              compacted_at, pinned_at, created_at, updated_at
+                              compacted_at, pinned_at, created_via, created_at, updated_at
                        FROM runtime.sessions
                        WHERE user_id = $1
                        ORDER BY (pinned_at IS NOT NULL) DESC,
@@ -255,7 +328,7 @@ impl RuntimeStore {
                 None => sqlx::query(
                     r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                               active_run_status, context_usage, compaction_started_at,
-                              compacted_at, pinned_at, created_at, updated_at
+                              compacted_at, pinned_at, created_via, created_at, updated_at
                        FROM runtime.sessions
                        ORDER BY (pinned_at IS NOT NULL) DESC,
                                 pinned_at DESC NULLS LAST,

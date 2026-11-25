@@ -244,10 +244,14 @@ impl RuntimeService {
     }
 
     pub fn report_app_state(&self) -> quire_server::AppState {
+        let bridge = std::sync::Arc::new(RuntimeExternalHarnessBridge {
+            store: self.store.clone(),
+        });
         quire_server::AppState::new(
             self.store.report_store().clone(),
             self.config.to_report_server_config(),
         )
+        .with_harness_bridge(bridge)
     }
 
     async fn delete_server_comment(&self, session_id: &str, thread_id: &str) -> RuntimeResult<()> {
@@ -395,5 +399,70 @@ impl RuntimeService {
         self.spawn_turn(session_id, serde_json::to_string(&payload)?)
             .await?;
         self.store.get_session_detail(session_id).await
+    }
+}
+
+struct RuntimeExternalHarnessBridge {
+    store: RuntimeStore,
+}
+
+impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge {
+    fn verify_api_key<'a>(
+        &'a self,
+        raw_token: &'a str,
+    ) -> quire_server::state::BoxFuture<'a, Option<quire_server::state::VerifiedExternalIdentity>>
+    {
+        Box::pin(async move {
+            match self.store.verify_api_key(raw_token).await {
+                Ok(Some(user)) => Some(quire_server::state::VerifiedExternalIdentity {
+                    user_id: user.user_id,
+                    username: user.username,
+                }),
+                _ => None,
+            }
+        })
+    }
+
+    fn prepare_session_for_report<'a>(
+        &'a self,
+        requested_session_id: Option<&'a quire_protocol::SessionId>,
+        user_id: Option<&'a str>,
+        title: &'a str,
+    ) -> quire_server::state::BoxFuture<'a, Result<quire_protocol::SessionId, String>> {
+        Box::pin(async move {
+            let raw_id = self
+                .store
+                .ensure_external_session_for_report(
+                    requested_session_id.map(quire_protocol::SessionId::as_str),
+                    user_id,
+                    title,
+                    None,
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            quire_protocol::SessionId::parse(raw_id).map_err(|error| error.to_string())
+        })
+    }
+
+    fn bind_created_report<'a>(
+        &'a self,
+        session_id: &'a quire_protocol::SessionId,
+        user_id: Option<&'a str>,
+        title: &'a str,
+        doc_id: &'a quire_protocol::DocId,
+    ) -> quire_server::state::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            let _ = self
+                .store
+                .ensure_external_session_for_report(
+                    Some(session_id.as_str()),
+                    user_id,
+                    title,
+                    Some(doc_id.as_str()),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })
     }
 }

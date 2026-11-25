@@ -2,7 +2,7 @@ use quire_protocol::short_id;
 use sqlx::Row;
 
 use super::*;
-use crate::auth::{UserRecord, UserRole};
+use crate::auth::{ApiKeyPublic, AuthUser, UserRecord, UserRole, hash_api_key};
 
 impl RuntimeStore {
     /// Seed the initial administrator from environment variables ONLY if no admin exists yet.
@@ -184,6 +184,86 @@ impl RuntimeStore {
         .await?;
         row_to_user(&row)
     }
+
+    pub async fn create_api_key(
+        &self,
+        user_id: &str,
+        name: &str,
+        key_prefix: &str,
+        key_hash: &str,
+    ) -> RuntimeResult<ApiKeyPublic> {
+        let key_id = short_id("key");
+        let row = sqlx::query(
+            r#"INSERT INTO identity.api_keys (key_id, user_id, name, key_prefix, key_hash)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING key_id, user_id, name, key_prefix, last_used_at, created_at"#,
+        )
+        .bind(&key_id)
+        .bind(user_id)
+        .bind(name)
+        .bind(key_prefix)
+        .bind(key_hash)
+        .fetch_one(&self.pool)
+        .await?;
+        row_to_api_key(&row)
+    }
+
+    pub async fn list_api_keys(&self, user_id: &str) -> RuntimeResult<Vec<ApiKeyPublic>> {
+        let rows = sqlx::query(
+            r#"SELECT key_id, user_id, name, key_prefix, last_used_at, created_at
+               FROM identity.api_keys
+               WHERE user_id = $1
+               ORDER BY created_at DESC, key_id ASC"#,
+        )
+        .bind(user_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter().map(row_to_api_key).collect()
+    }
+
+    pub async fn delete_api_key(&self, user_id: &str, key_id: &str) -> RuntimeResult<bool> {
+        let result = sqlx::query(
+            r#"DELETE FROM identity.api_keys
+               WHERE key_id = $1 AND user_id = $2"#,
+        )
+        .bind(key_id)
+        .bind(user_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    pub async fn verify_api_key(&self, raw_token: &str) -> RuntimeResult<Option<AuthUser>> {
+        let trimmed = raw_token.trim();
+        if !trimmed.starts_with("qk_") {
+            return Ok(None);
+        }
+        let key_hash = hash_api_key(trimmed);
+        let row = sqlx::query(
+            r#"UPDATE identity.api_keys AS k
+               SET last_used_at = NOW()
+               FROM identity.users AS u
+               WHERE k.key_hash = $1
+                 AND u.user_id = k.user_id
+                 AND u.enabled = TRUE
+               RETURNING u.user_id, u.username, u.role"#,
+        )
+        .bind(&key_hash)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let role_raw: String = row.try_get("role")?;
+        let Some(role) = UserRole::parse(&role_raw) else {
+            return Ok(None);
+        };
+        Ok(Some(AuthUser {
+            user_id: row.try_get("user_id")?,
+            username: row.try_get("username")?,
+            role,
+        }))
+    }
 }
 
 fn row_to_user(row: &PgRow) -> RuntimeResult<UserRecord> {
@@ -200,5 +280,16 @@ fn row_to_user(row: &PgRow) -> RuntimeResult<UserRecord> {
         enabled: row.try_get("enabled")?,
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+    })
+}
+
+fn row_to_api_key(row: &PgRow) -> RuntimeResult<ApiKeyPublic> {
+    Ok(ApiKeyPublic {
+        key_id: row.try_get("key_id")?,
+        user_id: row.try_get("user_id")?,
+        name: row.try_get("name")?,
+        key_prefix: row.try_get("key_prefix")?,
+        last_used_at: row.try_get("last_used_at")?,
+        created_at: row.try_get("created_at")?,
     })
 }

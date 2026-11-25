@@ -18,10 +18,9 @@ impl QuireMcpServer {
     pub async fn get_protocol_guide(
         &self,
         Parameters(request): Parameters<GuideParams>,
-    ) -> Result<Json<GuideReceipt>, ErrorData> {
-        QuireReportService::get_protocol_guide(self, request)
-            .await
-            .map(Json)
+    ) -> Result<String, ErrorData> {
+        let receipt = QuireReportService::get_protocol_guide(self, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------
@@ -58,10 +57,9 @@ impl QuireMcpServer {
     pub async fn list_reports(
         &self,
         Parameters(request): Parameters<ListReportsParams>,
-    ) -> Result<Json<ListReportsReceipt>, ErrorData> {
-        QuireReportService::list_reports(self, request)
-            .await
-            .map(Json)
+    ) -> Result<String, ErrorData> {
+        let receipt = QuireReportService::list_reports(self, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------
@@ -77,10 +75,9 @@ impl QuireMcpServer {
     pub async fn get_document_digest(
         &self,
         Parameters(request): Parameters<DigestParams>,
-    ) -> Result<Json<DigestReceipt>, ErrorData> {
-        QuireReportService::get_document_digest(self, request)
-            .await
-            .map(Json)
+    ) -> Result<String, ErrorData> {
+        let receipt = QuireReportService::get_document_digest(self, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------
@@ -96,10 +93,9 @@ impl QuireMcpServer {
     pub async fn read_as_markdown(
         &self,
         Parameters(request): Parameters<ReadMarkdownParams>,
-    ) -> Result<Json<ReadMarkdownReceipt>, ErrorData> {
-        QuireReportService::read_as_markdown(self, request)
-            .await
-            .map(Json)
+    ) -> Result<String, ErrorData> {
+        let receipt = QuireReportService::read_as_markdown(self, request).await?;
+        receipt.render_markdown()
     }
 
     // ---------------------------------------------------------------------

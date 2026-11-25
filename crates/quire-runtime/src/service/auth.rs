@@ -2,8 +2,9 @@ use secrecy::ExposeSecret;
 
 use super::*;
 use crate::auth::{
-    UserPublic, UserRole, hash_password, issue_user_jwt, normalize_optional_email,
-    validate_password, validate_username, verify_password,
+    ApiKeyPublic, CreatedApiKey, UserPublic, UserRole, generate_api_key_secret, hash_password,
+    issue_user_jwt, normalize_optional_email, validate_password, validate_username,
+    verify_password,
 };
 
 #[derive(Debug, Clone)]
@@ -155,5 +156,37 @@ impl RuntimeService {
     ) -> RuntimeResult<UserPublic> {
         let record = self.store.admin_update_user(user_id, role, enabled).await?;
         Ok(UserPublic::from(record))
+    }
+
+    pub async fn create_api_key(&self, user_id: &str, name: &str) -> RuntimeResult<CreatedApiKey> {
+        let cleaned = name.trim();
+        let effective_name = if cleaned.is_empty() {
+            "默认外部代理密钥"
+        } else {
+            cleaned
+        };
+        if effective_name.chars().count() > 64 {
+            return Err(RuntimeError::InvalidRequest(
+                "API key name must be 1-64 characters".into(),
+            ));
+        }
+        let (secret_key, key_prefix, key_hash) = generate_api_key_secret()?;
+        let key = self
+            .store
+            .create_api_key(user_id, effective_name, &key_prefix, &key_hash)
+            .await?;
+        Ok(CreatedApiKey { key, secret_key })
+    }
+
+    pub async fn list_api_keys(&self, user_id: &str) -> RuntimeResult<Vec<ApiKeyPublic>> {
+        self.store.list_api_keys(user_id).await
+    }
+
+    pub async fn delete_api_key(&self, user_id: &str, key_id: &str) -> RuntimeResult<()> {
+        let deleted = self.store.delete_api_key(user_id, key_id).await?;
+        if !deleted {
+            return Err(RuntimeError::InvalidRequest("API key not found".into()));
+        }
+        Ok(())
     }
 }

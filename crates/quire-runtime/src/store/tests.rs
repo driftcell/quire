@@ -26,6 +26,7 @@ fn running_summary(status: ActiveRunStatus) -> SessionSummary {
         compacting: false,
         compacted_at: None,
         pinned_at: None,
+        created_via: "chat".into(),
         created_at: Utc::now(),
         updated_at: Utc::now(),
     }

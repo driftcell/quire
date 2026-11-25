@@ -74,6 +74,11 @@ pub(crate) fn row_to_summary(row: &PgRow) -> RuntimeResult<SessionSummary> {
             }),
         compacted_at: row.try_get("compacted_at")?,
         pinned_at: row.try_get("pinned_at")?,
+        created_via: row
+            .try_get::<Option<String>, _>("created_via")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| "chat".to_string()),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
     })

@@ -17,14 +17,14 @@ databases and provides no legacy `public` views, table aliases, or automatic dat
 
 ### 2.1 Domain namespaces
 
-| Schema | Tables and ownership |
-| --- | --- |
-| `report` | `documents`, `blocks`, `sources`, `revisions`, `snapshots`, `comment_threads`, `comment_messages`, `deep_checks`; owned by `quire-store` |
-| `runtime` | `sessions`, `attachments`, `runs`, `tool_calls`, `questions`, `pending_queue`, `chat_charts`; owned by `quire-runtime` |
-| `kb` | `meta`, `branches`, `snapshots`, `branch_conflicts`, `documents`, `agent_definitions`, `skill_definitions`, `skill_resources`; owned by `quire-runtime` |
-| `catalog` | `llm_providers`, `llm_models`, `mcp_servers`, `mcp_tools`; owned by `quire-runtime` |
-| `identity` | `users`; owned by `quire-runtime` |
-| `rig` | `rig_memory_logs`, `rig_memory_log_chunks`, `rig_memory_files`, using the fixed upstream `rig-postgres` names |
+| Schema     | Tables and ownership                                                                                                                                    |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `report`   | `documents`, `blocks`, `sources`, `revisions`, `snapshots`, `comment_threads`, `comment_messages`, `deep_checks`; owned by `quire-store`                |
+| `runtime`  | `sessions`, `attachments`, `runs`, `tool_calls`, `questions`, `pending_queue`, `chat_charts`; owned by `quire-runtime`                                  |
+| `kb`       | `meta`, `branches`, `snapshots`, `branch_conflicts`, `documents`, `agent_definitions`, `skill_definitions`, `skill_resources`; owned by `quire-runtime` |
+| `catalog`  | `llm_providers`, `llm_models`, `mcp_servers`, `mcp_tools`; owned by `quire-runtime`                                                                     |
+| `identity` | `users`; owned by `quire-runtime`                                                                                                                       |
+| `rig`      | `rig_memory_logs`, `rig_memory_log_chunks`, `rig_memory_files`, using the fixed upstream `rig-postgres` names                                           |
 
 Application SQL uses explicit schema-qualified table names for every table, foreign key, index target
 and schema migration statement. Index names themselves are unqualified because PostgreSQL creates an

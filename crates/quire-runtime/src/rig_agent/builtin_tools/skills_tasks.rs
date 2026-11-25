@@ -455,6 +455,7 @@ pub(crate) fn in_process_request_context(
     Ok(quire_server::auth::RequestContext {
         session_id: Some(session_id),
         actor,
+        user_id: None,
     })
 }
 

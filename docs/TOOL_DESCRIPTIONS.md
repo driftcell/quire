@@ -51,8 +51,8 @@ implementation:
 
 ## 3. Invariants & Verification
 
-- Tool descriptions focus on *what the tool does*, *when to choose it over sibling tools*, and
-  *preconditions / post-call receipt expectations*. Parameter-level rules live on the parameter or
+- Tool descriptions focus on _what the tool does_, _when to choose it over sibling tools_, and
+  _preconditions / post-call receipt expectations_. Parameter-level rules live on the parameter or
   `JsonSchema` struct field `///` doc comments rather than being duplicated in the tool prose.
 - All tool input structs enforce `#[serde(deny_unknown_fields)]` so misspelled arguments fail fast
   with self-healing field names.
