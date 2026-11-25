@@ -366,9 +366,10 @@ export function normalizeXml(rawText: string): NormalizedXmlResult {
     },
   );
 
-  const markdown = transformed.replace(
-    /\u0000CODE_(\d+)\u0000/g,
-    (_match, idx) => codeSegments[Number(idx)] ?? "",
+  const markdown = codeSegments.reduce(
+    (text, segment, index) =>
+      text.replaceAll(`\u0000CODE_${index}\u0000`, segment),
+    transformed,
   );
 
   return {
