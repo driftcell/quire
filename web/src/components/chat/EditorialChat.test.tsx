@@ -489,4 +489,122 @@ describe("Borderless editorial chat", () => {
     );
     expect(html).toContain("核对省属高校立项数据");
   });
+
+  test("earlier orphan traces stay in chronological order before later completed messages", () => {
+    const html = renderToStaticMarkup(
+      <SessionStreamView
+        sessionId="session-1"
+        messages={[
+          {
+            message_id: "m_user_1",
+            session_id: "session-1",
+            role: "user",
+            content: "第一轮提问",
+            created_at: "2026-11-25T08:00:00Z",
+          },
+          {
+            message_id: "m_user_2",
+            session_id: "session-1",
+            role: "user",
+            content: "第二轮提问",
+            created_at: "2026-11-25T08:02:00Z",
+          },
+          {
+            message_id: "m_assistant_2",
+            session_id: "session-1",
+            role: "assistant",
+            run_id: "run_2",
+            content: "第二轮最终结论",
+            created_at: "2026-11-25T08:03:00Z",
+          },
+        ]}
+        traces={[
+          {
+            run_id: "run_1_failed",
+            status: "failed",
+            started_at: "2026-11-25T08:00:05Z",
+            duration_ms: 21000,
+            task_focus: { title: "查询双优建设数据" },
+            segments: [],
+          },
+          {
+            run_id: "run_2",
+            status: "completed",
+            started_at: "2026-11-25T08:02:05Z",
+            segments: [{ kind: "text", text: "第二轮最终结论" }],
+          },
+        ]}
+        liveMain={null}
+        liveSubagents={[]}
+        pendingQuestion={null}
+        isAnsweringQuestion={false}
+        onAnswerQuestion={() => {}}
+      />,
+    );
+
+    const u1Idx = html.indexOf("第一轮提问");
+    const failedIdx = html.indexOf("查询双优建设数据");
+    const u2Idx = html.indexOf("第二轮提问");
+    const a2Idx = html.indexOf("第二轮最终结论");
+    expect(u1Idx).toBeGreaterThan(-1);
+    expect(failedIdx).toBeGreaterThan(u1Idx);
+    expect(u2Idx).toBeGreaterThan(failedIdx);
+    expect(a2Idx).toBeGreaterThan(u2Idx);
+  });
+
+  test("pure ask_user turn after turn_finished renders no RunActivityHeader card", () => {
+    const html = renderToStaticMarkup(
+      <SessionStreamView
+        sessionId="session-1"
+        messages={[
+          {
+            message_id: "m_user",
+            session_id: "session-1",
+            role: "user",
+            content: "帮我生成研报",
+            created_at: "2026-11-25T08:00:00Z",
+          },
+        ]}
+        traces={[]}
+        liveMain={{
+          runId: "run_ask",
+          agentId: "main",
+          isStreaming: false,
+          segments: [
+            {
+              kind: "execution",
+              tools: [
+                {
+                  toolCallId: "tc_ask",
+                  toolName: "ask_user",
+                  status: "completed",
+                  inputPreview: "{}",
+                },
+              ],
+              subagentRunIds: [],
+            },
+          ],
+        }}
+        liveSubagents={[]}
+        pendingQuestion={{
+          question_id: "q_pure",
+          run_id: "run_ask",
+          tool_call_id: "tc_ask",
+          created_at: "2026-11-25T08:00:01Z",
+          questions: [
+            {
+              id: "scope",
+              title: "确认研报范围",
+              options: [{ id: "all", label: "全部高校" }],
+            },
+          ],
+        }}
+        isAnsweringQuestion={false}
+        onAnswerQuestion={() => {}}
+      />,
+    );
+
+    expect(html).toContain("确认研报范围");
+    expect(html).not.toContain('data-live-header="true"');
+  });
 });

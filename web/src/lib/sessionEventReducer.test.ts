@@ -513,6 +513,7 @@ describe("decoupled questionnaire lifecycle", () => {
       event: "turn_finished",
     });
     expect(closed.state.liveRunStatus).toBe("awaiting_input");
+    expect(closed.state.liveMain?.isStreaming).toBe(false);
     expect(closed.state.livePendingQuestion?.question_id).toBe("q_1");
     expect(closed.effects).toContainEqual({
       type: "refetch-and-clear",

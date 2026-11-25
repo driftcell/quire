@@ -141,18 +141,24 @@ function finishMainThinking(
   return finishThinkingSegment(withMainTrace(state, runId, eventTs), eventTs);
 }
 
-function finishAllThinking(
+function settleTerminalLiveTraces(
   state: LiveSessionState,
   eventTs: number,
 ): LiveSessionState {
   return {
     ...state,
     liveMain: state.liveMain
-      ? finishThinkingSegment(state.liveMain, eventTs)
+      ? {
+          ...finishThinkingSegment(state.liveMain, eventTs),
+          isStreaming: false,
+        }
       : null,
     liveSubagents: state.liveSubagents.map((subagent) => ({
       ...subagent,
-      trace: finishThinkingSegment(subagent.trace, eventTs),
+      trace: {
+        ...finishThinkingSegment(subagent.trace, eventTs),
+        isStreaming: false,
+      },
     })),
   };
 }
@@ -645,7 +651,7 @@ export function reduceSessionEvent(
     case "turn_finished":
       next = {
         ...next,
-        ...finishAllThinking(next, eventTs),
+        ...settleTerminalLiveTraces(next, eventTs),
         streamingEstimatedOutputTokens: 0,
         liveRunStatus: next.livePendingQuestion ? "awaiting_input" : "idle",
       };
@@ -655,7 +661,7 @@ export function reduceSessionEvent(
     case "turn_superseded":
       next = {
         ...next,
-        ...finishAllThinking(next, eventTs),
+        ...settleTerminalLiveTraces(next, eventTs),
         streamingEstimatedOutputTokens: 0,
         liveRunStatus: "idle",
       };
@@ -666,15 +672,9 @@ export function reduceSessionEvent(
     case "turn_failed":
       next = {
         ...next,
-        ...finishAllThinking(next, eventTs),
+        ...settleTerminalLiveTraces(next, eventTs),
         streamingEstimatedOutputTokens: 0,
         liveRunStatus: event.recoverable ? "interrupted" : "failed",
-      };
-      next = {
-        ...next,
-        liveMain: next.liveMain
-          ? { ...next.liveMain, isStreaming: false }
-          : null,
       };
       effects.push({ type: "invalidate", target: "session" });
       break;

@@ -498,6 +498,11 @@ export const RunActivityHeader = memo(function RunActivityHeader({
                 aria-hidden
                 className="size-3.5 text-destructive"
               />
+            ) : model.status === "running" ? (
+              <MinusIcon
+                aria-hidden
+                className="size-3.5 text-muted-foreground"
+              />
             ) : (
               <CheckIcon aria-hidden className="size-3.5 text-emerald-600" />
             )}

@@ -16,6 +16,7 @@ import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
 import {
   buildLiveRunStatusModel,
   buildLiveSegments,
+  hasTraceActivity,
 } from "@/components/chat/traceSegments";
 import { Message, MessageContent, MessageGroup } from "@/components/ui/message";
 import {
@@ -70,16 +71,27 @@ function LiveRunSection({
 
   const elapsed = Math.max(0, Math.floor((now - startedAt) / 1000));
   const headerModel = buildLiveRunStatusModel(trace, subagents, elapsed);
+  const showHeader =
+    trace.isStreaming ||
+    hasTraceActivity(segments) ||
+    Boolean(trace.taskFocus) ||
+    headerModel.milestones.length > 0;
+
+  if (!showHeader && !showFinalText) {
+    return null;
+  }
 
   return (
     <div className="w-full space-y-2.5">
-      <RunActivityHeader
-        model={headerModel}
-        isStreaming={trace.isStreaming}
-        detailsOpen={detailsOpen}
-        onToggleDetails={() => setDetailsOpen((open) => !open)}
-        onJumpToSection={onJumpToSection}
-      />
+      {showHeader && (
+        <RunActivityHeader
+          model={headerModel}
+          isStreaming={trace.isStreaming}
+          detailsOpen={detailsOpen}
+          onToggleDetails={() => setDetailsOpen((open) => !open)}
+          onJumpToSection={onJumpToSection}
+        />
+      )}
 
       <LiveTraceSegments
         sessionId={sessionId}
@@ -323,6 +335,55 @@ export function SessionStreamView({
     );
   }, [liveRunId, showLiveMain, traces, visibleMessages]);
 
+  type TimelineEntry =
+    | { kind: "message"; msg: SessionMessage }
+    | { kind: "orphan-trace"; trace: RunTraceSummary };
+
+  const timelineEntries = useMemo<TimelineEntry[]>(() => {
+    const timestamped: Array<{ trace: RunTraceSummary; startedAtMs: number; order: number }> = [];
+    const untimestamped: RunTraceSummary[] = [];
+    orphanTraces.forEach((trace, order) => {
+      const parsed = trace.started_at ? Date.parse(trace.started_at) : NaN;
+      if (Number.isFinite(parsed)) {
+        timestamped.push({ trace, startedAtMs: parsed, order });
+      } else {
+        untimestamped.push(trace);
+      }
+    });
+    timestamped.sort((a, b) => a.startedAtMs - b.startedAtMs || a.order - b.order);
+
+    const entries: TimelineEntry[] = [];
+    let orphanCursor = 0;
+    for (const msg of visibleMessages) {
+      const msgTime = Date.parse(msg.created_at);
+      if (Number.isFinite(msgTime)) {
+        while (orphanCursor < timestamped.length) {
+          const nextOrphan = timestamped[orphanCursor];
+          if (!nextOrphan) break;
+          const precedes =
+            msg.role === "user"
+              ? nextOrphan.startedAtMs < msgTime
+              : nextOrphan.startedAtMs <= msgTime;
+          if (!precedes) break;
+          entries.push({ kind: "orphan-trace", trace: nextOrphan.trace });
+          orphanCursor += 1;
+        }
+      }
+      entries.push({ kind: "message", msg });
+    }
+    while (orphanCursor < timestamped.length) {
+      const nextOrphan = timestamped[orphanCursor];
+      if (nextOrphan) {
+        entries.push({ kind: "orphan-trace", trace: nextOrphan.trace });
+      }
+      orphanCursor += 1;
+    }
+    for (const trace of untimestamped) {
+      entries.push({ kind: "orphan-trace", trace });
+    }
+    return entries;
+  }, [orphanTraces, visibleMessages]);
+
   return (
     <MessageScrollerProvider
       key={sessionId}
@@ -333,7 +394,27 @@ export function SessionStreamView({
       <MessageScroller className="h-full">
         <MessageScrollerViewport className="px-4 data-[pending-scroll]:opacity-0">
           <MessageScrollerContent className={`${contentClassName} gap-6 py-6`}>
-            {visibleMessages.map((msg) => {
+            {timelineEntries.map((item) => {
+              if (item.kind === "orphan-trace") {
+                const trace = item.trace;
+                return (
+                  <MessageScrollerItem
+                    key={`orphan-${trace.run_id}`}
+                    messageId={`orphan-${trace.run_id}`}
+                  >
+                    <Message align="start" className="items-start">
+                      <MessageContent className="min-w-0 w-full flex-1">
+                        <HistoricalRunTrace
+                          sessionId={sessionId}
+                          trace={trace}
+                          onJumpToSection={onJumpToSection}
+                        />
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                );
+              }
+              const msg = item.msg;
               const trace = msg.run_id
                 ? traceByRunId.get(msg.run_id)
                 : undefined;
@@ -393,23 +474,6 @@ export function SessionStreamView({
                 </MessageScrollerItem>
               );
             })}
-
-            {orphanTraces.map((trace) => (
-              <MessageScrollerItem
-                key={`orphan-${trace.run_id}`}
-                messageId={`orphan-${trace.run_id}`}
-              >
-                <Message align="start" className="items-start">
-                  <MessageContent className="min-w-0 w-full flex-1">
-                    <HistoricalRunTrace
-                      sessionId={sessionId}
-                      trace={trace}
-                      onJumpToSection={onJumpToSection}
-                    />
-                  </MessageContent>
-                </Message>
-              </MessageScrollerItem>
-            ))}
 
             {((showLiveMain && liveMain) || unpersistedLiveQuestion) && (
               <MessageScrollerItem messageId="live-main">
