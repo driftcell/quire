@@ -189,37 +189,37 @@ export function ReportPaneToolbar({
 
         {/* Group 2: Review Annotations & Print/PDF Export */}
         <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  aria-label="深度检查"
-                  disabled={!isDeepCheckEnabled || isDeepCheckRunning}
-                  className="h-7 gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/85 hover:bg-secondary hover:text-foreground disabled:opacity-50"
-                  onClick={() => deepCheckMutation.mutate()}
-                />
-              }
-            >
-              {isDeepCheckRunning ? (
-                <Loader2Icon className="size-3.5 animate-spin text-[#1D4ED8]" />
-              ) : (
-                <ShieldCheckIcon className="size-3.5 text-muted-foreground" />
-              )}
-              <span className="hidden @min-[540px]:inline">
-                {isDeepCheckRunning ? "检查中..." : "深度检查"}
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {!isDeepCheckEnabled
-                ? "未启用决策模型：请在环境变量配置 EVALUATOR_PROVIDER=jev 与 JEV_API_KEY"
-                : isDeepCheckRunning
-                  ? "决策模型正在后台扫描全文并生成批注，刷新页面后仍会保持进度"
-                  : "使用决策模型对全文进行语义与数据一致性深度检查，并生成批注"}
-            </TooltipContent>
-          </Tooltip>
+          {isDeepCheckEnabled ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    aria-label="深度检查"
+                    disabled={isDeepCheckRunning}
+                    className="h-7 gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/85 hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                    onClick={() => deepCheckMutation.mutate()}
+                  />
+                }
+              >
+                {isDeepCheckRunning ? (
+                  <Loader2Icon className="size-3.5 animate-spin text-[#1D4ED8]" />
+                ) : (
+                  <ShieldCheckIcon className="size-3.5 text-muted-foreground" />
+                )}
+                <span className="hidden @min-[540px]:inline">
+                  {isDeepCheckRunning ? "检查中..." : "深度检查"}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {isDeepCheckRunning
+                  ? "正在检查全文，完成后自动生成批注"
+                  : "语义与数据一致性深度检查"}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
 
           <Tooltip>
             <TooltipTrigger
