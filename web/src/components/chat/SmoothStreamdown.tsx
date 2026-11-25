@@ -13,7 +13,7 @@ import {
 import {
   ChatMessageCitationOrderContext,
   isPlaceholderCitationId,
-  normalizeChatXml,
+  normalizeXml,
   stripClobberPrefix,
   useChatMessageCitationOrder,
   useChatRichContext,
@@ -40,7 +40,7 @@ export interface SmoothStreamdownProps {
   controls?: ControlsConfig;
 }
 
-const CHAT_XML_ALLOWED_TAGS: AllowedTags = {
+const XML_ALLOWED_TAGS: AllowedTags = {
   citation: ["id"],
   echarts: ["id"],
 };
@@ -62,7 +62,7 @@ function hasRenderableSourceMetadata(
   );
 }
 
-const ChatXmlFallbackRenderer: ComponentType<
+const XmlFallbackRenderer: ComponentType<
   Record<string, unknown> & ExtraProps
 > = ({ node, ...props }) => {
   const { sources, charts } = useChatRichContext();
@@ -168,7 +168,7 @@ export function SmoothStreamdown({
   const animating = isStreaming || isSmoothing;
 
   const { markdown, citedSourceIds } = useMemo(
-    () => normalizeChatXml(smoothedText),
+    () => normalizeXml(smoothedText),
     [smoothedText],
   );
 
@@ -200,8 +200,8 @@ export function SmoothStreamdown({
             animated={false}
             controls={controls}
             tableMaxHeight="none"
-            allowedTags={CHAT_XML_ALLOWED_TAGS}
-            fallbackComponent={ChatXmlFallbackRenderer}
+            allowedTags={XML_ALLOWED_TAGS}
+            fallbackComponent={XmlFallbackRenderer}
           >
             {markdown}
           </Streamdown>

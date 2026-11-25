@@ -24,7 +24,7 @@ export interface ChatEchartsBlockProps {
 }
 
 /**
- * Renders an inline ECharts chart inside a chat message from a short embedded XML
+ * Renders an inline ECharts chart inside a chat message from a short XML
  * `<echarts id="..."/>` tag. Resolves committed report chart blocks first and
  * falls back to fetching a cached preview record (`/api/chart-previews/{id}`).
  */
