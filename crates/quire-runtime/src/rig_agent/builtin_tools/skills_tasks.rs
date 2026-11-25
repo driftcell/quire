@@ -77,20 +77,31 @@ pub(crate) async fn read_skill_resource_tool(
     })
 }
 
-/// Report the current work stage and dynamic todo-list progress to the user interface.
-/// Both the lead agent and subagents should call this at phase transitions so users can track progress without reading raw tool traces.
+/// Report the current work stage and step-by-step todo progress to the user interface.
+///
+/// When to call (both lead agent and subagents):
+/// 1. At task/phase start: initialize `todos` (item 1 = `in_progress`, remaining = `pending`).
+/// 2. At EVERY step transition — immediately as you move from one todo item to the next, before
+///    calling `spawn_subagents`, and after subagents return — so progress advances one item at a time
+///    instead of batch-completing everything at the end.
+/// 3. Fast incremental step: omit `todos` and pass `title` matching the next todo item; the runtime
+///    automatically marks the previous `in_progress` item `completed` and activates the matching item.
+///    Pass `todos` only when initializing, adding/reordering items, or marking the final item `completed`.
+/// 4. Before finishing: mark all remaining items `completed` (or `skipped`).
 #[rig_tool(name = "describe_task")]
 pub(crate) async fn describe_task_tool(
     #[rig(context)] context: &mut ToolContext,
     /// Short Chinese status phrase (`<= 16` chars) with zero internal tool names or raw IDs.
+    /// When advancing an existing todo list without `todos`, match the next todo item's `title`.
     /// Good: `"核对省属高校国自然立项口径"`; Bad: `"调用 apply_operations 更新 sec_2"`.
     title: String,
     /// Optional concise Chinese note on the current focus or blocker (e.g. `"对比2021—2025年面上与青年项目增量"`).
     detail: Option<String>,
     /// Optional `block_id` of the report heading currently being worked on to highlight the active chapter in the UI.
     section_id: Option<String>,
-    /// Ordered todo list (`status`: `"pending" | "in_progress" | "completed" | "skipped"`). Keep titles as parallel 8–16 char Chinese verb-object phrases and mark at most one item `in_progress` at a time.
-    /// Good: `[{"title":"梳理近五年立项数据","status":"completed"},{"title":"撰写学科对标分析","status":"in_progress"}]`; Bad: marking multiple items `in_progress` simultaneously.
+    /// Ordered todo list (`status`: `"pending" | "in_progress" | "completed" | "skipped"`). Omit when
+    /// advancing sequentially by `title`. Keep titles as parallel 8–16 char Chinese verb-object phrases
+    /// with at most one `in_progress` item at a time.
     todos: Option<Vec<TaskTodoInput>>,
 ) -> Result<DescribeTaskReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
@@ -122,11 +133,32 @@ pub(crate) async fn describe_task_tool(
             todos: normalized_todos.clone(),
         })
         .await;
+    let progress = if normalized_todos.is_empty() {
+        None
+    } else {
+        let total = normalized_todos.len();
+        let completed = normalized_todos
+            .iter()
+            .filter(|t| t.status == quire_session_protocol::TaskTodoStatus::Completed)
+            .count();
+        let in_progress = normalized_todos
+            .iter()
+            .filter(|t| t.status == quire_session_protocol::TaskTodoStatus::InProgress)
+            .count();
+        let pending = normalized_todos
+            .iter()
+            .filter(|t| t.status == quire_session_protocol::TaskTodoStatus::Pending)
+            .count();
+        Some(format!(
+            "{completed}/{total} completed, {in_progress} in_progress, {pending} pending"
+        ))
+    };
     Ok(DescribeTaskReceipt {
         title,
         detail,
         section_id,
         todos: normalized_todos,
+        progress,
     })
 }
 

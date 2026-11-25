@@ -73,8 +73,9 @@ pub(super) struct SubagentParent {
 ///
 /// Call `list_subagents` first if you need valid subagent names. Outcomes are returned in the exact
 /// input `tasks` order with `agent_name`, `status` (`"completed" | "failed" | "cancelled"`), `summary`,
-/// and `subagent_run_id` (passable as `resume_run_id` on follow-up calls). Always verify actual document
-/// changes via `get_document_digest` or `lint_document` after subagents finish.
+/// and `subagent_run_id` (passable as `resume_run_id` on follow-up calls). Call `describe_task`
+/// to activate the current delegation phase before dispatching, update `describe_task` once subagents
+/// return, and verify document changes via `get_document_digest` or `lint_document`.
 #[rig_tool(name = "spawn_subagents")]
 pub(super) async fn run_subagents_tool(
     #[rig(context)] context: &mut ToolContext,
