@@ -195,8 +195,8 @@ function SubagentAvatarStack({
                 type="button"
                 data-subagent-pill={sub.id}
                 data-status={sub.status}
-                aria-label={`${identity.label}：${statusLabel}${running ? `，${sub.activityText}` : ""}。展开并定位`}
-                title={`${identity.label} · ${statusLabel}${running ? ` · ${sub.activityText}` : ""}`}
+                aria-label={`${identity.label}：${statusLabel}${sub.activityText ? `，${sub.activityText}` : ""}。展开并定位`}
+                title={`${identity.label} · ${statusLabel}${sub.activityText ? ` · ${sub.activityText}` : ""}`}
                 onClick={() => onFocusSubagent(sub.id)}
                 className="relative inline-flex size-6 items-center justify-center rounded-full bg-background ring-2 ring-background focus-visible:z-10 focus-visible:ring-[#1D4ED8] focus-visible:outline-none"
               >
@@ -322,9 +322,11 @@ function SubagentLedger({
                   {statusLabel}
                 </span>
               </div>
-              <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
-                {sub.status === "running" ? sub.activityText : identity.role}
-              </p>
+              {sub.activityText && (
+                <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
+                  {sub.activityText}
+                </p>
+              )}
               {expanded && sub.todos.length > 0 && (
                 <ol
                   data-slot="subagent-todo-list"

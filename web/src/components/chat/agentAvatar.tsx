@@ -5,7 +5,7 @@ import { cn } from "cn";
 export interface AgentIdentity {
   actor: string;
   label: string;
-  role: string;
+  role?: string;
   monogram: string;
   bgClass: string;
   textClass: string;
@@ -278,7 +278,6 @@ export function resolveAgentIdentity(rawActor: string): AgentIdentity {
   return {
     actor,
     label: actor,
-    role: "协作子代理",
     monogram: firstChar,
     bgClass: theme.bgClass,
     textClass: theme.textClass,
@@ -370,7 +369,11 @@ export const AgentAvatar = memo(function AgentAvatar({
     <span
       data-slot="agent-avatar"
       data-actor={identity.actor}
-      title={`${identity.label} · ${identity.role}`}
+      title={
+        identity.role
+          ? `${identity.label} · ${identity.role}`
+          : identity.label
+      }
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-border/70 select-none",
         boxSize,

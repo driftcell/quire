@@ -425,7 +425,7 @@ export interface SubagentActivityPill {
   actor: string;
   task?: string;
   status: "running" | "completed" | "failed";
-  activityText: string;
+  activityText?: string;
   toolCount: number;
   completedToolCount: number;
   recentTools: string[];
@@ -512,15 +512,20 @@ export function buildLiveRunStatusModel(
   const pills: SubagentActivityPill[] = subagents.map((sub) => {
     const view = extractSubagentLiveView(sub.trace);
     const subTodos = extractLiveTodos(sub.trace);
-    const toolLabel = latestToolLabel(view.tools);
+    let lastDescribeTitle: string | undefined;
+    for (const seg of sub.trace.segments) {
+      if (seg.kind !== "execution") continue;
+      for (const tool of seg.tools) {
+        if (tool.toolName === "describe_task") {
+          const parsed = parseDescribeTaskInput(tool.inputPreview);
+          if (parsed.title) {
+            lastDescribeTitle = parsed.title;
+          }
+        }
+      }
+    }
     const activityText =
-      sub.trace.taskFocus?.title?.trim() ||
-      (sub.status === "running" && toolLabel ? `正在${toolLabel}` : toolLabel) ||
-      (sub.status === "running"
-        ? "协作执行中"
-        : sub.status === "failed"
-          ? "执行失败"
-          : "已完成");
+      sub.trace.taskFocus?.title?.trim() || lastDescribeTitle || undefined;
     return {
       id: sub.subagentRunId,
       actor: sub.displayName?.trim() || sub.agentName,
@@ -570,6 +575,7 @@ export function buildHistoricalRunStatusModel(
       tools.push(...toToolTraceItems(seg.tools).filter(isVisibleTraceTool));
       for (const sub of seg.subagents ?? []) {
         const subTools: ToolCallTraceItem[] = [];
+        let lastDescribeTitle: string | undefined;
         let subTodos: TaskTodoItem[] = sub.task_focus?.todos
           ? sub.task_focus.todos.map((item) => ({ ...item }))
           : [];
@@ -577,10 +583,11 @@ export function buildHistoricalRunStatusModel(
           if (sSeg.kind === "execution") {
             for (const item of toToolTraceItems(sSeg.tools)) {
               if (item.toolName === "describe_task") {
-                subTodos = mergeTodoStep(
-                  subTodos,
-                  parseDescribeTaskInput(item.inputPreview),
-                );
+                const parsed = parseDescribeTaskInput(item.inputPreview);
+                if (parsed.title) {
+                  lastDescribeTitle = parsed.title;
+                }
+                subTodos = mergeTodoStep(subTodos, parsed);
               } else if (isVisibleTraceTool(item)) {
                 subTools.push(item);
               }
@@ -594,9 +601,7 @@ export function buildHistoricalRunStatusModel(
               ? "running"
               : "completed";
         const activityText =
-          sub.task_focus?.title?.trim() ||
-          latestToolLabel(subTools) ||
-          (subStatus === "failed" ? "执行失败" : "已完成");
+          sub.task_focus?.title?.trim() || lastDescribeTitle || undefined;
         pills.push({
           id: sub.subagent_run_id,
           actor: sub.display_name?.trim() || sub.agent_name,

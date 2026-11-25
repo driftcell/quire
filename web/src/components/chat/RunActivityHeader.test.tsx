@@ -523,4 +523,200 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     expect(analystHtml).not.toEqual(writerHtml);
     expect(mainHtml).not.toEqual(analystHtml);
   });
+
+  test("omits subagent subtitle when describe_task is absent and keeps latest describe_task for main and subagents", () => {
+    const liveMain: LiveAgentTrace = {
+      runId: "run_sub_subtitle",
+      agentId: "main",
+      isStreaming: true,
+      taskFocus: { title: "主代理最新任务" },
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            {
+              toolCallId: "tc_m1",
+              toolName: "describe_task",
+              status: "completed",
+              inputPreview: JSON.stringify({ title: "主代理早期任务" }),
+            },
+            {
+              toolCallId: "tc_m2",
+              toolName: "describe_task",
+              status: "completed",
+              inputPreview: JSON.stringify({ title: "主代理最新任务" }),
+            },
+          ],
+          subagentRunIds: ["sub_no_desc", "sub_with_desc"],
+        },
+      ],
+    };
+
+    const liveSubagents: LiveSubagentRun[] = [
+      {
+        subagentRunId: "sub_no_desc",
+        agentName: "designer",
+        displayName: "版式专员",
+        task: "调整版式",
+        status: "running",
+        trace: {
+          agentId: "designer",
+          isStreaming: true,
+          segments: [
+            {
+              kind: "execution",
+              tools: [
+                {
+                  toolCallId: "tc_d1",
+                  toolName: "set_cover",
+                  status: "running",
+                  inputPreview: "{}",
+                },
+              ],
+              subagentRunIds: [],
+            },
+          ],
+        },
+      },
+      {
+        subagentRunId: "sub_with_desc",
+        agentName: "humanizer",
+        displayName: "文字润色",
+        task: "润色正文",
+        status: "completed",
+        trace: {
+          agentId: "humanizer",
+          isStreaming: false,
+          taskFocus: { title: "子代理最新阶段" },
+          segments: [
+            {
+              kind: "execution",
+              tools: [
+                {
+                  toolCallId: "tc_h1",
+                  toolName: "describe_task",
+                  status: "completed",
+                  inputPreview: JSON.stringify({ title: "子代理早期阶段" }),
+                },
+                {
+                  toolCallId: "tc_h2",
+                  toolName: "describe_task",
+                  status: "completed",
+                  inputPreview: JSON.stringify({ title: "子代理最新阶段" }),
+                },
+              ],
+              subagentRunIds: [],
+            },
+          ],
+        },
+      },
+    ];
+
+    const liveModel = buildLiveRunStatusModel(liveMain, liveSubagents, 5);
+    expect(liveModel.title).toBe("主代理最新任务");
+    expect(liveModel.subagents[0]?.activityText).toBeUndefined();
+    expect(liveModel.subagents[1]?.activityText).toBe("子代理最新阶段");
+
+    const liveCollapsedHtml = renderToStaticMarkup(
+      <RunActivityHeader
+        model={liveModel}
+        isStreaming={true}
+        detailsOpen={false}
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(liveCollapsedHtml).not.toContain("协作子代理");
+    expect(liveCollapsedHtml).not.toContain("协作执行中");
+    expect(liveCollapsedHtml).toContain('title="版式专员 · 进行中"');
+    expect(liveCollapsedHtml).toContain(
+      'title="文字润色 · 已完成 · 子代理最新阶段"',
+    );
+
+    const liveExpandedHtml = renderToStaticMarkup(
+      <RunActivityHeader
+        model={liveModel}
+        isStreaming={true}
+        detailsOpen={true}
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(liveExpandedHtml).toContain("主代理最新任务");
+    expect(liveExpandedHtml).toContain("子代理最新阶段");
+    expect(liveExpandedHtml).not.toContain("协作子代理");
+    expect(liveExpandedHtml).not.toContain("协作执行中");
+    expect(liveExpandedHtml).not.toContain("正在设置封面");
+
+    const historicalTrace: RunTraceSummary = {
+      run_id: "run_hist_sub",
+      status: "completed",
+      task_focus: { title: "主代理最终阶段" },
+      segments: [
+        {
+          kind: "execution",
+          tools: [],
+          subagents: [
+            {
+              subagent_run_id: "sub_hist_no_desc",
+              agent_name: "designer",
+              display_name: "版式专员",
+              task: "调整版式",
+              status: "completed",
+              segments: [
+                {
+                  kind: "execution",
+                  tools: [
+                    {
+                      tool_call_id: "tc_hd1",
+                      tool_name: "set_cover",
+                      status: "completed",
+                      input_preview: "{}",
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              subagent_run_id: "sub_hist_with_desc",
+              agent_name: "researcher",
+              display_name: "学科调研员",
+              task: "核查指标",
+              status: "completed",
+              task_focus: { title: "完成学科指标核查" },
+              segments: [],
+            },
+          ],
+        },
+      ],
+    };
+
+    const histModel = buildHistoricalRunStatusModel(historicalTrace);
+    expect(histModel.title).toBe("主代理最终阶段");
+    expect(histModel.subagents[0]?.activityText).toBeUndefined();
+    expect(histModel.subagents[1]?.activityText).toBe("完成学科指标核查");
+
+    const histExpandedHtml = renderToStaticMarkup(
+      <RunActivityHeader
+        model={histModel}
+        isStreaming={false}
+        detailsOpen={true}
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(histExpandedHtml).toContain("已完成主代理最终阶段");
+    expect(histExpandedHtml).toContain(">完成学科指标核查</p>");
+    expect(histExpandedHtml).not.toContain("协作子代理");
+    expect(histExpandedHtml).not.toContain(">资料检索与核验</p>");
+    expect(histExpandedHtml).not.toContain("设置封面");
+    const noDescStart = histExpandedHtml.indexOf(
+      'data-subagent-id="sub_hist_no_desc"',
+    );
+    const withDescStart = histExpandedHtml.indexOf(
+      'data-subagent-id="sub_hist_with_desc"',
+    );
+    expect(noDescStart).toBeGreaterThan(-1);
+    expect(withDescStart).toBeGreaterThan(noDescStart);
+    expect(histExpandedHtml.slice(noDescStart, withDescStart)).not.toContain(
+      "<p",
+    );
+  });
 });
