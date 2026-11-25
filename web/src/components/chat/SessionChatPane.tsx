@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { TerminalIcon } from "lucide-react";
 import {
   buildChatRichContext,
   ChatRichContext,
@@ -32,7 +31,6 @@ export interface SessionChatPaneProps {
   attachments: AttachmentMeta[];
   traces: RunTraceSummary[];
   hasReportData: boolean;
-  createdVia?: string;
   documentView?: DocumentResponse | null;
   liveMain: LiveAgentTrace | null;
   liveSubagents: LiveSubagentRun[];
@@ -81,7 +79,6 @@ export function SessionChatPane({
   attachments,
   traces,
   hasReportData,
-  createdVia,
   documentView,
   liveMain,
   liveSubagents,
@@ -115,14 +112,6 @@ export function SessionChatPane({
     [documentView, traces, liveMain, liveSubagents],
   );
 
-  const showEmptyExternalNotice =
-    !isLoading &&
-    hasReportData &&
-    messages.length === 0 &&
-    traces.length === 0 &&
-    !liveMain &&
-    (createdVia === "mcp" || true);
-
   return (
     <ChatRichContext.Provider value={richContext}>
       <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
@@ -133,26 +122,6 @@ export function SessionChatPane({
                 <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
                 <Skeleton className="h-24 w-5/6 rounded-2xl" />
                 <Skeleton className="h-16 w-3/4 rounded-2xl" />
-              </div>
-            </div>
-          ) : showEmptyExternalNotice ? (
-            <div className="flex h-full flex-col justify-center px-5 py-8">
-              <div className="mx-auto w-full max-w-sm border-l-2 border-[#1D4ED8] pl-3.5 text-left">
-                <div className="flex items-center gap-1.5 text-xs font-medium text-foreground">
-                  <TerminalIcon
-                    className="size-3.5 shrink-0 text-[#1D4ED8]"
-                    aria-hidden="true"
-                  />
-                  <span>外部代理报告已绑定当前会话</span>
-                </div>
-                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  左侧报告由外部代理通过{" "}
-                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-                    /mcp
-                  </code>{" "}
-                  创建并实时同步。你可以仅在左侧审阅报告、添加段落批注或导出 A4
-                  PDF，无需使用此对话栏；也可以随时在下方发送指令，交由内置代理继续润色或改写。
-                </p>
               </div>
             </div>
           ) : (

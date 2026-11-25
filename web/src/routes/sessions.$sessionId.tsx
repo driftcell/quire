@@ -279,7 +279,6 @@ function SessionWorkspace({ sessionId }: { sessionId: string }) {
       attachments={sessionQuery.data?.attachments ?? []}
       traces={tracesQuery.data ?? []}
       hasReportData={hasReportData}
-      createdVia={sessionQuery.data?.created_via}
       documentView={docQuery.data}
       liveMain={liveMain}
       liveSubagents={liveSubagents}
