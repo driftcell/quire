@@ -103,6 +103,10 @@ pub fn project(scope: EventScope, event: ModelStreamEvent) -> EventAction {
                 todos,
             },
         },
+        ModelStreamEvent::TodosUpdated { todos } => EventAction::Emit {
+            scope,
+            kind: SessionEventKind::TodosUpdated { todos },
+        },
         ModelStreamEvent::DocLinked { doc_id, title } if scope.is_main() => EventAction::Emit {
             scope,
             kind: SessionEventKind::DocLinked { doc_id, title },

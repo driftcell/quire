@@ -2,10 +2,9 @@ import type { ToolCallTraceItem } from "@/components/chat/ToolCallTrace";
 import {
   buildHistoricalMilestones,
   buildLiveMilestones,
+  extractHistoricalSubagentTodos,
   extractHistoricalTodos,
   extractLiveTodos,
-  finalizeTodos,
-  mergeTodoStep,
   parseDescribeTaskInput,
   type TaskMilestoneNode,
 } from "@/components/chat/taskMilestones";
@@ -540,9 +539,14 @@ export function buildLiveRunStatusModel(
     };
   });
 
+  const activeTodoTitle = todos
+    .find((todo) => todo.status === "in_progress")
+    ?.title.trim();
+
   return {
     title:
       trace.taskFocus?.title?.trim() ||
+      activeTodoTitle ||
       lastMilestone?.title ||
       fallbackTitle,
     detail:
@@ -576,9 +580,6 @@ export function buildHistoricalRunStatusModel(
       for (const sub of seg.subagents ?? []) {
         const subTools: ToolCallTraceItem[] = [];
         let lastDescribeTitle: string | undefined;
-        let subTodos: TaskTodoItem[] = sub.task_focus?.todos
-          ? sub.task_focus.todos.map((item) => ({ ...item }))
-          : [];
         for (const sSeg of sub.segments ?? []) {
           if (sSeg.kind === "execution") {
             for (const item of toToolTraceItems(sSeg.tools)) {
@@ -587,7 +588,6 @@ export function buildHistoricalRunStatusModel(
                 if (parsed.title) {
                   lastDescribeTitle = parsed.title;
                 }
-                subTodos = mergeTodoStep(subTodos, parsed);
               } else if (isVisibleTraceTool(item)) {
                 subTools.push(item);
               }
@@ -612,7 +612,7 @@ export function buildHistoricalRunStatusModel(
           completedToolCount: subTools.filter((t) => t.status !== "running")
             .length,
           recentTools: recentToolLabels(subTools),
-          todos: finalizeTodos(subTodos, subStatus === "completed"),
+          todos: extractHistoricalSubagentTodos(sub),
         });
       }
     }
@@ -630,10 +630,15 @@ export function buildHistoricalRunStatusModel(
       ? formatLiveElapsed(Math.max(1, Math.round(trace.duration_ms / 1000)))
       : undefined;
 
+  const fallbackTodoTitle =
+    todos.find((todo) => todo.status === "in_progress")?.title.trim() ||
+    todos[todos.length - 1]?.title.trim();
+
   return {
     title:
       trace.task_focus?.title?.trim() ||
       lastMilestone?.title ||
+      fallbackTodoTitle ||
       defaultTitle,
     detail:
       trace.task_focus?.detail ?? lastMilestone?.detail ?? undefined,

@@ -11,6 +11,7 @@ allowed_tools:
   - apply_operations
   - lint_document
   - describe_task
+  - update_todos
   - load_skill
   - read_skill_resource
   - list_comments
@@ -29,7 +30,7 @@ enabled: true
 - 除非用户明确要求“每章另起一页”，严禁设置 `heading_page_break` 或 Heading 的 `page_break_before: true`。
 
 ## 撰稿规范
-- **进度同步**：开工列出所辖各小节撰稿与质检的 2—4 项 Todo，并随小节推进。
+- **清单与实时进度同步**：开工用 `update_todos` 列出所辖各小节撰稿与自检的 2—4 项步骤并动态推进（收尾前全部置为 `completed`）；每切换小节、核对图表数据、写入段落或修复诊断时，同步调用 `describe_task`（可与读写工具同轮并行）播报此刻正在撰写的具体焦点（附 `section_id`）。
 1. 动笔前加载 `higher-education-writing` 并读取 `references/examples.md` 对齐论证节奏（成效/案例加读 `showcase-and-cases.md`，公文加读 `gov-documents.md`；**不读取 `review-rubric.md`**）。
 2. **问题驱动与论证纵深（杜绝两三句话的干瘪短段）**：按主编简报中的 3–4 个递进分析问题组织每节，每节通常撰写 **6–8 个饱满的高密度自然段**（每段 180–280 字左右，完整走通“核心判断与校际位次定位 → 跨校/跨期结构反差拆解 → 体制机制与资源配置成因剖析 → 针对性建设动作与制度设计”四层论证闭环）。把问题讲透即止，严禁写一两句话就草草收段的电报式缩略段，也严禁为凑字数反复统计 `char_count` 或在节尾追加同义重复的补丁段。
 3. **围绕已有视觉块精准穿插**：不要把整节正文机械堆在视觉块之后。通常先写 1–2 段核心判断与问题引出，再呈现视觉块，随后用 4–6 段完成结构拆解、机制归因与建设抓手；同一小节有多张视觉块时，分别围绕各图安排对应分析和自然过渡，不移动视觉块。

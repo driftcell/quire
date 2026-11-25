@@ -37,7 +37,7 @@ use super::{
         ListAttachmentsReceipt, ListSkillsReceipt, ListSubagentsReceipt, PreviewEchartsReceipt,
         ReadSkillResourceReceipt, SandboxExecuteReceipt, SandboxMountAttachmentReceipt,
         SandboxReadFileReceipt, SandboxWriteFileReceipt, SetSessionTitleReceipt, SkillSummaryView,
-        SubagentSummaryView, TaskTodoInput,
+        SubagentSummaryView, TaskTodoInput, UpdateTodosReceipt,
     },
 };
 
@@ -53,6 +53,7 @@ pub const BUILTIN_TOOLS: &[&str] = &[
     "load_skill",
     "read_skill_resource",
     "describe_task",
+    "update_todos",
     "set_session_title",
     "list_subagents",
     "spawn_subagents",
@@ -177,32 +178,38 @@ pub(super) struct RuntimeToolScope {
     pub(super) doc_id: SharedDocId,
     /// Snapshot of the parent agent's live conversation history for `fork: true` subagents.
     pub(super) parent_history: super::SharedForkHistory,
-    /// Live todo list for this agent run so incremental `describe_task` updates and
-    /// `spawn_subagents` receipts share the latest todo state without awaiting across locks.
+    /// Live work focus and todo checklist for this agent run so `describe_task`, `update_todos`,
+    /// and `spawn_subagents` receipts share state without holding locks across `.await`.
+    task_focus_title: std::sync::Mutex<Option<String>>,
     task_todos: std::sync::Mutex<Vec<quire_session_protocol::TaskTodoItem>>,
 }
 
 impl RuntimeToolScope {
-    pub(super) fn update_task_todos(
+    pub(super) fn set_task_focus_title(&self, title: &str) {
+        let mut guard = self
+            .task_focus_title
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *guard = Some(title.to_string());
+    }
+
+    pub(super) fn task_focus_title_snapshot(&self) -> Option<String> {
+        self.task_focus_title
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    pub(super) fn replace_task_todos(
         &self,
-        title: &str,
-        detail: Option<&str>,
-        section_id: Option<&str>,
-        incoming: &[quire_session_protocol::TaskTodoItem],
+        incoming: Vec<quire_session_protocol::TaskTodoItem>,
     ) -> Vec<quire_session_protocol::TaskTodoItem> {
         let mut guard = self
             .task_todos
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let merged = quire_session_protocol::merge_task_todos(
-            Some(guard.as_slice()),
-            title,
-            detail,
-            section_id,
-            incoming,
-        );
-        *guard = merged.clone();
-        merged
+        *guard = incoming.clone();
+        incoming
     }
 
     pub(super) fn task_todo_snapshot(&self) -> Vec<quire_session_protocol::TaskTodoItem> {
@@ -229,6 +236,12 @@ pub(super) fn quire_turn_meta(context: &ToolContext) -> Result<QuireTurnMeta, To
 
 pub(super) fn tool_other(error: impl std::fmt::Display) -> ToolExecutionError {
     ToolExecutionError::other(error.to_string())
+}
+
+pub(super) fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
 }
 
 const MAX_TOOL_CODE_BYTES: usize = 256 * 1024;
@@ -276,6 +289,7 @@ impl RigModelCore {
             cancellation: execution.cancellation.clone(),
             doc_id: Arc::clone(&execution.doc_id),
             parent_history,
+            task_focus_title: std::sync::Mutex::new(None),
             task_todos: std::sync::Mutex::new(Vec::new()),
         });
         let mut server = ToolServer::new();
@@ -350,6 +364,12 @@ impl RigModelCore {
             "describe_task",
             allow_list_matches(&execution.allowed_tools, "describe_task"),
             DescribeTaskTool
+        );
+        register!(
+            "update_todos",
+            allow_list_matches(&execution.allowed_tools, "update_todos")
+                || allow_list_matches(&execution.allowed_tools, "describe_task"),
+            UpdateTodosTool
         );
         register!(
             "set_session_title",

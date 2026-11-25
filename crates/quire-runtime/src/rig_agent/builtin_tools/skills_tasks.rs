@@ -138,44 +138,77 @@ pub(crate) fn summarize_todo_progress(
 pub(super) fn describe_task_next_hint(summary: Option<&TodoProgressSummary>) -> Option<String> {
     let summary = summary?;
     if let Some(next) = summary.next_pending_title.as_deref() {
+        let active = summary.active_title.as_deref().unwrap_or("none");
         Some(format!(
-            "Next todo: \"{next}\". Call describe_task(title=\"{next}\") when transitioning to that stage."
+            "Active todo: \"{active}\"; next pending: \"{next}\". Call update_todos when advancing, adding, or revising checklist steps."
         ))
     } else if let Some(active) = summary.active_title.as_deref() {
         Some(format!(
-            "Final todo active (\"{active}\"). Mark all todos completed with describe_task before finishing."
+            "Final todo active (\"{active}\"). Mark all remaining todos completed (or skipped) via update_todos before finishing."
         ))
     } else {
         Some("All todos completed.".into())
     }
 }
 
-/// Report the current work stage and step-by-step todo progress to the user interface.
+pub(super) fn update_todos_next_hint(
+    summary: Option<&TodoProgressSummary>,
+    has_live_focus: bool,
+) -> Option<String> {
+    let summary = summary?;
+    let focus_suffix = if has_live_focus {
+        ""
+    } else {
+        " Call describe_task to broadcast the specific action currently underway."
+    };
+    if let Some(next) = summary.next_pending_title.as_deref() {
+        Some(format!(
+            "Next todo: \"{next}\". Call update_todos when advancing or dynamically adjusting steps, and use describe_task for concrete live status.{focus_suffix}"
+        ))
+    } else if let Some(active) = summary.active_title.as_deref() {
+        Some(format!(
+            "Final todo active (\"{active}\"). Mark all remaining todos completed (or skipped) via update_todos before finishing.{focus_suffix}"
+        ))
+    } else {
+        Some("All todos completed.".into())
+    }
+}
+
+/// Broadcast what you are actively doing right now to the user interface (`title`, optional `detail`,
+/// optional `section_id`).
+///
+/// Purpose & boundaries:
+/// - ONLY reports live current work focus — it NEVER adds, completes, or modifies your todo checklist
+///   (use `update_todos` to create, advance, or dynamically revise todo steps).
+/// - `title` does NOT need to match any todo item; describe the exact concrete action underway right
+///   now instead of leaving a coarse stage name frozen.
+/// - May be called in the same parallel tool batch alongside the action it describes (`spawn_subagents`,
+///   `upsert_sources`, `apply_operations`, search/fetch, `preview_echarts`, `lint_document`, etc.)
+///   so status reporting costs zero extra turns.
 ///
 /// When to call (both lead agent and subagents):
-/// 1. At task/phase start: initialize `todos` (item 1 = `in_progress`, remaining = `pending`).
-/// 2. At EVERY step transition — immediately as you move from one todo item to the next, before
-///    calling `spawn_subagents`, and after subagents return — so progress advances one item at a time
-///    instead of batch-completing everything at the end.
-/// 3. Fast incremental step: omit `todos` and pass `title` matching the next todo item; the runtime
-///    automatically marks the previous `in_progress` item `completed` and activates the matching item.
-///    Pass `todos` only when initializing, adding/reordering items, or marking the final item `completed`.
-/// 4. Before finishing: mark all remaining items `completed` (or `skipped`).
+/// 1. When starting any concrete sub-task or shifting focus inside a stage (dispatching research
+///    tracks, cross-verifying conflicting figures, restructuring sections, generating a chart,
+///    drafting/humanizing prose, or fixing reviewer findings).
+/// 2. Immediately after subagents return when synthesizing results or launching follow-up work.
+/// 3. Before substantial edits in a specific report chapter (`section_id`), so the UI highlights and
+///    links to the active section.
+///
+/// When NOT to call:
+/// - Do not call only to update or complete checklist items — call `update_todos` for checklist changes.
+/// - Do not re-send identical `title` and `detail` when the active focus has not changed.
 #[rig_tool(name = "describe_task")]
 pub(crate) async fn describe_task_tool(
     #[rig(context)] context: &mut ToolContext,
-    /// Short Chinese status phrase (`<= 16` chars) with zero internal tool names or raw IDs.
-    /// When advancing an existing todo list without `todos`, match the next todo item's `title`.
-    /// Good: `"核对省属高校国自然立项口径"`; Bad: `"调用 apply_operations 更新 sec_2"`.
+    /// Short, concrete Chinese status phrase (`<= 20` chars) describing the exact work happening now,
+    /// with zero internal tool names or raw block IDs. Need not match a todo title.
+    /// Good: `"交叉核验省属高校国自然口径"` or `"精修第三章师资对比段落"`;
+    /// Bad: `"调用 apply_operations 更新 sec_2"` or repeating an unchanged macro stage title for 20 minutes.
     title: String,
-    /// Optional concise Chinese note on the current focus or blocker (e.g. `"对比2021—2025年面上与青年项目增量"`).
+    /// Optional concise Chinese note on current focus, data scope, or blocker (e.g. `"比对2021—2025年面上与青年项目增量冲突"`).
     detail: Option<String>,
     /// Optional `block_id` of the report heading currently being worked on to highlight the active chapter in the UI.
     section_id: Option<String>,
-    /// Ordered todo list (`status`: `"pending" | "in_progress" | "completed" | "skipped"`). Omit when
-    /// advancing sequentially by `title`. Keep titles as parallel 8–16 char Chinese verb-object phrases
-    /// with at most one `in_progress` item at a time.
-    todos: Option<Vec<TaskTodoInput>>,
 ) -> Result<DescribeTaskReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let title = title.trim().to_string();
@@ -184,12 +217,80 @@ pub(crate) async fn describe_task_tool(
             "`title` must be a non-empty status phrase",
         ));
     }
-    let normalized_todos: Vec<quire_session_protocol::TaskTodoItem> = todos
-        .unwrap_or_default()
+    let detail = normalize_optional_text(detail);
+    let section_id = normalize_optional_text(section_id);
+
+    runtime.set_task_focus_title(&title);
+    runtime
+        .event_scope
+        .send(ModelStreamEvent::TaskFocus {
+            title: title.clone(),
+            detail: detail.clone(),
+            section_id: section_id.clone(),
+            todos: Vec::new(),
+        })
+        .await;
+
+    let current_todos = runtime.task_todo_snapshot();
+    let summary = summarize_todo_progress(&current_todos);
+    let _next_hint = describe_task_next_hint(summary.as_ref());
+    let (active_todo, todo_progress) = match summary {
+        Some(item) => (item.active_title, Some(item.progress)),
+        None => (None, None),
+    };
+    Ok(DescribeTaskReceipt {
+        title,
+        detail,
+        section_id,
+        active_todo,
+        todo_progress,
+        _next_hint,
+    })
+}
+
+/// Create, advance, or dynamically revise your structured stage checklist (`todos`) in the UI.
+///
+/// Purpose & boundaries:
+/// - ONLY manages the ordered multi-step checklist (`todos`) — it NEVER replaces live action
+///   narration (`describe_task`). Call `describe_task` alongside or between stage updates whenever
+///   you begin a concrete sub-action inside a stage.
+/// - Always pass the complete ordered `todos` list so dynamic additions, removals, reorderings, and
+///   status transitions remain atomic and race-free even when called in parallel with `describe_task`.
+/// - Keep items at workflow / chapter granularity (lead agent: 3–6 macro stages; subagents: 2–4
+///   steps for multi-step work; parallel 8–16 char Chinese verb-object phrases), with at most one
+///   `in_progress` item at a time.
+///
+/// When to call (both lead agent and subagents):
+/// 1. **At task start**: initialize the checklist (item 1 = `in_progress`, remaining = `pending`).
+/// 2. **At stage transitions**: immediately as you move to a new stage (before calling
+///    `spawn_subagents` for a new phase, and after subagents return when advancing), mark finished
+///    items `completed` and set the next item `in_progress`.
+/// 3. **When the plan changes dynamically**: insert newly discovered steps (e.g. supplementary
+///    evidence verification, outline restructuring, post-review revision), split/reorder upcoming
+///    items, or mark obsolete steps `skipped`.
+/// 4. **Before finishing**: mark all remaining checklist items `completed` (or `skipped`).
+///
+/// When NOT to call:
+/// - Do not call for micro-actions inside an unchanged stage — use `describe_task` instead.
+/// - Skip `update_todos` for a trivial 1–2 tool single lookup that needs no checklist; use only
+///   `describe_task` there.
+#[rig_tool(name = "update_todos")]
+pub(crate) async fn update_todos_tool(
+    #[rig(context)] context: &mut ToolContext,
+    /// Full ordered todo checklist (`status`: `"pending" | "in_progress" | "completed" | "skipped"`,
+    /// defaults to `"pending"` when omitted). Pass the complete list so dynamic insertions,
+    /// removals, reorderings, and status transitions stay exact.
+    todos: Vec<TaskTodoInput>,
+) -> Result<UpdateTodosReceipt, ToolExecutionError> {
+    let runtime = runtime_tool_scope(context)?;
+    let normalized: Vec<quire_session_protocol::TaskTodoItem> = todos
         .into_iter()
         .filter_map(|item| {
             let mut item = quire_session_protocol::TaskTodoItem::from(item);
+            item.id = normalize_optional_text(item.id);
             item.title = item.title.trim().to_string();
+            item.detail = normalize_optional_text(item.detail);
+            item.section_id = normalize_optional_text(item.section_id);
             if item.title.is_empty() {
                 None
             } else {
@@ -197,30 +298,28 @@ pub(crate) async fn describe_task_tool(
             }
         })
         .collect();
-    let effective_todos = runtime.update_task_todos(
-        &title,
-        detail.as_deref(),
-        section_id.as_deref(),
-        &normalized_todos,
-    );
+    if normalized.is_empty() {
+        return Err(ToolExecutionError::invalid_args(
+            "`todos` must contain at least one item with a non-empty `title`",
+        ));
+    }
+
+    let stored = runtime.replace_task_todos(normalized);
     runtime
         .event_scope
-        .send(ModelStreamEvent::TaskFocus {
-            title: title.clone(),
-            detail: detail.clone(),
-            section_id: section_id.clone(),
-            todos: normalized_todos,
+        .send(ModelStreamEvent::TodosUpdated {
+            todos: stored.clone(),
         })
         .await;
-    let summary = summarize_todo_progress(&effective_todos);
-    let _next_hint = describe_task_next_hint(summary.as_ref());
+
+    let current_focus = runtime.task_focus_title_snapshot();
+    let summary = summarize_todo_progress(&stored);
+    let _next_hint = update_todos_next_hint(summary.as_ref(), current_focus.is_some());
     let progress = summary.map(|item| item.progress);
-    Ok(DescribeTaskReceipt {
-        title,
-        detail,
-        section_id,
-        todos: effective_todos,
+    Ok(UpdateTodosReceipt {
+        todos: stored,
         progress,
+        current_focus,
         _next_hint,
     })
 }

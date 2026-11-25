@@ -32,30 +32,50 @@ fn ask_user_schema_exposes_questions_array() {
 }
 
 #[test]
-fn describe_task_schema_advertises_status_and_parameters() {
+fn describe_task_schema_advertises_live_focus_without_todos() {
     let description = DESCRIBE_TASK_TOOL.description();
-    assert!(description.contains("current work stage"));
-    assert!(description.contains("user interface"));
+    assert!(description.contains("actively doing right now"));
+    assert!(description.contains("update_todos"));
 
     let parameters = DESCRIBE_TASK_TOOL.parameters();
     let properties = parameters
         .get("properties")
         .and_then(Value::as_object)
         .expect("describe_task schema should have properties");
-    for name in ["title", "detail", "section_id", "todos"] {
+    for name in ["title", "detail", "section_id"] {
         assert!(properties.contains_key(name), "missing `{name}`");
     }
+    assert!(
+        !properties.contains_key("todos"),
+        "describe_task must no longer own `todos`"
+    );
     let title = properties
         .get("title")
         .and_then(|value| value.get("description"))
         .and_then(Value::as_str)
         .expect("title description");
-    assert!(title.contains("16"));
+    assert!(title.contains("20"));
     assert_eq!(parameters.get("required"), Some(&json!(["title"])));
 }
 
 #[test]
-fn describe_task_input_defaults_missing_status_to_pending() {
+fn update_todos_schema_advertises_dynamic_checklist_and_boundaries() {
+    let description = UPDATE_TODOS_TOOL.description();
+    assert!(description.contains("structured stage checklist"));
+    assert!(description.contains("describe_task"));
+
+    let parameters = UPDATE_TODOS_TOOL.parameters();
+    let properties = parameters
+        .get("properties")
+        .and_then(Value::as_object)
+        .expect("update_todos schema should have properties");
+    assert!(properties.contains_key("todos"), "missing `todos`");
+    assert!(!properties.contains_key("title"));
+    assert_eq!(parameters.get("required"), Some(&json!(["todos"])));
+}
+
+#[test]
+fn update_todos_input_defaults_missing_status_to_pending() {
     let input: TaskTodoInput = serde_json::from_value(json!({"title": "梳理立项数据"})).unwrap();
     assert_eq!(
         input.status,
@@ -66,8 +86,8 @@ fn describe_task_input_defaults_missing_status_to_pending() {
 }
 
 #[test]
-fn describe_task_progress_tracks_incremental_title_advances() {
-    use quire_session_protocol::{TaskTodoItem, TaskTodoStatus, merge_task_todos};
+fn update_todos_and_describe_task_hints_cross_reference_cleanly() {
+    use quire_session_protocol::{TaskTodoItem, TaskTodoStatus};
 
     let initial = vec![
         TaskTodoItem {
@@ -89,22 +109,43 @@ fn describe_task_progress_tracks_incremental_title_advances() {
     assert!(step1.progress.contains("0/2 completed"));
     assert_eq!(step1.active_title.as_deref(), Some("立项调研"));
     assert_eq!(step1.next_pending_title.as_deref(), Some("框架建桩"));
+    assert!(describe_task_next_hint(Some(&step1)).is_some_and(|hint| {
+        hint.contains("Active todo: \"立项调研\"") && hint.contains("update_todos")
+    }));
     assert!(
-        describe_task_next_hint(Some(&step1))
-            .is_some_and(|hint| hint.contains("describe_task(title=\"框架建桩\")"))
+        update_todos_next_hint(Some(&step1), false)
+            .is_some_and(|hint| hint.contains("Next todo: \"框架建桩\"")
+                && hint.contains("Call describe_task"))
+    );
+    assert!(
+        update_todos_next_hint(Some(&step1), true)
+            .is_some_and(|hint| !hint.contains("Call describe_task"))
     );
 
-    let advanced = merge_task_todos(Some(&initial), "框架建桩", None, None, &[]);
-    assert_eq!(advanced.len(), 2);
-    assert_eq!(advanced[0].status, TaskTodoStatus::Completed);
-    assert_eq!(advanced[1].status, TaskTodoStatus::InProgress);
-    let step2 = summarize_todo_progress(&advanced).expect("summary for final todo");
+    let final_stage = vec![
+        TaskTodoItem {
+            id: Some("t1".into()),
+            title: "立项调研".into(),
+            status: TaskTodoStatus::Completed,
+            detail: None,
+            section_id: None,
+        },
+        TaskTodoItem {
+            id: Some("t2".into()),
+            title: "框架建桩".into(),
+            status: TaskTodoStatus::InProgress,
+            detail: None,
+            section_id: None,
+        },
+    ];
+    let step2 = summarize_todo_progress(&final_stage).expect("summary for final todo");
     assert!(step2.progress.contains("1/2 completed"));
     assert_eq!(step2.active_title.as_deref(), Some("框架建桩"));
     assert!(step2.next_pending_title.is_none());
     assert!(
-        describe_task_next_hint(Some(&step2))
-            .is_some_and(|hint| hint.contains("Final todo active (\"框架建桩\")"))
+        update_todos_next_hint(Some(&step2), true)
+            .is_some_and(|hint| hint.contains("Final todo active (\"框架建桩\")")
+                && hint.contains("update_todos"))
     );
 }
 

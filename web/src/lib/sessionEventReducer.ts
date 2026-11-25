@@ -333,34 +333,13 @@ export function reduceSessionEvent(
       }
       break;
     case "task_focus": {
-      const mergeTodos = (
+      const keepExistingOrLegacyTodos = (
         prevTodos: TaskTodoItem[] | undefined,
       ): TaskTodoItem[] | undefined => {
         if (event.todos && event.todos.length > 0) {
           return event.todos;
         }
-        if (!prevTodos || prevTodos.length === 0) {
-          return undefined;
-        }
-        const updated = prevTodos.map((item) =>
-          item.status === "in_progress" && item.title !== event.title
-            ? { ...item, status: "completed" as const }
-            : { ...item },
-        );
-        const match = updated.find((item) => item.title === event.title);
-        if (match) {
-          match.status = "in_progress";
-          if (event.detail) match.detail = event.detail;
-          if (event.section_id) match.section_id = event.section_id;
-        } else {
-          updated.push({
-            title: event.title,
-            status: "in_progress",
-            detail: event.detail ?? undefined,
-            section_id: event.section_id ?? undefined,
-          });
-        }
-        return updated;
+        return prevTodos && prevTodos.length > 0 ? prevTodos : undefined;
       };
       if (isSubagentEvent) {
         next = {
@@ -375,7 +354,7 @@ export function reduceSessionEvent(
                   title: event.title,
                   detail: event.detail ?? undefined,
                   sectionId: event.section_id ?? undefined,
-                  todos: mergeTodos(subTrace.taskFocus?.todos),
+                  todos: keepExistingOrLegacyTodos(subTrace.taskFocus?.todos),
                 },
               },
             };
@@ -391,7 +370,40 @@ export function reduceSessionEvent(
               title: event.title,
               detail: event.detail ?? undefined,
               sectionId: event.section_id ?? undefined,
-              todos: mergeTodos(mainTrace.taskFocus?.todos),
+              todos: keepExistingOrLegacyTodos(mainTrace.taskFocus?.todos),
+            },
+          },
+        };
+      }
+      break;
+    }
+    case "todos_updated": {
+      if (isSubagentEvent) {
+        next = {
+          ...next,
+          liveSubagents: mapSubagent(next, event.run_id, (subagent) => {
+            const subTrace = withSubagentTrace(subagent.trace, eventTs);
+            return {
+              ...subagent,
+              trace: {
+                ...subTrace,
+                taskFocus: {
+                  ...(subTrace.taskFocus ?? { title: "" }),
+                  todos: event.todos,
+                },
+              },
+            };
+          }),
+        };
+      } else {
+        const mainTrace = withMainTrace(next, event.run_id, eventTs);
+        next = {
+          ...next,
+          liveMain: {
+            ...mainTrace,
+            taskFocus: {
+              ...(mainTrace.taskFocus ?? { title: "" }),
+              todos: event.todos,
             },
           },
         };

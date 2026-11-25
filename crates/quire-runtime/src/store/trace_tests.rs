@@ -624,3 +624,81 @@ fn recoverable_turn_failure_marks_trace_interrupted() {
     assert_eq!(trace.status, "interrupted");
     assert!(trace.duration_ms.is_some());
 }
+
+#[test]
+fn todos_updated_preserves_live_focus_and_task_focus_preserves_todos() {
+    let events = vec![
+        SessionEvent::new(1, "run_split", "main", None, SessionEventKind::TurnStarted),
+        SessionEvent::new(
+            2,
+            "run_split",
+            "main",
+            None,
+            SessionEventKind::TodosUpdated {
+                todos: vec![quire_session_protocol::TaskTodoItem {
+                    id: Some("t1".into()),
+                    title: "阶段一调研".into(),
+                    status: quire_session_protocol::TaskTodoStatus::InProgress,
+                    detail: None,
+                    section_id: None,
+                }],
+            },
+        ),
+        SessionEvent::new(
+            3,
+            "run_split",
+            "main",
+            None,
+            SessionEventKind::TaskFocus {
+                title: "检索省属高校国自然口径".into(),
+                detail: Some("正在比对历史增量".into()),
+                section_id: None,
+                todos: Vec::new(),
+            },
+        ),
+        SessionEvent::new(
+            4,
+            "sub_split",
+            "researcher",
+            Some("run_split".into()),
+            SessionEventKind::SubagentStarted {
+                subagent_run_id: "sub_split".into(),
+                agent_name: "researcher".into(),
+                display_name: None,
+                task: "查核数据".into(),
+                section_id: None,
+            },
+        ),
+        SessionEvent::new(
+            5,
+            "sub_split",
+            "researcher",
+            Some("run_split".into()),
+            SessionEventKind::TodosUpdated {
+                todos: vec![quire_session_protocol::TaskTodoItem {
+                    id: None,
+                    title: "核查基金委公报".into(),
+                    status: quire_session_protocol::TaskTodoStatus::InProgress,
+                    detail: None,
+                    section_id: None,
+                }],
+            },
+        ),
+    ];
+
+    let traces = aggregate_run_traces(&events);
+    let trace = traces.first().expect("trace");
+    let focus = trace.task_focus.as_ref().expect("main focus");
+    assert_eq!(focus.title, "检索省属高校国自然口径");
+    assert_eq!(focus.detail.as_deref(), Some("正在比对历史增量"));
+    assert_eq!(focus.todos.len(), 1);
+    assert_eq!(focus.todos[0].title, "阶段一调研");
+
+    let Some(RunTraceSegment::Execution { subagents, .. }) = trace.segments.first() else {
+        panic!("expected execution segment");
+    };
+    let sub_focus = subagents[0].task_focus.as_ref().expect("sub focus");
+    assert_eq!(sub_focus.title, "");
+    assert_eq!(sub_focus.todos.len(), 1);
+    assert_eq!(sub_focus.todos[0].title, "核查基金委公报");
+}

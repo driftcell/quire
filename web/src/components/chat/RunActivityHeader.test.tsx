@@ -719,4 +719,148 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
       "<p",
     );
   });
+
+  test("separates live describe_task status from update_todos checklist for main and subagents", () => {
+    const liveMain: LiveAgentTrace = {
+      runId: "run_split",
+      agentId: "main",
+      isStreaming: true,
+      taskFocus: {
+        title: "核对省属高校国自然口径冲突",
+        detail: "对比2021—2025年面上与青年项目增量",
+        sectionId: "sec_1",
+        todos: [
+          { title: "立项与并行调研", status: "completed" },
+          { title: "交叉补证与框架建桩", status: "in_progress" },
+          { title: "派生测算与并行撰稿", status: "pending" },
+        ],
+      },
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            {
+              toolCallId: "tc_u1",
+              toolName: "update_todos",
+              status: "completed",
+              inputPreview: JSON.stringify({
+                todos: [
+                  { title: "立项与并行调研", status: "completed" },
+                  { title: "交叉补证与框架建桩", status: "in_progress" },
+                  { title: "派生测算与并行撰稿", status: "pending" },
+                ],
+              }),
+            },
+            {
+              toolCallId: "tc_d1",
+              toolName: "describe_task",
+              status: "completed",
+              inputPreview: JSON.stringify({
+                title: "核对省属高校国自然口径冲突",
+                detail: "对比2021—2025年面上与青年项目增量",
+                section_id: "sec_1",
+              }),
+            },
+          ],
+          subagentRunIds: ["sub_todos_only", "sub_both"],
+        },
+      ],
+    };
+
+    const subagents: LiveSubagentRun[] = [
+      {
+        subagentRunId: "sub_todos_only",
+        agentName: "researcher",
+        displayName: "调研员甲",
+        task: "查核基金委口径",
+        status: "running",
+        trace: {
+          runId: "sub_todos_only",
+          agentId: "researcher",
+          isStreaming: true,
+          taskFocus: {
+            title: "",
+            todos: [{ title: "查核基金委口径", status: "in_progress" }],
+          },
+          segments: [
+            {
+              kind: "execution",
+              tools: [
+                {
+                  toolCallId: "tc_su1",
+                  toolName: "update_todos",
+                  status: "completed",
+                  inputPreview: JSON.stringify({
+                    todos: [{ title: "查核基金委口径", status: "in_progress" }],
+                  }),
+                },
+              ],
+              subagentRunIds: [],
+            },
+          ],
+        },
+      },
+      {
+        subagentRunId: "sub_both",
+        agentName: "analyst",
+        displayName: "量化分析师",
+        task: "测算五年增量",
+        status: "running",
+        trace: {
+          runId: "sub_both",
+          agentId: "analyst",
+          isStreaming: true,
+          taskFocus: {
+            title: "绘制双轴增量对比图",
+            todos: [
+              { title: "汇总五年基准值", status: "completed" },
+              { title: "绘制增量对比图表", status: "in_progress" },
+            ],
+          },
+          segments: [],
+        },
+      },
+    ];
+
+    const liveModel = buildLiveRunStatusModel(liveMain, subagents, 12);
+    expect(liveModel.title).toBe("核对省属高校国自然口径冲突");
+    expect(liveModel.detail).toBe("对比2021—2025年面上与青年项目增量");
+    expect(liveModel.todos).toHaveLength(3);
+    expect(liveModel.todos[1]?.title).toBe("交叉补证与框架建桩");
+    expect(liveModel.todos[1]?.status).toBe("in_progress");
+    expect(liveModel.subagents[0]?.activityText).toBeUndefined();
+    expect(liveModel.subagents[0]?.todos).toHaveLength(1);
+    expect(liveModel.subagents[1]?.activityText).toBe("绘制双轴增量对比图");
+    expect(liveModel.subagents[1]?.todos).toHaveLength(2);
+
+    const collapsedHtml = renderToStaticMarkup(
+      <RunActivityHeader
+        model={liveModel}
+        isStreaming={true}
+        detailsOpen={false}
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(collapsedHtml).toContain("核对省属高校国自然口径冲突");
+    expect(collapsedHtml).toContain("对比2021—2025年面上与青年项目增量");
+    expect(collapsedHtml).toContain("交叉补证与框架建桩");
+
+    const expandedHtml = renderToStaticMarkup(
+      <RunActivityHeader
+        model={liveModel}
+        isStreaming={true}
+        detailsOpen={true}
+        onToggleDetails={() => {}}
+      />,
+    );
+    expect(expandedHtml).toContain("查核基金委口径");
+    expect(expandedHtml).toContain("绘制双轴增量对比图");
+    const todosOnlyStart = expandedHtml.indexOf(
+      'data-subagent-id="sub_todos_only"',
+    );
+    const bothStart = expandedHtml.indexOf('data-subagent-id="sub_both"');
+    expect(todosOnlyStart).toBeGreaterThan(-1);
+    expect(bothStart).toBeGreaterThan(todosOnlyStart);
+    expect(expandedHtml.slice(todosOnlyStart, bothStart)).not.toContain("<p");
+  });
 });

@@ -65,7 +65,7 @@ pub struct ReadSkillResourceReceipt {
     pub content: String,
 }
 
-/// One `describe_task` todo argument. Unlike the wire-level [`TaskTodoItem`], missing `status`
+/// One `update_todos` checklist argument. Unlike the wire-level [`TaskTodoItem`], missing `status`
 /// defaults to `pending` so the model may omit it when adding a new item.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TaskTodoInput {
@@ -97,10 +97,21 @@ pub struct DescribeTaskReceipt {
     pub title: String,
     pub detail: Option<String>,
     pub section_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_todo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_progress: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub _next_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct UpdateTodosReceipt {
     pub todos: Vec<quire_session_protocol::TaskTodoItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_focus: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub _next_hint: Option<String>,
 }

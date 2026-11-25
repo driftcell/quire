@@ -32,7 +32,7 @@ struct Buffer {
 ///
 /// Buffers flush after 50ms or 64 characters so the browser receives text at frame-friendly
 /// intervals. Callers must force a flush before any structural event (`ToolCallStarted`,
-/// `TaskFocus`, `TurnFinished`, `TurnFailed`) or cancellation so event order remains durable and
+/// `TaskFocus`, `TodosUpdated`, `TurnFinished`, `TurnFailed`) or cancellation so event order remains durable and
 /// replay-safe. Scopes are independent: coalescing never merges main and subagent output.
 #[derive(Debug)]
 pub struct DeltaCoalescer {

@@ -23,7 +23,7 @@ export function HistoricalSubagent({
       model={{
         id: subagent.subagent_run_id,
         title,
-        focusTitle: subagent.task_focus?.title,
+        focusTitle: subagent.task_focus?.title?.trim() || undefined,
         status,
         thinking: view.thinkingText,
         thinkingStreaming: false,

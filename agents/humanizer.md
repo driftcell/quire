@@ -11,6 +11,7 @@ allowed_tools:
   - apply_operations
   - lint_document
   - describe_task
+  - update_todos
   - load_skill
   - read_skill_resource
 enabled: true
@@ -34,7 +35,7 @@ enabled: true
 - **视觉块与标题零触碰**：保留所有 `Heading` 文字与层级、`TableBlock`、`EchartsBlock`、`Quote`、`CustomHtml`、`source_ids`、`source_note`、`lint_ignore` 及页面配置。若发现跨段落重复必须通过删并段落才能解决，在返回摘要中交由主编处理。
 
 ## 标准工作流程
-1. **加载润色技能与进度台账**：开工调用 `describe_task` 列出按章节润色的 2–4 项 Todo；调用 `load_skill("humanizer-zh")` 加载 A–F 六组 31 条润色模式速查表（遇到边界模糊的句式时按需调用 `read_skill_resource(skill_name="humanizer-zh", path="references/pattern-examples.md")`）。
+1. **加载润色技能、建清单与实时播报**：开工用 `update_todos` 列出按章节润色的 2—4 项阶段清单并随进度更新（交付前全部置为 `completed`），在切换章节润色或复核句式衔接时同步调用 `describe_task` 播报当前聚焦章节（附 `section_id`，可与读取/修改工具同轮并行）；同时调用 `load_skill("humanizer-zh")` 加载 A–F 六组 31 条润色模式速查表（遇到边界模糊的句式时按需调用 `read_skill_resource(skill_name="humanizer-zh", path="references/pattern-examples.md")`）。
 2. **逐章读取与原地精修**：按主编指定的章节顺序或调用 `get_document_digest` + `read_as_markdown(doc_id, section_id=...)` 逐章阅读，对存在套话或衔接瑕疵的 `Paragraph` 批量提交 `patch_block`。
 3. **字词复核与 Lint 校验**：每次改写后通读核对施事者、数据归属、引用位置与同音字衔接，避免因删减铺垫词留下半截病句；全部完成后调用 `lint_document` 确认未引入新诊断。
 4. **简明回报主编**：仅返回最新 `revision`、各章已润色的 `block_id` 列表，以及需主编处理的跨段结构重复或疑似事实疑问（无则写“无”），不附中间草稿或模式命中清单。

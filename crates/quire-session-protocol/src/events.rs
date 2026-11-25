@@ -82,7 +82,12 @@ pub enum SessionEventKind {
         detail: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         section_id: Option<String>,
+        /// Retained only for legacy `task_focus` replay payloads; live checklist mutations arrive
+        /// through [`SessionEventKind::TodosUpdated`].
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        todos: Vec<TaskTodoItem>,
+    },
+    TodosUpdated {
         todos: Vec<TaskTodoItem>,
     },
     ToolCallStarted {
@@ -168,6 +173,7 @@ impl SessionEventKind {
             Self::ThinkingDelta { .. } => "thinking_delta",
             Self::TextDelta { .. } => "text_delta",
             Self::TaskFocus { .. } => "task_focus",
+            Self::TodosUpdated { .. } => "todos_updated",
             Self::ToolCallStarted { .. } => "tool_call_started",
             Self::ToolCallFinished { .. } => "tool_call_finished",
             Self::SubagentStarted { .. } => "subagent_started",
@@ -212,6 +218,7 @@ impl SessionEventKind {
                 | Self::ThinkingDelta { .. }
                 | Self::TextDelta { .. }
                 | Self::TaskFocus { .. }
+                | Self::TodosUpdated { .. }
                 | Self::ToolCallStarted { .. }
                 | Self::ToolCallFinished { .. }
                 | Self::SubagentStarted { .. }
@@ -248,6 +255,7 @@ impl SessionEventKind {
                 section_id: None,
                 todos: Vec::new(),
             },
+            Self::TodosUpdated { todos: Vec::new() },
             Self::ToolCallStarted {
                 tool_call_id: "tc_1".into(),
                 tool_name: "tool".into(),
@@ -408,6 +416,32 @@ mod tests {
     }
 
     #[test]
+    fn todos_updated_roundtrips_with_frontend_field_names() {
+        let event = SessionEvent::new(
+            6,
+            "run_sub_1",
+            "researcher",
+            Some("run_main".into()),
+            SessionEventKind::TodosUpdated {
+                todos: vec![TaskTodoItem {
+                    id: Some("t1".into()),
+                    title: "核对省属高校立项口径".into(),
+                    status: crate::session::TaskTodoStatus::InProgress,
+                    detail: Some("重点比对2021—2025年增量".into()),
+                    section_id: Some("sec_1".into()),
+                }],
+            },
+        );
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["event"], "todos_updated");
+        assert_eq!(json["todos"][0]["title"], "核对省属高校立项口径");
+        assert_eq!(json["todos"][0]["status"], "in_progress");
+        assert_eq!(event.event_name(), "todos_updated");
+        let decoded: SessionEvent = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, event);
+    }
+
+    #[test]
     fn questionnaire_requested_is_terminal_and_roundtrips() {
         let event = SessionEvent::new(
             4,
@@ -444,7 +478,7 @@ mod tests {
         let schema = schemars::schema_for!(SessionEvent);
         let rendered = serde_json::to_string(&schema).unwrap();
         let variants = SessionEventKind::sample_variants();
-        assert_eq!(variants.len(), 22);
+        assert_eq!(variants.len(), 23);
         for kind in variants {
             let name = kind.event_name();
             assert!(rendered.contains(name), "missing {name} in schema");

@@ -272,12 +272,6 @@ pub(crate) async fn preview_echarts_tool(
     ToolOutput::content(content)
 }
 
-fn normalize_optional_text(value: Option<String>) -> Option<String> {
-    value
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-}
-
 /// Commit a chart that already passed `preview_echarts` into the report using its cached `preview_id`
 /// (never resend the ECharts `option`).
 ///

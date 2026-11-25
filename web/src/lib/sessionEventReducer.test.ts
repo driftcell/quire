@@ -387,3 +387,87 @@ describe("batched replay protection", () => {
     expect(comparable(actual.state)).toEqual(comparable(expected));
   });
 });
+
+describe("task_focus and todos_updated independence", () => {
+  test("keeps live work status and dynamic todo checklist orthogonal for main and subagents", () => {
+    const state = reduceAll([
+      {
+        seq: 1,
+        run_id: "run_1",
+        agent_id: "main",
+        parent_run_id: null,
+        timestamp: "2026-01-01T00:00:00Z",
+        event: "turn_started",
+      },
+      {
+        seq: 2,
+        run_id: "run_1",
+        agent_id: "main",
+        parent_run_id: null,
+        timestamp: "2026-01-01T00:00:01Z",
+        event: "todos_updated",
+        todos: [
+          { title: "立项与并行调研", status: "in_progress" },
+          { title: "汇总定调与建桩", status: "pending" },
+        ],
+      },
+      {
+        seq: 3,
+        run_id: "run_1",
+        agent_id: "main",
+        parent_run_id: null,
+        timestamp: "2026-01-01T00:00:02Z",
+        event: "task_focus",
+        title: "核验国自然立项口径冲突",
+        detail: "比对2021—2025年面上与青年增量",
+        section_id: "sec_1",
+      },
+      {
+        seq: 4,
+        run_id: "run_1",
+        agent_id: "main",
+        parent_run_id: null,
+        timestamp: "2026-01-01T00:00:03Z",
+        event: "todos_updated",
+        todos: [
+          { title: "立项与并行调研", status: "completed" },
+          { title: "补充交叉核验", status: "in_progress" },
+          { title: "汇总定调与建桩", status: "pending" },
+        ],
+      },
+      {
+        seq: 5,
+        run_id: "sub_1",
+        agent_id: "researcher",
+        parent_run_id: "run_1",
+        timestamp: "2026-01-01T00:00:04Z",
+        event: "subagent_started",
+        subagent_run_id: "sub_1",
+        agent_name: "researcher",
+        task: "交叉核验国自然立项",
+      },
+      {
+        seq: 6,
+        run_id: "sub_1",
+        agent_id: "researcher",
+        parent_run_id: "run_1",
+        timestamp: "2026-01-01T00:00:05Z",
+        event: "todos_updated",
+        todos: [{ title: "查核基金委口径", status: "in_progress" }],
+      },
+    ]);
+
+    expect(state.liveMain?.taskFocus?.title).toBe("核验国自然立项口径冲突");
+    expect(state.liveMain?.taskFocus?.detail).toBe(
+      "比对2021—2025年面上与青年增量",
+    );
+    expect(state.liveMain?.taskFocus?.sectionId).toBe("sec_1");
+    expect(state.liveMain?.taskFocus?.todos).toHaveLength(3);
+    expect(state.liveMain?.taskFocus?.todos?.[1]?.title).toBe("补充交叉核验");
+    expect(state.liveMain?.taskFocus?.todos?.[1]?.status).toBe("in_progress");
+
+    const sub = state.liveSubagents[0];
+    expect(sub?.trace.taskFocus?.title).toBe("");
+    expect(sub?.trace.taskFocus?.todos).toHaveLength(1);
+  });
+});

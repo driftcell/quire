@@ -163,40 +163,59 @@ export function parseDescribeTaskInput(inputPreview: string): {
   };
 }
 
-export function mergeTodoStep(
-  previous: TaskTodoItem[],
-  step: {
-    title?: string;
-    detail?: string;
-    sectionId?: string;
-    todos?: TaskTodoItem[];
-  },
+export function parseUpdateTodosInput(inputPreview: string): TaskTodoItem[] {
+  if (!inputPreview) return [];
+  try {
+    const parsed: unknown = JSON.parse(inputPreview);
+    if (isRecord(parsed)) {
+      return parseTodosFromParsedJson(parsed.todos);
+    }
+  } catch {
+    // Ignore truncated preview payloads; complete todos arrive on `todos_updated` events.
+  }
+  return [];
+}
+
+function collectTodosFromTools(
+  initial: TaskTodoItem[] | null | undefined,
+  tools: Iterable<{ toolName: string; inputPreview: string }>,
 ): TaskTodoItem[] {
-  if (step.todos && step.todos.length > 0) {
-    return step.todos.map((item) => ({ ...item }));
+  if (initial && initial.length > 0) {
+    return initial.map((item) => ({ ...item }));
   }
-  if (!step.title || previous.length === 0) {
-    return previous;
+  let todos: TaskTodoItem[] = [];
+  for (const tool of tools) {
+    if (tool.toolName === "update_todos") {
+      const parsed = parseUpdateTodosInput(tool.inputPreview);
+      if (parsed.length > 0) {
+        todos = parsed;
+      }
+    } else if (tool.toolName === "describe_task") {
+      const parsed = parseDescribeTaskInput(tool.inputPreview);
+      if (parsed.todos && parsed.todos.length > 0) {
+        todos = parsed.todos.map((item) => ({ ...item }));
+      }
+    }
   }
-  const updated = previous.map((item) =>
-    item.status === "in_progress" && item.title !== step.title
-      ? { ...item, status: "completed" as const }
-      : { ...item },
-  );
-  const existing = updated.find((item) => item.title === step.title);
-  if (existing) {
-    existing.status = "in_progress";
-    if (step.detail) existing.detail = step.detail;
-    if (step.sectionId) existing.section_id = step.sectionId;
-  } else {
-    updated.push({
-      title: step.title,
-      status: "in_progress",
-      detail: step.detail,
-      section_id: step.sectionId,
-    });
+  return todos;
+}
+
+export function extractHistoricalSubagentTodos(
+  sub: RunTraceSubagent,
+): TaskTodoItem[] {
+  const segmentTools: Array<{ toolName: string; inputPreview: string }> = [];
+  for (const seg of sub.segments ?? []) {
+    if (seg.kind === "execution") {
+      for (const tool of toToolTraceItems(seg.tools)) {
+        segmentTools.push({
+          toolName: tool.toolName,
+          inputPreview: tool.inputPreview,
+        });
+      }
+    }
   }
-  return updated;
+  const todos = collectTodosFromTools(sub.task_focus?.todos, segmentTools);
+  return finalizeTodos(todos, sub.status !== "failed" && sub.status !== "running");
 }
 
 export function finalizeTodos(
@@ -415,6 +434,9 @@ function buildSubagentMilestonesFromSegments(
     if (seg.kind === "execution") {
       const items = toToolTraceItems(seg.tools);
       for (const tool of items) {
+        if (tool.toolName === "update_todos") {
+          continue;
+        }
         if (tool.toolName === "describe_task") {
           const parsed = parseDescribeTaskInput(tool.inputPreview);
           if (parsed.title) {
@@ -513,6 +535,9 @@ function buildLiveSubagentMilestonesFromSegments(
     }
     if (seg.kind === "execution") {
       for (const tool of seg.tools) {
+        if (tool.toolName === "update_todos") {
+          continue;
+        }
         if (tool.toolName === "describe_task") {
           const parsed = parseDescribeTaskInput(tool.inputPreview);
           if (parsed.title) {
@@ -550,9 +575,7 @@ function buildHistoricalSubagentCard(
   let lastDescribeTitle: string | undefined;
   let lastDescribeDetail: string | undefined;
   let lastDescribeSection: string | undefined;
-  let todos: TaskTodoItem[] = sub.task_focus?.todos
-    ? sub.task_focus.todos.map((item) => ({ ...item }))
-    : [];
+  const todoTools: Array<{ toolName: string; inputPreview: string }> = [];
 
   for (const seg of sub.segments ?? []) {
     if (seg.kind === "thinking" && seg.text.trim()) {
@@ -561,6 +584,13 @@ function buildHistoricalSubagentCard(
       textParts.push(seg.text.trim());
     } else if (seg.kind === "execution") {
       for (const tool of toToolTraceItems(seg.tools)) {
+        if (tool.toolName === "update_todos") {
+          todoTools.push({
+            toolName: tool.toolName,
+            inputPreview: tool.inputPreview,
+          });
+          continue;
+        }
         if (tool.toolName === "describe_task") {
           const parsed = parseDescribeTaskInput(tool.inputPreview);
           if (parsed.title) {
@@ -568,7 +598,10 @@ function buildHistoricalSubagentCard(
             lastDescribeDetail = parsed.detail;
             lastDescribeSection = parsed.sectionId;
           }
-          todos = mergeTodoStep(todos, parsed);
+          todoTools.push({
+            toolName: tool.toolName,
+            inputPreview: tool.inputPreview,
+          });
         } else if (isVisibleTraceTool(tool)) {
           allTools.push(tool);
         }
@@ -593,6 +626,7 @@ function buildHistoricalSubagentCard(
     status,
   );
 
+  const todos = collectTodosFromTools(sub.task_focus?.todos, todoTools);
   return {
     id: sub.subagent_run_id,
     actor: sub.display_name?.trim() || sub.agent_name,
@@ -620,9 +654,7 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
   let lastDescribeTitle: string | undefined;
   let lastDescribeDetail: string | undefined;
   let lastDescribeSection: string | undefined;
-  let todos: TaskTodoItem[] = sub.trace.taskFocus?.todos
-    ? sub.trace.taskFocus.todos.map((item) => ({ ...item }))
-    : [];
+  const todoTools: Array<{ toolName: string; inputPreview: string }> = [];
 
   for (const seg of sub.trace.segments) {
     if (seg.kind === "thinking" && seg.text.trim()) {
@@ -631,6 +663,13 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
       textParts.push(seg.text.trim());
     } else if (seg.kind === "execution") {
       for (const tool of seg.tools) {
+        if (tool.toolName === "update_todos") {
+          todoTools.push({
+            toolName: tool.toolName,
+            inputPreview: tool.inputPreview,
+          });
+          continue;
+        }
         if (tool.toolName === "describe_task") {
           const parsed = parseDescribeTaskInput(tool.inputPreview);
           if (parsed.title) {
@@ -638,7 +677,10 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
             lastDescribeDetail = parsed.detail;
             lastDescribeSection = parsed.sectionId;
           }
-          todos = mergeTodoStep(todos, parsed);
+          todoTools.push({
+            toolName: tool.toolName,
+            inputPreview: tool.inputPreview,
+          });
         } else if (isVisibleTraceTool(tool)) {
           allTools.push(tool);
         }
@@ -662,6 +704,7 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
     { title: focusTitle, detail: focusDetail, sectionId },
     sub.status,
   );
+  const todos = collectTodosFromTools(sub.trace.taskFocus?.todos, todoTools);
 
   return {
     id: sub.subagentRunId,
@@ -684,34 +727,32 @@ function buildLiveSubagentCard(sub: LiveSubagentRun): MilestoneSubagentCard {
 }
 
 export function extractHistoricalTodos(trace: RunTraceSummary): TaskTodoItem[] {
-  let todos: TaskTodoItem[] = trace.task_focus?.todos
-    ? trace.task_focus.todos.map((item) => ({ ...item }))
-    : [];
+  const segmentTools: Array<{ toolName: string; inputPreview: string }> = [];
   for (const seg of trace.segments ?? []) {
     if (seg.kind !== "execution") continue;
     for (const tool of seg.tools ?? []) {
-      if (tool.tool_name === "describe_task") {
-        const parsed = parseDescribeTaskInput(tool.input_preview);
-        todos = mergeTodoStep(todos, parsed);
-      }
+      segmentTools.push({
+        toolName: tool.tool_name,
+        inputPreview: tool.input_preview,
+      });
     }
   }
+  const todos = collectTodosFromTools(trace.task_focus?.todos, segmentTools);
   return finalizeTodos(todos, trace.status === "completed");
 }
 
 export function extractLiveTodos(trace: LiveAgentTrace): TaskTodoItem[] {
-  let todos: TaskTodoItem[] = trace.taskFocus?.todos
-    ? trace.taskFocus.todos.map((item) => ({ ...item }))
-    : [];
+  const segmentTools: Array<{ toolName: string; inputPreview: string }> = [];
   for (const seg of trace.segments) {
     if (seg.kind !== "execution") continue;
     for (const tool of seg.tools) {
-      if (tool.toolName === "describe_task") {
-        const parsed = parseDescribeTaskInput(tool.inputPreview);
-        todos = mergeTodoStep(todos, parsed);
-      }
+      segmentTools.push({
+        toolName: tool.toolName,
+        inputPreview: tool.inputPreview,
+      });
     }
   }
+  const todos = collectTodosFromTools(trace.taskFocus?.todos, segmentTools);
   return finalizeTodos(todos, !trace.isStreaming);
 }
 
@@ -802,6 +843,9 @@ export function buildHistoricalMilestones(
     }
     if (seg.kind === "execution") {
       for (const tool of toToolTraceItems(seg.tools)) {
+        if (tool.toolName === "update_todos") {
+          continue;
+        }
         if (tool.toolName === "describe_task") {
           const parsed = parseDescribeTaskInput(tool.inputPreview);
           if (parsed.title) {
@@ -941,6 +985,9 @@ export function buildLiveMilestones(
     }
     if (seg.kind === "execution") {
       for (const tool of seg.tools) {
+        if (tool.toolName === "update_todos") {
+          continue;
+        }
         if (tool.toolName === "describe_task") {
           const parsed = parseDescribeTaskInput(tool.inputPreview);
           if (parsed.title) {

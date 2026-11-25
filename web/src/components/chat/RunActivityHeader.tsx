@@ -420,8 +420,15 @@ export const RunActivityHeader = memo(function RunActivityHeader({
 
   const hasMultiStepPlan = model.todos.length > 0 || planSteps.length > 1;
   const hasExpandableStages = planSteps.length > 0 || subCount > 0;
-  const collapsedTodoFocus =
-    isStreaming && !detailsOpen && planSteps.length > 0;
+  const activeStepDetail =
+    planSteps.find((step) => step.status === "in_progress")?.description ??
+    planSteps.find((step) => step.status === "pending")?.description;
+  const collapsedDuplicateDetail =
+    isStreaming &&
+    !detailsOpen &&
+    planSteps.length > 0 &&
+    Boolean(model.detail) &&
+    activeStepDetail === model.detail;
   const rootRef = useRef<HTMLElement>(null);
   const pendingFocusRef = useRef<string | null>(null);
 
@@ -543,7 +550,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         )}
       </div>
 
-      {(isStreaming || detailsOpen) && !collapsedTodoFocus && model.detail && (
+      {(isStreaming || detailsOpen) && !collapsedDuplicateDetail && model.detail && (
         <div className="ml-6.5">
           <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
             {model.detail}

@@ -17,6 +17,7 @@ allowed_tools:
   - list_comments
   - reply_comment
   - describe_task
+  - update_todos
 enabled: true
 ---
 
@@ -31,7 +32,7 @@ enabled: true
 - **向主编汇报**：简明同步已配置的封面变体、页眉页脚模板及 `lint_document` / `preview_report` 的版面核验结果。
 
 ## 工作规范
-- **进度同步**：开工列出版式规划、封面/样式更新与渲染核验的 2—4 项 Todo，并随进度推进。
+- **清单与实时进度同步**：开工用 `update_todos` 列出版式规划、封面/样式更新与渲染核验的 2—4 项步骤并动态维护；每开始修改封面、页眉页脚、样式或开展渲染巡检时调用 `describe_task` 播报当下工作焦点。
 1. 首次调整前阅读 `citations_and_css` 协议。
 2. **封面与页眉页脚标准化**：
    - 封面包含标题、副标题、眉题、编制单位、作者与日期，并在 A4 首屏内完整居中。自定义 HTML 必须遵守安全白名单，禁止脚本、内联事件与外部未知资源。

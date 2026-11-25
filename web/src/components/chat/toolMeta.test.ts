@@ -9,6 +9,7 @@ import {
   GlobeIcon,
   HistoryIcon,
   LayoutTemplateIcon,
+  ListTodoIcon,
   MessageSquareIcon,
   PaperclipIcon,
   SearchIcon,
@@ -44,6 +45,7 @@ function expectMeta(toolName: string, label: string, icon: LucideIcon): void {
 describe("isVisibleTraceTool", () => {
   test("hides orchestration and session-title metadata tools except failed spawn calls", () => {
     expect(isVisibleTraceTool(tool("describe", "describe_task"))).toBe(false);
+    expect(isVisibleTraceTool(tool("todos", "update_todos"))).toBe(false);
     expect(isVisibleTraceTool(tool("title", "set_session_title"))).toBe(false);
     expect(
       isVisibleTraceTool(tool("spawn-running", "spawn_subagents", "running")),
@@ -81,6 +83,8 @@ describe("getToolMeta", () => {
     expectMeta("rollback_revision", "回滚报告版本", HistoryIcon);
     expectMeta("list_subagents", "查看可用子代理", UsersIcon);
     expectMeta("spawn_subagents", "派发子代理", UsersIcon);
+    expectMeta("describe_task", "播报工作状态", FileTextIcon);
+    expectMeta("update_todos", "更新任务清单", ListTodoIcon);
   });
 
   test("covers every known report and runtime tool", () => {
@@ -116,6 +120,7 @@ describe("getToolMeta", () => {
       "ask_user",
       "set_session_title",
       "describe_task",
+      "update_todos",
       "list_subagents",
       "spawn_subagents",
       "deepseek_search",

@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-server`, `quire-runtime`, `quire-session-protocol`
-- **Related Notes:** `../notes/quire_typed_json_boundaries.md`, `../notes/runtime_native_report_tools.md`
+- **Related Notes:** `../notes/quire_typed_json_boundaries.md`, `../notes/runtime_native_report_tools.md`, `../notes/task_focus_and_todo_split.md`
 
 ## 1. Scope & Non-Goals
 
@@ -27,6 +27,11 @@ implementation:
      mutually exclusive flags, defaults, and side-effect warnings).
    - No intermediate wrapper struct or external Markdown file is used; `server.tool(TOOL)`
      registers the generated zero-sized tool unit struct directly on Rig's `ToolServer`.
+   - Status-tracking built-ins keep concerns split with explicit scenario boundaries in their `///`
+     descriptions: `describe_task` broadcasts live work focus only (`ModelStreamEvent::TaskFocus`,
+     `DescribeTaskReceipt`), while `update_todos` replaces the structured checklist dynamically
+     (`ModelStreamEvent::TodosUpdated`, `UpdateTodosReceipt`) and auto-registers alongside
+     `describe_task` for both lead and subagent runs.
 2. **Native Report Tools (`report_inproc.rs`)**:
    - Every one of the 19 tools uses `#[rig_tool(name = "...")]`. Function and argument `///`
      comments define the model-facing description and flat parameter schema; no custom report-tool

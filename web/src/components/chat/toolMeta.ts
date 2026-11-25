@@ -12,6 +12,7 @@ import {
   HistoryIcon,
   LayoutTemplateIcon,
   Link2Icon,
+  ListTodoIcon,
   MessageSquareIcon,
   PaperclipIcon,
   PenLineIcon,
@@ -64,7 +65,8 @@ const TOOL_META: Record<string, ToolMeta> = {
   set_session_title: { label: "更新会话标题", icon: TypeIcon },
   list_subagents: { label: "查看可用子代理", icon: UsersIcon },
   spawn_subagents: { label: "派发子代理", icon: UsersIcon },
-  describe_task: { label: "整理任务说明", icon: FileTextIcon },
+  describe_task: { label: "播报工作状态", icon: FileTextIcon },
+  update_todos: { label: "更新任务清单", icon: ListTodoIcon },
   deepseek_search: { label: "检索权威资料", icon: SearchIcon },
   deepseek_fetch: { label: "读取网页原文", icon: GlobeIcon },
 };
@@ -78,6 +80,7 @@ const TOOL_META: Record<string, ToolMeta> = {
 export function isVisibleTraceTool(tool: ToolCallTraceItem): boolean {
   if (
     tool.toolName === "describe_task" ||
+    tool.toolName === "update_todos" ||
     tool.toolName === "set_session_title"
   ) {
     return false;

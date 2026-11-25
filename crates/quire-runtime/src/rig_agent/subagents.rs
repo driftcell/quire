@@ -72,19 +72,19 @@ fn spawn_subagents_next_hint(summary: Option<&TodoProgressSummary>) -> String {
         Some(summary) => {
             if let Some(next) = summary.next_pending_title.as_deref() {
                 format!(
-                    "Subagents finished. When moving to the next stage, call describe_task(title=\"{next}\") to advance todo progress; verify document changes with get_document_digest or lint_document."
+                    "Subagents finished. Next pending todo: \"{next}\". Call update_todos when advancing or revising your stage checklist, and call describe_task to broadcast your current action; verify document changes with get_document_digest or lint_document."
                 )
             } else if let Some(active) = summary.active_title.as_deref() {
                 format!(
-                    "Subagents finished. Final todo active (\"{active}\"); mark all todos completed with describe_task before finishing, and verify document changes with get_document_digest or lint_document."
+                    "Subagents finished. Final todo active (\"{active}\"); call update_todos to mark todos completed (or add follow-up steps) before finishing, and call describe_task for live status; verify document changes with get_document_digest or lint_document."
                 )
             } else {
-                "Subagents finished. Verify document changes with get_document_digest or lint_document."
+                "Subagents finished. Call describe_task to broadcast your next action and verify document changes with get_document_digest or lint_document."
                     .into()
             }
         }
         None => {
-            "Subagents finished. Call describe_task to track stage todos, and verify document changes with get_document_digest or lint_document."
+            "Subagents finished. Call update_todos if tracking stage steps and describe_task to broadcast your current action; verify document changes with get_document_digest or lint_document."
                 .into()
         }
     }
@@ -121,9 +121,9 @@ pub(super) struct SubagentParent {
 /// Call `list_subagents` first if you need valid subagent names. Outcomes are returned under
 /// `outcomes` in the exact input `tasks` order with `agent_name`, `status`
 /// (`"completed" | "failed" | "cancelled"`), `summary`, and `subagent_run_id` (passable as
-/// `resume_run_id` on follow-up calls), alongside `todo_progress` and `_next_hint`. Call
-/// `describe_task` to activate the current delegation phase before dispatching, update
-/// `describe_task` once subagents return when moving to the next stage, and verify document
+/// `resume_run_id` on follow-up calls), alongside `todo_progress` and `_next_hint`. Use
+/// `update_todos` to advance/adjust stage checklists and `describe_task` (in the same batch or upon
+/// return) to broadcast the concrete delegation or synthesis action underway, and verify document
 /// changes via `get_document_digest` or `lint_document`.
 #[rig_tool(name = "spawn_subagents")]
 pub(super) async fn run_subagents_tool(
@@ -391,7 +391,7 @@ mod tests {
             empty
                 ._next_hint
                 .as_deref()
-                .is_some_and(|hint| hint.contains("Call describe_task"))
+                .is_some_and(|hint| hint.contains("update_todos") && hint.contains("describe_task"))
         );
 
         let todos = vec![
@@ -414,11 +414,10 @@ mod tests {
         assert!(mid.todo_progress.as_deref().is_some_and(
             |p| p.contains("0/2 completed") && p.contains("next: \"交叉补证与框架建桩\"")
         ));
-        assert!(
-            mid._next_hint
-                .as_deref()
-                .is_some_and(|hint| hint.contains("describe_task(title=\"交叉补证与框架建桩\")"))
-        );
+        assert!(mid._next_hint.as_deref().is_some_and(|hint| {
+            hint.contains("Next pending todo: \"交叉补证与框架建桩\"")
+                && hint.contains("update_todos")
+        }));
 
         let final_stage = vec![
             TaskTodoItem {
@@ -437,11 +436,9 @@ mod tests {
             },
         ];
         let last = build_spawn_subagents_receipt(outcome, &final_stage);
-        assert!(
-            last._next_hint
-                .as_deref()
-                .is_some_and(|hint| hint.contains("Final todo active (\"润色审校与交付\")"))
-        );
+        assert!(last._next_hint.as_deref().is_some_and(|hint| {
+            hint.contains("Final todo active (\"润色审校与交付\")") && hint.contains("update_todos")
+        }));
     }
 }
 

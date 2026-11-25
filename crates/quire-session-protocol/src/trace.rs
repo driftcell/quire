@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 
 use crate::{
     RunTaskFocus, RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem,
-    SessionEvent, SessionEventKind, TaskTodoItem, TaskTodoStatus,
+    SessionEvent, SessionEventKind, TaskTodoItem,
 };
 
 struct RunTraceAccumulator {
@@ -433,38 +433,33 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                     if let Some(location) = ensure_subagent(&mut trace.summary.segments, event)
                         && let Some(record) = subagent_mut(&mut trace.summary.segments, location)
                     {
-                        let merged_todos = merge_task_todos(
-                            record.task_focus.as_ref().map(|f| f.todos.as_slice()),
+                        apply_task_focus(
+                            &mut record.task_focus,
                             title,
                             detail.as_deref(),
                             section_id.as_deref(),
                             todos,
                         );
-                        record.task_focus = Some(RunTaskFocus {
-                            title: title.clone(),
-                            detail: detail.clone(),
-                            section_id: section_id.clone(),
-                            todos: merged_todos,
-                        });
                     }
                 } else {
-                    let merged_todos = merge_task_todos(
-                        trace
-                            .summary
-                            .task_focus
-                            .as_ref()
-                            .map(|f| f.todos.as_slice()),
+                    apply_task_focus(
+                        &mut trace.summary.task_focus,
                         title,
                         detail.as_deref(),
                         section_id.as_deref(),
                         todos,
                     );
-                    trace.summary.task_focus = Some(RunTaskFocus {
-                        title: title.clone(),
-                        detail: detail.clone(),
-                        section_id: section_id.clone(),
-                        todos: merged_todos,
-                    });
+                }
+            }
+            SessionEventKind::TodosUpdated { todos } => {
+                if subagent_event {
+                    if let Some(location) = ensure_subagent(&mut trace.summary.segments, event)
+                        && let Some(record) = subagent_mut(&mut trace.summary.segments, location)
+                    {
+                        apply_todos_updated(&mut record.task_focus, todos);
+                    }
+                } else {
+                    apply_todos_updated(&mut trace.summary.task_focus, todos);
                 }
             }
             SessionEventKind::ToolCallStarted {
@@ -622,57 +617,46 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
     traces.into_iter().map(|trace| trace.summary).collect()
 }
 
-/// Merge an incoming `describe_task` update into the existing todo list.
-///
-/// When `incoming` is non-empty, it replaces the list directly; when `incoming` is empty, any
-/// active `in_progress` item with a different title is marked `completed` and the matching
-/// `title` item (or a newly appended item) becomes `in_progress`.
-pub fn merge_task_todos(
-    previous: Option<&[TaskTodoItem]>,
+fn apply_task_focus(
+    target: &mut Option<RunTaskFocus>,
     title: &str,
     detail: Option<&str>,
     section_id: Option<&str>,
-    incoming: &[TaskTodoItem],
-) -> Vec<TaskTodoItem> {
-    if !incoming.is_empty() {
-        return incoming.to_vec();
-    }
-    let Some(prev) = previous.filter(|items| !items.is_empty()) else {
-        return Vec::new();
-    };
-    let mut updated: Vec<TaskTodoItem> = prev
-        .iter()
-        .map(|item| {
-            let mut next = item.clone();
-            if next.status == TaskTodoStatus::InProgress && next.title != title {
-                next.status = TaskTodoStatus::Completed;
-            }
-            next
-        })
-        .collect();
-    if let Some(matched) = updated.iter_mut().find(|item| item.title == title) {
-        matched.status = TaskTodoStatus::InProgress;
-        if let Some(d) = detail {
-            matched.detail = Some(d.to_string());
-        }
-        if let Some(s) = section_id {
-            matched.section_id = Some(s.to_string());
-        }
+    legacy_todos: &[TaskTodoItem],
+) {
+    let preserved_todos = if !legacy_todos.is_empty() {
+        legacy_todos.to_vec()
     } else {
-        updated.push(TaskTodoItem {
-            id: None,
-            title: title.to_string(),
-            status: TaskTodoStatus::InProgress,
-            detail: detail.map(ToOwned::to_owned),
-            section_id: section_id.map(ToOwned::to_owned),
+        target
+            .as_ref()
+            .map(|existing| existing.todos.clone())
+            .unwrap_or_default()
+    };
+    *target = Some(RunTaskFocus {
+        title: title.to_string(),
+        detail: detail.map(ToOwned::to_owned),
+        section_id: section_id.map(ToOwned::to_owned),
+        todos: preserved_todos,
+    });
+}
+
+fn apply_todos_updated(target: &mut Option<RunTaskFocus>, todos: &[TaskTodoItem]) {
+    if let Some(existing) = target.as_mut() {
+        existing.todos = todos.to_vec();
+    } else {
+        *target = Some(RunTaskFocus {
+            title: String::new(),
+            detail: None,
+            section_id: None,
+            todos: todos.to_vec(),
         });
     }
-    updated
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TaskTodoStatus;
 
     #[derive(serde::Deserialize)]
     struct TraceFixture {
@@ -706,5 +690,91 @@ mod tests {
             let actual = aggregate_run_traces(&fixture.events);
             assert_eq!(actual, fixture.expected_traces, "fixture {name}");
         }
+    }
+
+    #[test]
+    fn task_focus_and_todos_updated_stay_orthogonal() {
+        let events = vec![
+            SessionEvent::new(1, "run_main", "main", None, SessionEventKind::TurnStarted),
+            SessionEvent::new(
+                2,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::TodosUpdated {
+                    todos: vec![
+                        TaskTodoItem {
+                            id: Some("t1".into()),
+                            title: "立项调研".into(),
+                            status: TaskTodoStatus::InProgress,
+                            detail: None,
+                            section_id: None,
+                        },
+                        TaskTodoItem {
+                            id: Some("t2".into()),
+                            title: "框架建桩".into(),
+                            status: TaskTodoStatus::Pending,
+                            detail: None,
+                            section_id: None,
+                        },
+                    ],
+                },
+            ),
+            SessionEvent::new(
+                3,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::TaskFocus {
+                    title: "补派研究员核验国自然口径".into(),
+                    detail: Some("正在比对2021-2025年立项口径".into()),
+                    section_id: Some("sec_1".into()),
+                    todos: Vec::new(),
+                },
+            ),
+            SessionEvent::new(
+                4,
+                "run_main",
+                "main",
+                None,
+                SessionEventKind::TodosUpdated {
+                    todos: vec![
+                        TaskTodoItem {
+                            id: Some("t1".into()),
+                            title: "立项调研".into(),
+                            status: TaskTodoStatus::Completed,
+                            detail: None,
+                            section_id: None,
+                        },
+                        TaskTodoItem {
+                            id: Some("t_extra".into()),
+                            title: "交叉补证口径冲突".into(),
+                            status: TaskTodoStatus::InProgress,
+                            detail: None,
+                            section_id: None,
+                        },
+                        TaskTodoItem {
+                            id: Some("t2".into()),
+                            title: "框架建桩".into(),
+                            status: TaskTodoStatus::Pending,
+                            detail: None,
+                            section_id: None,
+                        },
+                    ],
+                },
+            ),
+        ];
+
+        let traces = aggregate_run_traces(&events);
+        assert_eq!(traces.len(), 1);
+        let focus = traces[0].task_focus.as_ref().expect("task focus");
+        assert_eq!(focus.title, "补派研究员核验国自然口径");
+        assert_eq!(focus.detail.as_deref(), Some("正在比对2021-2025年立项口径"));
+        assert_eq!(focus.section_id.as_deref(), Some("sec_1"));
+        assert_eq!(focus.todos.len(), 3);
+        assert_eq!(focus.todos[0].title, "立项调研");
+        assert_eq!(focus.todos[0].status, TaskTodoStatus::Completed);
+        assert_eq!(focus.todos[1].title, "交叉补证口径冲突");
+        assert_eq!(focus.todos[1].status, TaskTodoStatus::InProgress);
     }
 }

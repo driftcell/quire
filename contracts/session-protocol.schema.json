@@ -242,6 +242,7 @@
               ]
             },
             "todos": {
+              "description": "Retained only for legacy `task_focus` replay payloads; live checklist mutations arrive\nthrough [`SessionEventKind::TodosUpdated`].",
               "type": "array",
               "items": {
                 "$ref": "#/$defs/TaskTodoItem"
@@ -251,6 +252,25 @@
           "required": [
             "event",
             "title"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "event": {
+              "type": "string",
+              "const": "todos_updated"
+            },
+            "todos": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TaskTodoItem"
+              }
+            }
+          },
+          "required": [
+            "event",
+            "todos"
           ]
         },
         {
