@@ -24,7 +24,7 @@ export interface ChatEchartsBlockProps {
 }
 
 /**
- * Renders an inline ECharts chart inside a chat message from a short ChatML
+ * Renders an inline ECharts chart inside a chat message from a short embedded XML
  * `<echarts id="..."/>` tag. Resolves committed report chart blocks first and
  * falls back to fetching a cached preview record (`/api/chart-previews/{id}`).
  */
@@ -101,7 +101,9 @@ export const ChatEchartsBlock = memo(function ChatEchartsBlock({
 
   const title =
     resolved.title ??
-    (typeof resolved.chart.title === "string" ? resolved.chart.title : undefined);
+    (typeof resolved.chart.title === "string"
+      ? resolved.chart.title
+      : undefined);
   const note =
     resolved.note ??
     (typeof resolved.chart.note === "string" ? resolved.chart.note : undefined);

@@ -13,7 +13,7 @@ import {
 import {
   ChatMessageCitationOrderContext,
   isPlaceholderCitationId,
-  normalizeChatMl,
+  normalizeChatXml,
   stripClobberPrefix,
   useChatMessageCitationOrder,
   useChatRichContext,
@@ -40,7 +40,7 @@ export interface SmoothStreamdownProps {
   controls?: ControlsConfig;
 }
 
-const CHATML_ALLOWED_TAGS: AllowedTags = {
+const CHAT_XML_ALLOWED_TAGS: AllowedTags = {
   citation: ["id"],
   echarts: ["id"],
 };
@@ -51,20 +51,18 @@ function hasRenderableSourceMetadata(
   if (!source) return false;
   const title = source.title?.trim() ?? "";
   const hasDistinctTitle =
-    title.length > 0 &&
-    title !== source.id &&
-    !isPlaceholderCitationId(title);
+    title.length > 0 && title !== source.id && !isPlaceholderCitationId(title);
   return Boolean(
     hasDistinctTitle ||
-      source.url?.trim() ||
-      source.publisher?.trim() ||
-      source.author?.trim() ||
-      source.excerpt?.trim() ||
-      source.note?.trim(),
+    source.url?.trim() ||
+    source.publisher?.trim() ||
+    source.author?.trim() ||
+    source.excerpt?.trim() ||
+    source.note?.trim(),
   );
 }
 
-const ChatMlFallbackRenderer: ComponentType<
+const ChatXmlFallbackRenderer: ComponentType<
   Record<string, unknown> & ExtraProps
 > = ({ node, ...props }) => {
   const { sources, charts } = useChatRichContext();
@@ -170,7 +168,7 @@ export function SmoothStreamdown({
   const animating = isStreaming || isSmoothing;
 
   const { markdown, citedSourceIds } = useMemo(
-    () => normalizeChatMl(smoothedText),
+    () => normalizeChatXml(smoothedText),
     [smoothedText],
   );
 
@@ -202,8 +200,8 @@ export function SmoothStreamdown({
             animated={false}
             controls={controls}
             tableMaxHeight="none"
-            allowedTags={CHATML_ALLOWED_TAGS}
-            fallbackComponent={ChatMlFallbackRenderer}
+            allowedTags={CHAT_XML_ALLOWED_TAGS}
+            fallbackComponent={ChatXmlFallbackRenderer}
           >
             {markdown}
           </Streamdown>

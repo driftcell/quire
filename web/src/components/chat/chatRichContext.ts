@@ -71,7 +71,10 @@ function upsertSourceRecord(
   const authorFromArray =
     Array.isArray(item.authors) && item.authors.length > 0
       ? item.authors
-          .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+          .filter(
+            (entry): entry is string =>
+              typeof entry === "string" && entry.trim().length > 0,
+          )
           .join("、")
       : null;
   sources.set(id, {
@@ -82,7 +85,7 @@ function upsertSourceRecord(
     author:
       (typeof item.author === "string"
         ? item.author
-        : authorFromArray ?? existing?.author) ?? null,
+        : (authorFromArray ?? existing?.author)) ?? null,
     publishedAt:
       (typeof item.published_at === "string"
         ? item.published_at
@@ -278,12 +281,12 @@ export function buildChatRichContext(
 }
 
 // Single-pass regex matching all citation and echarts markers in exact appearance order
-const COMBINED_CHATML_RE =
+const COMBINED_CHAT_XML_RE =
   /(<citation\s+id=["']([^"']+)["']\s*(?:\/>|>[\s\S]*?<\/citation>))|(\[\^([a-zA-Z0-9_-]{1,48})\](?!:))|(<(?:echarts|chart)\s+(?:id|block_id|preview_id)=["']([^"']+)["']\s*(?:\/>|>[\s\S]*?<\/(?:echarts|chart)>))/gi;
 
 // Guard any incomplete trailing XML tag (`<c`, `<citation id="...`) or footnote (`[^src...`)
 // while streaming character-by-character so partial tags never flicker or break layout.
-const INCOMPLETE_TRAILING_CHATML_RE =
+const INCOMPLETE_TRAILING_CHAT_XML_RE =
   /(?:<\/?(?:citation|echarts|chart)(?:\s+[^>]*)?|<\/?[a-zA-Z]{1,12}|\[\^[a-zA-Z0-9_-]*)$/i;
 
 // Mask fenced code blocks and inline code spans before scanning for citations/charts
@@ -298,7 +301,7 @@ export function stripClobberPrefix(rawId: string): string {
     : trimmed;
 }
 
-export interface NormalizedChatMlResult {
+export interface NormalizedChatXmlResult {
   markdown: string;
   citedSourceIds: string[];
   chartIds: string[];
@@ -309,7 +312,7 @@ export interface NormalizedChatMlResult {
  * and inline `[^source_id]` markers) into clean paired tags for Streamdown
  * rendering and extract the ordered deduplicated list of cited source IDs.
  */
-export function normalizeChatMl(rawText: string): NormalizedChatMlResult {
+export function normalizeChatXml(rawText: string): NormalizedChatXmlResult {
   if (!rawText) {
     return { markdown: "", citedSourceIds: [], chartIds: [] };
   }
@@ -317,7 +320,7 @@ export function normalizeChatMl(rawText: string): NormalizedChatMlResult {
   const citedSet = new Set<string>();
   const chartSet = new Set<string>();
 
-  const cleaned = rawText.replace(INCOMPLETE_TRAILING_CHATML_RE, "");
+  const cleaned = rawText.replace(INCOMPLETE_TRAILING_CHAT_XML_RE, "");
 
   // Protect code blocks and inline code spans from citation replacement
   const codeSegments: string[] = [];
@@ -328,7 +331,7 @@ export function normalizeChatMl(rawText: string): NormalizedChatMlResult {
   });
 
   const transformed = masked.replace(
-    COMBINED_CHATML_RE,
+    COMBINED_CHAT_XML_RE,
     (
       _full,
       _citationTag: string | undefined,
