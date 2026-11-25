@@ -69,13 +69,26 @@ pub struct ReadSkillResourceReceipt {
 /// defaults to `pending` so the model may omit it when adding a new item.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TaskTodoInput {
+    /// Optional opaque identifier used only to preserve item identity across updates. It is not
+    /// user-facing. Omit it for ordinary new items and never copy it into `title` or `detail`.
     #[serde(default)]
     pub id: Option<String>,
+    /// Required human-facing stage name in concise natural Chinese (usually 8–16 characters, as a
+    /// verb-object phrase). Good: `核验高校立项口径` or `撰写第三章`. Bad: `更新 sec_2`,
+    /// `update_todos step_1`, or `完成 run_8`. Never include tool names or raw IDs.
     pub title: String,
+    /// Workflow state only (`pending` by default). Do not repeat this enum or other status codes in
+    /// the human-facing `title` or `detail`.
     #[serde(default)]
     pub status: TaskTodoStatus,
+    /// Optional human-facing one-sentence scope, evidence target, or outcome in natural Chinese.
+    /// Good: `统一2021—2025年项目类型与时间窗`. Bad: `调用工具处理 rev_3`. Never include tool
+    /// names, block/run/session IDs, revision numbers, JSON keys, or raw parameter values.
     #[serde(default)]
     pub detail: Option<String>,
+    /// Optional internal heading block ID used only to locate the related report section in the UI.
+    /// This is not user-facing text: omit it when no section link is needed and never repeat it in
+    /// `title` or `detail`.
     #[serde(default)]
     pub section_id: Option<String>,
 }

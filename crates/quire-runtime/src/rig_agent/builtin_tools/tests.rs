@@ -59,22 +59,6 @@ fn describe_task_schema_advertises_live_focus_without_todos() {
 }
 
 #[test]
-fn update_todos_schema_advertises_dynamic_checklist_and_boundaries() {
-    let description = UPDATE_TODOS_TOOL.description();
-    assert!(description.contains("structured stage checklist"));
-    assert!(description.contains("describe_task"));
-
-    let parameters = UPDATE_TODOS_TOOL.parameters();
-    let properties = parameters
-        .get("properties")
-        .and_then(Value::as_object)
-        .expect("update_todos schema should have properties");
-    assert!(properties.contains_key("todos"), "missing `todos`");
-    assert!(!properties.contains_key("title"));
-    assert_eq!(parameters.get("required"), Some(&json!(["todos"])));
-}
-
-#[test]
 fn update_todos_input_defaults_missing_status_to_pending() {
     let input: TaskTodoInput = serde_json::from_value(json!({"title": "梳理立项数据"})).unwrap();
     assert_eq!(

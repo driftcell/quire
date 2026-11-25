@@ -259,6 +259,14 @@ pub(crate) async fn describe_task_tool(
 ///   steps for multi-step work; parallel 8–16 char Chinese verb-object phrases), with at most one
 ///   `in_progress` item at a time.
 ///
+/// Human-facing text contract:
+/// - Every `title` and `detail` is rendered directly to people. Use concise natural Chinese business
+///   language that explains the evidence, chapter, or outcome being advanced.
+/// - NEVER expose tool/function names, MCP/module names, raw block/section/run/session IDs, revision
+///   numbers, JSON keys, enum values, or other internal system identifiers in `title` or `detail`.
+/// - Good title: `核验高校立项口径`. Good detail: `统一2021—2025年项目类型与时间窗`.
+/// - Bad title: `调用 apply_operations 更新 sec_2`. Bad detail: `run_8 已完成 rev=3`.
+///
 /// When to call (both lead agent and subagents):
 /// 1. **At task start**: initialize the checklist (item 1 = `in_progress`, remaining = `pending`).
 /// 2. **At stage transitions**: immediately as you move to a new stage (before calling
