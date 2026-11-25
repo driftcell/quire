@@ -267,7 +267,7 @@ export async function updateModel(
 }
 
 export async function listMcpServers(): Promise<McpServerRecord[]> {
-  const data = await adminRequest("/api/mcp/servers");
+  const data = await adminRequest("/api/admin/mcp/servers");
   if (!Array.isArray(data)) return [];
   return data
     .map(decodeMcpServer)
@@ -275,7 +275,10 @@ export async function listMcpServers(): Promise<McpServerRecord[]> {
 }
 
 export function syncMcpServer(serverId: string): Promise<unknown> {
-  return adminRequest(`/api/mcp/servers/${encodeURIComponent(serverId)}/sync`, {
-    method: "POST",
-  });
+  return adminRequest(
+    `/api/admin/mcp/servers/${encodeURIComponent(serverId)}/sync`,
+    {
+      method: "POST",
+    },
+  );
 }

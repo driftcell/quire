@@ -4241,7 +4241,7 @@ async fn mcp_auth_token_is_masked_in_http_and_admin_receipts() {
     let (status, created) = http_json(
         &app,
         axum::http::Method::POST,
-        "/api/mcp/servers",
+        "/api/admin/mcp/servers",
         &test_admin_jwt(),
         Some(json!({
             "server_id": server_id,

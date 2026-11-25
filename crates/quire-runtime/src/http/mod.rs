@@ -188,17 +188,20 @@ pub fn router(service: RuntimeService) -> Router {
         )
         .route("/api/models/import-models-dev", post(import_models_dev))
         .route(
-            "/api/mcp/servers",
+            "/api/admin/mcp/servers",
             get(list_mcp_servers).post(upsert_mcp_server),
         )
         .route(
-            "/api/mcp/servers/{server_id}",
+            "/api/admin/mcp/servers/{server_id}",
             patch(patch_mcp_server).delete(delete_mcp_server),
         )
-        .route("/api/mcp/servers/{server_id}/sync", post(sync_mcp_server))
-        .route("/api/mcp/tools", get(list_mcp_tools))
         .route(
-            "/api/mcp/servers/{server_id}/tools/{tool_name}",
+            "/api/admin/mcp/servers/{server_id}/sync",
+            post(sync_mcp_server),
+        )
+        .route("/api/admin/mcp/tools", get(list_mcp_tools))
+        .route(
+            "/api/admin/mcp/servers/{server_id}/tools/{tool_name}",
             patch(set_mcp_tool_enabled),
         )
         .route_layer(middleware::from_fn(admin_auth))

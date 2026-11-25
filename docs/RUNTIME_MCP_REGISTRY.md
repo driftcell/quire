@@ -105,13 +105,13 @@ they intentionally use a fixed header identity; the normal model tool loop uses 
 
 All routes use `runtime_auth`:
 
-- `GET /api/mcp/servers`
-- `POST /api/mcp/servers`
-- `PATCH /api/mcp/servers/{server_id}`
-- `DELETE /api/mcp/servers/{server_id}`
-- `POST /api/mcp/servers/{server_id}/sync`
-- `GET /api/mcp/tools` (optional `server_id` query)
-- `PATCH /api/mcp/servers/{server_id}/tools/{tool_name}` with `{enabled}`
+- `GET /api/admin/mcp/servers`
+- `POST /api/admin/mcp/servers`
+- `PATCH /api/admin/mcp/servers/{server_id}`
+- `DELETE /api/admin/mcp/servers/{server_id}`
+- `POST /api/admin/mcp/servers/{server_id}/sync`
+- `GET /api/admin/mcp/tools` (optional `server_id` query)
+- `PATCH /api/admin/mcp/servers/{server_id}/tools/{tool_name}` with `{enabled}`
 
 ### Admin MCP
 

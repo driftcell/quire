@@ -49,7 +49,7 @@ CORS configuration:
 | `/api/sessions` | `http://127.0.0.1:8081` | `quire-runtime` |
 | `/api/kb`       | `http://127.0.0.1:8081` | `quire-runtime` |
 | `/api/models`   | `http://127.0.0.1:8081` | `quire-runtime` |
-| `/api/mcp`      | `http://127.0.0.1:8081` | `quire-runtime` |
+| `/mcp`          | `http://127.0.0.1:8081` | `quire-runtime` |
 | `/attachments`  | `http://127.0.0.1:8081` | `quire-runtime` |
 
 ## Layout
