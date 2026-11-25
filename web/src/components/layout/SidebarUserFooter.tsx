@@ -155,10 +155,6 @@ export function SidebarUserFooter() {
                   API Key
                 </span>
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setExternalOpen(true)}>
-                <TerminalIcon aria-hidden="true" />
-                <span>使用外部代理</span>
-              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setPwdOpen(true)}>
                 <KeyRoundIcon aria-hidden="true" />
                 <span>修改密码</span>

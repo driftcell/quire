@@ -1,8 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import {
-  ArrowLeftIcon,
   BotIcon,
   CheckIcon,
   CopyIcon,
@@ -65,7 +64,6 @@ function formatTimestamp(iso?: string | null): string {
 }
 
 function AdminPage() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
   const { toggleSidebar } = useSidebar();
@@ -307,16 +305,6 @@ function AdminPage() {
               <PanelLeftIcon className="size-4" />
             </Button>
           )}
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0 px-2 sm:px-3"
-            onClick={() => void navigate({ to: "/" })}
-          >
-            <ArrowLeftIcon className="mr-1 size-4" />
-            返回工作台
-          </Button>
           <div className="flex min-w-0 items-center gap-1.5">
             <ShieldCheckIcon className="size-4 shrink-0 text-primary" />
             <h1 className="truncate text-sm font-semibold sm:text-base">
@@ -390,13 +378,6 @@ function AdminPage() {
                     <PlusIcon className="size-4 text-[#1D4ED8]" />
                     <span>创建外部代理 API 密钥</span>
                   </h2>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    创建的密钥可用于访问{" "}
-                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-                      /mcp
-                    </code>{" "}
-                    报告工具端点。外部代理创建报告时将自动绑定到你的左侧会话栏。
-                  </p>
                 </div>
 
                 <div className="space-y-1.5">
@@ -487,17 +468,6 @@ function AdminPage() {
                   <h2 className="text-sm font-semibold text-foreground">
                     外部 Harness 接入地址
                   </h2>
-                  <p className="text-xs leading-relaxed text-muted-foreground">
-                    在支持 MCP Streamable HTTP 协议的客户端中填入以下端点，并在{" "}
-                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-                      Authorization
-                    </code>{" "}
-                    请求头中携带{" "}
-                    <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-                      Bearer qk_...
-                    </code>
-                    。
-                  </p>
                 </div>
 
                 <div className="space-y-1.5">
@@ -551,9 +521,6 @@ function AdminPage() {
                   <h3 className="text-sm font-semibold text-foreground">
                     我的 API 密钥列表
                   </h3>
-                  <p className="text-xs text-muted-foreground">
-                    出于安全考虑，平台仅存储密钥 SHA-256 哈希与前缀摘要
-                  </p>
                 </div>
                 <Button
                   type="button"

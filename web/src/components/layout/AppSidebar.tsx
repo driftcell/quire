@@ -47,10 +47,10 @@ import {
 export { groupSessionsForSidebar };
 export type { SessionGroup };
 
-function GridLoader() {
+function GridLoader({ className = "" }: { className?: string }) {
   return (
     <output
-      className="ml-auto grid shrink-0 grid-cols-5 gap-[1.5px]"
+      className={`grid shrink-0 grid-cols-5 gap-[1.5px] ${className}`}
       aria-label="正在执行"
     >
       {Array.from({ length: 25 }, (_, index) => {
@@ -267,6 +267,7 @@ export function AppSidebar() {
                     session.doc_id || session.linked_doc_id,
                   );
                   const isExternalMcp = session.created_via === "mcp";
+                  const isRunning = session.active_run_status === "running";
 
                   return (
                     <SidebarMenuItem
@@ -326,9 +327,6 @@ export function AppSidebar() {
                               aria-hidden="true"
                             />
                           )}
-                        {session.active_run_status === "running" && (
-                          <GridLoader />
-                        )}
                         {session.active_run_status === "awaiting_input" && (
                           <span
                             className="ml-auto size-2 shrink-0 rounded-full bg-amber-500"
@@ -350,12 +348,14 @@ export function AppSidebar() {
                               type="button"
                               variant="ghost"
                               size="icon-sm"
-                              className={`absolute inset-y-0 right-1 my-auto size-7 text-muted-foreground transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 ${
+                              className={`group/session-action absolute inset-y-0 right-1 my-auto size-7 text-muted-foreground transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 ${
                                 deleting
                                   ? "pointer-events-auto opacity-100"
-                                  : "pointer-events-none opacity-0 group-hover/session:pointer-events-auto group-hover/session:opacity-100 aria-expanded:pointer-events-auto aria-expanded:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
+                                  : isRunning
+                                    ? "pointer-events-none opacity-100 group-hover/session:pointer-events-auto aria-expanded:pointer-events-auto [@media(hover:none)]:pointer-events-auto"
+                                    : "pointer-events-none opacity-0 group-hover/session:pointer-events-auto group-hover/session:opacity-100 aria-expanded:pointer-events-auto aria-expanded:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100"
                               }`}
-                              aria-label={`对话操作 ${title}`}
+                              aria-label={`对话操作 ${title}${isRunning && !deleting ? "，正在执行" : ""}`}
                               title="对话操作"
                               disabled={deleting}
                             />
@@ -366,6 +366,14 @@ export function AppSidebar() {
                               className="size-3.5 animate-spin"
                               aria-hidden="true"
                             />
+                          ) : isRunning ? (
+                            <>
+                              <GridLoader className="group-hover/session:hidden group-focus-visible/session-action:hidden group-aria-expanded/session-action:hidden [@media(hover:none)]:hidden" />
+                              <MoreHorizontalIcon
+                                className="hidden size-3.5 group-hover/session:block group-focus-visible/session-action:block group-aria-expanded/session-action:block [@media(hover:none)]:block"
+                                aria-hidden="true"
+                              />
+                            </>
                           ) : (
                             <MoreHorizontalIcon
                               className="size-3.5"

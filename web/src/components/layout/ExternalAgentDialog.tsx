@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -54,14 +54,6 @@ export function ExternalAgentDialog({
     enabled: open,
     refetchOnMount: "always",
   });
-  const { refetch: refetchApiKeys } = apiKeysQuery;
-
-  useEffect(() => {
-    if (open) {
-      void refetchApiKeys();
-    }
-  }, [open, refetchApiKeys]);
-
   const createKeyMutation = useMutation({
     mutationFn: (name: string) => createApiKey(name),
     onSuccess: (created) => {
@@ -203,8 +195,14 @@ export function ExternalAgentDialog({
                   2. 认证 API Key
                 </span>
               </div>
-              <span className="text-[11px] text-muted-foreground tabular-nums">
-                当前已有 {existingKeysCount} 个有效密钥
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground tabular-nums">
+                {apiKeysQuery.isFetching && (
+                  <LoaderCircleIcon
+                    className="size-3 animate-spin"
+                    aria-hidden="true"
+                  />
+                )}
+                <span>当前已有 {existingKeysCount} 个有效密钥</span>
               </span>
             </div>
 
