@@ -8,7 +8,7 @@ import {
   parseDescribeTaskInput,
   type TaskMilestoneNode,
 } from "@/components/chat/taskMilestones";
-import { getToolMeta, isVisibleTraceTool } from "@/components/chat/toolMeta";
+import { isVisibleTraceTool } from "@/components/chat/toolMeta";
 import type {
   RunTraceSubagent,
   RunTraceSummary,
@@ -81,37 +81,6 @@ export interface ActivitySummary {
   subagentCount: number;
   runningSubagents: number;
   runningTools: number;
-}
-
-export interface LiveProgressSummary {
-  toolCount: number;
-  completedToolCount: number;
-  subagentCount: number;
-  completedSubagentCount: number;
-}
-
-/**
- * Aggregate the live run's visible main-agent tools and subagent lifecycle.
- * Subagent tool calls stay inside their own cards so the header never double-counts them.
- */
-export function summarizeLiveProgress(
-  trace: LiveAgentTrace | null | undefined,
-  subagents: LiveSubagentRun[],
-): LiveProgressSummary {
-  const tools = (trace?.segments ?? []).flatMap((segment) =>
-    segment.kind === "execution"
-      ? segment.tools.filter(isVisibleTraceTool)
-      : [],
-  );
-  return {
-    toolCount: tools.length,
-    completedToolCount: tools.filter((tool) => tool.status !== "running")
-      .length,
-    subagentCount: subagents.length,
-    completedSubagentCount: subagents.filter(
-      (subagent) => subagent.status !== "running",
-    ).length,
-  };
 }
 
 /** Format an elapsed live-run duration with second-level precision. */
@@ -411,9 +380,6 @@ export interface SubagentActivityPill {
   task?: string;
   status: "running" | "completed" | "failed";
   activityText?: string;
-  toolCount: number;
-  completedToolCount: number;
-  recentTools: string[];
   todos: TaskTodoItem[];
 }
 
@@ -422,35 +388,10 @@ export interface RunStatusModel {
   detail?: string;
   sectionId?: string;
   status: "running" | "completed" | "failed" | "interrupted";
-  toolCount: number;
-  completedToolCount: number;
-  recentMainTools: string[];
   subagents: SubagentActivityPill[];
   milestones: TaskMilestoneNode[];
   todos: TaskTodoItem[];
   elapsedLabel?: string;
-}
-
-function recentToolLabels(tools: ToolCallTraceItem[], maxCount = 3): string[] {
-  const labels: string[] = [];
-  for (let i = tools.length - 1; i >= 0 && labels.length < maxCount; i -= 1) {
-    const tool = tools[i];
-    if (!tool) continue;
-    const label = getToolMeta(tool.toolName).label;
-    if (!labels.includes(label)) {
-      labels.unshift(label);
-    }
-  }
-  return labels;
-}
-
-function latestToolLabel(tools: ToolCallTraceItem[]): string | undefined {
-  const running = [...tools].reverse().find((t) => t.status === "running");
-  if (running) {
-    return getToolMeta(running.toolName).label;
-  }
-  const last = tools[tools.length - 1];
-  return last ? getToolMeta(last.toolName).label : undefined;
 }
 
 function normalizeTerminalStatus(
@@ -467,37 +408,13 @@ export function buildLiveRunStatusModel(
   subagents: LiveSubagentRun[],
   elapsedSeconds: number,
 ): RunStatusModel {
-  const progress = summarizeLiveProgress(trace, subagents);
   const milestones = buildLiveMilestones(trace, subagents);
   const todos = extractLiveTodos(trace);
-  const lastMilestone = milestones[milestones.length - 1];
-  const lastSeg = trace.segments[trace.segments.length - 1];
-  let fallbackTitle = trace.isStreaming ? "正在处理" : "执行完成";
-  if (trace.isStreaming && lastSeg) {
-    if (lastSeg.kind === "thinking") {
-      fallbackTitle = "正在思考规划";
-    } else if (lastSeg.kind === "text") {
-      fallbackTitle = "正在撰写回复";
-    } else if (lastSeg.kind === "execution") {
-      const visible = lastSeg.tools.filter(isVisibleTraceTool);
-      const toolLabel = latestToolLabel(visible);
-      if (toolLabel) {
-        fallbackTitle = `正在${toolLabel}`;
-      } else if (subagents.some((s) => s.status === "running")) {
-        fallbackTitle = "正在协调子代理执行";
-      }
-    }
-  }
-
-  const mainTools = trace.segments.flatMap((segment) =>
-    segment.kind === "execution"
-      ? segment.tools.filter(isVisibleTraceTool)
-      : [],
-  );
+  const lastDescribeMilestone = [...milestones]
+    .reverse()
+    .find((milestone) => milestone.isExplicitStage);
 
   const pills: SubagentActivityPill[] = subagents.map((sub) => {
-    const view = extractSubagentLiveView(sub.trace);
-    const subTodos = extractLiveTodos(sub.trace);
     let lastDescribeTitle: string | undefined;
     for (const seg of sub.trace.segments) {
       if (seg.kind !== "execution") continue;
@@ -518,32 +435,18 @@ export function buildLiveRunStatusModel(
       task: sub.task,
       status: sub.status,
       activityText,
-      toolCount: view.tools.length,
-      completedToolCount: view.tools.filter((t) => t.status !== "running")
-        .length,
-      recentTools: recentToolLabels(view.tools),
-      todos: subTodos,
+      todos: extractLiveTodos(sub.trace),
     };
   });
-
-  const activeTodoTitle = todos
-    .find((todo) => todo.status === "in_progress")
-    ?.title.trim();
 
   return {
     title:
       trace.taskFocus?.title?.trim() ||
-      activeTodoTitle ||
-      lastMilestone?.title ||
-      fallbackTitle,
-    detail:
-      trace.taskFocus?.detail ?? lastMilestone?.detail ?? undefined,
-    sectionId:
-      trace.taskFocus?.sectionId ?? lastMilestone?.sectionId ?? undefined,
+      lastDescribeMilestone?.title ||
+      (trace.isStreaming ? "正在执行" : "执行完成"),
+    detail: trace.taskFocus?.detail ?? lastDescribeMilestone?.detail,
+    sectionId: trace.taskFocus?.sectionId ?? lastDescribeMilestone?.sectionId,
     status: trace.isStreaming ? "running" : "completed",
-    toolCount: progress.toolCount,
-    completedToolCount: progress.completedToolCount,
-    recentMainTools: recentToolLabels(mainTools),
     subagents: pills,
     milestones,
     todos,
@@ -557,15 +460,14 @@ export function buildHistoricalRunStatusModel(
   const status = normalizeTerminalStatus(trace.status);
   const milestones = buildHistoricalMilestones(trace);
   const todos = extractHistoricalTodos(trace);
-  const lastMilestone = milestones[milestones.length - 1];
-  const tools: ToolCallTraceItem[] = [];
+  const lastDescribeMilestone = [...milestones]
+    .reverse()
+    .find((milestone) => milestone.isExplicitStage);
   const pills: SubagentActivityPill[] = [];
 
   for (const seg of trace.segments ?? []) {
     if (seg.kind === "execution") {
-      tools.push(...toToolTraceItems(seg.tools).filter(isVisibleTraceTool));
       for (const sub of seg.subagents ?? []) {
-        const subTools: ToolCallTraceItem[] = [];
         let lastDescribeTitle: string | undefined;
         for (const sSeg of sub.segments ?? []) {
           if (sSeg.kind === "execution") {
@@ -575,8 +477,6 @@ export function buildHistoricalRunStatusModel(
                 if (parsed.title) {
                   lastDescribeTitle = parsed.title;
                 }
-              } else if (isVisibleTraceTool(item)) {
-                subTools.push(item);
               }
             }
           }
@@ -595,10 +495,6 @@ export function buildHistoricalRunStatusModel(
           task: sub.task,
           status: subStatus,
           activityText,
-          toolCount: subTools.length,
-          completedToolCount: subTools.filter((t) => t.status !== "running")
-            .length,
-          recentTools: recentToolLabels(subTools),
           todos: extractHistoricalSubagentTodos(sub),
         });
       }
@@ -619,24 +515,14 @@ export function buildHistoricalRunStatusModel(
       ? formatLiveElapsed(Math.max(1, Math.round(trace.duration_ms / 1000)))
       : undefined;
 
-  const fallbackTodoTitle =
-    todos.find((todo) => todo.status === "in_progress")?.title.trim() ||
-    todos[todos.length - 1]?.title.trim();
-
   return {
     title:
       trace.task_focus?.title?.trim() ||
-      lastMilestone?.title ||
-      fallbackTodoTitle ||
+      lastDescribeMilestone?.title ||
       defaultTitle,
-    detail:
-      trace.task_focus?.detail ?? lastMilestone?.detail ?? undefined,
-    sectionId:
-      trace.task_focus?.section_id ?? lastMilestone?.sectionId ?? undefined,
+    detail: trace.task_focus?.detail ?? lastDescribeMilestone?.detail,
+    sectionId: trace.task_focus?.section_id ?? lastDescribeMilestone?.sectionId,
     status,
-    toolCount: tools.length,
-    completedToolCount: tools.filter((t) => t.status !== "running").length,
-    recentMainTools: recentToolLabels(tools),
     subagents: pills,
     milestones,
     todos,

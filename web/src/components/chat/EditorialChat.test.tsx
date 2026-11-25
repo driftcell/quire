@@ -373,7 +373,7 @@ describe("Borderless editorial chat", () => {
     );
 
     const userIdx = html.indexOf("分析双优建设成效");
-    const traceIdx = html.indexOf("已完成查询双优建设数据");
+    const traceIdx = html.indexOf("查询双优建设数据");
     const cardIdx = html.indexOf("已确认：选取哪组参照高校？");
     const finalIdx = html.indexOf("最终对比分析结论。");
     expect(userIdx).toBeGreaterThan(-1);
@@ -669,9 +669,6 @@ describe("Borderless editorial chat", () => {
         model={{
           title: "已完成问答回复",
           status: "completed",
-          toolCount: 0,
-          completedToolCount: 0,
-          recentMainTools: [],
           subagents: [],
           milestones: [],
           todos: [],

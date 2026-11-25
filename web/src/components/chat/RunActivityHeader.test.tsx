@@ -128,8 +128,7 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     expect(model.status).toBe("running");
     expect(model.title).toBe("正在统筹撰写双优建设报告");
     // set_session_title is hidden from visible tools
-    expect(model.toolCount).toBe(2);
-    expect(model.completedToolCount).toBe(1);
+    expect(model.subagents[0]?.activityText).toBe("检索国自然立项数据");
     expect(model.todos).toHaveLength(3);
     expect(model.subagents).toHaveLength(1);
     expect(model.subagents[0]?.activityText).toBe("检索国自然立项数据");
@@ -208,18 +207,12 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     ): RunStatusModel => ({
       title: "当前任务",
       status: "running",
-      toolCount: 0,
-      completedToolCount: 0,
-      recentMainTools: [],
       subagents: [
         {
           id: "sub_1",
           actor: "researcher",
           status: subagentStatus,
           activityText: "核对高校数据",
-          toolCount: 0,
-          completedToolCount: 0,
-          recentTools: [],
           todos: [],
         },
       ],
@@ -270,9 +263,6 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
       actor: `researcher-${index + 1}`,
       status: "completed",
       activityText: "核对高校数据",
-      toolCount: 0,
-      completedToolCount: 0,
-      recentTools: [],
       todos: [],
     }));
     const stack = renderCollapsed(crowded);
@@ -285,9 +275,6 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
       actor: `researcher-${index + 1}`,
       status: index < 8 ? "running" : "completed",
       activityText: "核对高校数据",
-      toolCount: 0,
-      completedToolCount: 0,
-      recentTools: [],
       todos: [],
     }));
     const activeStack = renderCollapsed(activeCrowd);
@@ -394,8 +381,7 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
     const model = buildHistoricalRunStatusModel(trace);
     expect(model.status).toBe("completed");
     expect(model.title).toBe("已完成双优建设报告");
-    expect(model.toolCount).toBe(2);
-    expect(model.completedToolCount).toBe(2);
+    expect(model.subagents[0]?.activityText).toBe("完成数据核验");
     expect(model.todos).toHaveLength(2);
     expect(model.todos.every((t) => t.status === "completed")).toBe(true);
     expect(model.subagents[0]?.activityText).toBe("完成数据核验");
@@ -709,7 +695,7 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
         onToggleDetails={() => {}}
       />,
     );
-    expect(histExpandedHtml).toContain("已完成主代理最终阶段");
+    expect(histExpandedHtml).toContain("主代理最终阶段");
     expect(histExpandedHtml).toContain(">完成学科指标核查</p>");
     expect(histExpandedHtml).not.toContain("协作子代理");
     expect(histExpandedHtml).not.toContain(">资料检索与核验</p>");

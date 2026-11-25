@@ -368,19 +368,6 @@ function SubagentLedger({
   );
 }
 
-function settledTitle(model: RunStatusModel): string {
-  if (model.status !== "completed") {
-    return model.title;
-  }
-  if (model.title.startsWith("正在")) {
-    return `已完成${model.title.slice(2)}`;
-  }
-  if (model.title.includes("完成")) {
-    return model.title;
-  }
-  return `已完成${model.title}`;
-}
-
 /**
  * Borderless editorial run ledger. Live work stays visible as a calm left-rule
  * checklist; settled runs collapse to a one-line receipt so the answer remains
@@ -528,7 +515,7 @@ export const RunActivityHeader = memo(function RunActivityHeader({
                 isStreaming ? "text-pretty leading-5" : "truncate leading-5.5",
               )}
             >
-              {isStreaming ? model.title : settledTitle(model)}
+              {model.title}
             </span>
           </span>
 

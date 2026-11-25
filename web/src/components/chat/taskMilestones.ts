@@ -319,34 +319,8 @@ export function buildSemanticActionPills(
   }));
 }
 
-function defaultPhaseTitle(
-  tools: ToolCallTraceItem[],
-  hasSubagents: boolean,
-  hasThinking: boolean,
-  isFirst: boolean,
-): string {
-  const visible = tools.filter(isVisibleTraceTool);
-  const meaningful = visible.filter(isDomainMeaningfulTool);
-  const pool = meaningful.length > 0 ? meaningful : visible;
-
-  if (hasSubagents && pool.length === 0) {
-    return "多角色协同调研与撰写";
-  }
-  if (pool.length > 0) {
-    const distinctLabels: string[] = [];
-    for (const tool of pool) {
-      const label = getToolMeta(tool.toolName).label;
-      if (!distinctLabels.includes(label)) {
-        distinctLabels.push(label);
-      }
-      if (distinctLabels.length >= 2) break;
-    }
-    return distinctLabels.join(" · ");
-  }
-  if (hasThinking) {
-    return isFirst ? "需求拆解与研究规划" : "阶段研判与统筹";
-  }
-  return "处理研究任务";
+function defaultPhaseTitle(): string {
+  return "正在执行";
 }
 
 function buildSubagentMilestonesFromSegments(
@@ -388,12 +362,7 @@ function buildSubagentMilestonesFromSegments(
       stepNumber,
       title:
         currentTitle ||
-        defaultPhaseTitle(
-          visibleTools,
-          false,
-          currentThinking.length > 0,
-          stepNumber === 1,
-        ),
+        defaultPhaseTitle(),
       detail: currentDetail,
       sectionId: currentSection,
       status,
@@ -490,12 +459,7 @@ function buildLiveSubagentMilestonesFromSegments(
       stepNumber,
       title:
         currentTitle ||
-        defaultPhaseTitle(
-          visibleTools,
-          false,
-          currentThinking.length > 0,
-          stepNumber === 1,
-        ),
+        defaultPhaseTitle(),
       detail: currentDetail,
       sectionId: currentSection,
       status,
@@ -792,12 +756,7 @@ export function buildHistoricalMilestones(
       stepNumber,
       title:
         explicitTitle ||
-        defaultPhaseTitle(
-          visibleTools,
-          currentSubagents.length > 0,
-          currentThinking.length > 0,
-          stepNumber === 1,
-        ),
+        defaultPhaseTitle(),
       detail:
         currentDetail ??
         (isFinal ? trace.task_focus?.detail ?? undefined : undefined),
@@ -936,12 +895,7 @@ export function buildLiveMilestones(
       stepNumber,
       title:
         explicitTitle ||
-        defaultPhaseTitle(
-          visibleTools,
-          currentSubagents.length > 0,
-          currentThinking.length > 0,
-          stepNumber === 1,
-        ),
+        defaultPhaseTitle(),
       detail:
         currentDetail ?? (isFinal ? trace.taskFocus?.detail : undefined),
       sectionId:

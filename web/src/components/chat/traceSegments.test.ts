@@ -12,7 +12,6 @@ import {
   extractSubagentLiveView,
   formatLiveElapsed,
   summarizeActivity,
-  summarizeLiveProgress,
   type RenderSegment,
 } from "./traceSegments";
 
@@ -85,45 +84,6 @@ describe("summarizeActivity", () => {
 });
 
 describe("live header progress", () => {
-  test("counts visible main tools and settled subagents", () => {
-    const trace: LiveAgentTrace = {
-      agentId: "main",
-      isStreaming: true,
-      segments: [
-        {
-          kind: "execution",
-          tools: [
-            tool("read-1"),
-            { ...tool("chart-1", "preview_echarts"), status: "running" },
-            tool("spawn-1", "spawn_subagents"),
-          ],
-          subagentRunIds: ["sub-1", "sub-2"],
-        },
-      ],
-    };
-    const runningSubagent: LiveSubagentRun = {
-      subagentRunId: "sub-1",
-      agentName: "writer",
-      task: "write",
-      status: "running",
-      trace: { agentId: "writer", isStreaming: true, segments: [] },
-    };
-    const completedSubagent: LiveSubagentRun = {
-      ...runningSubagent,
-      subagentRunId: "sub-2",
-      status: "completed",
-    };
-
-    expect(
-      summarizeLiveProgress(trace, [runningSubagent, completedSubagent]),
-    ).toEqual({
-      toolCount: 2,
-      completedToolCount: 1,
-      subagentCount: 2,
-      completedSubagentCount: 1,
-    });
-  });
-
   test("formats elapsed time with second precision", () => {
     expect(formatLiveElapsed(0)).toBe("0秒");
     expect(formatLiveElapsed(12.9)).toBe("12秒");
