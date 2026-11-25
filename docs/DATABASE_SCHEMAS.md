@@ -23,7 +23,7 @@ databases and provides no legacy `public` views, table aliases, or automatic dat
 | `runtime`  | `sessions`, `attachments`, `runs`, `tool_calls`, `questions`, `pending_queue`, `chat_charts`; owned by `quire-runtime`                                  |
 | `kb`       | `meta`, `branches`, `snapshots`, `branch_conflicts`, `documents`, `agent_definitions`, `skill_definitions`, `skill_resources`; owned by `quire-runtime` |
 | `catalog`  | `llm_providers`, `llm_models`, `mcp_servers`, `mcp_tools`; owned by `quire-runtime`                                                                     |
-| `identity` | `users`; owned by `quire-runtime`                                                                                                                       |
+| `identity` | `users`, `api_keys`; owned by `quire-runtime`                                                                                                           |
 | `rig`      | `rig_memory_logs`, `rig_memory_log_chunks`, `rig_memory_files`, using the fixed upstream `rig-postgres` names                                           |
 
 Application SQL uses explicit schema-qualified table names for every table, foreign key, index target
@@ -42,6 +42,8 @@ index in its parent table's schema. The current migrations create no objects in 
 3. `0003_catalog.sql`
 4. `0004_runtime.sql`
 5. `0005_rig.sql`
+6. `0006_external_mcp.sql` adds `identity.api_keys` and `runtime.sessions.created_via` as an incremental
+   migration; applied migrations must never be rewritten to introduce those objects.
 
 The runtime migrator creates `runtime` and records history in `runtime._quire_runtime_migrations`.
 `runtime.sessions.user_id` references `identity.users(user_id)` with `ON DELETE SET NULL`; runtime and

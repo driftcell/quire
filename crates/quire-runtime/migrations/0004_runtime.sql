@@ -19,8 +19,7 @@ CREATE TABLE IF NOT EXISTS runtime.sessions (
     compacted_at TIMESTAMPTZ,
     compaction_started_at TIMESTAMPTZ,
     pinned_at TIMESTAMPTZ,
-    user_id TEXT REFERENCES identity.users(user_id) ON DELETE SET NULL,
-    created_via TEXT NOT NULL DEFAULT 'chat' CHECK (created_via IN ('chat', 'mcp'))
+    user_id TEXT REFERENCES identity.users(user_id) ON DELETE SET NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_sessions_branch
