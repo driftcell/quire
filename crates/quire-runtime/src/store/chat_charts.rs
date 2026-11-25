@@ -10,7 +10,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<()> {
         let payload = serde_json::to_value(record)?;
         sqlx::query(
-            r#"INSERT INTO chat_charts (chart_id, session_id, payload)
+            r#"INSERT INTO runtime.chat_charts (chart_id, session_id, payload)
                VALUES ($1, $2, $3)
                ON CONFLICT (chart_id)
                DO UPDATE SET session_id = EXCLUDED.session_id,
@@ -30,7 +30,7 @@ impl RuntimeStore {
         chart_id: &str,
     ) -> RuntimeResult<Option<ChartPreviewRecord>> {
         let payload: Option<serde_json::Value> =
-            sqlx::query_scalar(r#"SELECT payload FROM chat_charts WHERE chart_id = $1"#)
+            sqlx::query_scalar(r#"SELECT payload FROM runtime.chat_charts WHERE chart_id = $1"#)
                 .bind(chart_id.trim())
                 .fetch_optional(&self.pool)
                 .await?;

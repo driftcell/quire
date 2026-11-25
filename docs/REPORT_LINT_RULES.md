@@ -23,7 +23,7 @@ or CLI work.
 | --- | --- |
 | `quire-protocol` | Wire contracts: `Diagnostic`, `LintSummary`, `LintReport`, `LintConfig`, `Severity`; `ReportDocument.lint`; `Block.lint_ignore`; `BlockPatch.lint_ignore`; `PatchOp::SetLint`. |
 | `quire-lint` | `RuleId`, `RuleMeta`, `RULES`, `LintOptions`, `lint_document`, `lint_document_with_options`, `lint_echarts_block` and the normalization pass. |
-| `quire-store` | Persists `report_documents.lint` JSONB and block payload `lint_ignore`; runs lint for inline warnings and blocking errors. |
+| `quire-store` | Persists `report.documents.lint` JSONB and block payload `lint_ignore`; runs lint for inline warnings and blocking errors. |
 | `quire-server` | Exposes `lint_document(doc_id, select?, ignore?)` and forwards diagnostics to MCP receipts. |
 
 `quire-lint` depends only on `quire-protocol`, `serde_json`, `regex`, `rayon` and `aho-corasick`.
@@ -320,12 +320,12 @@ Core contract and safety rules survive every ignore layer and are never counted 
 
 ### Persistence and configuration
 
-- Migration `crates/quire-store/migrations/0002_document_lint_config.sql` adds
-  `report_documents.lint JSONB NOT NULL DEFAULT '{"ignore":[]}'`.
+- Migration `crates/quire-store/migrations/001_init.sql` adds
+  `report.documents.lint JSONB NOT NULL DEFAULT '{"ignore":[]}'`.
 - `PatchOp::SetLint { lint }` replaces the document policy through the normal revision, inverse-op
   and rollback pipeline.
 - `BlockPatch.lint_ignore` replaces the block list; an empty list clears it. Block data stays inside
-  the existing `report_blocks.payload` JSONB.
+  the existing `report.blocks.payload` JSONB.
 
 ### Tool behavior
 

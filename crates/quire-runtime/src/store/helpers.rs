@@ -2,7 +2,7 @@ use super::*;
 
 impl RuntimeStore {
     pub async fn kb_version(&self) -> RuntimeResult<u64> {
-        let version = sqlx::query_scalar::<_, i64>("SELECT version FROM kb_meta WHERE singleton")
+        let version = sqlx::query_scalar::<_, i64>("SELECT version FROM kb.meta WHERE singleton")
             .fetch_one(&self.pool)
             .await?;
         Ok(u64::try_from(version).unwrap_or(0))
@@ -10,7 +10,7 @@ impl RuntimeStore {
 
     pub async fn bump_kb_version(&self) -> RuntimeResult<u64> {
         let version = sqlx::query_scalar::<_, i64>(
-            "UPDATE kb_meta SET version = version + 1 WHERE singleton RETURNING version",
+            "UPDATE kb.meta SET version = version + 1 WHERE singleton RETURNING version",
         )
         .fetch_one(&self.pool)
         .await?;

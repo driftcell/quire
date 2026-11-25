@@ -79,7 +79,7 @@ impl PgReportStore {
         let status = CommentStatus::Open;
 
         sqlx::query!(
-            r#"INSERT INTO report_comment_threads
+            r#"INSERT INTO report.comment_threads
                (doc_id, thread_id, block_id, end_block_id, anchor_blocks, section_id,
                 anchor_snapshot, quote, end_quote, status, created_rev, addressed_rev,
                 created_at, updated_at, evaluation_meta)
@@ -101,7 +101,7 @@ impl PgReportStore {
         .execute(&mut *tx)
         .await?;
         sqlx::query!(
-            r#"INSERT INTO report_comment_messages
+            r#"INSERT INTO report.comment_messages
                (message_id, doc_id, thread_id, author_type, author, body, created_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
             &message_id,
@@ -156,7 +156,7 @@ impl PgReportStore {
                       t.section_id, t.anchor_snapshot, t.quote, t.end_quote, t.status,
                       t.created_rev, t.addressed_rev, t.created_at, t.updated_at, t.evaluation_meta,
                       (NOT EXISTS (
-                          SELECT 1 FROM report_blocks b
+                          SELECT 1 FROM report.blocks b
                           WHERE b.doc_id = t.doc_id
                             AND (b.block_id = t.block_id
                                  OR b.block_id = t.end_block_id
@@ -164,7 +164,7 @@ impl PgReportStore {
                                      SELECT jsonb_array_elements_text(t.anchor_blocks)
                                  ))
                       )) AS "anchor_detached!"
-               FROM report_comment_threads t
+               FROM report.comment_threads t
                WHERE t.doc_id = $1
                  AND ($2::text IS NULL OR t.status = $2)
                  AND ($3::text IS NULL
@@ -180,7 +180,7 @@ impl PgReportStore {
         .await?;
         let message_rows = sqlx::query!(
             r#"SELECT message_id, thread_id, author_type, author, body, created_at
-               FROM report_comment_messages
+               FROM report.comment_messages
                WHERE doc_id = $1
                ORDER BY created_at ASC, message_id ASC"#,
             doc_id.as_str()
@@ -245,7 +245,7 @@ impl PgReportStore {
         }
         let mut tx = self.pool.begin().await?;
         let current_rev_row = sqlx::query!(
-            "SELECT current_rev FROM report_documents WHERE doc_id = $1",
+            "SELECT current_rev FROM report.documents WHERE doc_id = $1",
             doc_id.as_str()
         )
         .fetch_optional(&mut *tx)
@@ -260,7 +260,7 @@ impl PgReportStore {
         let now = Utc::now();
         let message_id = short_id("msg");
         sqlx::query!(
-            r#"INSERT INTO report_comment_messages
+            r#"INSERT INTO report.comment_messages
                (message_id, doc_id, thread_id, author_type, author, body, created_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
             &message_id,
@@ -289,7 +289,7 @@ impl PgReportStore {
             addressed_rev = Some(revision);
         }
         sqlx::query!(
-            r#"UPDATE report_comment_threads
+            r#"UPDATE report.comment_threads
                SET status = $3, addressed_rev = $4, updated_at = $5
                WHERE doc_id = $1 AND thread_id = $2"#,
             doc_id.as_str(),
@@ -323,7 +323,7 @@ impl PgReportStore {
         thread_id: &str,
     ) -> Result<(), StoreError> {
         let deleted = sqlx::query_scalar::<_, String>(
-            r#"DELETE FROM report_comment_threads
+            r#"DELETE FROM report.comment_threads
                WHERE doc_id = $1 AND thread_id = $2
                RETURNING thread_id"#,
         )
@@ -363,7 +363,7 @@ impl PgReportStore {
             thread.addressed_rev
         };
         sqlx::query!(
-            r#"UPDATE report_comment_threads
+            r#"UPDATE report.comment_threads
                SET status = $3, addressed_rev = $4, updated_at = $5
                WHERE doc_id = $1 AND thread_id = $2"#,
             doc_id.as_str(),
@@ -392,7 +392,7 @@ impl PgReportStore {
                       t.section_id, t.anchor_snapshot, t.quote, t.end_quote, t.status,
                       t.created_rev, t.addressed_rev, t.created_at, t.updated_at, t.evaluation_meta,
                       (NOT EXISTS (
-                          SELECT 1 FROM report_blocks b
+                          SELECT 1 FROM report.blocks b
                           WHERE b.doc_id = t.doc_id
                             AND (b.block_id = t.block_id
                                  OR b.block_id = t.end_block_id
@@ -400,7 +400,7 @@ impl PgReportStore {
                                      SELECT jsonb_array_elements_text(t.anchor_blocks)
                                  ))
                       )) AS "anchor_detached!"
-               FROM report_comment_threads t
+               FROM report.comment_threads t
                WHERE t.doc_id = $1 AND t.thread_id = $2"#,
             doc_id.as_str(),
             thread_id,
@@ -413,7 +413,7 @@ impl PgReportStore {
         })?;
         let message_rows = sqlx::query!(
             r#"SELECT message_id, thread_id, author_type, author, body, created_at
-               FROM report_comment_messages
+               FROM report.comment_messages
                WHERE doc_id = $1 AND thread_id = $2
                ORDER BY created_at ASC, message_id ASC"#,
             doc_id.as_str(),
@@ -463,16 +463,16 @@ impl CommentThreadRow {
             doc_id: DocId::parse(self.doc_id)?,
             block_id: BlockId::parse(self.block_id)?,
             end_block_id: self.end_block_id.map(BlockId::parse).transpose()?,
-            anchor_blocks: parse_json(self.anchor_blocks, "report_comment_threads.anchor_blocks")?,
+            anchor_blocks: parse_json(self.anchor_blocks, "report.comment_threads.anchor_blocks")?,
             section_id: self.section_id.map(BlockId::parse).transpose()?,
             anchor_snapshot: self.anchor_snapshot,
             quote: self
                 .quote
-                .map(|value| parse_json(value, "report_comment_threads.quote"))
+                .map(|value| parse_json(value, "report.comment_threads.quote"))
                 .transpose()?,
             end_quote: self
                 .end_quote
-                .map(|value| parse_json(value, "report_comment_threads.end_quote"))
+                .map(|value| parse_json(value, "report.comment_threads.end_quote"))
                 .transpose()?,
             status: CommentStatus::parse(&self.status).ok_or_else(|| {
                 StoreError::Internal(format!(
@@ -485,7 +485,7 @@ impl CommentThreadRow {
             anchor_detached: self.anchor_detached,
             evaluation_meta: self
                 .evaluation_meta
-                .map(|value| parse_json(value, "report_comment_threads.evaluation_meta"))
+                .map(|value| parse_json(value, "report.comment_threads.evaluation_meta"))
                 .transpose()?,
             messages,
             created_at: self.created_at,

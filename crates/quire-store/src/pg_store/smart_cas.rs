@@ -126,7 +126,7 @@ impl PgReportStore {
         persist_sources(&mut tx, doc_id.as_str(), &before, &after).await?;
         update_document_row(&mut tx, doc_id.as_str(), &after, new_revision).await?;
         sqlx::query!(
-            r#"INSERT INTO report_revisions
+            r#"INSERT INTO report.revisions
                (doc_id, rev_num, actor, summary, forward_ops, inverse_ops, affected_block_ids)
                VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
             doc_id.as_str(),
@@ -176,7 +176,7 @@ impl PgReportStore {
             });
         }
         let revision_rows = sqlx::query!(
-            r#"SELECT rev_num, inverse_ops FROM report_revisions
+            r#"SELECT rev_num, inverse_ops FROM report.revisions
                WHERE doc_id = $1 AND rev_num > $2 AND rev_num <= $3
                ORDER BY rev_num DESC"#,
             doc_id.as_str(),
@@ -224,7 +224,7 @@ impl PgReportStore {
         update_document_row(&mut tx, doc_id.as_str(), &after, new_revision).await?;
         let summary = format!("rollback_to_revision {target_revision}");
         sqlx::query!(
-            r#"INSERT INTO report_revisions
+            r#"INSERT INTO report.revisions
                (doc_id, rev_num, actor, summary, forward_ops, inverse_ops, affected_block_ids)
                VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
             doc_id.as_str(),
@@ -267,7 +267,7 @@ async fn detect_conflict(
     let typed_doc_id = DocId::parse(doc_id)?;
     let rows = sqlx::query!(
         r#"SELECT rev_num, forward_ops, affected_block_ids
-           FROM report_revisions
+           FROM report.revisions
            WHERE doc_id = $1 AND rev_num > $2 AND rev_num <= $3
            ORDER BY rev_num ASC"#,
         doc_id,
@@ -284,7 +284,7 @@ async fn detect_conflict(
     // against the current committed order so a concurrent insert inside the range cannot be
     // silently deleted by an apparently disjoint rebase.
     let ordered_ids: Vec<BlockId> = sqlx::query!(
-        r#"SELECT block_id FROM report_blocks WHERE doc_id = $1 ORDER BY rank COLLATE "C""#,
+        r#"SELECT block_id FROM report.blocks WHERE doc_id = $1 ORDER BY rank COLLATE "C""#,
         doc_id
     )
     .fetch_all(&mut **tx)
@@ -371,7 +371,7 @@ async fn detect_conflict(
     let ids: Vec<BlockId> = conflicting.into_iter().collect();
     let ids_db = block_ids_to_strings(&ids);
     let block_rows = sqlx::query!(
-        r#"SELECT payload FROM report_blocks
+        r#"SELECT payload FROM report.blocks
            WHERE doc_id = $1 AND block_id = ANY($2)
            ORDER BY rank COLLATE "C""#,
         doc_id,
@@ -381,7 +381,7 @@ async fn detect_conflict(
     .await?;
     let mut latest_blocks = Vec::new();
     for row in block_rows {
-        latest_blocks.push(parse_json(row.payload, "report_blocks.payload")?);
+        latest_blocks.push(parse_json(row.payload, "report.blocks.payload")?);
     }
     Ok(Some(RevisionConflict {
         doc_id: typed_doc_id,

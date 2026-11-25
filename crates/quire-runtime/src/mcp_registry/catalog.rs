@@ -6,7 +6,7 @@ impl McpRegistry {
         server_id: &str,
     ) -> RuntimeResult<Option<CachedMcpServer>> {
         let row = sqlx::query(
-            "SELECT server_id, name, url, auth_token_ref, enabled FROM mcp_servers WHERE server_id = $1",
+            "SELECT server_id, name, url, auth_token_ref, enabled FROM catalog.mcp_servers WHERE server_id = $1",
         )
         .bind(server_id)
         .fetch_optional(self.store.pool())
@@ -18,7 +18,7 @@ impl McpRegistry {
             return Ok(cached);
         }
         let server_rows = sqlx::query(
-            "SELECT server_id, name, url, auth_token_ref, enabled FROM mcp_servers WHERE enabled ORDER BY server_id ASC",
+            "SELECT server_id, name, url, auth_token_ref, enabled FROM catalog.mcp_servers WHERE enabled ORDER BY server_id ASC",
         )
         .fetch_all(self.store.pool())
         .await?;
@@ -26,7 +26,7 @@ impl McpRegistry {
             .iter()
             .map(row_to_cached_server)
             .collect::<RuntimeResult<Vec<_>>>()?;
-        let tool_rows = sqlx::query("SELECT server_id, tool_name, enabled FROM mcp_tools")
+        let tool_rows = sqlx::query("SELECT server_id, tool_name, enabled FROM catalog.mcp_tools")
             .fetch_all(self.store.pool())
             .await?;
         let mut tools: HashMap<String, HashMap<String, bool>> = HashMap::new();

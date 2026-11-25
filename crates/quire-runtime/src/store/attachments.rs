@@ -10,7 +10,7 @@ impl RuntimeStore {
             .map(str::to_string)
             .unwrap_or_else(|| short_id("att"));
         sqlx::query(
-            r#"INSERT INTO agent_attachments
+            r#"INSERT INTO runtime.attachments
                (attachment_id, session_id, filename, mime_type, size_bytes, storage_path,
                 storage_provider)
                VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
@@ -41,7 +41,7 @@ impl RuntimeStore {
         let row = sqlx::query(
             r#"SELECT attachment_id, session_id, filename, mime_type, size_bytes,
                       storage_path, storage_provider
-               FROM agent_attachments
+               FROM runtime.attachments
                WHERE attachment_id = $1 AND session_id = $2"#,
         )
         .bind(attachment_id)
@@ -64,7 +64,7 @@ impl RuntimeStore {
     pub async fn list_attachments(&self, session_id: &str) -> RuntimeResult<Vec<AttachmentMeta>> {
         let rows = sqlx::query(
             r#"SELECT attachment_id, filename, mime_type, size_bytes
-               FROM agent_attachments WHERE session_id = $1 ORDER BY created_at ASC"#,
+               FROM runtime.attachments WHERE session_id = $1 ORDER BY created_at ASC"#,
         )
         .bind(session_id)
         .fetch_all(&self.pool)

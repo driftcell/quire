@@ -6,6 +6,7 @@ members = [
   "crates/quire-server",
   "crates/quire-session-protocol",
   "crates/quire-runtime",
+  "crates/quire-migrate",
 ]
 resolver = "3"
 

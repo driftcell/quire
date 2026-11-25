@@ -484,7 +484,7 @@ async fn wait_for_running(store: &RuntimeStore, session_id: &str) {
 }
 
 async fn remove_branch(store: &RuntimeStore, name: &str) {
-    let _ = sqlx::query("DELETE FROM kb_branches WHERE name = $1")
+    let _ = sqlx::query("DELETE FROM kb.branches WHERE name = $1")
         .bind(name)
         .execute(store.pool())
         .await;
@@ -1725,10 +1725,10 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
     for statement in [
-        "DELETE FROM skill_resources",
-        "DELETE FROM skill_definitions",
-        "DELETE FROM agent_definitions",
-        "DELETE FROM kb_documents",
+        "DELETE FROM kb.skill_resources",
+        "DELETE FROM kb.skill_definitions",
+        "DELETE FROM kb.agent_definitions",
+        "DELETE FROM kb.documents",
     ] {
         sqlx::query(statement).execute(store.pool()).await.unwrap();
     }
@@ -1784,10 +1784,10 @@ async fn seed_is_idempotent_and_preserves_online_edits() {
         .unwrap();
     assert_eq!(default_agent.system_prompt, "ONLINE EDIT");
     for statement in [
-        "DELETE FROM skill_resources",
-        "DELETE FROM skill_definitions",
-        "DELETE FROM agent_definitions",
-        "DELETE FROM kb_documents",
+        "DELETE FROM kb.skill_resources",
+        "DELETE FROM kb.skill_definitions",
+        "DELETE FROM kb.agent_definitions",
+        "DELETE FROM kb.documents",
     ] {
         sqlx::query(statement).execute(store.pool()).await.unwrap();
     }
@@ -2977,7 +2977,7 @@ async fn disjoint_changes_auto_merge_on_promotion_and_invalidate_caches() {
         .unwrap();
     assert_eq!(branch.status, KbBranchStatus::Archived);
     let snapshots: i64 =
-        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM kb_snapshots WHERE version = $1")
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM kb.snapshots WHERE version = $1")
             .bind(i64::try_from(report.snapshot_version).unwrap())
             .fetch_one(store.pool())
             .await
@@ -3717,7 +3717,7 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
     );
     assert!(resumed.messages[2].content.contains("resumed after answer"));
     let question_status: String =
-        sqlx::query_scalar("SELECT status FROM agent_questions WHERE question_id = $1")
+        sqlx::query_scalar("SELECT status FROM runtime.questions WHERE question_id = $1")
             .bind(&pending.question_id)
             .fetch_one(store.pool())
             .await
@@ -3911,7 +3911,7 @@ async fn ask_user_skip_marks_skipped_and_continues() {
         message.role == MessageRole::Assistant && message.content.contains("continued after skip")
     }));
     let question_status: String =
-        sqlx::query_scalar("SELECT status FROM agent_questions WHERE question_id = $1")
+        sqlx::query_scalar("SELECT status FROM runtime.questions WHERE question_id = $1")
             .bind(&pending.question_id)
             .fetch_one(store.pool())
             .await
@@ -3996,7 +3996,7 @@ async fn new_message_dismisses_pending_question_and_starts_a_new_turn() {
         message.role == MessageRole::Assistant && message.content.contains("reply to new message")
     }));
     let question_status: String =
-        sqlx::query_scalar("SELECT status FROM agent_questions WHERE question_id = $1")
+        sqlx::query_scalar("SELECT status FROM runtime.questions WHERE question_id = $1")
             .bind(&pending.question_id)
             .fetch_one(store.pool())
             .await
@@ -4061,7 +4061,7 @@ async fn seed_retires_legacy_quire_report_mcp_and_exposes_native_report_tools() 
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
     let _ = sqlx::query(
-        r#"INSERT INTO mcp_servers (server_id, name, url, auth_token_ref, enabled)
+        r#"INSERT INTO catalog.mcp_servers (server_id, name, url, auth_token_ref, enabled)
            VALUES ('quire-report', 'Legacy Quire Report MCP', $1, 'env:QUIRE_RW_TOKEN', TRUE)
            ON CONFLICT (server_id) DO NOTHING"#,
     )
@@ -4132,7 +4132,7 @@ async fn mcp_tool_switch_filters_allow_listed_tools_and_invalidates_cache() {
         .unwrap();
     for tool_name in ["danger_tool", "safe_tool"] {
         sqlx::query(
-            r#"INSERT INTO mcp_tools (server_id, tool_name, description, enabled)
+            r#"INSERT INTO catalog.mcp_tools (server_id, tool_name, description, enabled)
                VALUES ($1, $2, $3, TRUE)"#,
         )
         .bind(&server_id)
@@ -6794,7 +6794,7 @@ async fn completed_run_trace_is_materialized_on_terminal_transition() {
     let mut stored: Option<Value> = None;
     for _ in 0..250 {
         stored = sqlx::query_scalar(
-            "SELECT trace_summary FROM agent_runs WHERE run_id = $1 AND trace_summary IS NOT NULL",
+            "SELECT trace_summary FROM runtime.runs WHERE run_id = $1 AND trace_summary IS NOT NULL",
         )
         .bind(&run_id)
         .fetch_optional(store.pool())
@@ -6845,7 +6845,7 @@ async fn question_closure_completes_run_and_materializes_completed_trace() {
     );
 
     let stored: Option<Value> =
-        sqlx::query_scalar("SELECT trace_summary FROM agent_runs WHERE run_id = $1")
+        sqlx::query_scalar("SELECT trace_summary FROM runtime.runs WHERE run_id = $1")
             .bind(&run.run_id)
             .fetch_optional(store.pool())
             .await

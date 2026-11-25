@@ -22,9 +22,9 @@ The session protocol retains:
 - `MessageRole::Question` and `SessionMessage.question_id` for first-class question timeline receipts;
 - `SessionDetail.pending_question` and `resolved_questions`;
 - non-terminal, non-run-scoped `questionnaire_requested`, `questionnaire_answered` and `questionnaire_dismissed` events;
-- `ActiveRunStatus::AwaitingInput` (session input gate only; `agent_runs` never enters `awaiting_input`).
+- `ActiveRunStatus::AwaitingInput` (session input gate only; `runtime.runs` never enters `awaiting_input`).
 
-`agent_questions` remains the durable card store with pending/answered/skipped/dismissed states,
+`runtime.questions` remains the durable card store with pending/answered/skipped/dismissed states,
 optional originating `tool_call_id`, JSON questions/answers and timestamps.
 
 Answers sent to the model use only `AskUserAnswerPayload`:
@@ -77,17 +77,17 @@ validation/execution failures without question metadata receive a failed finish 
 
 ### 2.3 Run Closure & Question Anchoring
 
-`EventSink` persists the `agent_questions` row before publishing `questionnaire_requested` (`liveRunStatus -> awaiting_input`). When the turn stops with a pending question:
+`EventSink` persists the `runtime.questions` row before publishing `questionnaire_requested` (`liveRunStatus -> awaiting_input`). When the turn stops with a pending question:
 
 1. Canonical conversation history (any assistant prose and accepted tool calls) is already committed in `rig-memory`;
 2. `ConversationMemory::append_question_message` attaches a visible `MessageRole::Question` receipt (`question_id`, `run_id`) onto the canonical conversation tail strictly after any `Assistant` receipt for that run;
-3. `finish_run_for_question` closes the run cleanly as `agent_runs.status = 'completed'`, keeps `agent_sessions.active_run_status = 'awaiting_input'`, appends `turn_finished`, and immediately materializes the settled `completed` cold `trace_summary`.
+3. `finish_run_for_question` closes the run cleanly as `runtime.runs.status = 'completed'`, keeps `runtime.sessions.active_run_status = 'awaiting_input'`, appends `turn_finished`, and immediately materializes the settled `completed` cold `trace_summary`.
 
-Startup recovery rewrites only `running` runs. A durable `MessageRole::Question` receipt and pending `agent_questions` card remain visible in canonical timeline order after refresh or restart.
+Startup recovery rewrites only `running` runs. A durable `MessageRole::Question` receipt and pending `runtime.questions` card remain visible in canonical timeline order after refresh or restart.
 
 ### 2.4 Answer, skip, retry, and dismissal
 
-`POST /api/sessions/{session_id}/questions/{question_id}/answer` validates that the card is pending, validates question/option IDs, stores `answered` or `skipped`, clears `agent_sessions.active_run_status` from `awaiting_input` to `idle`, emits `questionnaire_answered`, and starts the continuation turn (`Run 2`) cleanly without modifying `Run 1`'s finalized run or trace.
+`POST /api/sessions/{session_id}/questions/{question_id}/answer` validates that the card is pending, validates question/option IDs, stores `answered` or `skipped`, clears `runtime.sessions.active_run_status` from `awaiting_input` to `idle`, emits `questionnaire_answered`, and starts the continuation turn (`Run 2`) cleanly without modifying `Run 1`'s finalized run or trace.
 
 The answer payload is serialized as JSON and appended to canonical memory as an **internal, invisible
 prompt**. It is the only model input for the continuation turn. There is no

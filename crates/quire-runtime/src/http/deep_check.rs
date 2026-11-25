@@ -96,7 +96,7 @@ async fn load_deep_check_row(
     sqlx::query_as::<_, DeepCheckRow>(
         r#"SELECT status, provider, model, revision, evaluated_blocks, created_threads,
                   escalated_count, error_message, started_at, finished_at
-           FROM report_deep_checks
+           FROM report.deep_checks
            WHERE doc_id = $1"#,
     )
     .bind(doc_id.as_str())
@@ -143,7 +143,7 @@ pub(crate) async fn trigger_deep_check(
 
     // Atomically transition to `running` unless already `running`.
     let inserted = sqlx::query_as::<_, DeepCheckRow>(
-        r#"INSERT INTO report_deep_checks
+        r#"INSERT INTO report.deep_checks
                (doc_id, status, provider, model, revision, evaluated_blocks, created_threads,
                 escalated_count, error_message, started_at, finished_at, updated_at)
            VALUES ($1, 'running', $2, $3, $4, 0, 0, 0, NULL, NOW(), NULL, NOW())
@@ -159,7 +159,7 @@ pub(crate) async fn trigger_deep_check(
                started_at = NOW(),
                finished_at = NULL,
                updated_at = NOW()
-           WHERE report_deep_checks.status <> 'running'
+           WHERE report.deep_checks.status <> 'running'
            RETURNING status, provider, model, revision, evaluated_blocks, created_threads,
                      escalated_count, error_message, started_at, finished_at"#,
     )
@@ -197,7 +197,7 @@ pub(crate) async fn trigger_deep_check(
         match outcome {
             Ok((evaluated_blocks, created_threads, escalated_count)) => {
                 let _ = sqlx::query(
-                    r#"UPDATE report_deep_checks
+                    r#"UPDATE report.deep_checks
                        SET status = 'completed',
                            evaluated_blocks = $2,
                            created_threads = $3,
@@ -216,7 +216,7 @@ pub(crate) async fn trigger_deep_check(
             }
             Err(err) => {
                 let _ = sqlx::query(
-                    r#"UPDATE report_deep_checks
+                    r#"UPDATE report.deep_checks
                        SET status = 'failed',
                            error_message = $2,
                            finished_at = NOW(),

@@ -155,9 +155,10 @@ impl McpRegistry {
     /// Retire any legacy `quire-report` HTTP MCP server entry now that all 18 Quire
     /// report domain tools run natively in-process.
     pub async fn retire_legacy_quire_report(&self) -> RuntimeResult<()> {
-        let deleted = sqlx::query("DELETE FROM mcp_servers WHERE server_id = 'quire-report'")
-            .execute(self.store.pool())
-            .await?;
+        let deleted =
+            sqlx::query("DELETE FROM catalog.mcp_servers WHERE server_id = 'quire-report'")
+                .execute(self.store.pool())
+                .await?;
         if deleted.rows_affected() > 0 {
             self.after_mutation().await;
         }
@@ -167,7 +168,7 @@ impl McpRegistry {
     pub async fn list_servers(&self) -> RuntimeResult<Vec<McpServerRecord>> {
         let rows = sqlx::query(
             r#"SELECT server_id, name, url, auth_token_ref, enabled, created_at, updated_at
-               FROM mcp_servers ORDER BY server_id ASC"#,
+               FROM catalog.mcp_servers ORDER BY server_id ASC"#,
         )
         .fetch_all(self.store.pool())
         .await?;
@@ -177,7 +178,7 @@ impl McpRegistry {
     pub async fn get_server(&self, server_id: &str) -> RuntimeResult<Option<McpServerRecord>> {
         let row = sqlx::query(
             r#"SELECT server_id, name, url, auth_token_ref, enabled, created_at, updated_at
-               FROM mcp_servers WHERE server_id = $1"#,
+               FROM catalog.mcp_servers WHERE server_id = $1"#,
         )
         .bind(server_id)
         .fetch_optional(self.store.pool())
@@ -195,12 +196,12 @@ impl McpRegistry {
             _ => None,
         };
         sqlx::query(
-            r#"INSERT INTO mcp_servers (server_id, name, url, auth_token_ref, enabled)
+            r#"INSERT INTO catalog.mcp_servers (server_id, name, url, auth_token_ref, enabled)
                VALUES ($1, $2, $3, $4, $5)
                ON CONFLICT (server_id) DO UPDATE
                SET name = EXCLUDED.name,
                    url = EXCLUDED.url,
-                   auth_token_ref = COALESCE(EXCLUDED.auth_token_ref, mcp_servers.auth_token_ref),
+                   auth_token_ref = COALESCE(EXCLUDED.auth_token_ref, catalog.mcp_servers.auth_token_ref),
                    enabled = EXCLUDED.enabled,
                    updated_at = NOW()"#,
         )
@@ -236,7 +237,7 @@ impl McpRegistry {
         };
         let enabled = patch.enabled.unwrap_or(current.enabled);
         sqlx::query(
-            r#"UPDATE mcp_servers
+            r#"UPDATE catalog.mcp_servers
                SET name = $2, url = $3, auth_token_ref = $4, enabled = $5, updated_at = NOW()
                WHERE server_id = $1"#,
         )
@@ -254,7 +255,7 @@ impl McpRegistry {
     }
 
     pub async fn delete_server(&self, server_id: &str) -> RuntimeResult<()> {
-        sqlx::query("DELETE FROM mcp_servers WHERE server_id = $1")
+        sqlx::query("DELETE FROM catalog.mcp_servers WHERE server_id = $1")
             .bind(server_id)
             .execute(self.store.pool())
             .await?;
@@ -278,7 +279,7 @@ impl McpRegistry {
             discovered.insert(descriptor.name.clone(), descriptor);
         }
         let existing: BTreeSet<String> =
-            sqlx::query_scalar("SELECT tool_name FROM mcp_tools WHERE server_id = $1")
+            sqlx::query_scalar("SELECT tool_name FROM catalog.mcp_tools WHERE server_id = $1")
                 .bind(server_id)
                 .fetch_all(self.store.pool())
                 .await?
@@ -294,7 +295,7 @@ impl McpRegistry {
                 created += 1;
             }
             sqlx::query(
-                r#"INSERT INTO mcp_tools
+                r#"INSERT INTO catalog.mcp_tools
                    (server_id, tool_name, description, input_schema, enabled)
                    VALUES ($1, $2, $3, $4, TRUE)
                    ON CONFLICT (server_id, tool_name) DO UPDATE
@@ -325,7 +326,7 @@ impl McpRegistry {
             match server_id {
                 Some(server_id) => sqlx::query(
                     r#"SELECT server_id, tool_name, description, input_schema, enabled, updated_at
-                       FROM mcp_tools WHERE server_id = $1
+                       FROM catalog.mcp_tools WHERE server_id = $1
                        ORDER BY server_id ASC, tool_name ASC"#,
                 )
                 .bind(server_id)
@@ -333,7 +334,7 @@ impl McpRegistry {
                 .await?,
                 None => sqlx::query(
                     r#"SELECT server_id, tool_name, description, input_schema, enabled, updated_at
-                       FROM mcp_tools
+                       FROM catalog.mcp_tools
                        ORDER BY server_id ASC, tool_name ASC"#,
                 )
                 .fetch_all(self.store.pool())
@@ -349,7 +350,7 @@ impl McpRegistry {
         enabled: bool,
     ) -> RuntimeResult<McpToolRecord> {
         let updated = sqlx::query(
-            r#"UPDATE mcp_tools
+            r#"UPDATE catalog.mcp_tools
                SET enabled = $3, updated_at = NOW()
                WHERE server_id = $1 AND tool_name = $2"#,
         )
@@ -376,7 +377,7 @@ impl McpRegistry {
     ) -> RuntimeResult<Option<McpToolRecord>> {
         let row = sqlx::query(
             r#"SELECT server_id, tool_name, description, input_schema, enabled, updated_at
-               FROM mcp_tools WHERE server_id = $1 AND tool_name = $2"#,
+               FROM catalog.mcp_tools WHERE server_id = $1 AND tool_name = $2"#,
         )
         .bind(server_id)
         .bind(tool_name)

@@ -99,7 +99,7 @@ pub(crate) async fn insert_block_row(
 ) -> Result<(), StoreError> {
     let source_ids = source_ids_to_strings(&block.source_ids);
     sqlx::query!(
-        r#"INSERT INTO report_blocks
+        r#"INSERT INTO report.blocks
            (doc_id, block_id, rank, type, payload, style, source_ids, updated_rev)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"#,
         doc_id,
@@ -126,7 +126,7 @@ pub(crate) async fn persist_blocks(
     if !diff.deleted_block_ids.is_empty() {
         let deleted = block_ids_to_strings(&diff.deleted_block_ids);
         sqlx::query!(
-            "DELETE FROM report_blocks WHERE doc_id = $1 AND block_id = ANY($2)",
+            "DELETE FROM report.blocks WHERE doc_id = $1 AND block_id = ANY($2)",
             doc_id,
             deleted.as_slice()
         )
@@ -142,7 +142,7 @@ pub(crate) async fn persist_blocks(
             ))
         })?;
         sqlx::query!(
-            r#"INSERT INTO report_blocks
+            r#"INSERT INTO report.blocks
                (doc_id, block_id, rank, type, payload, style, source_ids, updated_rev)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                ON CONFLICT (doc_id, block_id)
@@ -175,7 +175,7 @@ pub(crate) async fn update_document_row(
     revision: Revision,
 ) -> Result<(), StoreError> {
     sqlx::query!(
-        r#"UPDATE report_documents
+        r#"UPDATE report.documents
            SET current_rev = $2, cover = $3, toc = $4, theme = $5,
                "references" = $6, lint = $7, updated_at = NOW()
            WHERE doc_id = $1"#,
@@ -203,12 +203,12 @@ pub(crate) async fn persist_sources(
     }
     // Source sets are small. Replacing the registry atomically avoids unique-index transient
     // collisions when normalized keys are swapped or rewritten by a rollback.
-    sqlx::query!("DELETE FROM report_sources WHERE doc_id = $1", doc_id)
+    sqlx::query!("DELETE FROM report.sources WHERE doc_id = $1", doc_id)
         .execute(&mut **tx)
         .await?;
     for (source_id, source) in &after.sources {
         sqlx::query!(
-            r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata, excerpt)
+            r#"INSERT INTO report.sources (doc_id, source_id, normalized_key, metadata, excerpt)
                VALUES ($1, $2, $3, $4, $5)"#,
             doc_id,
             source_id.as_str(),

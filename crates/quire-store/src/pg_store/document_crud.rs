@@ -38,7 +38,7 @@ impl PgReportStore {
             && let Some(existing) = sqlx::query!(
                 r#"SELECT doc_id, session_id, current_rev,
                           COALESCE(NULLIF(cover->>'title',''), doc_id) AS "title!"
-                   FROM report_documents WHERE idempotency_key = $1"#,
+                   FROM report.documents WHERE idempotency_key = $1"#,
                 key
             )
             .fetch_optional(&mut *tx)
@@ -58,7 +58,7 @@ impl PgReportStore {
         }
 
         let inserted = sqlx::query!(
-            r#"INSERT INTO report_documents
+            r#"INSERT INTO report.documents
                (doc_id, session_id, idempotency_key, current_rev, cover, toc, theme, "references", lint, target_prose_chars)
                VALUES ($1, $2, $3, 1, $4, $5, $6, $7, $8, $9)
                RETURNING current_rev"#,
@@ -83,7 +83,7 @@ impl PgReportStore {
                         && let Some(existing) = sqlx::query!(
                             r#"SELECT doc_id, session_id, current_rev,
                                       COALESCE(NULLIF(cover->>'title',''), doc_id) AS "title!"
-                               FROM report_documents WHERE idempotency_key = $1"#,
+                               FROM report.documents WHERE idempotency_key = $1"#,
                             key
                         )
                         .fetch_optional(&mut *tx)
@@ -113,7 +113,7 @@ impl PgReportStore {
         for (source_id, source) in &document.sources {
             validate_source_id(source_id)?;
             sqlx::query!(
-                r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata, excerpt)
+                r#"INSERT INTO report.sources (doc_id, source_id, normalized_key, metadata, excerpt)
                    VALUES ($1, $2, $3, $4, $5)"#,
                 document.doc_id.as_str(),
                 source_id.as_str(),
@@ -162,7 +162,7 @@ impl PgReportStore {
             .map(|block| block.id.as_str().to_string())
             .collect();
         sqlx::query!(
-            r#"INSERT INTO report_revisions
+            r#"INSERT INTO report.revisions
                (doc_id, rev_num, actor, summary, forward_ops, inverse_ops, affected_block_ids)
                VALUES ($1, $2, $3, $4, $5, '[]'::jsonb, $6)"#,
             document.doc_id.as_str(),
@@ -251,9 +251,9 @@ impl PgReportStore {
                    COALESCE(NULLIF(d.cover->>'title',''), d.doc_id) AS "title!",
                    d.session_id,
                    d.current_rev,
-                   (SELECT COUNT(*) FROM report_blocks b WHERE b.doc_id = d.doc_id) AS "block_count!",
+                   (SELECT COUNT(*) FROM report.blocks b WHERE b.doc_id = d.doc_id) AS "block_count!",
                    d.updated_at
-            FROM report_documents d
+            FROM report.documents d
             WHERE ($1::text IS NULL
                    OR d.doc_id ILIKE $1
                    OR COALESCE(d.cover->>'title','') ILIKE $1)
@@ -269,7 +269,7 @@ impl PgReportStore {
         let total = sqlx::query!(
             r#"
             SELECT COUNT(*) AS "count!"
-            FROM report_documents d
+            FROM report.documents d
             WHERE ($1::text IS NULL
                    OR d.doc_id ILIKE $1
                    OR COALESCE(d.cover->>'title','') ILIKE $1)
@@ -307,7 +307,7 @@ impl PgReportStore {
         let limit = limit.clamp(1, 500);
         let rows = sqlx::query!(
             r#"SELECT rev_num, actor, summary, forward_ops, inverse_ops, affected_block_ids, created_at
-               FROM report_revisions WHERE doc_id = $1
+               FROM report.revisions WHERE doc_id = $1
                ORDER BY rev_num DESC LIMIT $2"#,
             doc_id.as_str(),
             limit
@@ -342,7 +342,7 @@ impl PgReportStore {
     ) -> Result<Vec<RevisionEvent>, StoreError> {
         let rows = sqlx::query!(
             r#"SELECT rev_num, actor, summary, forward_ops, created_at
-               FROM report_revisions
+               FROM report.revisions
                WHERE doc_id = $1 AND rev_num > $2
                ORDER BY rev_num ASC LIMIT $3"#,
             doc_id.as_str(),
@@ -373,7 +373,7 @@ pub(crate) async fn lock_current_revision(
 ) -> Result<Revision, StoreError> {
     let typed_doc_id = DocId::parse(doc_id)?;
     let row = sqlx::query!(
-        "SELECT current_rev FROM report_documents WHERE doc_id = $1 FOR UPDATE",
+        "SELECT current_rev FROM report.documents WHERE doc_id = $1 FOR UPDATE",
         doc_id
     )
     .fetch_optional(&mut **tx)
@@ -392,7 +392,7 @@ pub(crate) async fn load_document_in_tx(
     let row = sqlx::query!(
         r#"SELECT doc_id, session_id, current_rev, cover, toc, theme, target_prose_chars,
                   "references" AS "references_json!", lint AS "lint_json!"
-           FROM report_documents WHERE doc_id = $1"#,
+           FROM report.documents WHERE doc_id = $1"#,
         doc_id
     )
     .fetch_optional(&mut **tx)
@@ -412,14 +412,14 @@ pub(crate) async fn load_document_in_tx(
     };
 
     let source_rows = sqlx::query!(
-        "SELECT source_id, metadata, excerpt FROM report_sources WHERE doc_id = $1 ORDER BY source_id",
+        "SELECT source_id, metadata, excerpt FROM report.sources WHERE doc_id = $1 ORDER BY source_id",
         doc_id
     )
     .fetch_all(&mut **tx)
     .await?;
     let mut sources = IndexMap::new();
     for row in source_rows {
-        let mut entry: SourceEntry = parse_json(row.metadata, "report_sources.metadata")?;
+        let mut entry: SourceEntry = parse_json(row.metadata, "report.sources.metadata")?;
         if entry.excerpt.is_none() {
             entry.excerpt = row.excerpt;
         }
@@ -427,7 +427,7 @@ pub(crate) async fn load_document_in_tx(
     }
 
     let block_rows = sqlx::query!(
-        r#"SELECT block_id, rank, payload FROM report_blocks
+        r#"SELECT block_id, rank, payload FROM report.blocks
            WHERE doc_id = $1 ORDER BY rank COLLATE "C""#,
         doc_id
     )
@@ -436,7 +436,7 @@ pub(crate) async fn load_document_in_tx(
     let mut blocks = Vec::with_capacity(block_rows.len());
     let mut ranks = BTreeMap::new();
     for row in block_rows {
-        let block: Block = parse_json(row.payload, "report_blocks.payload")?;
+        let block: Block = parse_json(row.payload, "report.blocks.payload")?;
         if block.id != row.block_id {
             return Err(StoreError::Internal(format!(
                 "block payload id `{}` does not match row id `{}`",
@@ -460,13 +460,13 @@ pub(crate) async fn load_document_in_tx(
             })
             .transpose()?,
         revision: doc_row.current_rev,
-        cover: parse_json(doc_row.cover, "report_documents.cover")?,
-        toc: parse_json(doc_row.toc, "report_documents.toc")?,
-        theme: parse_json(doc_row.theme, "report_documents.theme")?,
+        cover: parse_json(doc_row.cover, "report.documents.cover")?,
+        toc: parse_json(doc_row.toc, "report.documents.toc")?,
+        theme: parse_json(doc_row.theme, "report.documents.theme")?,
         sources,
         blocks,
-        references: parse_json(doc_row.references, "report_documents.references")?,
-        lint: parse_json(doc_row.lint, "report_documents.lint")?,
+        references: parse_json(doc_row.references, "report.documents.references")?,
+        lint: parse_json(doc_row.lint, "report.documents.lint")?,
     };
     Ok(LoadedDocument { document, ranks })
 }

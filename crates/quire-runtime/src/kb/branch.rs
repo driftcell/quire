@@ -4,7 +4,7 @@ impl KbService {
     pub async fn active_branch(&self) -> RuntimeResult<KbBranchRecord> {
         let row = sqlx::query(
             r#"SELECT name, description, status, base_version, head_version, created_at, updated_at
-               FROM kb_branches WHERE status = 'active'
+               FROM kb.branches WHERE status = 'active'
                ORDER BY name ASC LIMIT 1"#,
         )
         .fetch_optional(self.store.pool())
@@ -16,7 +16,7 @@ impl KbService {
     pub async fn list_branches(&self) -> RuntimeResult<Vec<KbBranchRecord>> {
         let rows = sqlx::query(
             r#"SELECT name, description, status, base_version, head_version, created_at, updated_at
-               FROM kb_branches
+               FROM kb.branches
                ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'draft' THEN 1 ELSE 2 END,
                         updated_at DESC, name ASC"#,
         )
@@ -28,7 +28,7 @@ impl KbService {
     pub async fn get_branch(&self, name: &str) -> RuntimeResult<Option<KbBranchRecord>> {
         let row = sqlx::query(
             r#"SELECT name, description, status, base_version, head_version, created_at, updated_at
-               FROM kb_branches WHERE name = $1"#,
+               FROM kb.branches WHERE name = $1"#,
         )
         .bind(name)
         .fetch_optional(self.store.pool())
@@ -59,7 +59,7 @@ impl KbService {
             ));
         }
         let exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM kb_branches WHERE name = $1)")
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM kb.branches WHERE name = $1)")
                 .bind(name)
                 .fetch_one(&mut *tx)
                 .await?;
@@ -78,7 +78,7 @@ impl KbService {
         )
         .await?;
         sqlx::query(
-            r#"INSERT INTO kb_branches
+            r#"INSERT INTO kb.branches
                (name, description, status, base_version, head_version)
                VALUES ($1, $2, 'draft', $3, $3)"#,
         )
@@ -188,7 +188,7 @@ impl KbService {
             )
             .await?;
             sqlx::query(
-                "UPDATE kb_branches SET base_version = $2, updated_at = NOW() WHERE name = $1",
+                "UPDATE kb.branches SET base_version = $2, updated_at = NOW() WHERE name = $1",
             )
             .bind(&branch.name)
             .bind(i64::try_from(active.head_version).unwrap_or(i64::MAX))
@@ -228,13 +228,13 @@ impl KbService {
             KbPromoteMode::FastForward
         };
         let version = bump_version(&mut tx).await?;
-        sqlx::query("UPDATE kb_branches SET head_version = $2, updated_at = NOW() WHERE name = $1")
+        sqlx::query("UPDATE kb.branches SET head_version = $2, updated_at = NOW() WHERE name = $1")
             .bind(&active.name)
             .bind(i64::try_from(version).unwrap_or(i64::MAX))
             .execute(&mut *tx)
             .await?;
         sqlx::query(
-            r#"UPDATE kb_branches SET status = 'archived', head_version = $2, updated_at = NOW()
+            r#"UPDATE kb.branches SET status = 'archived', head_version = $2, updated_at = NOW()
                WHERE name = $1"#,
         )
         .bind(&branch.name)
@@ -269,7 +269,7 @@ impl KbService {
                     )));
                 }
                 let exists: bool = sqlx::query_scalar(
-                    "SELECT EXISTS(SELECT 1 FROM kb_snapshots WHERE version = $1)",
+                    "SELECT EXISTS(SELECT 1 FROM kb.snapshots WHERE version = $1)",
                 )
                 .bind(i64::try_from(target).unwrap_or(i64::MAX))
                 .fetch_one(&mut *tx)
@@ -283,7 +283,7 @@ impl KbService {
             }
             None => {
                 let target = sqlx::query_scalar::<_, i64>(
-                    r#"SELECT version FROM kb_snapshots
+                    r#"SELECT version FROM kb.snapshots
                        WHERE version < $1 ORDER BY version DESC LIMIT 1"#,
                 )
                 .bind(i64::try_from(active.head_version).unwrap_or(i64::MAX))
@@ -301,7 +301,7 @@ impl KbService {
         let applied_items = apply_entries(&mut tx, &active.name, &snapshot).await?;
         let previous_version = active.head_version;
         let new_version = bump_version(&mut tx).await?;
-        sqlx::query("UPDATE kb_branches SET head_version = $2, updated_at = NOW() WHERE name = $1")
+        sqlx::query("UPDATE kb.branches SET head_version = $2, updated_at = NOW() WHERE name = $1")
             .bind(&active.name)
             .bind(i64::try_from(new_version).unwrap_or(i64::MAX))
             .execute(&mut *tx)
@@ -322,7 +322,7 @@ impl KbService {
 
     pub async fn list_snapshots(&self, limit: i64) -> RuntimeResult<Vec<KbSnapshotSummary>> {
         let rows = sqlx::query(
-            r#"SELECT version, branch, source, created_at FROM kb_snapshots
+            r#"SELECT version, branch, source, created_at FROM kb.snapshots
                ORDER BY version DESC LIMIT $1"#,
         )
         .bind(limit.clamp(1, 200))
@@ -399,7 +399,7 @@ impl KbService {
         match kind {
             KbItemKind::Doc => {
                 let row = sqlx::query(
-                    r#"SELECT doc_id, name, content, version, updated_at FROM kb_documents
+                    r#"SELECT doc_id, name, content, version, updated_at FROM kb.documents
                        WHERE branch = $1 AND doc_id = $2"#,
                 )
                 .bind(&branch)

@@ -17,13 +17,14 @@ dependency. Rendering and visual preview belong to the external frontend.
 | `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json` |
 | `quire-server` | Shared report application service and contracts, Axum REST/SSE endpoints, and the optional 19-tool `rmcp` adapter mounted at `/mcp` |
 | `quire-runtime` | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE |
+| `quire-migrate` | Standalone SQLx migration runner for all six PostgreSQL domain schemas |
 
 ## Quickstart
 
 ```bash
 cp .env.example .env
 just up          # PostgreSQL 16 + Redis 7 via docker compose
-just migrate     # SQLx migrations
+just migrate     # all report + runtime schemas via quire-migrate
 just server      # unified Quire server (`quire-runtime --bin server`, auto-runs migrations)
 ```
 
@@ -57,7 +58,8 @@ just test            # workspace tests; recreates report_core_test from DATABASE
 just clippy          # cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-`just test` derives a disposable `report_core_test` database from `DATABASE_URL`. Running the
+`just test` derives a disposable `report_core_test` database from `DATABASE_URL`, runs both migration
+pipelines, and uses that database for both SQLx macro compilation and test execution. Running the
 runtime integration tests directly with `cargo test` requires `TEST_DATABASE_URL`; they refuse to
 run against `report_core` because they mutate runtime state.
 
@@ -247,14 +249,14 @@ streamed placeholders immediately instead of waiting for `ttl_ms` to expire.
 `quire-runtime` is the unified backend; it embeds the `quire-server` report engine in-process while
 `quire-server` remains independent of the runtime and `rig`. It owns:
 
-- PostgreSQL tables for `agent_sessions`, messages, attachments, runs, `session_events`,
-  `agent_tool_calls`, knowledge documents, agent definitions, skills and skill resources.
+- PostgreSQL tables for `runtime.sessions`, messages, attachments, runs, `session_events`,
+  `runtime.tool_calls`, knowledge documents, agent definitions, skills and skill resources.
 - `POST/GET/PATCH/DELETE /api/sessions`, message/attachment/retry/compact/interrupt endpoints and
   `GET /api/sessions/{id}/events?afterSeq=N` (PostgreSQL replay, then Redis live tail).
 - `/api/kb/docs`, `/api/kb/agents` and `/api/kb/skills` CRUD with monotonic KB versions, idempotent
   filesystem seeding and moka cache invalidation over Redis.
 - Git-style KB branches: `/api/kb/branches` create/list/diff/promote, `/api/kb/rollback`, immutable
-  `kb_snapshots`, item-level three-way merge with structured conflicts, and session-level
+  `kb.snapshots`, item-level three-way merge with structured conflicts, and session-level
   `kb_branch` selection for isolated test runs.
 - `/admin/mcp` Streamable HTTP administration tools for branches, branch-scoped items, providers,
   models and session inspection. It uses the same `KbService` / `ModelRegistry` / `RuntimeService`
@@ -276,13 +278,13 @@ streamed placeholders immediately instead of waiting for `ttl_ms` to expire.
   durable in `SessionDetail.pending_question`; answers/skips resume through
   `POST /api/sessions/{id}/questions/{question_id}/answer`, while a normal new message dismisses the
   card and starts a fresh turn.
-- Global MCP registry (`mcp_servers` / `mcp_tools`) with idempotent legacy `quire-report` retirement,
+- Global MCP registry (`catalog.mcp_servers` / `catalog.mcp_tools`) with idempotent legacy `quire-report` retirement,
   tool discovery/sync, per-tool global kill switches, masked auth refs and moka + Redis invalidation.
   Agent tool selection is the triple intersection of enabled server, enabled tool and allow-list.
 
 Session contracts and SSE envelopes are exported to `contracts/session-protocol.schema.json`.
 
-Model routes are managed by `llm_providers` / `llm_models` and exposed under `/api/models`. Provider
+Model routes are managed by `catalog.llm_providers` / `catalog.llm_models` and exposed under `/api/models`. Provider
 credentials are stored only as `env:VAR` references or AES-256-GCM `enc:` values derived from
 `RUNTIME_MASTER_KEY`; GET responses expose masks only. `/api/models/import-models-dev` accepts either
 an offline `models.dev` `api.json` payload or fetches `MODELS_DEV_URL`, and `ModelRouter` builds
@@ -290,8 +292,8 @@ rig-core clients for `openai_compatible` or `anthropic` protocols with the regis
 context limit and tool/reasoning capabilities.
 
 ### Review comments
-Comments are side-channel data: they never enter `report_blocks`, never increment
-`report_documents.current_rev`, and never participate in Smart CAS. `block_id` is a soft `TEXT`
+Comments are side-channel data: they never enter `report.blocks`, never increment
+`report.documents.current_rev`, and never participate in Smart CAS. `block_id` is a soft `TEXT`
 reference plus a truncated `anchor_snapshot` and nearest-heading `section_id`; deleting the block
 leaves the thread intact with `anchor_detached: true`. Humans create/reply/archive through REST;
 agents use `add_comment`/`reply_comment` and may only advance `open` to `addressed` with
@@ -378,8 +380,8 @@ P90 visual-width heuristic (`CJK = 2.0`, ASCII = 1.0), `fit`/`grow` weights and
 
 ## Persistence
 
-Tables: `report_documents`, `report_blocks`, `report_sources`, `report_revisions`,
-`report_snapshots`, `report_comment_threads`, `report_comment_messages`. Snapshots are Zstd-compressed every 50 revisions. Source dedup uses a normalized
+Tables: `report.documents`, `report.blocks`, `report.sources`, `report.revisions`,
+`report.snapshots`, `report.comment_threads`, `report.comment_messages`. Snapshots are Zstd-compressed every 50 revisions. Source dedup uses a normalized
 key (URL first, normalized title otherwise).
 
 ## Non-goals

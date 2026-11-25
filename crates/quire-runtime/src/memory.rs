@@ -55,17 +55,19 @@ impl ConversationMemory {
         let prefix = format!("{session_id}:sub:");
         let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "DELETE FROM rig_memory_log_chunks WHERE name = $1 OR left(name, length($2)) = $2",
+            "DELETE FROM rig.rig_memory_log_chunks WHERE name = $1 OR left(name, length($2)) = $2",
         )
         .bind(session_id)
         .bind(&prefix)
         .execute(&mut *tx)
         .await?;
-        sqlx::query("DELETE FROM rig_memory_logs WHERE name = $1 OR left(name, length($2)) = $2")
-            .bind(session_id)
-            .bind(prefix)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(
+            "DELETE FROM rig.rig_memory_logs WHERE name = $1 OR left(name, length($2)) = $2",
+        )
+        .bind(session_id)
+        .bind(prefix)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(())
     }

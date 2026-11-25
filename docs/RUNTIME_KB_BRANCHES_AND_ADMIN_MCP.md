@@ -26,31 +26,31 @@ wire protocols beyond the provider registry already owned by `quire-runtime`.
 
 ### Tables
 
-The consolidated `migrations/0001_init.sql` adds:
+The reset `0002_kb.sql` and `0004_runtime.sql` migrations define:
 
-- `kb_branches(name PK, description, status, base_version, head_version, created_at, updated_at)`.
+- `kb.branches(name PK, description, status, base_version, head_version, created_at, updated_at)`.
   Status is constrained to `active`, `draft`, `archived`; a partial unique index allows one active
-  branch. Migration seeds `main` from the current `kb_meta.version`.
-- `branch` on `kb_documents`, `agent_definitions`, `skill_definitions` and `skill_resources`.
+  branch. Migration seeds `main` from the current `kb.meta.version`.
+- `branch` on `kb.documents`, `kb.agent_definitions`, `kb.skill_definitions` and `kb.skill_resources`.
   Primary keys become `(branch, doc_id)`, `(branch, name)`, `(branch, name)` and
   `(branch, skill_name, path)`. Skill resources reference their branch-scoped skill definition.
-- `kb_snapshots(version PK, branch, source, entries JSONB, created_at)`. Entries contain complete
+- `kb.snapshots(version PK, branch, source, entries JSONB, created_at)`. Entries contain complete
   documents, agents and skills (skills include resources). Snapshots are immutable.
-- `agent_sessions.kb_branch`.
+- `runtime.sessions.kb_branch`.
 
-The same migration adds `kb_branch_conflicts(branch PK, active_version, branch_head_version,
+The same migration adds `kb.branch_conflicts(branch PK, active_version, branch_head_version,
 created_at)`.
 
 ### Versioning and isolation
 
-`kb_meta.version` is the global production version. Active mutations, promotions and rollbacks bump
+`kb.meta.version` is the global production version. Active mutations, promotions and rollbacks bump
 it and publish `runtime:kb:invalidate`. Draft mutations only increment that branch's `head_version`;
 they do not bump production, rewrite active rows, or publish a production release. Session prompt
 caches are keyed by branch (`system_prompt:{branch}`), so an isolated branch session reads the draft
 documents and skills while a normal session keeps reading active.
 
 `CreateSessionRequest` accepts optional `kb_branch`; omission selects the active branch. New sessions
-store the resolved branch name in `agent_sessions.kb_branch` and expose it as
+store the resolved branch name in `runtime.sessions.kb_branch` and expose it as
 `SessionSummary.kb_branch`. Archived branches cannot back new sessions but remain readable for
 already-created sessions.
 
@@ -67,7 +67,7 @@ compares base, active and draft entries per `(item_kind, item_key)` with content
   `item_kind`, `item_key`, `base_content`, `active_content`, `branch_content`, plus branch and
   version metadata.
 
-On rejection, `kb_branch_conflicts` records the draft head. If the draft is edited afterward, the
+On rejection, `kb.branch_conflicts` records the draft head. If the draft is edited afterward, the
 next promotion treats the new head as the resolution: it writes a `conflict_rebase` snapshot of the
 current active state, moves the draft `base_version` to that version, merges and reports mode
 `merged`. An unedited retry still returns the conflict.

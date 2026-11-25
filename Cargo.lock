@@ -5146,6 +5146,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "quire-migrate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dotenvy",
+ "sqlx",
+ "tokio",
+]
+
+[[package]]
 name = "quire-protocol"
 version = "0.1.0"
 dependencies = [

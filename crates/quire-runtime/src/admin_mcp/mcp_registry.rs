@@ -44,7 +44,7 @@ impl AdminMcpServer {
         Ok(Json(McpServerReceipt { server, next_hint }))
     }
 
-    /// Connect to a registered MCP server, call `tools/list`, and upsert discovered tool descriptors into `mcp_tools`.
+    /// Connect to a registered MCP server, call `tools/list`, and upsert discovered tool descriptors into `catalog.mcp_tools`.
     ///
     /// Newly discovered tools default to `enabled: true`, while existing tools preserve their current `enabled` switch and refresh `description` and `input_schema`.
     #[tool(name = "mcp_sync_tools")]
@@ -108,7 +108,7 @@ impl AdminMcpServer {
         Ok(Json(McpToolReceipt { tool, next_hint }))
     }
 
-    /// Delete a registered MCP server and cascade-delete all of its discovered `mcp_tools` entries, closing pooled connections across the runtime.
+    /// Delete a registered MCP server and cascade-delete all of its discovered `catalog.mcp_tools` entries, closing pooled connections across the runtime.
     #[tool(name = "mcp_delete_server")]
     pub async fn mcp_delete_server(
         &self,

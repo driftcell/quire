@@ -130,8 +130,14 @@ impl PgReportStore {
     }
 
     /// Apply embedded migrations. Useful for the server binary and E2E runs.
+    ///
+    /// Report migrations own the `report` schema and keep their ledger at
+    /// `report._sqlx_migrations`, separate from other domain pipelines.
     pub async fn migrate(&self) -> Result<(), StoreError> {
-        sqlx::migrate!("./migrations")
+        let mut migrator = sqlx::migrate!("./migrations");
+        migrator.create_schema("report");
+        migrator.dangerous_set_table_name("report._sqlx_migrations");
+        migrator
             .run(&self.pool)
             .await
             .map_err(|error| StoreError::Internal(format!("migration failed: {error}")))

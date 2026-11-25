@@ -15,7 +15,7 @@ impl PgReportStore {
 
         let existing_rows = sqlx::query!(
             r#"SELECT source_id, normalized_key, metadata
-               FROM report_sources WHERE doc_id = $1
+               FROM report.sources WHERE doc_id = $1
                ORDER BY source_id ASC
                FOR UPDATE"#,
             doc_id.as_str()
@@ -133,7 +133,7 @@ impl PgReportStore {
         validate_source_registry(&after.sources)?;
         for (source_id, (normalized, source)) in &db_updates {
             sqlx::query!(
-                r#"INSERT INTO report_sources (doc_id, source_id, normalized_key, metadata, excerpt)
+                r#"INSERT INTO report.sources (doc_id, source_id, normalized_key, metadata, excerpt)
                    VALUES ($1, $2, $3, $4, $5)
                    ON CONFLICT (doc_id, source_id)
                    DO UPDATE SET normalized_key = EXCLUDED.normalized_key,
@@ -150,7 +150,7 @@ impl PgReportStore {
         }
         update_document_row(&mut tx, doc_id.as_str(), &after, new_revision).await?;
         sqlx::query!(
-            r#"INSERT INTO report_revisions
+            r#"INSERT INTO report.revisions
                (doc_id, rev_num, actor, summary, forward_ops, inverse_ops, affected_block_ids)
                VALUES ($1, $2, $3, 'upsert_sources', $4, $5, '{}')"#,
             doc_id.as_str(),
@@ -260,7 +260,7 @@ impl PgReportStore {
         let delete_strs: Vec<String> = to_delete.iter().map(|id| id.to_string()).collect();
 
         sqlx::query!(
-            r#"DELETE FROM report_sources
+            r#"DELETE FROM report.sources
                WHERE doc_id = $1 AND source_id = ANY($2)"#,
             doc_id.as_str(),
             &delete_strs
@@ -269,7 +269,7 @@ impl PgReportStore {
         .await?;
         update_document_row(&mut tx, doc_id.as_str(), &after, new_revision).await?;
         sqlx::query!(
-            r#"INSERT INTO report_revisions
+            r#"INSERT INTO report.revisions
                (doc_id, rev_num, actor, summary, forward_ops, inverse_ops, affected_block_ids)
                VALUES ($1, $2, $3, 'delete_sources', $4, $5, '{}')"#,
             doc_id.as_str(),

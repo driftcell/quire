@@ -89,7 +89,7 @@ fn patch_text(block_id: &str, text: &str) -> PatchOp {
 }
 
 async fn cleanup(store: &PgReportStore, doc_id: &str) {
-    sqlx::query("DELETE FROM report_documents WHERE doc_id = $1")
+    sqlx::query("DELETE FROM report.documents WHERE doc_id = $1")
         .bind(doc_id)
         .execute(store.pool())
         .await
@@ -172,7 +172,7 @@ async fn row_level_updates_only_touch_target_blocks_and_preserve_rank_order() {
     assert_eq!(result.new_revision.get(), 2);
 
     let rows = sqlx::query(
-        r#"SELECT block_id, updated_rev, rank FROM report_blocks
+        r#"SELECT block_id, updated_rev, rank FROM report.blocks
            WHERE doc_id = $1 ORDER BY rank COLLATE "C""#,
     )
     .bind(&doc_id)
@@ -785,7 +785,7 @@ async fn snapshots_are_written_every_fifty_revisions() {
     let mut snapshot: Option<(i64, Vec<u8>)> = None;
     for _ in 0..100 {
         if let Some(row) = sqlx::query(
-            "SELECT rev_num, snapshot_zstd FROM report_snapshots WHERE doc_id = $1 ORDER BY rev_num DESC LIMIT 1",
+            "SELECT rev_num, snapshot_zstd FROM report.snapshots WHERE doc_id = $1 ORDER BY rev_num DESC LIMIT 1",
         )
         .bind(&doc_id)
         .fetch_optional(store.pool())

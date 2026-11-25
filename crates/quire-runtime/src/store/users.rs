@@ -15,7 +15,7 @@ impl RuntimeStore {
         password_hash: &str,
     ) -> RuntimeResult<bool> {
         let admin_exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE role = 'admin')")
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity.users WHERE role = 'admin')")
                 .fetch_one(&self.pool)
                 .await?;
         if admin_exists {
@@ -23,7 +23,7 @@ impl RuntimeStore {
         }
         let user_id = short_id("usr");
         let inserted = sqlx::query(
-            r#"INSERT INTO users (user_id, username, email, display_name, role, password_hash, enabled)
+            r#"INSERT INTO identity.users (user_id, username, email, display_name, role, password_hash, enabled)
                VALUES ($1, $2, $3, $4, 'admin', $5, TRUE)
                ON CONFLICT DO NOTHING"#,
         )
@@ -47,7 +47,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<UserRecord> {
         let user_id = short_id("usr");
         let row = sqlx::query(
-            r#"INSERT INTO users (user_id, username, email, display_name, role, password_hash, enabled)
+            r#"INSERT INTO identity.users (user_id, username, email, display_name, role, password_hash, enabled)
                VALUES ($1, $2, $3, $4, $5, $6, TRUE)
                RETURNING user_id, username, email, display_name, role, password_hash, enabled, created_at, updated_at"#,
         )
@@ -71,7 +71,7 @@ impl RuntimeStore {
     pub async fn find_user_for_login(&self, identifier: &str) -> RuntimeResult<Option<UserRecord>> {
         let row = sqlx::query(
             r#"SELECT user_id, username, email, display_name, role, password_hash, enabled, created_at, updated_at
-               FROM users
+               FROM identity.users
                WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($1)
                LIMIT 1"#,
         )
@@ -84,7 +84,7 @@ impl RuntimeStore {
     pub async fn get_user_by_id(&self, user_id: &str) -> RuntimeResult<Option<UserRecord>> {
         let row = sqlx::query(
             r#"SELECT user_id, username, email, display_name, role, password_hash, enabled, created_at, updated_at
-               FROM users
+               FROM identity.users
                WHERE user_id = $1"#,
         )
         .bind(user_id)
@@ -99,7 +99,7 @@ impl RuntimeStore {
         new_password_hash: &str,
     ) -> RuntimeResult<()> {
         let result = sqlx::query(
-            r#"UPDATE users
+            r#"UPDATE identity.users
                SET password_hash = $2, updated_at = NOW()
                WHERE user_id = $1"#,
         )
@@ -129,7 +129,7 @@ impl RuntimeStore {
             None => current.email.as_deref(),
         };
         let row = sqlx::query(
-            r#"UPDATE users
+            r#"UPDATE identity.users
                SET display_name = $2, email = $3, updated_at = NOW()
                WHERE user_id = $1
                RETURNING user_id, username, email, display_name, role, password_hash, enabled, created_at, updated_at"#,
@@ -151,7 +151,7 @@ impl RuntimeStore {
     pub async fn list_users(&self) -> RuntimeResult<Vec<UserRecord>> {
         let rows = sqlx::query(
             r#"SELECT user_id, username, email, display_name, role, password_hash, enabled, created_at, updated_at
-               FROM users
+               FROM identity.users
                ORDER BY created_at ASC"#,
         )
         .fetch_all(&self.pool)
@@ -172,7 +172,7 @@ impl RuntimeStore {
         let next_role = role.unwrap_or(current.role);
         let next_enabled = enabled.unwrap_or(current.enabled);
         let row = sqlx::query(
-            r#"UPDATE users
+            r#"UPDATE identity.users
                SET role = $2, enabled = $3, updated_at = NOW()
                WHERE user_id = $1
                RETURNING user_id, username, email, display_name, role, password_hash, enabled, created_at, updated_at"#,

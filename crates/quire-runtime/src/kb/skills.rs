@@ -12,7 +12,7 @@ impl KbService {
         let branch = self.resolve_branch(branch).await?.name;
         let rows = sqlx::query(
             r#"SELECT name, description, body, version, enabled, updated_at
-               FROM skill_definitions WHERE branch = $1 ORDER BY name ASC"#,
+               FROM kb.skill_definitions WHERE branch = $1 ORDER BY name ASC"#,
         )
         .bind(&branch)
         .fetch_all(self.store.pool())
@@ -76,11 +76,11 @@ impl KbService {
         let branch_record = self.mutable_branch(branch).await?;
         let mut tx = self.store.pool().begin().await?;
         sqlx::query(
-            r#"INSERT INTO skill_definitions (branch, name, description, body, version, enabled)
+            r#"INSERT INTO kb.skill_definitions (branch, name, description, body, version, enabled)
                VALUES ($1, $2, $3, $4, 1, $5)
                ON CONFLICT (branch, name) DO UPDATE
                SET description = EXCLUDED.description, body = EXCLUDED.body,
-                   enabled = EXCLUDED.enabled, version = skill_definitions.version + 1,
+                   enabled = EXCLUDED.enabled, version = kb.skill_definitions.version + 1,
                    updated_at = NOW()"#,
         )
         .bind(&branch_record.name)
@@ -91,20 +91,20 @@ impl KbService {
         .execute(&mut *tx)
         .await?;
         let version: i64 = sqlx::query_scalar(
-            "SELECT version FROM skill_definitions WHERE branch = $1 AND name = $2",
+            "SELECT version FROM kb.skill_definitions WHERE branch = $1 AND name = $2",
         )
         .bind(&branch_record.name)
         .bind(name)
         .fetch_one(&mut *tx)
         .await?;
-        sqlx::query("DELETE FROM skill_resources WHERE branch = $1 AND skill_name = $2")
+        sqlx::query("DELETE FROM kb.skill_resources WHERE branch = $1 AND skill_name = $2")
             .bind(&branch_record.name)
             .bind(name)
             .execute(&mut *tx)
             .await?;
         for (path, content) in resources {
             sqlx::query(
-                r#"INSERT INTO skill_resources (branch, skill_name, path, content, version)
+                r#"INSERT INTO kb.skill_resources (branch, skill_name, path, content, version)
                    VALUES ($1, $2, $3, $4, $5)"#,
             )
             .bind(&branch_record.name)
@@ -130,7 +130,7 @@ impl KbService {
 
     pub async fn delete_skill_on(&self, branch: &str, name: &str) -> RuntimeResult<()> {
         let branch_record = self.mutable_branch(branch).await?;
-        sqlx::query("DELETE FROM skill_definitions WHERE branch = $1 AND name = $2")
+        sqlx::query("DELETE FROM kb.skill_definitions WHERE branch = $1 AND name = $2")
             .bind(&branch_record.name)
             .bind(name)
             .execute(self.store.pool())
@@ -146,7 +146,7 @@ impl KbService {
         name: &str,
     ) -> RuntimeResult<Vec<SkillResourceRecord>> {
         let rows = sqlx::query(
-            r#"SELECT path, content, version FROM skill_resources
+            r#"SELECT path, content, version FROM kb.skill_resources
                WHERE branch = $1 AND skill_name = $2 ORDER BY path ASC"#,
         )
         .bind(branch)

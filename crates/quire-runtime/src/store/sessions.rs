@@ -7,7 +7,7 @@ impl RuntimeStore {
         doc_id: Option<&str>,
     ) -> RuntimeResult<SessionSummary> {
         let branch: String = sqlx::query_scalar(
-            "SELECT name FROM kb_branches WHERE status = 'active' ORDER BY name ASC LIMIT 1",
+            "SELECT name FROM kb.branches WHERE status = 'active' ORDER BY name ASC LIMIT 1",
         )
         .fetch_optional(&self.pool)
         .await?
@@ -40,7 +40,7 @@ impl RuntimeStore {
         }
         let session_id = short_id("sess");
         sqlx::query(
-            r#"INSERT INTO agent_sessions
+            r#"INSERT INTO runtime.sessions
                (session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status, active_run_status)
                VALUES ($1, $2, $3, $4, $4, $5, 'active', 'idle')"#,
         )
@@ -56,7 +56,7 @@ impl RuntimeStore {
 
     pub async fn get_session_owner(&self, session_id: &str) -> RuntimeResult<Option<String>> {
         let owner: Option<Option<String>> =
-            sqlx::query_scalar("SELECT user_id FROM agent_sessions WHERE session_id = $1")
+            sqlx::query_scalar("SELECT user_id FROM runtime.sessions WHERE session_id = $1")
                 .bind(session_id)
                 .fetch_optional(&self.pool)
                 .await?;
@@ -68,7 +68,7 @@ impl RuntimeStore {
             r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                       active_run_status, context_usage, compaction_started_at,
                       compacted_at, pinned_at, created_at, updated_at
-               FROM agent_sessions WHERE session_id = $1"#,
+               FROM runtime.sessions WHERE session_id = $1"#,
         )
         .bind(session_id)
         .fetch_optional(&self.pool)
@@ -222,7 +222,7 @@ impl RuntimeStore {
                     r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                               active_run_status, context_usage, compaction_started_at,
                               compacted_at, pinned_at, created_at, updated_at
-                       FROM agent_sessions
+                       FROM runtime.sessions
                        WHERE user_id = $1 OR user_id IS NULL
                        ORDER BY (pinned_at IS NOT NULL) DESC,
                                 pinned_at DESC NULLS LAST,
@@ -239,7 +239,7 @@ impl RuntimeStore {
                     r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                               active_run_status, context_usage, compaction_started_at,
                               compacted_at, pinned_at, created_at, updated_at
-                       FROM agent_sessions
+                       FROM runtime.sessions
                        WHERE user_id = $1
                        ORDER BY (pinned_at IS NOT NULL) DESC,
                                 pinned_at DESC NULLS LAST,
@@ -256,7 +256,7 @@ impl RuntimeStore {
                     r#"SELECT session_id, user_id, title, doc_id, linked_doc_id, kb_branch, status,
                               active_run_status, context_usage, compaction_started_at,
                               compacted_at, pinned_at, created_at, updated_at
-                       FROM agent_sessions
+                       FROM runtime.sessions
                        ORDER BY (pinned_at IS NOT NULL) DESC,
                                 pinned_at DESC NULLS LAST,
                                 updated_at DESC,
@@ -289,7 +289,7 @@ impl RuntimeStore {
         patch: SessionPatch<'_>,
     ) -> RuntimeResult<SessionSummary> {
         let updated = sqlx::query(
-            r#"UPDATE agent_sessions
+            r#"UPDATE runtime.sessions
                SET title = COALESCE($2, title),
                    status = COALESCE($3, status),
                    pinned_at = CASE
@@ -316,7 +316,7 @@ impl RuntimeStore {
     }
 
     pub async fn delete_session(&self, session_id: &str) -> RuntimeResult<()> {
-        let deleted = sqlx::query("DELETE FROM agent_sessions WHERE session_id = $1")
+        let deleted = sqlx::query("DELETE FROM runtime.sessions WHERE session_id = $1")
             .bind(session_id)
             .execute(&self.pool)
             .await?;
@@ -336,7 +336,7 @@ impl RuntimeStore {
 
     pub async fn bind_doc(&self, session_id: &str, doc_id: &str) -> RuntimeResult<()> {
         let updated = sqlx::query(
-            r#"UPDATE agent_sessions
+            r#"UPDATE runtime.sessions
                SET doc_id = $2, linked_doc_id = $2, updated_at = NOW()
                WHERE session_id = $1"#,
         )
@@ -357,7 +357,7 @@ impl RuntimeStore {
         kb_version: u64,
     ) -> RuntimeResult<()> {
         let updated = sqlx::query(
-            r#"UPDATE agent_sessions
+            r#"UPDATE runtime.sessions
                SET pinned_system_prompt = $2, synced_kb_version = $3, updated_at = NOW()
                WHERE session_id = $1"#,
         )
@@ -374,7 +374,7 @@ impl RuntimeStore {
 
     pub async fn begin_compaction(&self, session_id: &str) -> RuntimeResult<DateTime<Utc>> {
         let started: Option<DateTime<Utc>> = sqlx::query_scalar(
-            r#"UPDATE agent_sessions
+            r#"UPDATE runtime.sessions
                SET compaction_started_at = NOW(), updated_at = NOW()
                WHERE session_id = $1
                  AND active_run_status <> 'running'
@@ -403,7 +403,7 @@ impl RuntimeStore {
 
     pub async fn clear_compaction(&self, session_id: &str) -> RuntimeResult<()> {
         sqlx::query(
-            "UPDATE agent_sessions SET compaction_started_at = NULL, updated_at = NOW() WHERE session_id = $1",
+            "UPDATE runtime.sessions SET compaction_started_at = NULL, updated_at = NOW() WHERE session_id = $1",
         )
         .bind(session_id)
         .execute(&self.pool)
@@ -417,7 +417,7 @@ impl RuntimeStore {
         started_at: DateTime<Utc>,
     ) -> RuntimeResult<()> {
         sqlx::query(
-            r#"UPDATE agent_sessions
+            r#"UPDATE runtime.sessions
                SET compaction_started_at = NULL, updated_at = NOW()
                WHERE session_id = $1 AND compaction_started_at = $2"#,
         )
@@ -432,7 +432,7 @@ impl RuntimeStore {
     pub async fn apply_compaction(&self, write: &CompactionWrite<'_>) -> RuntimeResult<()> {
         let mut tx = self.pool.begin().await?;
         let status: Option<String> = sqlx::query_scalar(
-            "SELECT active_run_status FROM agent_sessions WHERE session_id = $1 FOR UPDATE",
+            "SELECT active_run_status FROM runtime.sessions WHERE session_id = $1 FOR UPDATE",
         )
         .bind(write.session_id)
         .fetch_optional(&mut *tx)
@@ -451,7 +451,7 @@ impl RuntimeStore {
             .await?;
         let usage = serde_json::to_value(write.context_usage)?;
         sqlx::query(
-            r#"UPDATE agent_sessions
+            r#"UPDATE runtime.sessions
                SET compacted_at = NOW(),
                    compaction_started_at = NULL,
                    pinned_system_prompt = $2,
@@ -472,7 +472,7 @@ impl RuntimeStore {
 
     pub async fn pinned_prompt(&self, session_id: &str) -> RuntimeResult<(Option<String>, u64)> {
         let row = sqlx::query(
-            "SELECT pinned_system_prompt, synced_kb_version FROM agent_sessions WHERE session_id = $1",
+            "SELECT pinned_system_prompt, synced_kb_version FROM runtime.sessions WHERE session_id = $1",
         )
         .bind(session_id)
         .fetch_optional(&self.pool)
@@ -490,7 +490,7 @@ impl RuntimeStore {
         kb_version: u64,
     ) -> RuntimeResult<()> {
         let updated = sqlx::query(
-            "UPDATE agent_sessions SET synced_kb_version = $2, updated_at = NOW() WHERE session_id = $1",
+            "UPDATE runtime.sessions SET synced_kb_version = $2, updated_at = NOW() WHERE session_id = $1",
         )
         .bind(session_id)
         .bind(i64::try_from(kb_version).unwrap_or(i64::MAX))

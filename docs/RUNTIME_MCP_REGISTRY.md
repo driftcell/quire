@@ -16,10 +16,10 @@ does not define MCP wire protocol fields, Quire report tool semantics, or agent 
 
 ### Storage
 
-The consolidated `migrations/0001_init.sql` adds:
+The reset `migrations/0003_catalog.sql` adds:
 
-- `mcp_servers(server_id PK, name, url, auth_token_ref, enabled, created_at, updated_at)`
-- `mcp_tools(server_id FK ON DELETE CASCADE, tool_name, description, input_schema, enabled,
+- `catalog.mcp_servers(server_id PK, name, url, auth_token_ref, enabled, created_at, updated_at)`
+- `catalog.mcp_tools(server_id FK ON DELETE CASCADE, tool_name, description, input_schema, enabled,
   updated_at, PRIMARY KEY(server_id, tool_name))`
 
 `auth_token_ref` follows the same secret-ref rules as model providers: `env:VAR` references or
@@ -34,8 +34,8 @@ executing in-process against the shared `PgReportStore`. Consequently, `McpRegis
 for external third-party MCP servers (such as `subjectcloud_*`).
 
 During startup, `RuntimeService::seed` calls `McpRegistry::retire_legacy_quire_report` to remove any
-legacy `server_id = 'quire-report'` entry from `mcp_servers` (`ON DELETE CASCADE` removes its
-`mcp_tools` rows) and publishes cache invalidation.
+legacy `server_id = 'quire-report'` entry from `catalog.mcp_servers` (`ON DELETE CASCADE` removes its
+`catalog.mcp_tools` rows) and publishes cache invalidation.
 
 ### Discovery and switches
 
@@ -128,7 +128,7 @@ raw auth token reference.
 
 ## 3. Invariants & Verification
 
-- Seeding retires any legacy `'quire-report'` row from `mcp_servers` idempotently while all 19 report tools are served natively in-process via `BUILTIN_TOOLS`.
+- Seeding retires any legacy `'quire-report'` row from `catalog.mcp_servers` idempotently while all 19 report tools are served natively in-process via `BUILTIN_TOOLS`.
 - Sync preserves existing tool enable switches; new tools are enabled.
 - A globally disabled external MCP tool is filtered even when present in `agent_definition.allowed_tools`.
 - Allow-list matching is identical across the registry, MCP client and built-in tool loop; scoped

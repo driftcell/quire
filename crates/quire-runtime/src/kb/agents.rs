@@ -12,7 +12,7 @@ impl KbService {
         let branch = self.resolve_branch(branch).await?.name;
         let rows = sqlx::query(
             r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
-               FROM agent_definitions WHERE branch = $1 ORDER BY name ASC"#,
+               FROM kb.agent_definitions WHERE branch = $1 ORDER BY name ASC"#,
         )
         .bind(&branch)
         .fetch_all(self.store.pool())
@@ -32,7 +32,7 @@ impl KbService {
         let branch = self.resolve_branch(branch).await?.name;
         let row = sqlx::query(
             r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
-               FROM agent_definitions WHERE branch = $1 AND name = $2"#,
+               FROM kb.agent_definitions WHERE branch = $1 AND name = $2"#,
         )
         .bind(&branch)
         .bind(name)
@@ -48,7 +48,7 @@ impl KbService {
         let branch = self.resolve_branch(branch).await?.name;
         let row = sqlx::query(
             r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
-               FROM agent_definitions
+               FROM kb.agent_definitions
                WHERE branch = $1 AND is_default = TRUE AND enabled = TRUE
                LIMIT 1"#,
         )
@@ -85,7 +85,7 @@ impl KbService {
         let mut tx = self.store.pool().begin().await?;
         if is_default {
             sqlx::query(
-                r#"UPDATE agent_definitions
+                r#"UPDATE kb.agent_definitions
                    SET is_default = FALSE, updated_at = NOW()
                    WHERE branch = $1 AND name <> $2 AND is_default = TRUE"#,
             )
@@ -95,14 +95,14 @@ impl KbService {
             .await?;
         }
         sqlx::query(
-            r#"INSERT INTO agent_definitions
+            r#"INSERT INTO kb.agent_definitions
                (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled)
                VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
                ON CONFLICT (branch, name) DO UPDATE
                SET description = EXCLUDED.description, model = EXCLUDED.model,
                    system_prompt = EXCLUDED.system_prompt, allowed_tools = EXCLUDED.allowed_tools,
                    is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled,
-                   version = agent_definitions.version + 1, updated_at = NOW()"#,
+                   version = kb.agent_definitions.version + 1, updated_at = NOW()"#,
         )
         .bind(&branch_record.name)
         .bind(name)
@@ -129,7 +129,7 @@ impl KbService {
 
     pub async fn delete_agent_on(&self, branch: &str, name: &str) -> RuntimeResult<()> {
         let branch_record = self.mutable_branch(branch).await?;
-        sqlx::query("DELETE FROM agent_definitions WHERE branch = $1 AND name = $2")
+        sqlx::query("DELETE FROM kb.agent_definitions WHERE branch = $1 AND name = $2")
             .bind(&branch_record.name)
             .bind(name)
             .execute(self.store.pool())

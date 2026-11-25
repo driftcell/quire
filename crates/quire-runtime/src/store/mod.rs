@@ -110,6 +110,7 @@ pub struct StoredAttachment {
 #[derive(Clone)]
 pub struct RuntimeStore {
     pool: PgPool,
+    rig_pool: PgPool,
     bus: RedisBus,
     report_store: quire_store::PgReportStore,
     memory: Arc<tokio::sync::OnceCell<ConversationMemory>>,
@@ -122,6 +123,19 @@ impl RuntimeStore {
             .acquire_timeout(std::time::Duration::from_secs(10))
             .connect(database_url)
             .await?;
+        let rig_pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .acquire_timeout(std::time::Duration::from_secs(10))
+            .after_connect(|connection, _metadata| {
+                Box::pin(async move {
+                    sqlx::query("SET search_path TO rig")
+                        .execute(connection)
+                        .await?;
+                    Ok(())
+                })
+            })
+            .connect(database_url)
+            .await?;
         let report_bus = quire_store::RedisStreamBus::connect(redis_url)
             .await
             .map_err(|error| {
@@ -130,6 +144,7 @@ impl RuntimeStore {
         let report_store = quire_store::PgReportStore::from_pool(pool.clone(), report_bus);
         Ok(Self {
             pool,
+            rig_pool,
             bus: RedisBus::connect(redis_url)?,
             report_store,
             memory: Arc::new(tokio::sync::OnceCell::new()),
@@ -138,11 +153,13 @@ impl RuntimeStore {
 
     pub fn from_pool(
         pool: PgPool,
+        rig_pool: PgPool,
         bus: RedisBus,
         report_store: quire_store::PgReportStore,
     ) -> Self {
         Self {
             pool,
+            rig_pool,
             bus,
             report_store,
             memory: Arc::new(tokio::sync::OnceCell::new()),
@@ -159,7 +176,8 @@ impl RuntimeStore {
             .await
             .map_err(|error| RuntimeError::Internal(format!("report migration failed: {error}")))?;
         let mut migrator = sqlx::migrate!("./migrations");
-        migrator.dangerous_set_table_name("_quire_runtime_migrations");
+        migrator.create_schema("runtime");
+        migrator.dangerous_set_table_name("runtime._quire_runtime_migrations");
         migrator
             .run(&self.pool)
             .await
@@ -183,7 +201,7 @@ impl RuntimeStore {
 
     pub async fn memory(&self) -> RuntimeResult<ConversationMemory> {
         self.memory
-            .get_or_try_init(|| ConversationMemory::open(self.pool.clone()))
+            .get_or_try_init(|| ConversationMemory::open(self.rig_pool.clone()))
             .await
             .cloned()
     }

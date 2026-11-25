@@ -13,6 +13,7 @@ knowledge belongs in `docs/`, decision history belongs in `notes/`.
 | `quire-server` | Shared `QuireReportService`, report tool contracts, Axum REST/SSE and optional `rmcp` transport adapters. Must not depend on `rig` or agent-runtime internals. |
 | `quire-session-protocol` | Pure synchronous Session REST/SSE contracts and JSON Schema export. Zero I/O. |
 | `quire-runtime` | Unified session backend and agent runtime. Native report `rig::tool::Tool`s call `QuireReportService` directly; mounts `/api/docs/*`, optional report `/mcp`, and the independent `/admin/mcp` control plane. |
+| `quire-migrate` | Standalone SQLx migration runner for fresh/bootstrap databases. Owns no business logic and has no application-crate dependencies. |
 
 Dependency direction is one-way: protocol crates never depend on storage/server/runtime crates, and
 `quire-server` remains independent of `quire-runtime` and `rig`.

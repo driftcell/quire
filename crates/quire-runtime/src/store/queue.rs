@@ -3,7 +3,7 @@ use super::*;
 impl RuntimeStore {
     pub async fn list_sessions_with_pending_queue(&self) -> RuntimeResult<Vec<String>> {
         let sessions = sqlx::query_scalar::<_, String>(
-            "SELECT DISTINCT session_id FROM session_pending_queue ORDER BY session_id",
+            "SELECT DISTINCT session_id FROM runtime.pending_queue ORDER BY session_id",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -17,7 +17,7 @@ impl RuntimeStore {
         self.get_session_summary(session_id).await?;
         let rows = sqlx::query(
             r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
-               FROM session_pending_queue
+               FROM runtime.pending_queue
                WHERE session_id = $1
                ORDER BY sequence ASC"#,
         )
@@ -51,7 +51,7 @@ impl RuntimeStore {
         let attachments = serde_json::to_value(attachment_ids)?;
         let comment_refs = serde_json::to_value(comment_refs)?;
         let inserted = sqlx::query(
-            r#"INSERT INTO session_pending_queue
+            r#"INSERT INTO runtime.pending_queue
                (queue_id, session_id, client_msg_id, content, comment_refs, source, thread_id, attachment_ids)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                ON CONFLICT (session_id, client_msg_id) DO NOTHING
@@ -72,7 +72,7 @@ impl RuntimeStore {
         }
         let row = sqlx::query(
             r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
-               FROM session_pending_queue
+               FROM runtime.pending_queue
                WHERE session_id = $1 AND client_msg_id = $2"#,
         )
         .bind(session_id)
@@ -110,7 +110,7 @@ impl RuntimeStore {
         }
         let comment_refs = serde_json::to_value(comment_refs)?;
         let row = sqlx::query(
-            r#"UPDATE session_pending_queue
+            r#"UPDATE runtime.pending_queue
                SET content = $3, comment_refs = $4
                WHERE session_id = $1 AND queue_id = $2
                RETURNING queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at"#,
@@ -136,7 +136,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<PendingQueueItem>> {
         let row = sqlx::query(
             r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
-               FROM session_pending_queue
+               FROM runtime.pending_queue
                WHERE session_id = $1 AND queue_id = $2"#,
         )
         .bind(session_id)
@@ -153,7 +153,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<PendingQueueItem>> {
         let row = sqlx::query(
             r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
-               FROM session_pending_queue
+               FROM runtime.pending_queue
                WHERE session_id = $1 AND thread_id = $2 AND source = 'comment'
                ORDER BY sequence DESC
                LIMIT 1"#,
@@ -171,7 +171,7 @@ impl RuntimeStore {
         queue_id: &str,
     ) -> RuntimeResult<bool> {
         let deleted = sqlx::query_scalar::<_, String>(
-            r#"DELETE FROM session_pending_queue
+            r#"DELETE FROM runtime.pending_queue
                WHERE session_id = $1 AND queue_id = $2
                RETURNING queue_id"#,
         )
@@ -191,7 +191,7 @@ impl RuntimeStore {
             return Ok(0);
         }
         let deleted = sqlx::query(
-            r#"DELETE FROM session_pending_queue
+            r#"DELETE FROM runtime.pending_queue
                WHERE session_id = $1 AND queue_id = ANY($2)"#,
         )
         .bind(session_id)
@@ -208,7 +208,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Vec<PendingQueueItem>> {
         let rows = sqlx::query(
             r#"SELECT queue_id, session_id, content, comment_refs, source, thread_id, attachment_ids, created_at
-               FROM session_pending_queue
+               FROM runtime.pending_queue
                WHERE session_id = $1
                ORDER BY sequence ASC"#,
         )
@@ -228,7 +228,7 @@ impl RuntimeStore {
             return Ok(0);
         }
         let deleted = sqlx::query(
-            r#"DELETE FROM session_pending_queue
+            r#"DELETE FROM runtime.pending_queue
                WHERE session_id = $1 AND queue_id = ANY($2)"#,
         )
         .bind(session_id)
@@ -252,7 +252,7 @@ impl RuntimeStore {
         }
         let mut tx = self.pool.begin().await?;
         let _status: String = sqlx::query_scalar(
-            "SELECT active_run_status FROM agent_sessions WHERE session_id = $1 FOR UPDATE",
+            "SELECT active_run_status FROM runtime.sessions WHERE session_id = $1 FOR UPDATE",
         )
         .bind(session_id)
         .fetch_optional(&mut *tx)
@@ -261,7 +261,7 @@ impl RuntimeStore {
         // Another runtime may have claimed the same batch before this lock was
         // acquired. Re-check ownership instead of emitting a duplicate message.
         let claimable: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM session_pending_queue WHERE session_id = $1 AND queue_id = ANY($2)",
+            "SELECT COUNT(*) FROM runtime.pending_queue WHERE session_id = $1 AND queue_id = ANY($2)",
         )
         .bind(session_id)
         .bind(queue_ids)
@@ -309,7 +309,7 @@ impl RuntimeStore {
         thread_id: &str,
     ) -> RuntimeResult<u64> {
         let deleted = sqlx::query(
-            r#"DELETE FROM session_pending_queue
+            r#"DELETE FROM runtime.pending_queue
                WHERE session_id = $1 AND thread_id = $2"#,
         )
         .bind(session_id)
@@ -345,7 +345,7 @@ impl RuntimeStore {
         let question_id = short_id("q");
         let questions_value = serde_json::to_value(questions)?;
         let created_at: DateTime<Utc> = sqlx::query_scalar(
-            r#"INSERT INTO agent_questions
+            r#"INSERT INTO runtime.questions
                (question_id, session_id, run_id, tool_call_id, questions, status)
                VALUES ($1, $2, $3, $4, $5, 'pending')
                RETURNING created_at"#,
@@ -372,7 +372,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<PendingQuestion>> {
         let row = sqlx::query(
             r#"SELECT question_id, run_id, tool_call_id, questions, created_at
-               FROM agent_questions
+               FROM runtime.questions
                WHERE session_id = $1 AND status = 'pending'
                ORDER BY created_at DESC LIMIT 1"#,
         )
@@ -389,7 +389,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<PendingQuestion>> {
         let row = sqlx::query(
             r#"SELECT question_id, run_id, tool_call_id, questions, created_at
-               FROM agent_questions
+               FROM runtime.questions
                WHERE session_id = $1 AND question_id = $2 AND status = 'pending'"#,
         )
         .bind(session_id)
@@ -405,7 +405,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Vec<ResolvedQuestion>> {
         let rows = sqlx::query(
             r#"SELECT question_id, run_id, tool_call_id, questions, status, answers, created_at
-               FROM agent_questions
+               FROM runtime.questions
                WHERE session_id = $1 AND status <> 'pending'
                ORDER BY created_at ASC"#,
         )
@@ -425,7 +425,7 @@ impl RuntimeStore {
         let status = if skipped { "skipped" } else { "answered" };
         let answers = serde_json::to_value(answers)?;
         let updated = sqlx::query(
-            r#"UPDATE agent_questions
+            r#"UPDATE runtime.questions
                SET answers = $3, status = $4, resolved_at = NOW()
                WHERE session_id = $1 AND question_id = $2 AND status = 'pending'"#,
         )
@@ -448,7 +448,7 @@ impl RuntimeStore {
         session_id: &str,
     ) -> RuntimeResult<Vec<PendingQuestion>> {
         let rows = sqlx::query(
-            r#"UPDATE agent_questions
+            r#"UPDATE runtime.questions
                SET status = 'dismissed', resolved_at = NOW()
                WHERE session_id = $1 AND status = 'pending'
                RETURNING question_id, run_id, tool_call_id, questions, created_at"#,
@@ -461,7 +461,7 @@ impl RuntimeStore {
 
     pub async fn clear_session_awaiting_input(&self, session_id: &str) -> RuntimeResult<()> {
         sqlx::query(
-            r#"UPDATE agent_sessions
+            r#"UPDATE runtime.sessions
                SET active_run_status = 'idle', updated_at = NOW()
                WHERE session_id = $1 AND active_run_status = 'awaiting_input'"#,
         )

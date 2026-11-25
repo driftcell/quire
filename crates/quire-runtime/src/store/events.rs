@@ -134,7 +134,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<SessionEvent>> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
-            r#"UPDATE agent_runs
+            r#"UPDATE runtime.runs
                SET status = $2, error = $3, finished_at = NOW()
                WHERE run_id = $1 AND status = 'running'
                RETURNING session_id, agent_id, parent_run_id, start_seq"#,
@@ -146,7 +146,7 @@ impl RuntimeStore {
         .await?;
         let Some(row) = row else {
             let exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM agent_runs WHERE run_id = $1)",
+                "SELECT EXISTS(SELECT 1 FROM runtime.runs WHERE run_id = $1)",
             )
             .bind(run_id)
             .fetch_one(&mut *tx)
@@ -163,7 +163,7 @@ impl RuntimeStore {
         let parent_run_id: Option<String> = row.try_get("parent_run_id")?;
         let start_seq: Option<i64> = row.try_get("start_seq")?;
         sqlx::query(
-            "UPDATE agent_sessions SET active_run_status = $2, updated_at = NOW() WHERE session_id = $1",
+            "UPDATE runtime.sessions SET active_run_status = $2, updated_at = NOW() WHERE session_id = $1",
         )
         .bind(&session_id)
         .bind(session_status)
@@ -193,7 +193,7 @@ impl RuntimeStore {
             .into_iter()
             .find(|trace| trace.run_id == run_id)
         {
-            sqlx::query("UPDATE agent_runs SET trace_summary = $2 WHERE run_id = $1")
+            sqlx::query("UPDATE runtime.runs SET trace_summary = $2 WHERE run_id = $1")
                 .bind(run_id)
                 .bind(serde_json::to_value(trace)?)
                 .execute(&self.pool)
@@ -247,7 +247,7 @@ impl RuntimeStore {
             None
         };
         let active_start: Option<Option<i64>> = sqlx::query_scalar(
-            r#"SELECT start_seq FROM agent_runs
+            r#"SELECT start_seq FROM runtime.runs
                WHERE session_id = $1 AND status = 'running'
                ORDER BY started_at DESC LIMIT 1"#,
         )
@@ -289,7 +289,7 @@ impl RuntimeStore {
         detail: &ToolCallDetail,
     ) -> RuntimeResult<()> {
         sqlx::query(
-            r#"INSERT INTO agent_tool_calls
+            r#"INSERT INTO runtime.tool_calls
                (tool_call_id, session_id, run_id, tool_name, status, input, output, error,
                 duration_ms, created_at)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
@@ -322,7 +322,7 @@ impl RuntimeStore {
         let row = sqlx::query(
             r#"SELECT tool_call_id, session_id, run_id, tool_name, status, input, output, error,
                       duration_ms, created_at
-               FROM agent_tool_calls WHERE session_id = $1 AND tool_call_id = $2"#,
+               FROM runtime.tool_calls WHERE session_id = $1 AND tool_call_id = $2"#,
         )
         .bind(session_id)
         .bind(tool_call_id)

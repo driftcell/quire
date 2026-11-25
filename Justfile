@@ -13,9 +13,9 @@ down:
 logs:
     docker compose logs -f postgres redis
 
-# Apply SQLx migrations from the store crate.
+# Apply both report and runtime migrations without compiling application query macros.
 migrate:
-    sqlx migrate run --source crates/quire-store/migrations
+    cargo run -p quire-migrate
 
 # Regenerate the offline SQLx query cache after schema/query changes.
 prepare:
@@ -50,8 +50,8 @@ test:
     TEST_DATABASE_URL="${DATABASE_URL%/*}/report_core_test"
     sqlx database drop -y --force --database-url "$TEST_DATABASE_URL" >/dev/null 2>&1 || true
     sqlx database create --database-url "$TEST_DATABASE_URL"
-    sqlx migrate run --database-url "$TEST_DATABASE_URL" --source crates/quire-store/migrations
-    TEST_DATABASE_URL="$TEST_DATABASE_URL" cargo test --workspace
+    DATABASE_URL="$TEST_DATABASE_URL" cargo run -p quire-migrate
+    DATABASE_URL="$TEST_DATABASE_URL" TEST_DATABASE_URL="$TEST_DATABASE_URL" cargo test --workspace
 
 test-protocol:
     cargo test -p quire-protocol

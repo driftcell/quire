@@ -26,7 +26,7 @@ impl RuntimeStore {
             return Ok(());
         };
         let value = serde_json::to_value(&trace)?;
-        sqlx::query("UPDATE agent_runs SET trace_summary = $2 WHERE run_id = $1")
+        sqlx::query("UPDATE runtime.runs SET trace_summary = $2 WHERE run_id = $1")
             .bind(run_id)
             .bind(value)
             .execute(&mut **tx)
@@ -37,7 +37,7 @@ impl RuntimeStore {
     /// Lazy backfill for a completed run whose trace has not been materialized.
     pub async fn materialize_run_trace(&self, run_id: &str) -> RuntimeResult<()> {
         let mut tx = self.pool.begin().await?;
-        let row = sqlx::query("SELECT session_id, start_seq FROM agent_runs WHERE run_id = $1")
+        let row = sqlx::query("SELECT session_id, start_seq FROM runtime.runs WHERE run_id = $1")
             .bind(run_id)
             .fetch_optional(&mut *tx)
             .await?
@@ -62,7 +62,7 @@ impl RuntimeStore {
         let mut tx = self.pool.begin().await?;
         let end_seq = self.bus.current_event_seq(session_id).await?;
         let rows = sqlx::query(
-            r#"SELECT run_id, start_seq FROM agent_runs
+            r#"SELECT run_id, start_seq FROM runtime.runs
                WHERE session_id = $1 AND parent_run_id IS NULL
                  AND status <> 'running' AND trace_summary IS NULL"#,
         )
@@ -99,7 +99,7 @@ impl RuntimeStore {
         let mut tx = self.pool.begin().await?;
         if parent_run_id.is_none() {
             let status: Option<String> = sqlx::query_scalar(
-                "SELECT active_run_status FROM agent_sessions WHERE session_id = $1 FOR UPDATE",
+                "SELECT active_run_status FROM runtime.sessions WHERE session_id = $1 FOR UPDATE",
             )
             .bind(session_id)
             .fetch_optional(&mut *tx)
@@ -115,7 +115,7 @@ impl RuntimeStore {
         }
         let run_id = short_id("run");
         sqlx::query(
-            r#"INSERT INTO agent_runs (run_id, session_id, parent_run_id, agent_id, status, model)
+            r#"INSERT INTO runtime.runs (run_id, session_id, parent_run_id, agent_id, status, model)
                VALUES ($1, $2, $3, $4, 'running', $5)"#,
         )
         .bind(&run_id)
@@ -126,7 +126,7 @@ impl RuntimeStore {
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            r#"UPDATE agent_sessions SET active_run_status = 'running', updated_at = NOW()
+            r#"UPDATE runtime.sessions SET active_run_status = 'running', updated_at = NOW()
                WHERE session_id = $1"#,
         )
         .bind(session_id)
@@ -143,7 +143,7 @@ impl RuntimeStore {
         kind: SessionEventKind,
     ) -> RuntimeResult<SessionEvent> {
         let row = sqlx::query(
-            "SELECT session_id, agent_id, parent_run_id FROM agent_runs WHERE run_id = $1",
+            "SELECT session_id, agent_id, parent_run_id FROM runtime.runs WHERE run_id = $1",
         )
         .bind(run_id)
         .fetch_optional(&self.pool)
@@ -161,11 +161,13 @@ impl RuntimeStore {
                 kind,
             )
             .await?;
-        sqlx::query("UPDATE agent_runs SET start_seq = $2 WHERE run_id = $1 AND start_seq IS NULL")
-            .bind(run_id)
-            .bind(i64::try_from(event.seq).unwrap_or(i64::MAX))
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(
+            "UPDATE runtime.runs SET start_seq = $2 WHERE run_id = $1 AND start_seq IS NULL",
+        )
+        .bind(run_id)
+        .bind(i64::try_from(event.seq).unwrap_or(i64::MAX))
+        .execute(&self.pool)
+        .await?;
         Ok(event)
     }
 
@@ -173,7 +175,7 @@ impl RuntimeStore {
         let row = sqlx::query(
             r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
                       started_at, finished_at, start_seq
-               FROM agent_runs WHERE run_id = $1"#,
+               FROM runtime.runs WHERE run_id = $1"#,
         )
         .bind(run_id)
         .fetch_optional(&self.pool)
@@ -186,7 +188,7 @@ impl RuntimeStore {
         let row = sqlx::query(
             r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
                       started_at, finished_at, start_seq
-               FROM agent_runs
+               FROM runtime.runs
                WHERE session_id = $1 AND status = 'running'
                ORDER BY started_at DESC LIMIT 1"#,
         )
@@ -200,7 +202,7 @@ impl RuntimeStore {
         let row = sqlx::query(
             r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
                       started_at, finished_at, start_seq
-               FROM agent_runs
+               FROM runtime.runs
                WHERE session_id = $1
                ORDER BY started_at DESC LIMIT 1"#,
         )
@@ -214,7 +216,7 @@ impl RuntimeStore {
     /// so `boot()` can automatically resume them from their latest checkpoint.
     pub async fn list_recoverable_running_runs(&self) -> RuntimeResult<Vec<RecoverableRun>> {
         let orphaned_subs = sqlx::query(
-            r#"SELECT run_id FROM agent_runs
+            r#"SELECT run_id FROM runtime.runs
                WHERE status = 'running' AND parent_run_id IS NOT NULL"#,
         )
         .fetch_all(&self.pool)
@@ -236,7 +238,7 @@ impl RuntimeStore {
 
         let rows = sqlx::query(
             r#"SELECT run_id, session_id
-               FROM agent_runs
+               FROM runtime.runs
                WHERE status = 'running' AND parent_run_id IS NULL
                ORDER BY started_at ASC"#,
         )
@@ -257,7 +259,7 @@ impl RuntimeStore {
         let rows = sqlx::query(
             r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
                       started_at, finished_at, start_seq
-               FROM agent_runs WHERE status = 'running'"#,
+               FROM runtime.runs WHERE status = 'running'"#,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -284,7 +286,7 @@ impl RuntimeStore {
         usage: &quire_session_protocol::ContextUsage,
     ) -> RuntimeResult<()> {
         sqlx::query(
-            "UPDATE agent_sessions SET context_usage = $2, updated_at = NOW() WHERE session_id = $1",
+            "UPDATE runtime.sessions SET context_usage = $2, updated_at = NOW() WHERE session_id = $1",
         )
         .bind(session_id)
         .bind(serde_json::to_value(usage)?)
@@ -296,7 +298,7 @@ impl RuntimeStore {
     pub async fn list_run_traces(&self, session_id: &str) -> RuntimeResult<Vec<RunTraceSummary>> {
         let summary = self.get_session_summary(session_id).await?;
         let rows = sqlx::query(
-            r#"SELECT run_id, status, start_seq, trace_summary FROM agent_runs
+            r#"SELECT run_id, status, start_seq, trace_summary FROM runtime.runs
                WHERE session_id = $1 AND parent_run_id IS NULL
                ORDER BY started_at ASC, run_id ASC"#,
         )

@@ -11,7 +11,7 @@ impl KbService {
     ) -> RuntimeResult<Vec<KbDocumentRecord>> {
         let branch = self.resolve_branch(branch).await?.name;
         let rows = sqlx::query(
-            r#"SELECT doc_id, name, content, version, updated_at FROM kb_documents
+            r#"SELECT doc_id, name, content, version, updated_at FROM kb.documents
                WHERE branch = $1 ORDER BY name ASC"#,
         )
         .bind(&branch)
@@ -40,11 +40,11 @@ impl KbService {
     ) -> RuntimeResult<KbDocumentRecord> {
         let branch_record = self.mutable_branch(branch).await?;
         sqlx::query(
-            r#"INSERT INTO kb_documents (branch, doc_id, name, content, version)
+            r#"INSERT INTO kb.documents (branch, doc_id, name, content, version)
                VALUES ($1, $2, $3, $4, 1)
                ON CONFLICT (branch, doc_id) DO UPDATE
                SET name = EXCLUDED.name, content = EXCLUDED.content,
-                   version = kb_documents.version + 1, updated_at = NOW()"#,
+                   version = kb.documents.version + 1, updated_at = NOW()"#,
         )
         .bind(&branch_record.name)
         .bind(doc_id)
@@ -55,7 +55,7 @@ impl KbService {
         self.after_kb_mutation_on(&branch_record.name, branch_record.status)
             .await?;
         let row = sqlx::query(
-            r#"SELECT doc_id, name, content, version, updated_at FROM kb_documents
+            r#"SELECT doc_id, name, content, version, updated_at FROM kb.documents
                WHERE branch = $1 AND doc_id = $2"#,
         )
         .bind(&branch_record.name)
@@ -72,7 +72,7 @@ impl KbService {
 
     pub async fn delete_document_on(&self, branch: &str, doc_id: &str) -> RuntimeResult<()> {
         let branch_record = self.mutable_branch(branch).await?;
-        sqlx::query("DELETE FROM kb_documents WHERE branch = $1 AND doc_id = $2")
+        sqlx::query("DELETE FROM kb.documents WHERE branch = $1 AND doc_id = $2")
             .bind(&branch_record.name)
             .bind(doc_id)
             .execute(self.store.pool())

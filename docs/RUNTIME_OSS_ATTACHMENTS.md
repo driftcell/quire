@@ -53,7 +53,7 @@ and `ring::digest`; no SDK or additional cryptography crate is used.
 ### Storage provenance
 
 Migration `0007_attachment_storage_provider.sql` adds
-`agent_attachments.storage_provider TEXT NOT NULL DEFAULT 'local'` with a `local`/`oss` check
+`runtime.attachments.storage_provider TEXT NOT NULL DEFAULT 'local'` with a `local`/`oss` check
 constraint. `storage_path` stores a local filesystem path for `local` rows and the OSS object key for
 `oss` rows. Neither column is part of `AttachmentMeta` or any browser/LLM trace contract.
 

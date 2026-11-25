@@ -24,11 +24,12 @@ impl KbService {
         let mut report = SeedReport::default();
         let _ = report.documents;
 
-        let agent_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM agent_definitions WHERE branch = $1")
-                .bind(&branch)
-                .fetch_one(self.store.pool())
-                .await?;
+        let agent_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM kb.agent_definitions WHERE branch = $1",
+        )
+        .bind(&branch)
+        .fetch_one(self.store.pool())
+        .await?;
         if agent_count == 0 {
             let agents_dir = workspace.join("agents");
             if agents_dir.is_dir() {
@@ -92,11 +93,12 @@ impl KbService {
             }
         }
 
-        let skill_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*)::bigint FROM skill_definitions WHERE branch = $1")
-                .bind(&branch)
-                .fetch_one(self.store.pool())
-                .await?;
+        let skill_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::bigint FROM kb.skill_definitions WHERE branch = $1",
+        )
+        .bind(&branch)
+        .fetch_one(self.store.pool())
+        .await?;
         if skill_count == 0 {
             let skills_dir = workspace.join("skills");
             if skills_dir.is_dir() {
@@ -162,7 +164,7 @@ impl KbService {
             enabled,
         } = command;
         sqlx::query(
-            r#"INSERT INTO agent_definitions
+            r#"INSERT INTO kb.agent_definitions
                (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled)
                VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
                ON CONFLICT (branch, name) DO NOTHING"#,
@@ -191,7 +193,7 @@ impl KbService {
     ) -> RuntimeResult<()> {
         let mut tx = self.store.pool().begin().await?;
         sqlx::query(
-            r#"INSERT INTO skill_definitions (branch, name, description, body, version, enabled)
+            r#"INSERT INTO kb.skill_definitions (branch, name, description, body, version, enabled)
                VALUES ($1, $2, $3, $4, 1, $5)
                ON CONFLICT (branch, name) DO NOTHING"#,
         )
@@ -204,7 +206,7 @@ impl KbService {
         .await?;
         for (path, content) in resources {
             sqlx::query(
-                r#"INSERT INTO skill_resources (branch, skill_name, path, content, version)
+                r#"INSERT INTO kb.skill_resources (branch, skill_name, path, content, version)
                    VALUES ($1, $2, $3, $4, 1)
                    ON CONFLICT (branch, skill_name, path) DO NOTHING"#,
             )

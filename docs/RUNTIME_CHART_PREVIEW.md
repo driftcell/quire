@@ -10,7 +10,7 @@
 
 This document governs the pre-commit visual preview of a single ECharts chart, durable storage
 of chat-scoped charts, and the hand-off from the runtime agent to `quire-server`. It covers
-protocol validation helpers, the Redis preview record, the PostgreSQL `chat_charts` table, the
+protocol validation helpers, the Redis preview record, the PostgreSQL `runtime.chat_charts` table, the
 runtime read-only endpoint, the stateless web route and the `preview_echarts` / `commit_chart`
 tools.
 
@@ -54,8 +54,8 @@ no chart preset or mode abstraction.
 
 When a chart is committed for inline chat rendering without a bound report document (`scope: "chat"`
 or unbound session), `quire-runtime` persists the aliased `ChartPreviewRecord` (`preview_id` set to
-`block_id`) in the `chat_charts` table (`crates/quire-runtime/migrations/0013_chat_charts.sql`),
-scoped to `agent_sessions(session_id)` with `ON DELETE CASCADE`.
+`block_id`) in the `runtime.chat_charts` table (`crates/quire-runtime/migrations/0004_runtime.sql`),
+scoped to `runtime.sessions(session_id)` with `ON DELETE CASCADE`.
 
 `RuntimeStore::save_chat_chart` and `RuntimeStore::load_chat_chart` use runtime `sqlx::query` /
 `sqlx::query_scalar` bindings rather than compile-time `sqlx::query!` macros so `just migrate` and
@@ -64,7 +64,7 @@ Pure chat commits write only to PostgreSQL and do not dual-write to Redis.
 
 ### Runtime endpoint
 
-`GET /api/chart-previews/{preview_id}` checks PostgreSQL `chat_charts` (`load_chat_chart`) first
+`GET /api/chart-previews/{preview_id}` checks PostgreSQL `runtime.chat_charts` (`load_chat_chart`) first
 and falls back to Redis `quire:chart_preview:{preview_id}` (`load_chart_preview`) for transient
 `preview_echarts` drafts. It is authenticated by `chart_preview_auth` (`Authorization: Bearer` with
 a signed user JWT or short-lived preview JWT). Missing, malformed or expired records return `404`
@@ -130,7 +130,7 @@ Redis and:
   (`QuireReportService`) with the current turn's `RequestContext`, returning the mutation receipt
   plus `preview_id` and `block_id`.
 - In pure chat mode (`scope: "chat"` or when no report is bound to the session), persists the chart
-  under `block_id` in PostgreSQL `chat_charts` (`save_chat_chart`) so `<echarts id="..."/>` renders
+  under `block_id` in PostgreSQL `runtime.chat_charts` (`save_chat_chart`) so `<echarts id="..."/>` renders
   durably in reloaded sessions without creating or modifying a report document.
 
 An expired preview returns an actionable error that tells the agent to call `preview_echarts` again.
@@ -141,7 +141,7 @@ An expired preview returns an actionable error that tells the agent to call `pre
   static chart diagnostics.
 - `quire-runtime` embeds `quire-store` and `quire-server` in-process while `quire-server` never depends on the runtime.
 - A transient `preview_id` expires in Redis after 1800 seconds and returns `404` afterwards; chat
-  charts persisted via `commit_chart` survive Redis expiry in PostgreSQL `chat_charts` for the
+  charts persisted via `commit_chart` survive Redis expiry in PostgreSQL `runtime.chat_charts` for the
   lifetime of the session and take precedence over Redis drafts in `GET /api/chart-previews/{preview_id}`.
 - `RuntimeStore::save_chat_chart` and `load_chat_chart` use runtime `sqlx` queries (no `sqlx::query!`).
 - Public preview URLs never contain the read-only or preview token outside the URL `#` fragment.

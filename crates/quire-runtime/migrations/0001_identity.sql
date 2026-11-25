@@ -1,4 +1,9 @@
-CREATE TABLE IF NOT EXISTS users (
+-- Identity domain: local runtime accounts and credentials.
+-- Fresh schema only: runtime data is namespaced under the `identity` schema.
+
+CREATE SCHEMA IF NOT EXISTS identity;
+
+CREATE TABLE IF NOT EXISTS identity.users (
     user_id TEXT PRIMARY KEY,
     username TEXT NOT NULL,
     email TEXT,
@@ -11,8 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower
-    ON users (LOWER(username));
+    ON identity.users (LOWER(username));
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower
-    ON users (LOWER(email))
+    ON identity.users (LOWER(email))
     WHERE email IS NOT NULL;

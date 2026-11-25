@@ -41,7 +41,7 @@ impl KbService {
             KbBranchStatus::Active => {
                 let version = self.store.bump_kb_version().await?;
                 sqlx::query(
-                    r#"UPDATE kb_branches SET head_version = $2, updated_at = NOW()
+                    r#"UPDATE kb.branches SET head_version = $2, updated_at = NOW()
                        WHERE name = $1 AND status = 'active'"#,
                 )
                 .bind(branch)
@@ -52,7 +52,7 @@ impl KbService {
             }
             KbBranchStatus::Draft => {
                 let head: i64 = sqlx::query_scalar(
-                    r#"UPDATE kb_branches SET head_version = head_version + 1, updated_at = NOW()
+                    r#"UPDATE kb.branches SET head_version = head_version + 1, updated_at = NOW()
                        WHERE name = $1 AND status = 'draft' RETURNING head_version"#,
                 )
                 .bind(branch)
@@ -157,7 +157,7 @@ pub(crate) async fn fetch_branch_for_update(
 ) -> RuntimeResult<Option<KbBranchRecord>> {
     let row = sqlx::query(
         r#"SELECT name, description, status, base_version, head_version, created_at, updated_at
-           FROM kb_branches WHERE name = $1 FOR UPDATE"#,
+           FROM kb.branches WHERE name = $1 FOR UPDATE"#,
     )
     .bind(name)
     .fetch_optional(&mut *conn)
@@ -170,7 +170,7 @@ pub(crate) async fn fetch_active_branch_for_update(
 ) -> RuntimeResult<KbBranchRecord> {
     let row = sqlx::query(
         r#"SELECT name, description, status, base_version, head_version, created_at, updated_at
-           FROM kb_branches WHERE status = 'active' ORDER BY name ASC LIMIT 1 FOR UPDATE"#,
+           FROM kb.branches WHERE status = 'active' ORDER BY name ASC LIMIT 1 FOR UPDATE"#,
     )
     .fetch_optional(&mut *conn)
     .await?
@@ -183,7 +183,7 @@ pub(crate) async fn fetch_conflict_mark(
     branch: &str,
 ) -> RuntimeResult<Option<KbConflictMark>> {
     let row = sqlx::query(
-        "SELECT branch_head_version FROM kb_branch_conflicts WHERE branch = $1 FOR UPDATE",
+        "SELECT branch_head_version FROM kb.branch_conflicts WHERE branch = $1 FOR UPDATE",
     )
     .bind(branch)
     .fetch_optional(&mut *conn)
@@ -204,7 +204,7 @@ pub(crate) async fn upsert_conflict_mark(
     branch_head_version: u64,
 ) -> RuntimeResult<()> {
     sqlx::query(
-        r#"INSERT INTO kb_branch_conflicts (branch, active_version, branch_head_version)
+        r#"INSERT INTO kb.branch_conflicts (branch, active_version, branch_head_version)
            VALUES ($1, $2, $3)
            ON CONFLICT (branch) DO UPDATE
            SET active_version = EXCLUDED.active_version,
@@ -223,7 +223,7 @@ pub(crate) async fn delete_conflict_mark(
     conn: &mut PgConnection,
     branch: &str,
 ) -> RuntimeResult<()> {
-    sqlx::query("DELETE FROM kb_branch_conflicts WHERE branch = $1")
+    sqlx::query("DELETE FROM kb.branch_conflicts WHERE branch = $1")
         .bind(branch)
         .execute(&mut *conn)
         .await?;
@@ -235,7 +235,7 @@ pub(crate) async fn fetch_entries(
     branch: &str,
 ) -> RuntimeResult<KbEntries> {
     let document_rows = sqlx::query(
-        r#"SELECT doc_id, name, content, version, updated_at FROM kb_documents
+        r#"SELECT doc_id, name, content, version, updated_at FROM kb.documents
            WHERE branch = $1 ORDER BY doc_id ASC"#,
     )
     .bind(branch)
@@ -247,7 +247,7 @@ pub(crate) async fn fetch_entries(
     }
     let agent_rows = sqlx::query(
         r#"SELECT name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
-           FROM agent_definitions WHERE branch = $1 ORDER BY name ASC"#,
+           FROM kb.agent_definitions WHERE branch = $1 ORDER BY name ASC"#,
     )
     .bind(branch)
     .fetch_all(&mut *conn)
@@ -258,7 +258,7 @@ pub(crate) async fn fetch_entries(
     }
     let skill_rows = sqlx::query(
         r#"SELECT name, description, body, version, enabled, updated_at
-           FROM skill_definitions WHERE branch = $1 ORDER BY name ASC"#,
+           FROM kb.skill_definitions WHERE branch = $1 ORDER BY name ASC"#,
     )
     .bind(branch)
     .fetch_all(&mut *conn)
@@ -268,7 +268,7 @@ pub(crate) async fn fetch_entries(
         let name: String = row.try_get("name")?;
         let version: i64 = row.try_get("version")?;
         let resource_rows = sqlx::query(
-            r#"SELECT path, content, version FROM skill_resources
+            r#"SELECT path, content, version FROM kb.skill_resources
                WHERE branch = $1 AND skill_name = $2 ORDER BY path ASC"#,
         )
         .bind(branch)
@@ -307,38 +307,38 @@ pub(crate) async fn copy_branch_entries(
     target: &str,
 ) -> RuntimeResult<()> {
     sqlx::query(
-        r#"INSERT INTO kb_documents (branch, doc_id, name, content, version, updated_at)
+        r#"INSERT INTO kb.documents (branch, doc_id, name, content, version, updated_at)
            SELECT $1, doc_id, name, content, version, updated_at
-           FROM kb_documents WHERE branch = $2"#,
+           FROM kb.documents WHERE branch = $2"#,
     )
     .bind(target)
     .bind(source)
     .execute(&mut *conn)
     .await?;
     sqlx::query(
-        r#"INSERT INTO agent_definitions
+        r#"INSERT INTO kb.agent_definitions
            (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at)
            SELECT $1, name, description, model, system_prompt, allowed_tools, is_default, version, enabled, updated_at
-           FROM agent_definitions WHERE branch = $2"#,
+           FROM kb.agent_definitions WHERE branch = $2"#,
     )
     .bind(target)
     .bind(source)
     .execute(&mut *conn)
     .await?;
     sqlx::query(
-        r#"INSERT INTO skill_definitions
+        r#"INSERT INTO kb.skill_definitions
            (branch, name, description, body, version, enabled, updated_at)
            SELECT $1, name, description, body, version, enabled, updated_at
-           FROM skill_definitions WHERE branch = $2"#,
+           FROM kb.skill_definitions WHERE branch = $2"#,
     )
     .bind(target)
     .bind(source)
     .execute(&mut *conn)
     .await?;
     sqlx::query(
-        r#"INSERT INTO skill_resources (branch, skill_name, path, content, version)
+        r#"INSERT INTO kb.skill_resources (branch, skill_name, path, content, version)
            SELECT $1, skill_name, path, content, version
-           FROM skill_resources WHERE branch = $2"#,
+           FROM kb.skill_resources WHERE branch = $2"#,
     )
     .bind(target)
     .bind(source)
@@ -356,7 +356,7 @@ pub(crate) async fn insert_snapshot(
 ) -> RuntimeResult<()> {
     let entries = serde_json::to_value(entries)?;
     sqlx::query(
-        r#"INSERT INTO kb_snapshots (version, branch, source, entries)
+        r#"INSERT INTO kb.snapshots (version, branch, source, entries)
            VALUES ($1, $2, $3, $4)
            ON CONFLICT (version) DO NOTHING"#,
     )
@@ -373,7 +373,7 @@ pub(crate) async fn load_snapshot_entries(
     conn: &mut PgConnection,
     version: u64,
 ) -> RuntimeResult<KbEntries> {
-    let entries: Value = sqlx::query_scalar("SELECT entries FROM kb_snapshots WHERE version = $1")
+    let entries: Value = sqlx::query_scalar("SELECT entries FROM kb.snapshots WHERE version = $1")
         .bind(i64::try_from(version).unwrap_or(i64::MAX))
         .fetch_optional(&mut *conn)
         .await?
@@ -388,7 +388,7 @@ pub(crate) async fn load_snapshot_entries(
 
 pub(crate) async fn bump_version(conn: &mut PgConnection) -> RuntimeResult<u64> {
     let version: i64 = sqlx::query_scalar(
-        "UPDATE kb_meta SET version = version + 1 WHERE singleton RETURNING version",
+        "UPDATE kb.meta SET version = version + 1 WHERE singleton RETURNING version",
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -501,11 +501,11 @@ pub(crate) async fn upsert_item(
     match entry {
         KbItemEntry::Document(record) => {
             sqlx::query(
-                r#"INSERT INTO kb_documents (branch, doc_id, name, content, version)
+                r#"INSERT INTO kb.documents (branch, doc_id, name, content, version)
                    VALUES ($1, $2, $3, $4, 1)
                    ON CONFLICT (branch, doc_id) DO UPDATE
                    SET name = EXCLUDED.name, content = EXCLUDED.content,
-                       version = kb_documents.version + 1, updated_at = NOW()"#,
+                       version = kb.documents.version + 1, updated_at = NOW()"#,
             )
             .bind(branch)
             .bind(&record.doc_id)
@@ -517,7 +517,7 @@ pub(crate) async fn upsert_item(
         KbItemEntry::Agent(record) => {
             if record.is_default {
                 sqlx::query(
-                    r#"UPDATE agent_definitions
+                    r#"UPDATE kb.agent_definitions
                        SET is_default = FALSE, updated_at = NOW()
                        WHERE branch = $1 AND name <> $2 AND is_default = TRUE"#,
                 )
@@ -527,14 +527,14 @@ pub(crate) async fn upsert_item(
                 .await?;
             }
             sqlx::query(
-                r#"INSERT INTO agent_definitions
+                r#"INSERT INTO kb.agent_definitions
                    (branch, name, description, model, system_prompt, allowed_tools, is_default, version, enabled)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
                    ON CONFLICT (branch, name) DO UPDATE
                    SET description = EXCLUDED.description, model = EXCLUDED.model,
                        system_prompt = EXCLUDED.system_prompt, allowed_tools = EXCLUDED.allowed_tools,
                        is_default = EXCLUDED.is_default, enabled = EXCLUDED.enabled,
-                       version = agent_definitions.version + 1, updated_at = NOW()"#,
+                       version = kb.agent_definitions.version + 1, updated_at = NOW()"#,
             )
             .bind(branch)
             .bind(&record.name)
@@ -549,11 +549,11 @@ pub(crate) async fn upsert_item(
         }
         KbItemEntry::Skill(record) => {
             sqlx::query(
-                r#"INSERT INTO skill_definitions (branch, name, description, body, version, enabled)
+                r#"INSERT INTO kb.skill_definitions (branch, name, description, body, version, enabled)
                    VALUES ($1, $2, $3, $4, 1, $5)
                    ON CONFLICT (branch, name) DO UPDATE
                    SET description = EXCLUDED.description, body = EXCLUDED.body,
-                       enabled = EXCLUDED.enabled, version = skill_definitions.version + 1,
+                       enabled = EXCLUDED.enabled, version = kb.skill_definitions.version + 1,
                        updated_at = NOW()"#,
             )
             .bind(branch)
@@ -564,20 +564,20 @@ pub(crate) async fn upsert_item(
             .execute(&mut *conn)
             .await?;
             let version: i64 = sqlx::query_scalar(
-                "SELECT version FROM skill_definitions WHERE branch = $1 AND name = $2",
+                "SELECT version FROM kb.skill_definitions WHERE branch = $1 AND name = $2",
             )
             .bind(branch)
             .bind(&record.name)
             .fetch_one(&mut *conn)
             .await?;
-            sqlx::query("DELETE FROM skill_resources WHERE branch = $1 AND skill_name = $2")
+            sqlx::query("DELETE FROM kb.skill_resources WHERE branch = $1 AND skill_name = $2")
                 .bind(branch)
                 .bind(&record.name)
                 .execute(&mut *conn)
                 .await?;
             for resource in &record.resources {
                 sqlx::query(
-                    r#"INSERT INTO skill_resources (branch, skill_name, path, content, version)
+                    r#"INSERT INTO kb.skill_resources (branch, skill_name, path, content, version)
                        VALUES ($1, $2, $3, $4, $5)"#,
                 )
                 .bind(branch)
@@ -600,21 +600,21 @@ pub(crate) async fn delete_item(
 ) -> RuntimeResult<()> {
     match entry {
         KbItemEntry::Document(record) => {
-            sqlx::query("DELETE FROM kb_documents WHERE branch = $1 AND doc_id = $2")
+            sqlx::query("DELETE FROM kb.documents WHERE branch = $1 AND doc_id = $2")
                 .bind(branch)
                 .bind(&record.doc_id)
                 .execute(&mut *conn)
                 .await?;
         }
         KbItemEntry::Agent(record) => {
-            sqlx::query("DELETE FROM agent_definitions WHERE branch = $1 AND name = $2")
+            sqlx::query("DELETE FROM kb.agent_definitions WHERE branch = $1 AND name = $2")
                 .bind(branch)
                 .bind(&record.name)
                 .execute(&mut *conn)
                 .await?;
         }
         KbItemEntry::Skill(record) => {
-            sqlx::query("DELETE FROM skill_definitions WHERE branch = $1 AND name = $2")
+            sqlx::query("DELETE FROM kb.skill_definitions WHERE branch = $1 AND name = $2")
                 .bind(branch)
                 .bind(&record.name)
                 .execute(&mut *conn)

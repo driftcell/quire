@@ -1,0 +1,16 @@
+[package]
+name = "quire-migrate"
+description = "Quire: standalone PostgreSQL migration runner"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dotenvy = "0.15"
+sqlx.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

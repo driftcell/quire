@@ -93,7 +93,7 @@ reference fields must be non-empty and a message cannot contain duplicate thread
 ```
 
 Runtime migration `0006_session_comment_refs.sql` adds `comment_refs JSONB NOT NULL DEFAULT '[]'`
-to `session_pending_queue`. Canonical conversation messages keep the same fields in their rig-memory
+to `runtime.pending_queue`. Canonical conversation messages keep the same fields in their rig-memory
 message-receipt Asides. Queue edits replace `content` and `comment_refs` together while preserving
 attachments, source and the queue row's thread ID. Consecutive queued comment items still form one
 user message: their references are flattened in FIFO order, non-empty content is joined with blank

@@ -21,10 +21,10 @@ Session events and run traces are display projections, never an alternate source
 ### 2.1 Storage separation
 
 Fresh runtime migrations intentionally do not create `agent_messages`, `session_events`,
-`agent_sessions.last_event_seq` or `agent_sessions.min_available_seq`.
+`runtime.sessions.last_event_seq` or `runtime.sessions.min_available_seq`.
 
-- **Canonical conversation:** `rig_memory_logs`, `rig_memory_log_chunks` and `rig_memory_files`, opened
-  through the official `PostgresSessionStore` on the existing PostgreSQL pool.
+- **Canonical conversation:** `rig.rig_memory_logs`, `rig.rig_memory_log_chunks` and
+  `rig.rig_memory_files`, opened through the official `PostgresSessionStore` on a dedicated Rig pool.
 - **UI message receipts:** saved `quire.message_receipt` Asides anchored to canonical `MessageId`s
   (supporting multiple ordered receipts per `MessageId`). They carry idempotency and presentation
   metadata and are never sent to a model. A main run has at most one visible Assistant receipt whose
@@ -35,10 +35,10 @@ Fresh runtime migrations intentionally do not create `agent_messages`, `session_
   response when suffix persistence did not complete; an existing provider receipt is never duplicated.
 - **Hot display events:** an ordered Redis list plus a persistent session sequence key and Pub/Sub
   channel. The list has a 24-hour sliding TTL refreshed by appends.
-- **Cold run trace:** `agent_runs.trace_summary`, materialized from the hot events on terminal
-  transition. `agent_runs.start_seq` records the hot sequence of `turn_started`.
-- **Operational records:** `agent_tool_calls`, `agent_questions`, pending queue rows, attachments and
-  run/session rows retain their existing domain responsibilities.
+- **Cold run trace:** `runtime.runs.trace_summary`, materialized from the hot events on terminal
+  transition. `runtime.runs.start_seq` records the hot sequence of `turn_started`.
+- **Operational records:** `runtime.tool_calls`, `runtime.questions`, pending queue rows, attachments
+  and run/session rows retain their existing domain responsibilities.
 
 Retry locates a visible user receipt's canonical `MessageId`, removes the failed/cancelled suffix and
 all asides anchored to removed entries, then reuses the retained prompt. It never appends a second
@@ -83,7 +83,7 @@ On a winning terminal run transition:
 1. PostgreSQL updates the run and session status;
 2. the terminal event is appended to Redis;
 3. hot events for the run are aggregated;
-4. the complete `RunTraceSummary` is saved to `agent_runs.trace_summary`.
+4. the complete `RunTraceSummary` is saved to `runtime.runs.trace_summary`.
 
 `/traces` reads cold summaries and aggregates only rows without one. Hot-only orphan traces can still
 be projected for test/recovery scenarios. Terminal transitions remain conditional, so a late finisher

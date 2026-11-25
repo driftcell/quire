@@ -56,7 +56,7 @@ impl ModelRegistry {
         let rows = sqlx::query(
             r#"SELECT provider_id, name, protocol, base_url, api_key_ref, enabled,
                       created_at, updated_at
-               FROM llm_providers ORDER BY provider_id ASC"#,
+               FROM catalog.llm_providers ORDER BY provider_id ASC"#,
         )
         .fetch_all(self.store.pool())
         .await?;
@@ -71,7 +71,7 @@ impl ModelRegistry {
         }
         let api_key_ref = normalize_api_key_ref(&input.api_key_ref, self.master_key.as_ref())?;
         sqlx::query(
-            r#"INSERT INTO llm_providers
+            r#"INSERT INTO catalog.llm_providers
                (provider_id, name, protocol, base_url, api_key_ref, enabled)
                VALUES ($1, $2, $3, $4, $5, $6)
                ON CONFLICT (provider_id) DO UPDATE
@@ -97,7 +97,7 @@ impl ModelRegistry {
         let row = sqlx::query(
             r#"SELECT provider_id, name, protocol, base_url, api_key_ref, enabled,
                       created_at, updated_at
-               FROM llm_providers WHERE provider_id = $1"#,
+               FROM catalog.llm_providers WHERE provider_id = $1"#,
         )
         .bind(provider_id)
         .fetch_optional(self.store.pool())
@@ -106,7 +106,7 @@ impl ModelRegistry {
     }
 
     pub async fn delete_provider(&self, provider_id: &str) -> RuntimeResult<()> {
-        sqlx::query("DELETE FROM llm_providers WHERE provider_id = $1")
+        sqlx::query("DELETE FROM catalog.llm_providers WHERE provider_id = $1")
             .bind(provider_id)
             .execute(self.store.pool())
             .await?;
@@ -119,7 +119,7 @@ impl ModelRegistry {
             r#"SELECT id, provider_id, model_id, display_name, context_limit,
                       max_output_tokens, supports_reasoning, supports_tools, supports_vision,
                       cost_input, cost_output, cost_cache_read, enabled, updated_at
-               FROM llm_models ORDER BY id ASC"#,
+               FROM catalog.llm_models ORDER BY id ASC"#,
         )
         .fetch_all(self.store.pool())
         .await?;
@@ -136,7 +136,7 @@ impl ModelRegistry {
             ));
         }
         sqlx::query(
-            r#"INSERT INTO llm_models
+            r#"INSERT INTO catalog.llm_models
                (id, provider_id, model_id, display_name, context_limit, max_output_tokens,
                 supports_reasoning, supports_tools, supports_vision,
                 cost_input, cost_output, cost_cache_read, enabled)
@@ -178,7 +178,7 @@ impl ModelRegistry {
             r#"SELECT id, provider_id, model_id, display_name, context_limit,
                       max_output_tokens, supports_reasoning, supports_tools, supports_vision,
                       cost_input, cost_output, cost_cache_read, enabled, updated_at
-               FROM llm_models WHERE id = $1"#,
+               FROM catalog.llm_models WHERE id = $1"#,
         )
         .bind(id)
         .fetch_optional(self.store.pool())
@@ -187,7 +187,7 @@ impl ModelRegistry {
     }
 
     pub async fn delete_model(&self, id: &str) -> RuntimeResult<()> {
-        sqlx::query("DELETE FROM llm_models WHERE id = $1")
+        sqlx::query("DELETE FROM catalog.llm_models WHERE id = $1")
             .bind(id)
             .execute(self.store.pool())
             .await?;
@@ -204,8 +204,8 @@ impl ModelRegistry {
                       m.max_output_tokens, m.supports_reasoning, m.supports_tools,
                       m.supports_vision, m.cost_input, m.cost_output, m.cost_cache_read,
                       p.protocol, p.base_url, p.api_key_ref
-               FROM llm_models m
-               JOIN llm_providers p ON p.provider_id = m.provider_id
+               FROM catalog.llm_models m
+               JOIN catalog.llm_providers p ON p.provider_id = m.provider_id
                WHERE m.id = $1 AND m.enabled AND p.enabled"#,
         )
         .bind(route_id)

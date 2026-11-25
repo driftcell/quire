@@ -23,7 +23,7 @@ impl PgReportStore {
             return Ok(current);
         }
         let snapshot = sqlx::query!(
-            r#"SELECT rev_num, snapshot_zstd FROM report_snapshots
+            r#"SELECT rev_num, snapshot_zstd FROM report.snapshots
                WHERE doc_id = $1 AND rev_num <= $2
                ORDER BY rev_num DESC LIMIT 1"#,
             doc_id.as_str(),
@@ -37,7 +37,7 @@ impl PgReportStore {
             let mut document: ReportDocument = serde_json::from_slice(&decoded)?;
             document.revision = Revision::new(snapshot.rev_num)?;
             let rows = sqlx::query!(
-                r#"SELECT rev_num, forward_ops FROM report_revisions
+                r#"SELECT rev_num, forward_ops FROM report.revisions
                    WHERE doc_id = $1 AND rev_num > $2 AND rev_num <= $3
                    ORDER BY rev_num ASC"#,
                 doc_id.as_str(),
@@ -62,7 +62,7 @@ impl PgReportStore {
         }
 
         let rows = sqlx::query!(
-            r#"SELECT rev_num, inverse_ops FROM report_revisions
+            r#"SELECT rev_num, inverse_ops FROM report.revisions
                WHERE doc_id = $1 AND rev_num > $2 AND rev_num <= $3
                ORDER BY rev_num DESC"#,
             doc_id.as_str(),
@@ -104,7 +104,7 @@ impl PgReportStore {
                 let compressed = zstd::encode_all(json.as_slice(), 5)
                     .map_err(|error| StoreError::Snapshot(error.to_string()))?;
                 sqlx::query!(
-                    r#"INSERT INTO report_snapshots (doc_id, rev_num, snapshot_zstd)
+                    r#"INSERT INTO report.snapshots (doc_id, rev_num, snapshot_zstd)
                        VALUES ($1, $2, $3)
                        ON CONFLICT (doc_id, rev_num) DO NOTHING"#,
                     &doc_id,
