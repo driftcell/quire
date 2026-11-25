@@ -553,7 +553,7 @@ export interface SourceEntry {
    * Official publication-grade title of the document, announcement, or dataset. Required when registering a new
    * source; may be omitted when partially updating an existing source by `id`.
    * Never include internal MCP/warehouse module tags or English parenthetical suffixes (e.g. `（reporting）`, `（subject）`, `panorama_report`, `subjectcloud`).
-   * Good: `"2025年国家自然科学基金集中接收申请项目评审结果通告"` or `"青塔高等教育全景数据库 — 国家自然科学基金立项统计"`;
+   * Good: `"2025年国家自然科学基金集中接收申请项目评审结果通告"`, `"青塔全景云"`, or `"青塔学科云"`;
    * Bad: `"国自然官网"`, `"青塔数据库（reporting）"`, `"青塔学科云（subject）"`.
    */
   title?: string;
@@ -567,7 +567,7 @@ export interface SourceEntry {
   authors?: string[];
   /**
    * Full formal name of the publishing institution or platform (never a bare domain, URL, or internal MCP module name).
-   * Good: `"国家自然科学基金委员会"` or `"青塔教育"`; Bad: `"nsfc.gov.cn"`, `"reporting"`, `"subjectcloud"`.
+   * Good: `"国家自然科学基金委员会"` or `"青塔学科云"`; Bad: `"nsfc.gov.cn"`, `"reporting"`, `"subjectcloud"`.
    */
   publisher?: string | null;
   /**

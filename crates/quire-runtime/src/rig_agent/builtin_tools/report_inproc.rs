@@ -304,7 +304,7 @@ pub(crate) enum TargetScope {
 ///
 /// Progressive-disclosure & provenance rules:
 /// - Register ONLY real sources retrieved during research; never fabricate URLs, DOIs, or excerpts.
-/// - Use formal publication-grade titles and publishers (e.g. `"青塔高等教育全景数据库 — 国家自然科学基金立项统计"`, `"青塔学科发展监测平台"`). NEVER expose internal MCP/tool/module tags (`（reporting）`, `（subject）`, `panorama_report`, `subjectcloud`, `shuangyou`).
+/// - Use formal publication-grade titles and publishers (e.g. `"青塔全景云"`, `"青塔学科云"`). NEVER expose internal MCP/tool/module tags (`（reporting）`, `（subject）`, `panorama_report`, `subjectcloud`, `shuangyou`).
 /// - Call `list_sources` first when a report already has sources so internal databases without URLs are reused rather than duplicated under variant titles.
 /// - `excerpt` is optional and reader-facing: include a short verbatim passage only for natural-language documents when it directly supports a claim; omit `excerpt` for structured database/API records and use `note` for concise natural-Chinese statistical scope and time window.
 #[rig_tool(name = "upsert_sources", required(sources))]
