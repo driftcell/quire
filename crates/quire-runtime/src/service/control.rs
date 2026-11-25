@@ -64,6 +64,9 @@ impl RuntimeService {
                 "session has no user message to retry".into(),
             ));
         };
+        let dismissed = self.store.dismiss_pending_questions(session_id).await?;
+        self.clear_dismissed_questions(session_id, dismissed, "retried_by_user")
+            .await?;
         let prompt = self
             .store
             .memory()

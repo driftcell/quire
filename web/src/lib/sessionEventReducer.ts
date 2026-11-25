@@ -647,7 +647,7 @@ export function reduceSessionEvent(
         ...next,
         ...finishAllThinking(next, eventTs),
         streamingEstimatedOutputTokens: 0,
-        liveRunStatus: "idle",
+        liveRunStatus: next.livePendingQuestion ? "awaiting_input" : "idle",
       };
       effects.push({ type: "refetch-and-clear", runId: event.run_id });
       effects.push({ type: "invalidate", target: "sessions" });

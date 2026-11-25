@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-session-protocol`, `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_ask_user_suspend_resume.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_ask_user_suspend_resume.md`, `../notes/ask_user_run_decoupling.md`
 
 ## 1. Scope & Non-Goals
 
@@ -19,9 +19,10 @@ It does not use a serialized `AgentRun`, an inline hook wait or same-run `agent.
 The session protocol retains:
 
 - `QuestionOption`, `QuestionItem`, `QuestionAnswer`, `PendingQuestion` and `ResolvedQuestion`;
+- `MessageRole::Question` and `SessionMessage.question_id` for first-class question timeline receipts;
 - `SessionDetail.pending_question` and `resolved_questions`;
-- `questionnaire_requested`, `questionnaire_answered` and `questionnaire_dismissed` events;
-- `ActiveRunStatus::AwaitingInput`.
+- non-terminal, non-run-scoped `questionnaire_requested`, `questionnaire_answered` and `questionnaire_dismissed` events;
+- `ActiveRunStatus::AwaitingInput` (session input gate only; `agent_runs` never enters `awaiting_input`).
 
 `agent_questions` remains the durable card store with pending/answered/skipped/dismissed states,
 optional originating `tool_call_id`, JSON questions/answers and timestamps.
@@ -74,21 +75,19 @@ any provider request. The driver treats that cancellation as normal suspension, 
 history containing every question/skipped result and does not mark the run failed. Tool
 validation/execution failures without question metadata receive a failed finish instead.
 
-### 2.3 Suspension
+### 2.3 Run Closure & Question Anchoring
 
-The service's existing `EventSink` creates the pending question before publishing its request event,
-then the run/session become `awaiting_input`. No model connection or task remains open. Any assistant
-text and accepted tool results are already represented in canonical rig-memory history and the hot
-trace.
+`EventSink` persists the `agent_questions` row before publishing `questionnaire_requested` (`liveRunStatus -> awaiting_input`). When the turn stops with a pending question:
 
-Startup recovery rewrites only `running` runs. A durable pending card remains visible after refresh or
-restart even if the final status transition was interrupted.
+1. Canonical conversation history (any assistant prose and accepted tool calls) is already committed in `rig-memory`;
+2. `ConversationMemory::append_question_message` attaches a visible `MessageRole::Question` receipt (`question_id`, `run_id`) onto the canonical conversation tail strictly after any `Assistant` receipt for that run;
+3. `finish_run_for_question` closes the run cleanly as `agent_runs.status = 'completed'`, keeps `agent_sessions.active_run_status = 'awaiting_input'`, appends `turn_finished`, and immediately materializes the settled `completed` cold `trace_summary`.
 
-### 2.4 Answer, skip and dismissal
+Startup recovery rewrites only `running` runs. A durable `MessageRole::Question` receipt and pending `agent_questions` card remain visible in canonical timeline order after refresh or restart.
 
-`POST /api/sessions/{session_id}/questions/{question_id}/answer` validates that the card is pending,
-validates question/option IDs, stores `answered` or `skipped`, emits `questionnaire_answered`, and
-finalizes the suspended run's cold trace.
+### 2.4 Answer, skip, retry, and dismissal
+
+`POST /api/sessions/{session_id}/questions/{question_id}/answer` validates that the card is pending, validates question/option IDs, stores `answered` or `skipped`, clears `agent_sessions.active_run_status` from `awaiting_input` to `idle`, emits `questionnaire_answered`, and starts the continuation turn (`Run 2`) cleanly without modifying `Run 1`'s finalized run or trace.
 
 The answer payload is serialized as JSON and appended to canonical memory as an **internal, invisible
 prompt**. It is the only model input for the continuation turn. There is no
@@ -96,16 +95,13 @@ prompt**. It is the only model input for the continuation turn. There is no
 `Continue the task...` user message. The assistant response starts a new run with the standard
 lifecycle and visible assistant projection.
 
-A normal user message may bypass the card. Pending cards become `dismissed` with reason
-`superseded_by_user_message`. Before the new visible prompt is appended, canonical memory receives
-an internal invisible `ask_user_response` JSON prompt with `status = "dismissed"`, the question/tool
-IDs and that reason. The model therefore never sees an unexplained dangling `awaiting_input` result.
-The suspended runs are finalized, the user's standard new turn wins, and pending queue contents are
-not consumed by question suspension.
+A normal user message (or `retry`) may bypass the card. Pending cards become `dismissed` (`superseded_by_user_message` or `retried_by_user`) and `clear_session_awaiting_input` releases the session input gate before starting the next turn. On `post_message`, canonical memory receives an invisible `ask_user_response` JSON prompt with `status = "dismissed"` before the new visible prompt. On `retry`, rewinding to a prompt cleans any suffix entries as well as any non-`User` receipt asides anchored to that prompt. Pending queue contents are not consumed while the session is in `awaiting_input`.
 
 ## 3. Invariants & Verification
 
-- A pending card survives refresh/restart and resolved cards remain anchored to the original call.
+- A pending or resolved card is anchored as a `MessageRole::Question` receipt strictly after its originating run's assistant prose (if any) and before any later run's output.
+- Non-failed `ask_user` calls stay hidden in trace tool accordions (`isVisibleTraceTool`); if a pre-question run produced tools/subagents without assistant prose, the run's `HistoricalRunTrace` renders immediately above its `QuestionCard` rather than as a bottom orphan trace.
+- `Run 1` always closes as `completed` with a finalized cold trace at questionnaire time, never remaining `running` or `awaiting_input`.
 - Mixed batches execute no sibling tool and every sibling has exactly one terminal skipped finish,
   regardless of whether it appears before or after `ask_user`.
 - `ask_user` never holds a task while waiting for a person.
@@ -114,16 +110,20 @@ not consumed by question suspension.
 - Internal answer prompts remain canonical but do not render as user bubbles.
 - A new user message appends an invisible canonical dismissal before its visible prompt and wins;
   the dismissal never becomes a UI bubble, and a resolved card cannot be answered again.
-- Failed question calls do not leave running tool rows.
+- Failed question calls remain visible in trace tool lists and do not leave running tool rows.
 
 Coverage includes:
 
 - `ask_user_suspends_until_answers_resume_the_run`
+- `ask_user_anchors_question_after_assistant_prose_and_before_resumed_run`
 - `ask_user_skip_marks_skipped_and_continues`
 - `new_message_dismisses_pending_question_and_starts_a_new_turn`
 - `ask_user_suspension_keeps_pending_queue_untouched`
+- `question_closure_completes_run_and_materializes_completed_trace`
 - `HookTestHarness` mixed-batch sibling skipping in both call orders with exactly-once finishes
+- canonical `memory` `question_receipt_anchors_after_assistant_and_rewinds_cleanly` unit test
 - session-protocol structured payload/label serialization tests
+- frontend `EditorialChat.test.tsx`, `sessionEventReducer.test.ts`, `traceSegments.test.ts`, `toolMeta.test.ts`
 
 Full gate:
 
@@ -132,4 +132,8 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 just schema
+bun run --cwd web gen:types
+bun test --cwd web
+bun run --cwd web typecheck
+bun run --cwd web lint
 ```

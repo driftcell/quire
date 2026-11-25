@@ -1,4 +1,4 @@
-import { Fragment, memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import {
   ToolCallTrace,
@@ -12,20 +12,15 @@ const VISIBLE_RECENT_TOOLS = 4;
 export const ToolCallList = memo(function ToolCallList({
   sessionId,
   tools: rawTools,
-  questionSlots,
 }: {
   sessionId: string;
   tools: ToolCallTraceItem[];
-  questionSlots?: Map<string, ReactNode>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const tools = useMemo(() => rawTools.filter(isVisibleTraceTool), [rawTools]);
 
   const renderTool = (tool: ToolCallTraceItem) => (
-    <Fragment key={tool.toolCallId}>
-      <ToolCallTrace sessionId={sessionId} item={tool} />
-      {questionSlots?.get(tool.toolCallId)}
-    </Fragment>
+    <ToolCallTrace key={tool.toolCallId} sessionId={sessionId} item={tool} />
   );
 
   if (tools.length === 0) {
@@ -56,17 +51,11 @@ export const ToolCallList = memo(function ToolCallList({
   const splitAt = tools.length - VISIBLE_RECENT_TOOLS;
   const hiddenTools = tools.slice(0, splitAt);
   const recentTools = tools.slice(splitAt);
-  const pinnedTools = hiddenTools.filter((tool) =>
-    questionSlots?.has(tool.toolCallId),
-  );
-  const restHidden = hiddenTools.filter(
-    (tool) => !questionSlots?.has(tool.toolCallId),
-  );
-  const runningHidden = restHidden.filter((t) => t.status === "running");
+  const runningHidden = hiddenTools.filter((t) => t.status === "running");
 
   return (
     <div className="space-y-0.5">
-      {restHidden.length > 0 && (
+      {hiddenTools.length > 0 && (
         <button
           type="button"
           onClick={() => setExpanded(true)}
@@ -74,11 +63,10 @@ export const ToolCallList = memo(function ToolCallList({
         >
           <ChevronDownIcon className="size-3" />
           <span>
-            展开更早的 {restHidden.length} 个步骤（共 {tools.length} 步）
+            展开更早的 {hiddenTools.length} 个步骤（共 {tools.length} 步）
           </span>
         </button>
       )}
-      {pinnedTools.map(renderTool)}
       {runningHidden.map(renderTool)}
       {recentTools.map(renderTool)}
     </div>

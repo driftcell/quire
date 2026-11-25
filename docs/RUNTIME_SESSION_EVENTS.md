@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`, `quire-session-protocol`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/session_event_pipeline_consolidation.md`, `../notes/runtime_pending_failure_recovery.md`, `../notes/task_focus_and_todo_split.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/session_event_pipeline_consolidation.md`, `../notes/runtime_pending_failure_recovery.md`, `../notes/task_focus_and_todo_split.md`, `../notes/ask_user_run_decoupling.md`
 
 ## 1. Scope & Non-Goals
 
@@ -25,12 +25,14 @@ Fresh runtime migrations intentionally do not create `agent_messages`, `session_
 
 - **Canonical conversation:** `rig_memory_logs`, `rig_memory_log_chunks` and `rig_memory_files`, opened
   through the official `PostgresSessionStore` on the existing PostgreSQL pool.
-- **UI message receipts:** saved `quire.message_receipt` Asides anchored to canonical `MessageId`s.
-  They carry idempotency and presentation metadata and are never sent to a model. A main run has at
-  most one visible Assistant receipt whose content aggregates all non-empty text turns of that run;
-  empty output creates neither a receipt nor a synthetic empty Assistant entry. A provider stream error
-  uses the same idempotent fallback to preserve a failed run's non-empty response when suffix persistence
-  did not complete; an existing provider receipt is never duplicated.
+- **UI message receipts:** saved `quire.message_receipt` Asides anchored to canonical `MessageId`s
+  (supporting multiple ordered receipts per `MessageId`). They carry idempotency and presentation
+  metadata and are never sent to a model. A main run has at most one visible Assistant receipt whose
+  content aggregates all non-empty text turns of that run; empty output creates neither a receipt nor
+  a synthetic empty Assistant entry. `MessageRole::Question` receipts anchor `ask_user` cards (`question_id`,
+  `run_id`) immediately onto the originating run's canonical tail after any Assistant receipt. A
+  provider stream error uses the same idempotent fallback to preserve a failed run's non-empty
+  response when suffix persistence did not complete; an existing provider receipt is never duplicated.
 - **Hot display events:** an ordered Redis list plus a persistent session sequence key and Pub/Sub
   channel. The list has a 24-hour sliding TTL refreshed by appends.
 - **Cold run trace:** `agent_runs.trace_summary`, materialized from the hot events on terminal
@@ -71,9 +73,10 @@ not rewritten.
 
 ### 2.3 Active snapshots and cold materialization
 
-`SessionSummary.last_event_seq` is read from Redis, not PostgreSQL. For a running or awaiting-input
-session, `get_session_detail` reads hot events in `start_seq..=last_event_seq` and delegates to the
-canonical pure `aggregate_run_traces` projector. Idle sessions do not aggregate event history.
+`SessionSummary.last_event_seq` is read from Redis, not PostgreSQL. For a `running` session,
+`get_session_detail` reads hot events in `start_seq..=last_event_seq` and delegates to the canonical
+pure `aggregate_run_traces` projector. Idle and `awaiting_input` sessions do not maintain an active
+run trace (question turns close cleanly as `completed` via `finish_run_for_question`).
 
 On a winning terminal run transition:
 
@@ -116,6 +119,8 @@ have no visible user bubble. Compaction markers are visible receipts attached to
 - `turn_started` establishes a new run owner;
 - `turn_superseded` settles thinking and requests detail/trace refresh with run-owner guards;
 - standard `user_message_added` invalidates the detail projection;
+- `turn_finished` preserves `liveRunStatus = "awaiting_input"` while `livePendingQuestion` is non-null before clearing `liveMain` via `refetch-and-clear`;
+- `questionnaire_requested`, `questionnaire_answered`, and `questionnaire_dismissed` are all non-terminal, non-run-scoped session events (`trace_run_id()` is `None`);
 - skipped tool results update both live and hydrated traces;
 - `task_focus` updates live work focus (`title`, `detail`, `section_id`) while preserving existing `todos` unless non-empty legacy `todos` are present; `todos_updated` updates `todos` atomically without overwriting an existing focus `title`, `detail`, or `section_id`;
 - scope-aware usage and terminal single-winner behavior remain unchanged.

@@ -210,11 +210,14 @@ impl RuntimeService {
                 .await?;
         }
         if let Some(question) = suspended_question {
-            if let Some(usage) = reported_usage {
+            if let Some(mut usage) = reported_usage {
+                usage.cost_rmb = cumulative_cost_rmb;
                 self.store.update_context_usage(session_id, &usage).await?;
             }
-            self.store.mark_run_awaiting_input(run_id).await?;
-            let _ = question;
+            self.store
+                .insert_question_message(session_id, run_id, &question)
+                .await?;
+            let _ = self.store.finish_run_for_question(run_id).await?;
             return Ok(());
         }
         if superseded {

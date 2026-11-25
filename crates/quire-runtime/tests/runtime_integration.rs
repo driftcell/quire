@@ -41,9 +41,9 @@ use quire_runtime::{
     store::{EnqueuePendingMessage, SessionPatch},
 };
 use quire_session_protocol::{
-    ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionItem, QuestionOption,
-    RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem, SendMessageRequest,
-    SessionCommentRef, SessionEvent, SessionEventKind, SessionMessage,
+    ActiveRunStatus, ContextUsage, MessageRole, PendingQueueSource, QuestionAnswer, QuestionItem,
+    QuestionOption, RunTraceSegment, RunTraceSubagent, RunTraceSummary, RunTraceToolItem,
+    SendMessageRequest, SessionCommentRef, SessionEvent, SessionEventKind, SessionMessage,
 };
 use secrecy::SecretString;
 use serde_json::{Value, json};
@@ -3639,9 +3639,26 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
         waiting.summary.active_run_status,
         ActiveRunStatus::AwaitingInput
     );
+    assert!(waiting.active_run_trace.is_none());
     let pending = waiting.pending_question.clone().expect("pending question");
     assert_eq!(pending.questions.len(), 1);
     assert_eq!(pending.tool_call_id.as_deref(), Some("tc_ask"));
+    assert_eq!(
+        waiting.messages.iter().map(|m| m.role).collect::<Vec<_>>(),
+        vec![MessageRole::User, MessageRole::Question]
+    );
+    assert_eq!(
+        waiting.messages[1].question_id.as_deref(),
+        Some(pending.question_id.as_str())
+    );
+    assert_eq!(
+        waiting.messages[1].run_id.as_deref(),
+        Some(pending.run_id.as_str())
+    );
+    let waiting_traces = store.list_run_traces(&session.session_id).await.unwrap();
+    assert_eq!(waiting_traces.len(), 1);
+    assert_eq!(waiting_traces[0].run_id, pending.run_id);
+    assert_eq!(waiting_traces[0].status, "completed");
 
     let app = quire_runtime::http::router(service.clone());
     let (status, body) = http_json(
@@ -3683,9 +3700,23 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
             .map(String::as_str),
         Some("q3")
     );
-    assert!(resumed.messages.iter().any(|message| {
-        message.role == MessageRole::Assistant && message.content.contains("resumed after answer")
-    }));
+    assert_eq!(
+        resumed
+            .messages
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        vec![
+            MessageRole::User,
+            MessageRole::Question,
+            MessageRole::Assistant
+        ]
+    );
+    assert_eq!(
+        resumed.messages[1].question_id.as_deref(),
+        Some(pending.question_id.as_str())
+    );
+    assert!(resumed.messages[2].content.contains("resumed after answer"));
     let question_status: String =
         sqlx::query_scalar("SELECT status FROM agent_questions WHERE question_id = $1")
             .bind(&pending.question_id)
@@ -3713,6 +3744,103 @@ async fn ask_user_suspends_until_answers_resume_the_run() {
         request.user_message.contains("q3") && request.user_message.contains("ask_user_response")
     }));
     drop(requests);
+    service.delete_session(&session.session_id).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn ask_user_anchors_question_after_assistant_prose_and_before_resumed_run() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let (provider, _requests) = RecordingStreamProvider::with_turns(vec![
+        vec![
+            ModelStreamEvent::TextDelta("Before asking scope".into()),
+            ModelStreamEvent::QuestionnaireRequested {
+                tool_call_id: Some("tc_with_prose".into()),
+                questions: question_items(),
+            },
+        ],
+        vec![ModelStreamEvent::TextDelta(
+            "Resumed final synthesis".into(),
+        )],
+    ]);
+    let service = service.with_model_stream_provider(Arc::new(provider));
+    let session = service
+        .create_session(&unique("ask-user-prose-order"), Some("runtime-doc"))
+        .await
+        .unwrap();
+    service
+        .post_message(
+            &session.session_id,
+            &SendMessageRequest {
+                client_msg_id: unique("ask-user-prose-start"),
+                content: "Start with context".into(),
+                comment_refs: Vec::new(),
+                attachment_ids: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let waiting = service.session_detail(&session.session_id).await.unwrap();
+    let pending = waiting.pending_question.expect("pending question");
+    assert_eq!(
+        waiting
+            .messages
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        vec![
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::Question,
+        ]
+    );
+    assert!(waiting.messages[1].content.contains("Before asking scope"));
+    assert_eq!(
+        waiting.messages[2].question_id.as_deref(),
+        Some(pending.question_id.as_str())
+    );
+
+    service
+        .answer_question(
+            &session.session_id,
+            &pending.question_id,
+            &[QuestionAnswer {
+                question_id: "scope".into(),
+                selected_option_ids: vec!["q3".into()],
+                freeform_text: None,
+                skipped: false,
+            }],
+            false,
+        )
+        .await
+        .unwrap();
+    wait_for_idle(&store, &session.session_id).await;
+
+    let finished = service.session_detail(&session.session_id).await.unwrap();
+    assert_eq!(
+        finished
+            .messages
+            .iter()
+            .map(|message| message.role)
+            .collect::<Vec<_>>(),
+        vec![
+            MessageRole::User,
+            MessageRole::Assistant,
+            MessageRole::Question,
+            MessageRole::Assistant,
+        ]
+    );
+    assert!(
+        finished.messages[3]
+            .content
+            .contains("Resumed final synthesis")
+    );
+    let traces = store.list_run_traces(&session.session_id).await.unwrap();
+    assert_eq!(traces.len(), 2);
+    assert!(traces.iter().all(|trace| trace.status == "completed"));
+
     service.delete_session(&session.session_id).await.unwrap();
 }
 
@@ -6689,11 +6817,11 @@ async fn completed_run_trace_is_materialized_on_terminal_transition() {
 }
 
 #[tokio::test]
-async fn resolving_a_suspended_run_materializes_its_trace() {
+async fn question_closure_completes_run_and_materializes_completed_trace() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
     let session = service
-        .create_session("materialize suspended trace", None)
+        .create_session("materialize question trace", None)
         .await
         .unwrap();
     let run = store
@@ -6704,8 +6832,18 @@ async fn resolving_a_suspended_run_materializes_its_trace() {
         .start_run_with_event(&run.run_id, SessionEventKind::TurnStarted)
         .await
         .unwrap();
-    store.mark_run_awaiting_input(&run.run_id).await.unwrap();
-    store.resolve_suspended_run(&run.run_id).await.unwrap();
+    store.finish_run_for_question(&run.run_id).await.unwrap();
+
+    let run_row = store.get_run(&run.run_id).await.unwrap();
+    assert_eq!(run_row.status, "completed");
+    assert_eq!(
+        store
+            .get_session_summary(&session.session_id)
+            .await
+            .unwrap()
+            .active_run_status,
+        ActiveRunStatus::AwaitingInput
+    );
 
     let stored: Option<Value> =
         sqlx::query_scalar("SELECT trace_summary FROM agent_runs WHERE run_id = $1")
@@ -6713,9 +6851,20 @@ async fn resolving_a_suspended_run_materializes_its_trace() {
             .fetch_optional(store.pool())
             .await
             .unwrap();
-    assert!(
-        stored.is_some(),
-        "resolve_suspended_run must materialize the trace"
+    let stored = stored.expect("finish_run_for_question must materialize the trace");
+    assert_eq!(stored["status"], "completed");
+
+    store
+        .clear_session_awaiting_input(&session.session_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .get_session_summary(&session.session_id)
+            .await
+            .unwrap()
+            .active_run_status,
+        ActiveRunStatus::Idle
     );
 }
 

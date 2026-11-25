@@ -471,3 +471,71 @@ describe("task_focus and todos_updated independence", () => {
     expect(sub?.trace.taskFocus?.todos).toHaveLength(1);
   });
 });
+
+describe("decoupled questionnaire lifecycle", () => {
+  test("turn_finished after questionnaire_requested preserves awaiting_input status until answered", () => {
+    const requested = reduceAll([
+      {
+        seq: 1,
+        run_id: "run_1",
+        agent_id: "main",
+        parent_run_id: null,
+        timestamp: "2026-01-01T00:00:00Z",
+        event: "turn_started",
+      },
+      {
+        seq: 2,
+        run_id: "run_1",
+        agent_id: "main",
+        parent_run_id: null,
+        timestamp: "2026-01-01T00:00:01Z",
+        event: "questionnaire_requested",
+        question_id: "q_1",
+        tool_call_id: "tc_ask",
+        questions: [
+          {
+            id: "scope",
+            title: "选择对照范围",
+            options: [{ id: "c9", label: "C9 高校" }],
+          },
+        ],
+      },
+    ]);
+    expect(requested.liveRunStatus).toBe("awaiting_input");
+    expect(requested.livePendingQuestion?.question_id).toBe("q_1");
+
+    const closed = reduceSessionEvent(requested, {
+      seq: 3,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:02Z",
+      event: "turn_finished",
+    });
+    expect(closed.state.liveRunStatus).toBe("awaiting_input");
+    expect(closed.state.livePendingQuestion?.question_id).toBe("q_1");
+    expect(closed.effects).toContainEqual({
+      type: "refetch-and-clear",
+      runId: "run_1",
+    });
+
+    const cleared = resetLiveRunForTest(closed.state, "run_1");
+    expect(cleared.liveMain).toBeNull();
+    expect(cleared.livePendingQuestion?.question_id).toBe("q_1");
+
+    const answered = reduceSessionEvent(cleared, {
+      seq: 4,
+      run_id: "run_1",
+      agent_id: "main",
+      parent_run_id: null,
+      timestamp: "2026-01-01T00:00:03Z",
+      event: "questionnaire_answered",
+      question_id: "q_1",
+      answers: [{ question_id: "scope", selected_option_ids: ["c9"] }],
+      skipped_all: false,
+    });
+    expect(answered.state.livePendingQuestion).toBeNull();
+    expect(answered.state.resolvedQuestions).toHaveLength(1);
+    expect(answered.state.resolvedQuestions[0]?.status).toBe("answered");
+  });
+});

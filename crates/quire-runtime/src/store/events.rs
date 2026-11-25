@@ -99,6 +99,39 @@ impl RuntimeStore {
         error: Option<&str>,
         kind: SessionEventKind,
     ) -> RuntimeResult<Option<SessionEvent>> {
+        let session_status = match status {
+            "completed" => "idle",
+            "cancelled" | "interrupted" => "interrupted",
+            "failed" => "failed",
+            _ => "idle",
+        };
+        self.finish_run_inner(run_id, status, session_status, error, kind)
+            .await
+    }
+
+    /// Close a run cleanly as `completed` while keeping the session input gate in `awaiting_input`.
+    pub async fn finish_run_for_question(
+        &self,
+        run_id: &str,
+    ) -> RuntimeResult<Option<SessionEvent>> {
+        self.finish_run_inner(
+            run_id,
+            "completed",
+            "awaiting_input",
+            None,
+            SessionEventKind::TurnFinished,
+        )
+        .await
+    }
+
+    async fn finish_run_inner(
+        &self,
+        run_id: &str,
+        status: &str,
+        session_status: &str,
+        error: Option<&str>,
+        kind: SessionEventKind,
+    ) -> RuntimeResult<Option<SessionEvent>> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
             r#"UPDATE agent_runs
@@ -129,12 +162,6 @@ impl RuntimeStore {
         let agent_id: String = row.try_get("agent_id")?;
         let parent_run_id: Option<String> = row.try_get("parent_run_id")?;
         let start_seq: Option<i64> = row.try_get("start_seq")?;
-        let session_status = match status {
-            "completed" => "idle",
-            "cancelled" | "interrupted" => "interrupted",
-            "failed" => "failed",
-            _ => "idle",
-        };
         sqlx::query(
             "UPDATE agent_sessions SET active_run_status = $2, updated_at = NOW() WHERE session_id = $1",
         )
@@ -221,7 +248,7 @@ impl RuntimeStore {
         };
         let active_start: Option<Option<i64>> = sqlx::query_scalar(
             r#"SELECT start_seq FROM agent_runs
-               WHERE session_id = $1 AND status IN ('running', 'awaiting_input')
+               WHERE session_id = $1 AND status = 'running'
                ORDER BY started_at DESC LIMIT 1"#,
         )
         .bind(session_id)

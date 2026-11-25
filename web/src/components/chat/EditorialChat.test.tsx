@@ -225,11 +225,12 @@ describe("Borderless editorial chat", () => {
             created_at: "2026-11-24T08:00:00Z",
           },
           {
-            message_id: "m_tool",
+            message_id: "m_question",
             session_id: "session-1",
-            role: "tool",
+            role: "question",
             run_id: "run-awaiting",
-            content: "",
+            question_id: "q_1",
+            content: "选取哪组参照高校？",
             created_at: "2026-11-24T08:00:01Z",
           },
         ]}
@@ -272,6 +273,189 @@ describe("Borderless editorial chat", () => {
       />,
     );
     expect(streamHtml.match(/aria-label="需要你的确认"/g)?.length).toBe(1);
+    expect(streamHtml).not.toContain('data-message-id="orphan-run-awaiting"');
+  });
+
+  test("question card and pre-question trace stay anchored before resumed assistant output", () => {
+    const resolvedQ = {
+      question: {
+        question_id: "q_prev",
+        run_id: "run_1",
+        tool_call_id: "tc_ask",
+        created_at: "2026-11-24T08:00:01Z",
+        questions: [
+          {
+            id: "peers",
+            title: "选取哪组参照高校？",
+            options: [{ id: "top5", label: "清北复交南" }],
+          },
+        ],
+      },
+      status: "answered" as const,
+      answers: [{ question_id: "peers", selected_option_ids: ["top5"] }],
+    };
+
+    const run1Trace: RunTraceSummary = {
+      run_id: "run_1",
+      status: "completed",
+      task_focus: {
+        title: "查询双优建设数据",
+        todos: [{ title: "核实双优指标", status: "completed" }],
+      },
+      segments: [
+        {
+          kind: "execution",
+          tools: [
+            {
+              tool_call_id: "tc_data",
+              tool_name: "shuangyou_intel_list",
+              status: "completed",
+              input_preview: "{}",
+            },
+            {
+              tool_call_id: "tc_ask",
+              tool_name: "ask_user",
+              status: "awaiting_input",
+              input_preview: "{}",
+            },
+          ],
+          subagent_run_ids: [],
+        },
+      ],
+    };
+
+    const run2Trace: RunTraceSummary = {
+      run_id: "run_2",
+      status: "completed",
+      segments: [{ kind: "text", text: "最终对比分析结论。" }],
+    };
+
+    const html = renderToStaticMarkup(
+      <SessionStreamView
+        sessionId="session-1"
+        messages={[
+          {
+            message_id: "m_user",
+            session_id: "session-1",
+            role: "user",
+            content: "分析双优建设成效",
+            created_at: "2026-11-24T08:00:00Z",
+          },
+          {
+            message_id: "m_question",
+            session_id: "session-1",
+            role: "question",
+            run_id: "run_1",
+            question_id: "q_prev",
+            content: "选取哪组参照高校？",
+            created_at: "2026-11-24T08:00:01Z",
+          },
+          {
+            message_id: "m_final",
+            session_id: "session-1",
+            role: "assistant",
+            run_id: "run_2",
+            content: "最终对比分析结论。",
+            created_at: "2026-11-24T08:01:00Z",
+          },
+        ]}
+        traces={[run1Trace, run2Trace]}
+        liveMain={null}
+        liveSubagents={[]}
+        pendingQuestion={null}
+        resolvedQuestions={[resolvedQ]}
+        isAnsweringQuestion={false}
+        onAnswerQuestion={() => {}}
+      />,
+    );
+
+    const userIdx = html.indexOf("分析双优建设成效");
+    const traceIdx = html.indexOf("已完成查询双优建设数据");
+    const cardIdx = html.indexOf("已确认：选取哪组参照高校？");
+    const finalIdx = html.indexOf("最终对比分析结论。");
+    expect(userIdx).toBeGreaterThan(-1);
+    expect(traceIdx).toBeGreaterThan(userIdx);
+    expect(cardIdx).toBeGreaterThan(traceIdx);
+    expect(finalIdx).toBeGreaterThan(cardIdx);
+    expect(html).not.toContain('data-message-id="orphan-run_1"');
+    expect(html).not.toContain("发起结构化确认");
+  });
+
+  test("question card renders below its run assistant prose when run 1 wrote prose before ask_user", () => {
+    const resolvedQ = {
+      question: {
+        question_id: "q_prose",
+        run_id: "run_1",
+        tool_call_id: "tc_ask",
+        created_at: "2026-11-24T08:00:02Z",
+        questions: [
+          {
+            id: "peers",
+            title: "确认对比范围",
+            options: [{ id: "c9", label: "C9 高校" }],
+          },
+        ],
+      },
+      status: "answered" as const,
+      answers: [{ question_id: "peers", selected_option_ids: ["c9"] }],
+    };
+
+    const html = renderToStaticMarkup(
+      <SessionStreamView
+        sessionId="session-1"
+        messages={[
+          {
+            message_id: "m_user",
+            session_id: "session-1",
+            role: "user",
+            content: "帮我先排查后确认",
+            created_at: "2026-11-24T08:00:00Z",
+          },
+          {
+            message_id: "m_pre_prose",
+            session_id: "session-1",
+            role: "assistant",
+            run_id: "run_1",
+            content: "我先确认一个参数：",
+            created_at: "2026-11-24T08:00:01Z",
+          },
+          {
+            message_id: "m_question",
+            session_id: "session-1",
+            role: "question",
+            run_id: "run_1",
+            question_id: "q_prose",
+            content: "确认对比范围",
+            created_at: "2026-11-24T08:00:02Z",
+          },
+          {
+            message_id: "m_final",
+            session_id: "session-1",
+            role: "assistant",
+            run_id: "run_2",
+            content: "已按 C9 口径完成分析。",
+            created_at: "2026-11-24T08:01:00Z",
+          },
+        ]}
+        traces={[
+          { run_id: "run_1", status: "completed", segments: [{ kind: "text", text: "我先确认一个参数：" }] },
+          { run_id: "run_2", status: "completed", segments: [{ kind: "text", text: "已按 C9 口径完成分析。" }] },
+        ]}
+        liveMain={null}
+        liveSubagents={[]}
+        pendingQuestion={null}
+        resolvedQuestions={[resolvedQ]}
+        isAnsweringQuestion={false}
+        onAnswerQuestion={() => {}}
+      />,
+    );
+
+    const proseIdx = html.indexOf("我先确认一个参数：");
+    const cardIdx = html.indexOf("已确认：确认对比范围");
+    const finalIdx = html.indexOf("已按 C9 口径完成分析。");
+    expect(proseIdx).toBeGreaterThan(-1);
+    expect(cardIdx).toBeGreaterThan(proseIdx);
+    expect(finalIdx).toBeGreaterThan(cardIdx);
   });
   test("interrupted run trace without assistant message remains visible in stream", () => {
     const interruptedTrace: RunTraceSummary = {

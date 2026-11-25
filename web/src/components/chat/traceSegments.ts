@@ -198,20 +198,6 @@ export function extractSubagentLiveView(
   };
 }
 
-export function activityHasQuestion(
-  items: ActivityItem[],
-  questionSlots?: Map<string, unknown>,
-): boolean {
-  if (!questionSlots || questionSlots.size === 0) {
-    return false;
-  }
-  return items.some(
-    (item) =>
-      item.kind === "execution" &&
-      item.tools.some((tool) => questionSlots.has(tool.toolCallId)),
-  );
-}
-
 /**
  * Group a historical run into strictly chronological activity and text
  * segments. A text segment closes the current activity group; later thinking
@@ -469,7 +455,8 @@ function latestToolLabel(tools: ToolCallTraceItem[]): string | undefined {
 
 function normalizeTerminalStatus(
   raw: string,
-): "completed" | "failed" | "interrupted" {
+): "running" | "completed" | "failed" | "interrupted" {
+  if (raw === "running") return "running";
   if (raw === "failed") return "failed";
   if (raw === "interrupted") return "interrupted";
   return "completed";
@@ -623,7 +610,9 @@ export function buildHistoricalRunStatusModel(
       ? "执行失败"
       : status === "interrupted"
         ? "已中断"
-        : "执行完成";
+        : status === "running"
+          ? "正在执行"
+          : "执行完成";
 
   const elapsedLabel =
     typeof trace.duration_ms === "number" && trace.duration_ms > 0

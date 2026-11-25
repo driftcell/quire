@@ -198,7 +198,6 @@ impl SessionEventKind {
                 | Self::TurnSuperseded
                 | Self::TurnFailed { .. }
                 | Self::SyncRequired { .. }
-                | Self::QuestionnaireRequested { .. }
         )
     }
 
@@ -224,7 +223,6 @@ impl SessionEventKind {
                 | Self::SubagentStarted { .. }
                 | Self::SubagentFinished { .. }
                 | Self::ContextUsage { .. }
-                | Self::QuestionnaireRequested { .. }
         )
     }
 
@@ -442,7 +440,7 @@ mod tests {
     }
 
     #[test]
-    fn questionnaire_requested_is_terminal_and_roundtrips() {
+    fn questionnaire_requested_is_non_terminal_and_roundtrips() {
         let event = SessionEvent::new(
             4,
             "run_main",
@@ -465,7 +463,8 @@ mod tests {
                 }],
             },
         );
-        assert!(event.kind.is_terminal());
+        assert!(!event.kind.is_terminal());
+        assert!(!event.kind.is_run_scoped());
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["event"], "questionnaire_requested");
         assert_eq!(json["questions"][0]["id"], "scope");

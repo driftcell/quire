@@ -112,10 +112,7 @@ pub(crate) fn active_trace_snapshot(
     active_run_id: Option<&str>,
     traces: Vec<RunTraceSummary>,
 ) -> (Option<RunTraceSummary>, Vec<RunTraceSubagent>) {
-    if !matches!(
-        summary.active_run_status,
-        ActiveRunStatus::Running | ActiveRunStatus::AwaitingInput
-    ) {
+    if summary.active_run_status != ActiveRunStatus::Running {
         return (None, Vec::new());
     }
     let Some(trace) = active_run_id.and_then(|run_id| select_active_trace(traces, run_id)) else {

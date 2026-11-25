@@ -68,6 +68,7 @@ pub enum MessageRole {
     User,
     Assistant,
     Tool,
+    Question,
     System,
     Compaction,
 }
@@ -78,6 +79,7 @@ impl MessageRole {
             Self::User => "user",
             Self::Assistant => "assistant",
             Self::Tool => "tool",
+            Self::Question => "question",
             Self::System => "system",
             Self::Compaction => "compaction",
         }
@@ -88,6 +90,7 @@ impl MessageRole {
             "user" => Some(Self::User),
             "assistant" => Some(Self::Assistant),
             "tool" => Some(Self::Tool),
+            "question" => Some(Self::Question),
             "system" => Some(Self::System),
             "compaction" => Some(Self::Compaction),
             _ => None,
@@ -192,6 +195,8 @@ pub struct SessionMessage {
     pub attachment_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_id: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 

@@ -172,7 +172,7 @@ export type TaskTodoStatus = "pending" | "in_progress" | "completed" | "skipped"
 export type PendingQueueSource = "user" | "comment";
 export type SessionStatus = "active" | "archived";
 export type ActiveRunStatus = "idle" | "running" | "interrupted" | "failed" | "awaiting_input";
-export type MessageRole = "user" | "assistant" | "tool" | "system" | "compaction";
+export type MessageRole = "user" | "assistant" | "tool" | "question" | "system" | "compaction";
 /**
  * One ordered slice of a run. Text output closes the preceding thinking and
  * execution phase, so later reasoning or tools start a new segment instead of
@@ -439,6 +439,7 @@ export interface SessionMessage {
   comment_refs?: SessionCommentRef[];
   attachment_ids?: string[];
   run_id?: string | null;
+  question_id?: string | null;
   created_at: string;
   [k: string]: unknown;
 }

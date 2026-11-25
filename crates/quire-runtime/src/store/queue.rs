@@ -459,78 +459,15 @@ impl RuntimeStore {
         rows.iter().map(row_to_pending_question).collect()
     }
 
-    pub async fn mark_run_awaiting_input(&self, run_id: &str) -> RuntimeResult<()> {
-        let mut tx = self.pool.begin().await?;
-        let row = sqlx::query(
-            r#"UPDATE agent_runs
-               SET status = 'awaiting_input'
-               WHERE run_id = $1 AND status = 'running'
-               RETURNING session_id"#,
-        )
-        .bind(run_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some(row) = row else {
-            let exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM agent_runs WHERE run_id = $1)",
-            )
-            .bind(run_id)
-            .fetch_one(&mut *tx)
-            .await?;
-            tx.commit().await?;
-            return if exists {
-                Ok(())
-            } else {
-                Err(RuntimeError::RunNotFound(run_id.to_string()))
-            };
-        };
-        let session_id: String = row.try_get("session_id")?;
+    pub async fn clear_session_awaiting_input(&self, session_id: &str) -> RuntimeResult<()> {
         sqlx::query(
             r#"UPDATE agent_sessions
-               SET active_run_status = 'awaiting_input', updated_at = NOW()
-               WHERE session_id = $1"#,
+               SET active_run_status = 'idle', updated_at = NOW()
+               WHERE session_id = $1 AND active_run_status = 'awaiting_input'"#,
         )
-        .bind(&session_id)
-        .execute(&mut *tx)
+        .bind(session_id)
+        .execute(&self.pool)
         .await?;
-        tx.commit().await?;
         Ok(())
-    }
-
-    pub async fn resolve_suspended_run(&self, run_id: &str) -> RuntimeResult<Option<String>> {
-        let mut tx = self.pool.begin().await?;
-        let row = sqlx::query(
-            r#"UPDATE agent_runs
-               SET status = 'completed', finished_at = COALESCE(finished_at, NOW())
-               WHERE run_id = $1 AND status = 'awaiting_input'
-               RETURNING session_id, start_seq"#,
-        )
-        .bind(run_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some(row) = row else {
-            tx.commit().await?;
-            return Ok(None);
-        };
-        let session_id: String = row.try_get("session_id")?;
-        let start_seq: Option<i64> = row.try_get("start_seq")?;
-        sqlx::query(
-            r#"UPDATE agent_sessions SET active_run_status = 'idle', updated_at = NOW()
-               WHERE session_id = $1"#,
-        )
-        .bind(&session_id)
-        .execute(&mut *tx)
-        .await?;
-        let end_seq = self.bus.current_event_seq(&session_id).await?;
-        self.materialize_run_trace_in(
-            &mut tx,
-            &session_id,
-            run_id,
-            start_seq.map(|seq| u64::try_from(seq).unwrap_or(0)),
-            end_seq,
-        )
-        .await?;
-        tx.commit().await?;
-        Ok(Some(session_id))
     }
 }

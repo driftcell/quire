@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use quire_protocol::short_id;
-use quire_session_protocol::{MessageRole, SendMessageRequest, SessionMessage};
+use quire_session_protocol::{MessageRole, PendingQuestion, SendMessageRequest, SessionMessage};
 use rig::memory::{SummaryState, apply_summary, load_async, save_async, summary_state};
 use rig::postgres::PostgresSessionStore;
 use rig::{
@@ -91,10 +91,9 @@ impl ConversationMemory {
         visible: bool,
     ) -> RuntimeResult<(SessionMessage, bool)> {
         let mut conversation = self.load(log).await?;
-        if let Some(receipt) = receipts(&conversation)
-            .into_values()
-            .find(|receipt| receipt.client_msg_id == request.client_msg_id)
-        {
+        if let Some(receipt) = find_receipt(&conversation, |receipt| {
+            receipt.client_msg_id == request.client_msg_id
+        }) {
             return Ok((receipt.message, true));
         }
         let now = Utc::now();
@@ -106,6 +105,7 @@ impl ConversationMemory {
             comment_refs: request.comment_refs.clone(),
             attachment_ids: request.attachment_ids.clone(),
             run_id: None,
+            question_id: None,
             created_at: now,
         };
         let rendered = render_stored_user_message(&message);
@@ -115,14 +115,7 @@ impl ConversationMemory {
             visible,
             message: message.clone(),
         };
-        conversation.add_aside(
-            Aside::new(
-                MESSAGE_RECEIPT,
-                Author::plugin("quire"),
-                serde_json::to_value(receipt)?,
-            )
-            .after(Some(message_id)),
-        );
+        attach_receipt_aside(&mut conversation, message_id, receipt)?;
         self.save(log, &mut conversation).await?;
         Ok((message, false))
     }
@@ -161,26 +154,16 @@ impl ConversationMemory {
         client_msg_id: &str,
     ) -> RuntimeResult<Option<SessionMessage>> {
         let conversation = self.load(log).await?;
-        Ok(receipts(&conversation)
-            .into_values()
-            .find(|receipt| receipt.visible && receipt.client_msg_id == client_msg_id)
-            .map(|receipt| receipt.message))
+        Ok(find_receipt(&conversation, |receipt| {
+            receipt.visible && receipt.client_msg_id == client_msg_id
+        })
+        .map(|receipt| receipt.message))
     }
 
-    /// Project visible user/assistant messages from canonical messages and saved asides.
+    /// Project visible conversation messages (including structured question cards) in canonical order.
     pub async fn list_messages(&self, log: &str) -> RuntimeResult<Vec<SessionMessage>> {
         let conversation = self.load(log).await?;
-        let mut receipts = receipts(&conversation);
-        let mut messages = Vec::new();
-        for entry in conversation.entries() {
-            let Some(receipt) = receipts.remove(&entry.id) else {
-                continue;
-            };
-            if receipt.visible {
-                messages.push(receipt.message);
-            }
-        }
-        Ok(messages)
+        Ok(visible_messages(&conversation))
     }
 
     /// Test/stub providers use the same canonical store; real Rig runs already commit receipts.
@@ -196,13 +179,12 @@ impl ConversationMemory {
             ));
         }
         let mut conversation = self.load(log).await?;
-        if let Some(message) = receipts(&conversation).into_values().find_map(|receipt| {
-            (receipt.visible
+        if let Some(receipt) = find_receipt(&conversation, |receipt| {
+            receipt.visible
                 && receipt.message.run_id.as_deref() == Some(run_id)
-                && receipt.message.role == MessageRole::Assistant)
-                .then_some(receipt.message)
+                && receipt.message.role == MessageRole::Assistant
         }) {
-            return Ok(message);
+            return Ok(receipt.message);
         }
         let message = SessionMessage {
             message_id: short_id("msg"),
@@ -212,6 +194,7 @@ impl ConversationMemory {
             comment_refs: Vec::new(),
             attachment_ids: Vec::new(),
             run_id: Some(run_id.to_string()),
+            question_id: None,
             created_at: Utc::now(),
         };
         let message_id = conversation.push(Message::assistant(content));
@@ -220,14 +203,20 @@ impl ConversationMemory {
             visible: true,
             message: message.clone(),
         };
-        conversation.add_aside(
-            Aside::new(
-                MESSAGE_RECEIPT,
-                Author::plugin("quire"),
-                serde_json::to_value(receipt)?,
-            )
-            .after(Some(message_id)),
-        );
+        attach_receipt_aside(&mut conversation, message_id, receipt)?;
+        self.save(log, &mut conversation).await?;
+        Ok(message)
+    }
+
+    /// Anchor a structured `ask_user` question card onto the canonical conversation tail.
+    pub async fn append_question_message(
+        &self,
+        log: &str,
+        run_id: &str,
+        question: &PendingQuestion,
+    ) -> RuntimeResult<SessionMessage> {
+        let mut conversation = self.load(log).await?;
+        let message = attach_question_receipt(&mut conversation, log, run_id, question)?;
         self.save(log, &mut conversation).await?;
         Ok(message)
     }
@@ -239,11 +228,7 @@ impl ConversationMemory {
     ) -> RuntimeResult<Vec<Message>> {
         let conversation = self.load(log).await?;
         let end = match exclude_message_id {
-            Some(message_id) => receipts(&conversation)
-                .into_iter()
-                .find_map(|(after, receipt)| {
-                    (receipt.message.message_id == message_id).then_some(after)
-                })
+            Some(message_id) => find_receipt_entry(&conversation, message_id)
                 .and_then(|id| conversation.index_of(id))
                 .ok_or_else(|| {
                     RuntimeError::InvalidRequest(format!(
@@ -273,18 +258,13 @@ impl ConversationMemory {
         }
         let mut conversation = self.load(log).await?;
         let keep_from = match exclude_message_id {
-            Some(message_id) => Some(
-                receipts(&conversation)
-                    .into_iter()
-                    .find_map(|(after, receipt)| {
-                        (receipt.message.message_id == message_id).then_some(after)
-                    })
-                    .ok_or_else(|| {
-                        RuntimeError::InvalidRequest(format!(
-                            "compaction exclusion message `{message_id}` is not in canonical memory"
-                        ))
-                    })?,
-            ),
+            Some(message_id) => Some(find_receipt_entry(&conversation, message_id).ok_or_else(
+                || {
+                    RuntimeError::InvalidRequest(format!(
+                        "compaction exclusion message `{message_id}` is not in canonical memory"
+                    ))
+                },
+            )?),
             None => None,
         };
         let state = SummaryState {
@@ -305,6 +285,7 @@ impl ConversationMemory {
             comment_refs: Vec::new(),
             attachment_ids: Vec::new(),
             run_id: None,
+            question_id: None,
             created_at: Utc::now(),
         };
         let receipt = MessageReceipt {
@@ -312,14 +293,7 @@ impl ConversationMemory {
             visible: true,
             message: marker.clone(),
         };
-        conversation.add_aside(
-            Aside::new(
-                MESSAGE_RECEIPT,
-                Author::plugin("quire"),
-                serde_json::to_value(receipt)?,
-            )
-            .after(Some(summary_id)),
-        );
+        attach_receipt_aside(&mut conversation, summary_id, receipt)?;
         self.save(log, &mut conversation).await?;
         Ok(marker)
     }
@@ -443,18 +417,73 @@ fn append_run_suffix(
                 comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
                 run_id: Some(run_id.to_string()),
+                question_id: None,
                 created_at: Utc::now(),
             },
         };
-        conversation.add_aside(
-            Aside::new(
-                MESSAGE_RECEIPT,
-                Author::plugin("quire"),
-                serde_json::to_value(receipt)?,
-            )
-            .after(Some(message_id)),
-        );
+        attach_receipt_aside(conversation, message_id, receipt)?;
     }
+    Ok(())
+}
+
+fn attach_question_receipt(
+    conversation: &mut Conversation,
+    log: &str,
+    run_id: &str,
+    question: &PendingQuestion,
+) -> RuntimeResult<SessionMessage> {
+    let client_msg_id = format!("question:{}", question.question_id);
+    if let Some(receipt) = find_receipt(conversation, |receipt| {
+        receipt.client_msg_id == client_msg_id
+    }) {
+        return Ok(receipt.message);
+    }
+    let Some(anchor_id) = conversation.entries().last().map(|entry| entry.id) else {
+        return Err(RuntimeError::InvalidRequest(format!(
+            "cannot attach question `{}` to empty conversation `{log}`",
+            question.question_id
+        )));
+    };
+    let content = question
+        .questions
+        .iter()
+        .map(|item| item.title.trim())
+        .filter(|title| !title.is_empty())
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let message = SessionMessage {
+        message_id: short_id("msg"),
+        session_id: log.to_string(),
+        role: MessageRole::Question,
+        content,
+        comment_refs: Vec::new(),
+        attachment_ids: Vec::new(),
+        run_id: Some(run_id.to_string()),
+        question_id: Some(question.question_id.clone()),
+        created_at: question.created_at,
+    };
+    let receipt = MessageReceipt {
+        client_msg_id,
+        visible: true,
+        message: message.clone(),
+    };
+    attach_receipt_aside(conversation, anchor_id, receipt)?;
+    Ok(message)
+}
+
+fn attach_receipt_aside(
+    conversation: &mut Conversation,
+    anchor_id: MessageId,
+    receipt: MessageReceipt,
+) -> RuntimeResult<()> {
+    conversation.add_aside(
+        Aside::new(
+            MESSAGE_RECEIPT,
+            Author::plugin("quire"),
+            serde_json::to_value(receipt)?,
+        )
+        .after(Some(anchor_id)),
+    );
     Ok(())
 }
 
@@ -464,9 +493,13 @@ fn rewind_conversation_to_prompt(
 ) -> RuntimeResult<SessionMessage> {
     let (prompt_id, receipt) = receipts(conversation)
         .into_iter()
-        .find(|(_, receipt)| {
-            receipt.message.message_id == session_message_id
-                && receipt.message.role == MessageRole::User
+        .find_map(|(after, list)| {
+            list.into_iter()
+                .find(|receipt| {
+                    receipt.message.message_id == session_message_id
+                        && receipt.message.role == MessageRole::User
+                })
+                .map(|receipt| (after, receipt))
         })
         .ok_or_else(|| {
             RuntimeError::InvalidRequest(format!(
@@ -483,19 +516,28 @@ fn rewind_conversation_to_prompt(
         .skip(prompt_index.saturating_add(1))
         .map(|entry| entry.id)
         .collect();
+    let aside_ids = conversation
+        .asides()
+        .filter_map(|(id, aside)| {
+            let after = aside.after?;
+            if removed.contains(&after) {
+                return Some(id);
+            }
+            if after == prompt_id && aside.kind == MESSAGE_RECEIPT {
+                let parsed = serde_json::from_value::<MessageReceipt>(aside.value.clone()).ok()?;
+                if parsed.message.message_id != session_message_id
+                    || parsed.message.role != MessageRole::User
+                {
+                    return Some(id);
+                }
+            }
+            None
+        })
+        .collect::<Vec<_>>();
+    for id in aside_ids {
+        conversation.remove_aside(id);
+    }
     if !removed.is_empty() {
-        let aside_ids = conversation
-            .asides()
-            .filter_map(|(id, aside)| {
-                aside
-                    .after
-                    .filter(|after| removed.contains(after))
-                    .map(|_| id)
-            })
-            .collect::<Vec<_>>();
-        for id in aside_ids {
-            conversation.remove_aside(id);
-        }
         conversation.splice(
             prompt_index.saturating_add(1)..,
             std::iter::empty::<rig::conversation::Entry>(),
@@ -505,23 +547,63 @@ fn rewind_conversation_to_prompt(
     Ok(receipt.message)
 }
 
-fn receipts(conversation: &Conversation) -> HashMap<MessageId, MessageReceipt> {
-    conversation
-        .asides()
-        .filter_map(|(_, aside)| {
-            if aside.kind != MESSAGE_RECEIPT {
-                return None;
-            }
-            let after = aside.after?;
-            let receipt = serde_json::from_value::<MessageReceipt>(aside.value.clone()).ok()?;
-            Some((after, receipt))
+fn receipts(conversation: &Conversation) -> HashMap<MessageId, Vec<MessageReceipt>> {
+    let mut by_entry: HashMap<MessageId, Vec<MessageReceipt>> = HashMap::new();
+    for (_, aside) in conversation.asides() {
+        if aside.kind != MESSAGE_RECEIPT {
+            continue;
+        }
+        let Some(after) = aside.after else {
+            continue;
+        };
+        let Ok(receipt) = serde_json::from_value::<MessageReceipt>(aside.value.clone()) else {
+            continue;
+        };
+        by_entry.entry(after).or_default().push(receipt);
+    }
+    by_entry
+}
+
+fn find_receipt(
+    conversation: &Conversation,
+    predicate: impl Fn(&MessageReceipt) -> bool,
+) -> Option<MessageReceipt> {
+    receipts(conversation)
+        .into_values()
+        .flatten()
+        .find(|receipt| predicate(receipt))
+}
+
+fn find_receipt_entry(conversation: &Conversation, message_id: &str) -> Option<MessageId> {
+    receipts(conversation)
+        .into_iter()
+        .find_map(|(after, list)| {
+            list.iter()
+                .any(|receipt| receipt.message.message_id == message_id)
+                .then_some(after)
         })
-        .collect()
+}
+
+fn visible_messages(conversation: &Conversation) -> Vec<SessionMessage> {
+    let mut receipts = receipts(conversation);
+    let mut messages = Vec::new();
+    for entry in conversation.entries() {
+        let Some(entry_receipts) = receipts.remove(&entry.id) else {
+            continue;
+        };
+        for receipt in entry_receipts {
+            if receipt.visible {
+                messages.push(receipt.message);
+            }
+        }
+    }
+    messages
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use quire_session_protocol::{QuestionItem, QuestionOption};
     use rig::memory::{MemoryStore, load, save};
 
     #[test]
@@ -540,7 +622,7 @@ mod tests {
         .unwrap();
         let projected = receipts(&conversation);
         assert_eq!(projected.len(), 1);
-        let receipt = projected.into_values().next().unwrap();
+        let receipt = projected.into_values().flatten().next().unwrap();
         assert_eq!(receipt.message.content, "first\n\nsecond");
         assert_eq!(receipt.message.run_id.as_deref(), Some("run_1"));
 
@@ -556,6 +638,73 @@ mod tests {
     }
 
     #[test]
+    fn question_receipt_anchors_after_assistant_and_rewinds_cleanly() {
+        let mut conversation = Conversation::new();
+        let prompt_id = conversation.push(Message::user("prompt"));
+        attach_receipt_aside(
+            &mut conversation,
+            prompt_id,
+            MessageReceipt {
+                client_msg_id: "client_prompt".into(),
+                visible: true,
+                message: SessionMessage {
+                    message_id: "msg_prompt".into(),
+                    session_id: "session".into(),
+                    role: MessageRole::User,
+                    content: "prompt".into(),
+                    comment_refs: Vec::new(),
+                    attachment_ids: Vec::new(),
+                    run_id: None,
+                    question_id: None,
+                    created_at: Utc::now(),
+                },
+            },
+        )
+        .unwrap();
+        append_run_suffix(
+            &mut conversation,
+            vec![Message::assistant("Need scope choice")],
+            "session",
+            Some("run_1"),
+        )
+        .unwrap();
+        let question = PendingQuestion {
+            question_id: "q_1".into(),
+            run_id: "run_1".into(),
+            tool_call_id: Some("call_1".into()),
+            questions: vec![QuestionItem {
+                id: "scope".into(),
+                title: "Which scope?".into(),
+                description: None,
+                multiple: false,
+                required: true,
+                options: vec![QuestionOption {
+                    id: "c9".into(),
+                    label: "C9".into(),
+                    description: None,
+                }],
+            }],
+            created_at: Utc::now(),
+        };
+        attach_question_receipt(&mut conversation, "session", "run_1", &question).unwrap();
+        let projected = visible_messages(&conversation);
+        assert_eq!(
+            projected.iter().map(|m| m.role).collect::<Vec<_>>(),
+            vec![
+                MessageRole::User,
+                MessageRole::Assistant,
+                MessageRole::Question,
+            ]
+        );
+        assert_eq!(projected[2].question_id.as_deref(), Some("q_1"));
+        assert_eq!(projected[2].run_id.as_deref(), Some("run_1"));
+
+        let rewound = rewind_conversation_to_prompt(&mut conversation, "msg_prompt").unwrap();
+        assert_eq!(rewound.message_id, "msg_prompt");
+        assert_eq!(visible_messages(&conversation).len(), 1);
+    }
+
+    #[test]
     fn retry_rewind_removes_the_failed_suffix_and_its_receipts() {
         let mut conversation = Conversation::new();
         let prompt_id = conversation.push(Message::user("prompt"));
@@ -567,6 +716,7 @@ mod tests {
             comment_refs: Vec::new(),
             attachment_ids: Vec::new(),
             run_id: None,
+            question_id: None,
             created_at: Utc::now(),
         };
         conversation.add_aside(
@@ -598,6 +748,7 @@ mod tests {
                         comment_refs: Vec::new(),
                         attachment_ids: Vec::new(),
                         run_id: Some("run_failed".into()),
+                        question_id: None,
                         created_at: Utc::now(),
                     },
                 })
@@ -626,6 +777,7 @@ mod tests {
                 comment_refs: Vec::new(),
                 attachment_ids: Vec::new(),
                 run_id: None,
+                question_id: None,
                 created_at: Utc::now(),
             };
             let message_id = conversation.push(Message::user(format!("content {index}")));

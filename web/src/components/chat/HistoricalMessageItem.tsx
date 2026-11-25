@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from "react";
+import { memo } from "react";
 import { CopyIcon } from "lucide-react";
 import { toast } from "sonner";
 import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
@@ -98,7 +98,6 @@ export interface HistoricalMessageItemProps {
   msg: SessionMessage;
   attachmentMap: Map<string, AttachmentMeta>;
   trace?: RunTraceSummary;
-  questionSlots?: Map<string, ReactNode>;
   onJumpToSection?: (sectionId: string) => void;
 }
 
@@ -107,7 +106,6 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
   msg,
   attachmentMap,
   trace,
-  questionSlots,
   onJumpToSection,
 }: HistoricalMessageItemProps) {
   const msgAttachmentIds = msg.attachment_ids ?? [];
@@ -156,7 +154,6 @@ export const HistoricalMessageItem = memo(function HistoricalMessageItem({
             <HistoricalRunTrace
               sessionId={sessionId}
               trace={trace}
-              questionSlots={questionSlots}
               onJumpToSection={onJumpToSection}
             />
           )}

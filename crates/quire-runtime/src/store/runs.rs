@@ -64,7 +64,7 @@ impl RuntimeStore {
         let rows = sqlx::query(
             r#"SELECT run_id, start_seq FROM agent_runs
                WHERE session_id = $1 AND parent_run_id IS NULL
-                 AND status NOT IN ('running', 'awaiting_input') AND trace_summary IS NULL"#,
+                 AND status <> 'running' AND trace_summary IS NULL"#,
         )
         .bind(session_id)
         .fetch_all(&mut *tx)
@@ -188,21 +188,6 @@ impl RuntimeStore {
                       started_at, finished_at, start_seq
                FROM agent_runs
                WHERE session_id = $1 AND status = 'running'
-               ORDER BY started_at DESC LIMIT 1"#,
-        )
-        .bind(session_id)
-        .fetch_optional(&self.pool)
-        .await?;
-        row.map(|row| row_to_run(&row)).transpose()
-    }
-
-    /// Latest run that still owns the live pane (`running` or `awaiting_input`).
-    pub async fn latest_active_run(&self, session_id: &str) -> RuntimeResult<Option<RunRecord>> {
-        let row = sqlx::query(
-            r#"SELECT run_id, session_id, parent_run_id, agent_id, status, model, error,
-                      started_at, finished_at, start_seq
-               FROM agent_runs
-               WHERE session_id = $1 AND status IN ('running', 'awaiting_input')
                ORDER BY started_at DESC LIMIT 1"#,
         )
         .bind(session_id)
@@ -343,7 +328,7 @@ impl RuntimeStore {
             else {
                 continue;
             };
-            if !matches!(status.as_str(), "running" | "awaiting_input") {
+            if status != "running" {
                 // Lazy backfill for runs completed before trace materialization.
                 self.materialize_run_trace(&run_id).await?;
             }

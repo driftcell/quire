@@ -1227,6 +1227,12 @@
             "null"
           ]
         },
+        "question_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "created_at": {
           "type": "string",
           "format": "date-time"
@@ -1246,6 +1252,7 @@
         "user",
         "assistant",
         "tool",
+        "question",
         "system",
         "compaction"
       ]

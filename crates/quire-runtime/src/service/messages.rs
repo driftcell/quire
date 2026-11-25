@@ -159,20 +159,8 @@ impl RuntimeService {
         if !inserted {
             return Ok(PostMessageOutcome::Replayed { message });
         }
-        for question in dismissed {
-            let _ = self.store.resolve_suspended_run(&question.run_id).await?;
-            self.emit(
-                session_id,
-                &question.run_id,
-                "main",
-                None,
-                SessionEventKind::QuestionnaireDismissed {
-                    question_id: question.question_id,
-                    reason: "superseded_by_user_message".into(),
-                },
-            )
+        self.clear_dismissed_questions(session_id, dismissed, "superseded_by_user_message")
             .await?;
-        }
         let message_id = message.message_id.clone();
         let model_input = render_stored_user_message(&message);
         let run_id = self
@@ -334,6 +322,32 @@ impl RuntimeService {
         self.drain_pending_locked(session_id, false).await
     }
 
+    pub(crate) async fn clear_dismissed_questions(
+        &self,
+        session_id: &str,
+        dismissed: Vec<PendingQuestion>,
+        reason: &str,
+    ) -> RuntimeResult<()> {
+        if dismissed.is_empty() {
+            return Ok(());
+        }
+        self.store.clear_session_awaiting_input(session_id).await?;
+        for question in dismissed {
+            self.emit(
+                session_id,
+                &question.run_id,
+                "main",
+                None,
+                SessionEventKind::QuestionnaireDismissed {
+                    question_id: question.question_id,
+                    reason: reason.into(),
+                },
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Resolve a pending ask_user card and continue the interrupted reasoning immediately.
     pub async fn answer_question(
         &self,
@@ -362,7 +376,7 @@ impl RuntimeService {
         self.store
             .resolve_question(session_id, question_id, &answers, skipped)
             .await?;
-        let _ = self.store.resolve_suspended_run(&question.run_id).await?;
+        self.store.clear_session_awaiting_input(session_id).await?;
         self.emit(
             session_id,
             &question.run_id,

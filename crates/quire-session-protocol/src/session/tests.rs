@@ -33,6 +33,7 @@ fn session_detail_roundtrips_and_flattens_summary() {
             comment_refs: Vec::new(),
             attachment_ids: Vec::new(),
             run_id: None,
+            question_id: None,
             created_at: now,
         }],
         attachments: Vec::new(),
@@ -168,5 +169,6 @@ fn status_helpers_match_wire_values() {
         MessageRole::parse("assistant"),
         Some(MessageRole::Assistant)
     );
+    assert_eq!(MessageRole::parse("question"), Some(MessageRole::Question));
     assert!(ActiveRunStatus::parse("bogus").is_none());
 }

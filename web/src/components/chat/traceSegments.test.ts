@@ -6,6 +6,7 @@ import type {
 } from "@/contracts/session-protocol";
 import type { LiveAgentTrace, LiveSubagentRun } from "@/lib/liveTrace";
 import {
+  buildHistoricalRunStatusModel,
   buildHistoricalSegments,
   buildLiveSegments,
   extractSubagentLiveView,
@@ -705,5 +706,15 @@ describe("extractSubagentLiveView", () => {
     expect(view.thinkingStartedAtMs).toBe(5000);
     expect(view.isThinkingStreaming).toBe(true);
     expect(view.isTextStreaming).toBe(false);
+  });
+
+  test("buildHistoricalRunStatusModel preserves running status without masking as completed", () => {
+    const model = buildHistoricalRunStatusModel({
+      run_id: "run-running",
+      status: "running",
+      segments: [],
+    });
+    expect(model.status).toBe("running");
+    expect(model.title).toBe("正在执行");
   });
 });

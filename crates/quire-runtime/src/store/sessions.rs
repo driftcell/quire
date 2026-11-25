@@ -81,7 +81,7 @@ impl RuntimeStore {
 
     pub async fn get_session_detail(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
         let summary = self.get_session_summary(session_id).await?;
-        let active_run = self.latest_active_run(session_id).await?;
+        let active_run = self.latest_running_run(session_id).await?;
         let (active_run_trace, active_subagent_traces) = match active_run.as_ref() {
             Some(run) => {
                 let events = match run.start_seq {
@@ -545,6 +545,18 @@ impl RuntimeStore {
         self.memory()
             .await?
             .append_assistant_if_missing(session_id, run_id, content)
+            .await
+    }
+
+    pub async fn insert_question_message(
+        &self,
+        session_id: &str,
+        run_id: &str,
+        question: &PendingQuestion,
+    ) -> RuntimeResult<SessionMessage> {
+        self.memory()
+            .await?
+            .append_question_message(session_id, run_id, question)
             .await
     }
 

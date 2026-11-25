@@ -43,7 +43,7 @@ function expectMeta(toolName: string, label: string, icon: LucideIcon): void {
 }
 
 describe("isVisibleTraceTool", () => {
-  test("hides orchestration and session-title metadata tools except failed spawn calls", () => {
+  test("hides orchestration and session-title metadata tools except failed spawn or ask_user calls", () => {
     expect(isVisibleTraceTool(tool("describe", "describe_task"))).toBe(false);
     expect(isVisibleTraceTool(tool("todos", "update_todos"))).toBe(false);
     expect(isVisibleTraceTool(tool("title", "set_session_title"))).toBe(false);
@@ -58,6 +58,12 @@ describe("isVisibleTraceTool", () => {
     expect(
       isVisibleTraceTool(tool("spawn-failed", "spawn_subagents", "failed")),
     ).toBe(true);
+    expect(isVisibleTraceTool(tool("ask-ok", "ask_user", "completed"))).toBe(
+      false,
+    );
+    expect(isVisibleTraceTool(tool("ask-failed", "ask_user", "failed"))).toBe(
+      true,
+    );
     expect(isVisibleTraceTool(tool("read", "read_blocks"))).toBe(true);
   });
 });

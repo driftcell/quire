@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import {
   HistoricalRunTrace,
@@ -43,7 +42,6 @@ function LiveRunSection({
   trace,
   subagents,
   segments,
-  questionSlots,
   onJumpToSection,
   showFinalText,
 }: {
@@ -51,7 +49,6 @@ function LiveRunSection({
   trace: LiveAgentTrace;
   subagents: LiveSubagentRun[];
   segments: ReturnType<typeof buildLiveSegments>;
-  questionSlots: Map<string, ReactNode>;
   onJumpToSection?: (sectionId: string) => void;
   showFinalText: boolean;
 }) {
@@ -89,7 +86,6 @@ function LiveRunSection({
         trace={trace}
         subagents={subagents}
         segments={segments}
-        questionSlots={questionSlots}
         detailsOpen={detailsOpen}
         onOpenChange={setDetailsOpen}
         onJumpToSection={onJumpToSection}
@@ -187,17 +183,16 @@ export function SessionStreamView({
     [liveMain, liveSubagents],
   );
 
-  const allQuestionCards = useMemo(() => {
-    const byId = new Map<
-      string,
-      {
-        question: PendingQuestion;
-        resolvedState?: {
-          status: "answered" | "skipped" | "dismissed";
-          answers?: QuestionAnswer[];
-        };
-      }
-    >();
+  type QuestionCardEntry = {
+    question: PendingQuestion;
+    resolvedState?: {
+      status: "answered" | "skipped" | "dismissed";
+      answers?: QuestionAnswer[];
+    };
+  };
+
+  const questionCardById = useMemo(() => {
+    const byId = new Map<string, QuestionCardEntry>();
     for (const item of resolvedQuestions) {
       byId.set(item.question.question_id, {
         question: item.question,
@@ -207,18 +202,8 @@ export function SessionStreamView({
     if (pendingQuestion) {
       byId.set(pendingQuestion.question_id, { question: pendingQuestion });
     }
-    return Array.from(byId.values());
+    return byId;
   }, [pendingQuestion, resolvedQuestions]);
-
-  const questionsByRunId = useMemo(() => {
-    const map = new Map<string, typeof allQuestionCards>();
-    for (const entry of allQuestionCards) {
-      const list = map.get(entry.question.run_id) ?? [];
-      list.push(entry);
-      map.set(entry.question.run_id, list);
-    }
-    return map;
-  }, [allQuestionCards]);
 
   const answerQuestionRef = useRef(onAnswerQuestion);
   useEffect(() => {
@@ -226,7 +211,7 @@ export function SessionStreamView({
   }, [onAnswerQuestion]);
 
   const renderQuestionCard = useCallback(
-    (entry: (typeof allQuestionCards)[number]) => (
+    (entry: QuestionCardEntry) => (
       <QuestionCard
         key={entry.question.question_id}
         pending={entry.question}
@@ -246,44 +231,40 @@ export function SessionStreamView({
     [isAnsweringQuestion],
   );
 
-  const questionSlots = useMemo(() => {
-    const map = new Map<string, ReactNode>();
-    for (const entry of allQuestionCards) {
-      const toolCallId = entry.question.tool_call_id;
-      if (toolCallId) {
-        map.set(toolCallId, renderQuestionCard(entry));
-      }
-    }
-    return map;
-  }, [allQuestionCards, renderQuestionCard]);
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter(
+        (msg) =>
+          msg.role === "user" ||
+          msg.role === "assistant" ||
+          msg.role === "question" ||
+          msg.role === "compaction",
+      ),
+    [messages],
+  );
 
-  const visibleMessages = useMemo(() => {
-    const persisted = messages.filter(
-      (msg) =>
-        msg.role === "assistant" ||
-        msg.role === "tool" ||
-        msg.role === "compaction" ||
-        msg.role === "user",
-    );
-    const assistantRunIds = new Set(
-      persisted
+  const firstTraceAnchorForQuestion = useMemo(() => {
+    const assistantRuns = new Set(
+      visibleMessages
         .filter((msg) => msg.role === "assistant" && msg.run_id)
         .map((msg) => msg.run_id),
     );
-    return persisted.filter((msg) => {
-      if (msg.role !== "tool") {
-        return true;
-      }
-      if (!msg.run_id) {
-        return false;
-      }
-      return (
-        !assistantRunIds.has(msg.run_id) &&
-        questionsByRunId.has(msg.run_id) &&
+    const anchors = new Set<string>();
+    const claimedRuns = new Set<string>();
+    for (const msg of visibleMessages) {
+      if (
+        msg.role === "question" &&
+        msg.run_id &&
+        !assistantRuns.has(msg.run_id) &&
+        !claimedRuns.has(msg.run_id) &&
         traceByRunId.has(msg.run_id)
-      );
-    });
-  }, [messages, questionsByRunId, traceByRunId]);
+      ) {
+        anchors.add(msg.message_id);
+        claimedRuns.add(msg.run_id);
+      }
+    }
+    return anchors;
+  }, [traceByRunId, visibleMessages]);
 
   const lastUserMessageId = useMemo(() => {
     for (let index = visibleMessages.length - 1; index >= 0; index -= 1) {
@@ -295,13 +276,21 @@ export function SessionStreamView({
     return null;
   }, [visibleMessages]);
 
-  const orphanQuestions = useMemo(
+  const persistedQuestionIds = useMemo(
     () =>
-      allQuestionCards.filter((entry) => {
-        return !entry.question.tool_call_id;
-      }),
-    [allQuestionCards],
+      new Set(
+        visibleMessages
+          .filter((msg) => msg.role === "question" && msg.question_id)
+          .map((msg) => msg.question_id),
+      ),
+    [visibleMessages],
   );
+
+  const unpersistedLiveQuestion =
+    pendingQuestion && !persistedQuestionIds.has(pendingQuestion.question_id)
+      ? pendingQuestion
+      : null;
+
   const liveRunId = liveMain?.runId;
   const liveRunCompleted = liveRunId
     ? traceByRunId.get(liveRunId)?.status === "completed"
@@ -358,8 +347,14 @@ export function SessionStreamView({
                   </MessageScrollerItem>
                 );
               }
-              if (msg.role === "tool") {
-                if (!trace) {
+              if (msg.role === "question") {
+                const entry = msg.question_id
+                  ? questionCardById.get(msg.question_id)
+                  : undefined;
+                const showQuestionTrace =
+                  Boolean(trace) &&
+                  firstTraceAnchorForQuestion.has(msg.message_id);
+                if (!entry && !showQuestionTrace) {
                   return null;
                 }
                 return (
@@ -368,13 +363,15 @@ export function SessionStreamView({
                     messageId={msg.message_id}
                   >
                     <Message align="start" className="items-start">
-                      <MessageContent className="min-w-0 w-full flex-1">
-                        <HistoricalRunTrace
-                          sessionId={sessionId}
-                          trace={trace}
-                          questionSlots={questionSlots}
-                          onJumpToSection={onJumpToSection}
-                        />
+                      <MessageContent className="min-w-0 w-full flex-1 gap-3">
+                        {showQuestionTrace && trace && (
+                          <HistoricalRunTrace
+                            sessionId={sessionId}
+                            trace={trace}
+                            onJumpToSection={onJumpToSection}
+                          />
+                        )}
+                        {entry && renderQuestionCard(entry)}
                       </MessageContent>
                     </Message>
                   </MessageScrollerItem>
@@ -391,7 +388,6 @@ export function SessionStreamView({
                     msg={msg}
                     attachmentMap={attachmentMap}
                     trace={trace}
-                    questionSlots={questionSlots}
                     onJumpToSection={onJumpToSection}
                   />
                 </MessageScrollerItem>
@@ -408,7 +404,6 @@ export function SessionStreamView({
                     <HistoricalRunTrace
                       sessionId={sessionId}
                       trace={trace}
-                      questionSlots={questionSlots}
                       onJumpToSection={onJumpToSection}
                     />
                   </MessageContent>
@@ -416,26 +411,29 @@ export function SessionStreamView({
               </MessageScrollerItem>
             ))}
 
-            {showLiveMain && liveMain && (
-                <MessageScrollerItem messageId="live-main">
-                  <MessageGroup>
-                    <Message align="start" className="items-start">
-                      <MessageContent className="min-w-0 w-full flex-1 gap-2">
+            {((showLiveMain && liveMain) || unpersistedLiveQuestion) && (
+              <MessageScrollerItem messageId="live-main">
+                <MessageGroup>
+                  <Message align="start" className="items-start">
+                    <MessageContent className="min-w-0 w-full flex-1 gap-3">
+                      {showLiveMain && liveMain && (
                         <LiveRunSection
                           key={liveMain.runId ?? "live-main"}
                           sessionId={sessionId}
                           trace={liveMain}
                           subagents={liveSubagents}
                           segments={liveSegments}
-                          questionSlots={questionSlots}
                           onJumpToSection={onJumpToSection}
                           showFinalText={liveRunCompleted}
                         />
-                      </MessageContent>
-                    </Message>
-                  </MessageGroup>
-                </MessageScrollerItem>
-              )}
+                      )}
+                      {unpersistedLiveQuestion &&
+                        renderQuestionCard({ question: unpersistedLiveQuestion })}
+                    </MessageContent>
+                  </Message>
+                </MessageGroup>
+              </MessageScrollerItem>
+            )}
 
             {pendingQueue.map((item, index) => (
               <MessageScrollerItem
@@ -453,15 +451,6 @@ export function SessionStreamView({
                   onRecall={onRecallPending}
                   onDelete={onDeletePending}
                 />
-              </MessageScrollerItem>
-            ))}
-
-            {orphanQuestions.map((entry) => (
-              <MessageScrollerItem
-                key={`question-${entry.question.question_id}`}
-                messageId={`question-${entry.question.question_id}`}
-              >
-                {renderQuestionCard(entry)}
               </MessageScrollerItem>
             ))}
           </MessageScrollerContent>
