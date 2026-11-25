@@ -207,6 +207,8 @@ fn test_admin_jwt() -> String {
             role: "admin".into(),
             iat: now,
             exp: now + 3600,
+            preview_doc_id: None,
+            preview_chart_id: None,
         },
     )
     .expect("sign test admin jwt")
@@ -253,6 +255,15 @@ async fn test_service_with_config(config: Config) -> (RuntimeService, RuntimeSto
     let _migration_guard = migration_lock().lock().await;
     store.migrate().await.expect("runtime migrations");
     drop(_migration_guard);
+    sqlx::query(
+        r#"INSERT INTO identity.users
+           (user_id, username, email, display_name, role, password_hash, enabled)
+           VALUES ('usr_test_admin', 'test-admin', NULL, 'Test Admin', 'admin', 'test-only', TRUE)
+           ON CONFLICT DO NOTHING"#,
+    )
+    .execute(store.pool())
+    .await
+    .expect("seed test admin identity");
     let kb = KbService::new(store.clone());
     let models = ModelRegistry::new(
         store.clone(),
@@ -5506,7 +5517,8 @@ async fn chart_preview_endpoint_accepts_preview_jwt_and_hides_expired_previews()
         source_note: None,
     };
     store.bus().store_chart_preview(&record).await.unwrap();
-    let preview_token = quire_runtime::auth::issue_preview_jwt(service.config()).unwrap();
+    let preview_token =
+        quire_runtime::auth::issue_chart_preview_jwt(service.config(), &preview_id).unwrap();
     let app = quire_runtime::http::router(service);
     let authorized = app
         .clone()
@@ -5549,7 +5561,7 @@ async fn chart_preview_endpoint_accepts_preview_jwt_and_hides_expired_previews()
         )
         .await
         .unwrap();
-    assert_eq!(missing.status(), axum::http::StatusCode::NOT_FOUND);
+    assert_eq!(missing.status(), axum::http::StatusCode::FORBIDDEN);
     store.bus().delete_chart_preview(&preview_id).await.unwrap();
 }
 
@@ -5602,7 +5614,8 @@ async fn chat_chart_persists_in_postgres_and_prefers_pg_over_redis() {
         .expect("chat chart persisted in postgres");
     assert_eq!(loaded.title.as_deref(), Some("Postgres Durable"));
 
-    let preview_token = quire_runtime::auth::issue_preview_jwt(service.config()).unwrap();
+    let preview_token =
+        quire_runtime::auth::issue_chart_preview_jwt(service.config(), &chart_id).unwrap();
     let app = quire_runtime::http::router(service.clone());
 
     let pg_over_redis = app

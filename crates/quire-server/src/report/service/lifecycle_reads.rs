@@ -37,12 +37,17 @@ impl QuireReportService {
     /// Read-only; does not load block bodies.
     pub async fn list_reports(
         &self,
+        context: RequestContext,
         request: ListReportsParams,
     ) -> Result<ListReportsReceipt, ErrorData> {
         let list = self
             .state
-            .store
-            .list_reports(request.query.as_deref(), request.limit.unwrap_or(20), 0)
+            .list_reports_authorized(
+                &context,
+                request.query.as_deref(),
+                request.limit.unwrap_or(20),
+                0,
+            )
             .await
             .map_err(mcp_error)?;
         let _next_hint = if list.reports.is_empty() {
@@ -75,9 +80,14 @@ impl QuireReportService {
     /// 3. `read_blocks`: inspect raw canonical Block AST JSON (for example `TableBlock` `ColumnNode` trees or `EchartsBlock` `option`) before surgical patching.
     pub async fn get_document_digest(
         &self,
+        context: RequestContext,
         request: DigestParams,
     ) -> Result<DigestReceipt, ErrorData> {
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, false)
+            .await
+            .map_err(mcp_error)?;
         let document = self
             .state
             .store
@@ -120,6 +130,7 @@ impl QuireReportService {
     /// - Does not return raw ECharts `option` JSON or recursive `ColumnNode` definitions; use `read_blocks` when you need raw AST fields for those blocks.
     pub async fn read_as_markdown(
         &self,
+        context: RequestContext,
         request: ReadMarkdownParams,
     ) -> Result<ReadMarkdownReceipt, ErrorData> {
         if [
@@ -143,6 +154,10 @@ impl QuireReportService {
             include_front_matter: true,
         };
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, false)
+            .await
+            .map_err(mcp_error)?;
         let document = self
             .state
             .store
@@ -204,10 +219,15 @@ impl QuireReportService {
     /// - Any unknown `block_id` fails the call with the list of valid document block IDs.
     pub async fn read_blocks(
         &self,
+        context: RequestContext,
         request: ReadBlocksParams,
     ) -> Result<ReadBlocksReceipt, ErrorData> {
         let doc_id = parse_doc_id(&request.doc_id)?;
         let block_ids = parse_block_ids(&request.block_ids)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, false)
+            .await
+            .map_err(mcp_error)?;
         let document = self
             .state
             .store

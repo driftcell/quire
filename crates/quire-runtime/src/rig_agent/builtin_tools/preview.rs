@@ -405,11 +405,14 @@ pub(crate) async fn commit_chart_tool(
 
     let digest_receipt = runtime
         .report
-        .get_document_digest(quire_server::report::DigestParams {
-            doc_id: doc_id.clone(),
-            query: None,
-            target_prose_chars: None,
-        })
+        .get_document_digest(
+            req_ctx.clone(),
+            quire_server::report::DigestParams {
+                doc_id: doc_id.clone(),
+                query: None,
+                target_prose_chars: None,
+            },
+        )
         .await
         .map_err(mcp_error_to_tool_error)?;
     let existing_echarts = digest_receipt

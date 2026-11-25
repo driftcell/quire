@@ -109,6 +109,7 @@ fn status_for(error: &StoreError) -> StatusCode {
         | StoreError::RevisionAhead { .. }
         | StoreError::Conflict(_)
         | StoreError::SourceConflict { .. } => StatusCode::CONFLICT,
+        StoreError::Forbidden(_) => StatusCode::FORBIDDEN,
         StoreError::InvalidDocId { .. }
         | StoreError::InvalidSourceId { .. }
         | StoreError::InvalidRollbackTarget { .. }

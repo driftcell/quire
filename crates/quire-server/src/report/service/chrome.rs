@@ -6,8 +6,12 @@ impl QuireReportService {
         context: RequestContext,
         request: SetCoverParams,
     ) -> Result<SetCoverReceipt, ErrorData> {
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let patch = request.cover_patch;
         let (result, updated) = self
             .apply_with_reload(&doc_id, &actor, "update_cover", |document| {
@@ -36,7 +40,6 @@ impl QuireReportService {
         context: RequestContext,
         request: ConfigureTocParams,
     ) -> Result<ConfigureTocReceipt, ErrorData> {
-        let actor = context.actor;
         if let Some(depth) = request.max_depth
             && !(1..=3).contains(&depth)
         {
@@ -60,6 +63,11 @@ impl QuireReportService {
             ));
         }
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let (result, updated) = self
             .apply_with_reload(&doc_id, &actor, "configure_toc", |document| {
                 let mut toc = document.toc.clone();
@@ -100,8 +108,12 @@ impl QuireReportService {
         context: RequestContext,
         request: ConfigureReferencesParams,
     ) -> Result<ConfigureReferencesReceipt, ErrorData> {
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let (result, document) = self
             .apply_with_reload(&doc_id, &actor, "configure_references", |document| {
                 let mut references = document.references.clone();
@@ -156,8 +168,12 @@ impl QuireReportService {
         context: RequestContext,
         request: ConfigurePageChromeParams,
     ) -> Result<ConfigurePageChromeReceipt, ErrorData> {
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         if let Some(expected) = request.base_revision {
             let current = self
                 .state
@@ -206,7 +222,6 @@ impl QuireReportService {
         context: RequestContext,
         request: UpdateStyleParams,
     ) -> Result<UpdateStyleReceipt, ErrorData> {
-        let actor = context.actor;
         for (name, value) in &request.tokens_patch {
             if !is_valid_css_token_name(name) {
                 return Err(invalid_params(
@@ -231,6 +246,11 @@ impl QuireReportService {
             return Err(protocol_error(error));
         }
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let (result, updated) = self
             .apply_with_reload(&doc_id, &actor, "update_style_and_css", |document| {
                 let mut theme = document.theme.clone();

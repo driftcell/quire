@@ -293,6 +293,16 @@ pub enum PatchOp {
     },
 }
 
+/// Document-level metadata domain modified by a [`PatchOp`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MetadataField {
+    Cover,
+    Toc,
+    References,
+    Lint,
+    Theme,
+}
+
 impl PatchOp {
     /// All block IDs read or written by this operation. Used by Smart CAS to decide whether an
     /// intervening revision conflicts with an incoming batch.
@@ -338,6 +348,18 @@ impl PatchOp {
             | Self::SetSources { .. } => {}
         }
         ids
+    }
+
+    /// Document-level metadata domain overwritten by this operation, if any.
+    pub fn touched_metadata_field(&self) -> Option<MetadataField> {
+        match self {
+            Self::SetCover { .. } => Some(MetadataField::Cover),
+            Self::SetToc { .. } => Some(MetadataField::Toc),
+            Self::SetReferences { .. } => Some(MetadataField::References),
+            Self::SetLint { .. } => Some(MetadataField::Lint),
+            Self::SetTheme { .. } => Some(MetadataField::Theme),
+            _ => None,
+        }
     }
 
     /// IDs of blocks introduced by this operation, before collision handling.

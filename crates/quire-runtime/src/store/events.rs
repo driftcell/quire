@@ -134,42 +134,25 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<SessionEvent>> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
-            r#"UPDATE runtime.runs
-               SET status = $2, error = $3, finished_at = NOW()
-               WHERE run_id = $1 AND status = 'running'
-               RETURNING session_id, agent_id, parent_run_id, start_seq"#,
+            r#"SELECT session_id, agent_id, parent_run_id, start_seq, status
+               FROM runtime.runs
+               WHERE run_id = $1
+               FOR UPDATE"#,
         )
         .bind(run_id)
-        .bind(status)
-        .bind(error)
         .fetch_optional(&mut *tx)
         .await?;
         let Some(row) = row else {
-            let exists = sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(SELECT 1 FROM runtime.runs WHERE run_id = $1)",
-            )
-            .bind(run_id)
-            .fetch_one(&mut *tx)
-            .await?;
-            tx.commit().await?;
-            return if exists {
-                Ok(None)
-            } else {
-                Err(RuntimeError::RunNotFound(run_id.to_string()))
-            };
+            return Err(RuntimeError::RunNotFound(run_id.to_string()));
         };
+        let current_status: String = row.try_get("status")?;
+        if current_status != "running" {
+            return Ok(None);
+        }
         let session_id: String = row.try_get("session_id")?;
         let agent_id: String = row.try_get("agent_id")?;
         let parent_run_id: Option<String> = row.try_get("parent_run_id")?;
         let start_seq: Option<i64> = row.try_get("start_seq")?;
-        sqlx::query(
-            "UPDATE runtime.sessions SET active_run_status = $2, updated_at = NOW() WHERE session_id = $1",
-        )
-        .bind(&session_id)
-        .bind(session_status)
-        .execute(&mut *tx)
-        .await?;
-        tx.commit().await?;
 
         let event = self
             .append_event(
@@ -180,25 +163,52 @@ impl RuntimeStore {
                 kind,
             )
             .await?;
-        let events = self.bus.hot_events(&session_id).await?;
-        let terminal_seq = event.seq;
-        let start = start_seq
-            .and_then(|seq| u64::try_from(seq).ok())
-            .unwrap_or(0);
-        let events: Vec<SessionEvent> = events
-            .into_iter()
-            .filter(|event| event.seq >= start && event.seq <= terminal_seq)
-            .collect();
-        if let Some(trace) = aggregate_run_traces(&events)
-            .into_iter()
-            .find(|trace| trace.run_id == run_id)
-        {
-            sqlx::query("UPDATE runtime.runs SET trace_summary = $2 WHERE run_id = $1")
-                .bind(run_id)
-                .bind(serde_json::to_value(trace)?)
-                .execute(&self.pool)
-                .await?;
+
+        let trace_value = match self.bus.hot_events(&session_id).await {
+            Ok(events) => {
+                let terminal_seq = event.seq;
+                let start = start_seq
+                    .and_then(|seq| u64::try_from(seq).ok())
+                    .unwrap_or(0);
+                let filtered: Vec<SessionEvent> = events
+                    .into_iter()
+                    .filter(|ev| ev.seq >= start && ev.seq <= terminal_seq)
+                    .collect();
+                aggregate_run_traces(&filtered)
+                    .into_iter()
+                    .find(|trace| trace.run_id == run_id)
+                    .and_then(|trace| serde_json::to_value(trace).ok())
+            }
+            Err(_) => None,
+        };
+
+        sqlx::query(
+            r#"UPDATE runtime.runs
+               SET status = $2,
+                   error = $3,
+                   finished_at = NOW(),
+                   trace_summary = COALESCE($4, trace_summary),
+                   lease_owner = NULL,
+                   lease_expires_at = NULL
+               WHERE run_id = $1"#,
+        )
+        .bind(run_id)
+        .bind(status)
+        .bind(error)
+        .bind(trace_value)
+        .execute(&mut *tx)
+        .await?;
+
+        if parent_run_id.is_none() {
+            sqlx::query(
+                "UPDATE runtime.sessions SET active_run_status = $2, updated_at = NOW() WHERE session_id = $1",
+            )
+            .bind(&session_id)
+            .bind(session_status)
+            .execute(&mut *tx)
+            .await?;
         }
+        tx.commit().await?;
         Ok(Some(event))
     }
 

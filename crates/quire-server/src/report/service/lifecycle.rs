@@ -90,6 +90,11 @@ impl QuireReportService {
         context: RequestContext,
         request: CreateReportParams,
     ) -> Result<CreateReportReceipt, ErrorData> {
+        if context.preview_doc_id.is_some() {
+            return Err(mcp_error(StoreError::Forbidden(
+                "preview token cannot create reports".into(),
+            )));
+        }
         let title = request.title.trim();
         if title.is_empty() {
             return Err(invalid_params(
@@ -112,15 +117,14 @@ impl QuireReportService {
             self.state.harness_bridge.as_ref(),
         ) {
             (requested, Some(bridge)) => bridge
-                .prepare_session_for_report(requested, context.user_id.as_deref(), title)
+                .prepare_session_for_report(
+                    requested,
+                    context.user_id.as_deref(),
+                    context.is_admin,
+                    title,
+                )
                 .await
-                .map_err(|error| {
-                    invalid_params(
-                        error,
-                        "Ensure a valid session identity or API key is supplied.",
-                        None,
-                    )
-                })?,
+                .map_err(|error| mcp_error(StoreError::Forbidden(error)))?,
             (Some(session_id), None) => session_id.clone(),
             (None, None) => {
                 return Err(invalid_params(
@@ -224,17 +228,16 @@ impl QuireReportService {
             .map_err(mcp_error)?;
         if let Some(bridge) = self.state.harness_bridge.as_ref() {
             let effective_session = result.session_id.as_ref().unwrap_or(&session_id);
-            if let Err(error) = bridge
+            bridge
                 .bind_created_report(
                     effective_session,
                     context.user_id.as_deref(),
+                    context.is_admin,
                     &result.title,
                     &result.doc_id,
                 )
                 .await
-            {
-                tracing::warn!(%error, session_id = effective_session.as_str(), doc_id = result.doc_id.as_str(), "failed to bind session to created report");
-            }
+                .map_err(|error| mcp_error(StoreError::Forbidden(error)))?;
         }
         let stored = self
             .state

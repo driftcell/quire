@@ -175,6 +175,29 @@ impl OssConfig {
         )
     }
 
+    /// Whether to verify completed uploads against the live OSS endpoint.
+    /// Disabled by default so tests and development fixtures never make unexpected network calls.
+    pub fn is_live_endpoint(&self) -> bool {
+        env::var("QUIRE_OSS_VERIFY_UPLOADS")
+            .ok()
+            .is_some_and(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+    }
+
+    /// Presign a HEAD request used to verify an uploaded object's existence and size.
+    pub fn presign_head(&self, object_key: &str, ttl_secs: u64) -> RuntimeResult<String> {
+        let endpoint = self
+            .internal_endpoint
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or(self.public_endpoint.as_deref());
+        self.presign_at("HEAD", endpoint, object_key, None, ttl_secs, Utc::now())
+    }
+
     /// Presign a sandbox-facing GET URL, preferring the VPC endpoint.
     pub fn presign_get_for_sandbox(
         &self,

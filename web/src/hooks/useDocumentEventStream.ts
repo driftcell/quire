@@ -270,7 +270,10 @@ export function useDocumentEventStream({
           if (oldTimer !== undefined) {
             window.clearTimeout(oldTimer);
           }
-          const ttl = preview.ttl_ms ?? 15_000;
+          const rawTtl = preview.ttl_ms ?? 15_000;
+          const ttl = Number.isFinite(rawTtl)
+            ? Math.min(Math.max(Math.trunc(rawTtl), 100), 300_000)
+            : 15_000;
           const timerId = window.setTimeout(() => {
             clearPreviewIds([preview.preview_id]);
           }, ttl);

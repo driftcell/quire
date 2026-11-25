@@ -1,5 +1,6 @@
+use crate::auth::{AuthUser, UserRole};
 use axum::{
-    Json,
+    Extension, Json,
     extract::{Path, State},
 };
 use chrono::{DateTime, Utc};
@@ -107,10 +108,21 @@ async fn load_deep_check_row(
 
 pub(crate) async fn get_deep_check_status(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(raw_doc_id): Path<String>,
 ) -> RuntimeResult<Json<DeepCheckStatusView>> {
     let doc_id =
         DocId::parse(&raw_doc_id).map_err(|e| RuntimeError::InvalidRequest(e.to_string()))?;
+    service
+        .store()
+        .authorize_document_access(
+            doc_id.as_str(),
+            None,
+            Some(&auth_user.user_id),
+            None,
+            auth_user.role == UserRole::Admin,
+        )
+        .await?;
     let enabled = service.config().evaluator.is_enabled();
     match load_deep_check_row(&service, &doc_id).await? {
         Some(row) => Ok(Json(row.into_view(&doc_id, enabled))),
@@ -120,10 +132,21 @@ pub(crate) async fn get_deep_check_status(
 
 pub(crate) async fn trigger_deep_check(
     State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
     Path(raw_doc_id): Path<String>,
 ) -> RuntimeResult<Json<DeepCheckStatusView>> {
     let doc_id =
         DocId::parse(&raw_doc_id).map_err(|e| RuntimeError::InvalidRequest(e.to_string()))?;
+    service
+        .store()
+        .authorize_document_access(
+            doc_id.as_str(),
+            None,
+            Some(&auth_user.user_id),
+            None,
+            auth_user.role == UserRole::Admin,
+        )
+        .await?;
     let eval_cfg = service.config().evaluator.clone();
     let Some(evaluator) = build_optional_document_evaluator(&eval_cfg) else {
         return Err(RuntimeError::InvalidRequest(

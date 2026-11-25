@@ -244,9 +244,7 @@ impl RuntimeService {
     }
 
     pub fn report_app_state(&self) -> quire_server::AppState {
-        let bridge = std::sync::Arc::new(RuntimeExternalHarnessBridge {
-            store: self.store.clone(),
-        });
+        let bridge = std::sync::Arc::new(RuntimeExternalHarnessBridge::new(self.store.clone()));
         quire_server::AppState::new(
             self.store.report_store().clone(),
             self.config.to_report_server_config(),
@@ -402,8 +400,14 @@ impl RuntimeService {
     }
 }
 
-struct RuntimeExternalHarnessBridge {
+pub(crate) struct RuntimeExternalHarnessBridge {
     store: RuntimeStore,
+}
+
+impl RuntimeExternalHarnessBridge {
+    pub(crate) fn new(store: RuntimeStore) -> Self {
+        Self { store }
+    }
 }
 
 impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge {
@@ -417,6 +421,26 @@ impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge
                 Ok(Some(user)) => Some(quire_server::state::VerifiedExternalIdentity {
                     user_id: user.user_id,
                     username: user.username,
+                    is_admin: user.role == crate::auth::UserRole::Admin,
+                    preview_doc_id: None,
+                }),
+                _ => None,
+            }
+        })
+    }
+
+    fn verify_active_user<'a>(
+        &'a self,
+        user_id: &'a str,
+    ) -> quire_server::state::BoxFuture<'a, Option<quire_server::state::VerifiedExternalIdentity>>
+    {
+        Box::pin(async move {
+            match self.store.verify_active_user(user_id).await {
+                Ok(Some(user)) => Some(quire_server::state::VerifiedExternalIdentity {
+                    user_id: user.user_id,
+                    username: user.username,
+                    is_admin: user.role == crate::auth::UserRole::Admin,
+                    preview_doc_id: None,
                 }),
                 _ => None,
             }
@@ -427,6 +451,7 @@ impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge
         &'a self,
         requested_session_id: Option<&'a quire_protocol::SessionId>,
         user_id: Option<&'a str>,
+        is_admin: bool,
         title: &'a str,
     ) -> quire_server::state::BoxFuture<'a, Result<quire_protocol::SessionId, String>> {
         Box::pin(async move {
@@ -435,6 +460,7 @@ impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge
                 .ensure_external_session_for_report(
                     requested_session_id.map(quire_protocol::SessionId::as_str),
                     user_id,
+                    is_admin,
                     title,
                     None,
                 )
@@ -448,6 +474,7 @@ impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge
         &'a self,
         session_id: &'a quire_protocol::SessionId,
         user_id: Option<&'a str>,
+        is_admin: bool,
         title: &'a str,
         doc_id: &'a quire_protocol::DocId,
     ) -> quire_server::state::BoxFuture<'a, Result<(), String>> {
@@ -457,12 +484,68 @@ impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge
                 .ensure_external_session_for_report(
                     Some(session_id.as_str()),
                     user_id,
+                    is_admin,
                     title,
                     Some(doc_id.as_str()),
                 )
                 .await
                 .map_err(|error| error.to_string())?;
             Ok(())
+        })
+    }
+
+    fn authorize_document_access<'a>(
+        &'a self,
+        doc_id: &'a quire_protocol::DocId,
+        doc_session_id: Option<&'a quire_protocol::SessionId>,
+        user_id: Option<&'a str>,
+        caller_session_id: Option<&'a quire_protocol::SessionId>,
+        is_admin: bool,
+    ) -> quire_server::state::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.store
+                .authorize_document_access(
+                    doc_id.as_str(),
+                    doc_session_id.map(quire_protocol::SessionId::as_str),
+                    user_id,
+                    caller_session_id.map(quire_protocol::SessionId::as_str),
+                    is_admin,
+                )
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn authorize_session_access<'a>(
+        &'a self,
+        session_id: &'a quire_protocol::SessionId,
+        user_id: Option<&'a str>,
+        is_admin: bool,
+    ) -> quire_server::state::BoxFuture<'a, Result<(), String>> {
+        Box::pin(async move {
+            self.store
+                .authorize_session_access(session_id.as_str(), user_id, is_admin)
+                .await
+                .map_err(|error| error.to_string())
+        })
+    }
+
+    fn accessible_report_scope<'a>(
+        &'a self,
+        user_id: Option<&'a str>,
+        caller_session_id: Option<&'a quire_protocol::SessionId>,
+        is_admin: bool,
+    ) -> quire_server::state::BoxFuture<'a, Result<Option<(Vec<String>, Vec<String>)>, String>>
+    {
+        Box::pin(async move {
+            self.store
+                .accessible_report_scope(
+                    user_id,
+                    caller_session_id.map(quire_protocol::SessionId::as_str),
+                    is_admin,
+                )
+                .await
+                .map_err(|error| error.to_string())
         })
     }
 }

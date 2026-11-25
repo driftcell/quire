@@ -139,13 +139,13 @@ impl PgReportStore {
         )
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
 
         let event = RevisionEvent::new(doc_id.clone(), new_revision, actor, summary, forward_ops)
             .with_cleared_preview_ids(cleared_preview_ids);
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish revision");
         }
+        tx.commit().await?;
         self.maybe_snapshot(doc_id.as_str(), new_revision, after.clone());
 
         Ok(ApplyResult {
@@ -237,7 +237,6 @@ impl PgReportStore {
         )
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
 
         let mut warnings = normalization_warnings;
         warnings.extend(inline_warnings(&after));
@@ -245,6 +244,7 @@ impl PgReportStore {
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish rollback revision");
         }
+        tx.commit().await?;
         self.maybe_snapshot(doc_id.as_str(), new_revision, after);
 
         Ok(RollbackResult {
@@ -310,6 +310,10 @@ async fn detect_conflict(
         PatchOp::SetSources { sources } => Some(sources.keys().cloned().collect()),
         _ => None,
     });
+    let incoming_meta: BTreeSet<quire_protocol::MetadataField> = incoming
+        .iter()
+        .filter_map(PatchOp::touched_metadata_field)
+        .collect();
     let mut conflicting: BTreeSet<BlockId> = BTreeSet::new();
     let mut conflicting_sources: BTreeSet<SourceId> = BTreeSet::new();
     let mut conflicting_revisions: Vec<Revision> = Vec::new();
@@ -357,6 +361,22 @@ async fn detect_conflict(
                 }
                 Err(_) => {
                     conflicting_sources.extend(incoming_sources.iter().cloned());
+                    conflicting_revisions.push(Revision::new(row.rev_num)?);
+                }
+            }
+        }
+        if !incoming_meta.is_empty() {
+            match &parsed_ops {
+                Ok(ops) => {
+                    let touched_meta = ops
+                        .iter()
+                        .filter_map(PatchOp::touched_metadata_field)
+                        .any(|field| incoming_meta.contains(&field));
+                    if touched_meta {
+                        conflicting_revisions.push(Revision::new(row.rev_num)?);
+                    }
+                }
+                Err(_) => {
                     conflicting_revisions.push(Revision::new(row.rev_num)?);
                 }
             }

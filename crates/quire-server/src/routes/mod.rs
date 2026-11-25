@@ -15,14 +15,11 @@ use axum::{
 use chrono::Utc;
 use futures::Stream;
 use quire_protocol::{
-    BlockId, CommentAuthorType, CommentStatus, CommentThread, ComputedDocumentMeta,
-    DocumentDiffReport, DocumentSyncDelta, EphemeralPayload, ReportDocument, TextQuoteSelector,
+    ComputedDocumentMeta, DocumentDiffReport, DocumentSyncDelta, EphemeralPayload, ReportDocument,
     compute_document_meta, diff_documents, sync_documents,
 };
 use quire_protocol::{DocId, Revision, SessionId};
-use quire_store::{
-    NewCommentReply, NewCommentThread, ReportList, RevisionRecord, RollbackResult, StoreError,
-};
+use quire_store::{ReportList, RevisionRecord, RollbackResult, StoreError};
 use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
@@ -40,6 +37,11 @@ use crate::{
     mcp::QuireMcpServer,
     sse,
     state::AppState,
+};
+
+mod comments;
+use comments::{
+    create_comment, delete_comment, list_comments, reply_comment, update_comment_status,
 };
 
 /// Build the composable document REST/SSE + `/mcp` router so it can be mounted
@@ -184,6 +186,7 @@ struct ListQuery {
 
 async fn list_documents(
     State(state): State<AppState>,
+    context: RequestContext,
     Query(query): Query<ListQuery>,
 ) -> Result<Json<ReportList>, ApiError> {
     let page_size = query.page_size.or(query.limit).unwrap_or(20).clamp(1, 100);
@@ -193,8 +196,7 @@ async fn list_documents(
         .unwrap_or(0)
         .max(0);
     let mut list = state
-        .store
-        .list_reports(query.query.as_deref(), page_size, offset)
+        .list_reports_authorized(&context, query.query.as_deref(), page_size, offset)
         .await?;
     list.limit = page_size;
     list.offset = offset;
@@ -217,8 +219,10 @@ struct DocumentQuery {
 async fn get_document(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
+    context: RequestContext,
     Query(query): Query<DocumentQuery>,
 ) -> Result<Json<DocumentView>, ApiError> {
+    state.authorize_doc_access(&context, &doc_id, false).await?;
     let document = match query.rev {
         Some(rev) if rev < 1 => {
             return Err(ApiError(StoreError::InvalidRequest(
@@ -250,8 +254,10 @@ struct EventsQuery {
 async fn document_events(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
+    context: RequestContext,
     Query(query): Query<EventsQuery>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
+    state.authorize_doc_access(&context, &doc_id, false).await?;
     let since_rev = Revision::new(query.since_rev.unwrap_or(0).max(0))?;
     let document = state.store.get_document(&doc_id).await?;
     let current_rev = document.revision;
@@ -269,7 +275,11 @@ async fn document_events(
 async fn session_events(
     State(state): State<AppState>,
     Path(session_id): Path<SessionId>,
+    context: RequestContext,
 ) -> Result<Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>>, ApiError> {
+    state
+        .authorize_session_access(&context, &session_id)
+        .await?;
     let stream = sse::session_stream(state, session_id);
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
 }
@@ -289,8 +299,10 @@ struct RevisionListView {
 async fn list_revisions(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
+    context: RequestContext,
     Query(query): Query<RevisionsQuery>,
 ) -> Result<Json<RevisionListView>, ApiError> {
+    state.authorize_doc_access(&context, &doc_id, false).await?;
     let document = state.store.get_document(&doc_id).await?;
     let revisions = state
         .store
@@ -323,6 +335,7 @@ async fn rollback(
     context: RequestContext,
     Json(request): Json<RollbackRequest>,
 ) -> Result<Json<RollbackView>, ApiError> {
+    state.authorize_doc_access(&context, &doc_id, true).await?;
     let actor = request
         .actor
         .as_deref()
@@ -342,170 +355,6 @@ async fn rollback(
 
 const MAX_EPHEMERAL_BYTES: usize = 64 * 1024;
 
-#[derive(Debug, Serialize)]
-struct CommentListView {
-    doc_id: DocId,
-    comments: Vec<CommentThread>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CommentListQuery {
-    status: Option<String>,
-    block_id: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct CreateCommentRequest {
-    block_id: String,
-    #[serde(default)]
-    end_block_id: Option<String>,
-    #[serde(default)]
-    anchor_blocks: Vec<String>,
-    body: String,
-    #[serde(default)]
-    quote: Option<TextQuoteSelector>,
-    #[serde(default)]
-    end_quote: Option<TextQuoteSelector>,
-    #[serde(default)]
-    anchor_snapshot: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct ReplyCommentRequest {
-    body: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct UpdateCommentStatusRequest {
-    status: String,
-}
-
-fn parse_comment_status(value: &str) -> Result<CommentStatus, ApiError> {
-    CommentStatus::parse(value).ok_or_else(|| {
-        ApiError(StoreError::InvalidRequest(format!(
-            "unknown comment status `{value}`; expected open, addressed, archived or all"
-        )))
-    })
-}
-
-async fn list_comments(
-    State(state): State<AppState>,
-    Path(doc_id): Path<DocId>,
-    Query(query): Query<CommentListQuery>,
-) -> Result<Json<CommentListView>, ApiError> {
-    let status = match query.status.as_deref() {
-        None | Some("all") => None,
-        Some(raw) => Some(parse_comment_status(raw)?),
-    };
-    let block_id = query.block_id.as_deref().map(BlockId::parse).transpose()?;
-    let mut comments = state
-        .store
-        .list_comment_threads(&doc_id, status, block_id.as_ref())
-        .await?;
-    if query.status.is_none() {
-        comments.retain(|thread| thread.status != CommentStatus::Archived);
-    }
-    Ok(Json(CommentListView { doc_id, comments }))
-}
-
-async fn create_comment(
-    State(state): State<AppState>,
-    Path(doc_id): Path<DocId>,
-    context: RequestContext,
-    Json(request): Json<CreateCommentRequest>,
-) -> Result<Json<CommentThread>, ApiError> {
-    let block_id = BlockId::parse(request.block_id)?;
-    let end_block_id = request.end_block_id.map(BlockId::parse).transpose()?;
-    let anchor_blocks = request
-        .anchor_blocks
-        .into_iter()
-        .map(BlockId::parse)
-        .collect::<Result<Vec<_>, _>>()?;
-    if let Some(quote) = &request.quote {
-        quote
-            .validate()
-            .map_err(|reason| ApiError(StoreError::InvalidRequest(reason)))?;
-    }
-    if let Some(end_quote) = &request.end_quote {
-        end_quote
-            .validate()
-            .map_err(|reason| ApiError(StoreError::InvalidRequest(reason)))?;
-    }
-    let thread = state
-        .store
-        .create_comment_thread(
-            &doc_id,
-            NewCommentThread {
-                block_id,
-                end_block_id,
-                anchor_blocks,
-                author_type: CommentAuthorType::Human,
-                author: context.actor,
-                body: request.body,
-                quote: request.quote,
-                end_quote: request.end_quote,
-                anchor_snapshot: request.anchor_snapshot,
-                evaluation_meta: None,
-            },
-        )
-        .await?;
-    state.publish_comment_updated(&thread).await;
-    Ok(Json(thread))
-}
-
-async fn reply_comment(
-    State(state): State<AppState>,
-    Path((doc_id, thread_id)): Path<(DocId, String)>,
-    context: RequestContext,
-    Json(request): Json<ReplyCommentRequest>,
-) -> Result<Json<CommentThread>, ApiError> {
-    let thread = state
-        .store
-        .reply_comment_thread(
-            &doc_id,
-            &thread_id,
-            NewCommentReply {
-                author_type: CommentAuthorType::Human,
-                author: context.actor,
-                body: request.body,
-                mark_addressed: false,
-                addressed_rev: None,
-            },
-        )
-        .await?;
-    state.publish_comment_updated(&thread).await;
-    Ok(Json(thread))
-}
-
-async fn update_comment_status(
-    State(state): State<AppState>,
-    Path((doc_id, thread_id)): Path<(DocId, String)>,
-    Json(request): Json<UpdateCommentStatusRequest>,
-) -> Result<Json<CommentThread>, ApiError> {
-    let status = parse_comment_status(&request.status)?;
-    let thread = state
-        .store
-        .update_comment_status(&doc_id, &thread_id, status)
-        .await?;
-    state.publish_comment_updated(&thread).await;
-    Ok(Json(thread))
-}
-
-async fn delete_comment(
-    State(state): State<AppState>,
-    Path((doc_id, thread_id)): Path<(DocId, String)>,
-) -> Result<StatusCode, ApiError> {
-    state
-        .store
-        .delete_comment_thread(&doc_id, &thread_id)
-        .await?;
-    state.publish_comment_deleted(&doc_id, &thread_id).await;
-    Ok(StatusCode::NO_CONTENT)
-}
-
 #[derive(Debug, Deserialize)]
 struct DiffQuery {
     #[serde(rename = "fromRev", alias = "from_rev")]
@@ -517,8 +366,10 @@ struct DiffQuery {
 async fn document_diff(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
+    context: RequestContext,
     Query(query): Query<DiffQuery>,
 ) -> Result<Json<DocumentDiffReport>, ApiError> {
+    state.authorize_doc_access(&context, &doc_id, false).await?;
     let from_revision = Revision::new(query.from_rev)?;
     let current = state.store.get_document(&doc_id).await?.revision;
     let to_revision = Revision::new(query.to_rev.unwrap_or(current.get()))?;
@@ -548,8 +399,10 @@ struct SyncQuery {
 async fn document_sync(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
+    context: RequestContext,
     Query(query): Query<SyncQuery>,
 ) -> Result<Json<DocumentSyncDelta>, ApiError> {
+    state.authorize_doc_access(&context, &doc_id, false).await?;
     let from_revision = Revision::new(query.from_rev)?;
     let after = state.store.get_document(&doc_id).await?;
     if from_revision > after.revision {
@@ -597,8 +450,10 @@ fn parse_ephemeral_body(doc_id: &DocId, body: &[u8]) -> Result<EphemeralPayload,
 async fn ephemeral(
     State(state): State<AppState>,
     Path(doc_id): Path<DocId>,
+    context: RequestContext,
     body: Bytes,
 ) -> Result<(StatusCode, Json<PublishedResponse>), ApiError> {
+    state.authorize_doc_access(&context, &doc_id, true).await?;
     if body.len() > MAX_EPHEMERAL_BYTES {
         return Err(ApiError(StoreError::InvalidRequest(format!(
             "ephemeral payload is {} bytes; limit is {MAX_EPHEMERAL_BYTES}",

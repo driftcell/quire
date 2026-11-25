@@ -217,11 +217,19 @@ pub fn issue_user_jwt(config: &Config, user: &UserPublic) -> RuntimeResult<Strin
         role: user.role.as_str().to_string(),
         iat: now,
         exp: now + ttl,
+        preview_doc_id: None,
+        preview_chart_id: None,
     };
     sign_jwt(config.jwt_secret.expose_secret().as_bytes(), &claims).map_err(RuntimeError::Internal)
 }
 
-pub fn issue_preview_jwt(config: &Config) -> RuntimeResult<String> {
+pub fn issue_doc_preview_jwt(config: &Config, doc_id: &str) -> RuntimeResult<String> {
+    let trimmed = doc_id.trim();
+    if trimmed.is_empty() {
+        return Err(RuntimeError::InvalidRequest(
+            "preview doc_id must not be empty".into(),
+        ));
+    }
     let now = Utc::now().timestamp();
     let claims = JwtClaims {
         sub: "preview".to_string(),
@@ -229,8 +237,34 @@ pub fn issue_preview_jwt(config: &Config) -> RuntimeResult<String> {
         role: "preview".to_string(),
         iat: now,
         exp: now + PREVIEW_JWT_TTL_SECS,
+        preview_doc_id: Some(trimmed.to_string()),
+        preview_chart_id: None,
     };
     sign_jwt(config.jwt_secret.expose_secret().as_bytes(), &claims).map_err(RuntimeError::Internal)
+}
+
+pub fn issue_chart_preview_jwt(config: &Config, chart_id: &str) -> RuntimeResult<String> {
+    let trimmed = chart_id.trim();
+    if trimmed.is_empty() {
+        return Err(RuntimeError::InvalidRequest(
+            "preview chart_id must not be empty".into(),
+        ));
+    }
+    let now = Utc::now().timestamp();
+    let claims = JwtClaims {
+        sub: "preview".to_string(),
+        username: "preview".to_string(),
+        role: "preview".to_string(),
+        iat: now,
+        exp: now + PREVIEW_JWT_TTL_SECS,
+        preview_doc_id: None,
+        preview_chart_id: Some(trimmed.to_string()),
+    };
+    sign_jwt(config.jwt_secret.expose_secret().as_bytes(), &claims).map_err(RuntimeError::Internal)
+}
+
+pub fn issue_preview_jwt(config: &Config) -> RuntimeResult<String> {
+    issue_chart_preview_jwt(config, "*")
 }
 
 pub fn verify_token(config: &Config, token: &str) -> Result<JwtClaims, String> {

@@ -79,6 +79,7 @@ impl PgReportStore {
             Ok(row) => Revision::new(row.current_rev)?,
             Err(error) => {
                 if is_unique_violation(&error) {
+                    let _ = tx.rollback().await;
                     if let Some(key) = idempotency_key
                         && let Some(existing) = sqlx::query!(
                             r#"SELECT doc_id, session_id, current_rev,
@@ -86,10 +87,9 @@ impl PgReportStore {
                                FROM report.documents WHERE idempotency_key = $1"#,
                             key
                         )
-                        .fetch_optional(&mut *tx)
+                        .fetch_optional(&self.pool)
                         .await?
                     {
-                        tx.commit().await?;
                         let existing_doc_id = DocId::parse(existing.doc_id)?;
                         let existing_revision = Revision::new(existing.current_rev)?;
                         let existing_session =
@@ -174,7 +174,6 @@ impl PgReportStore {
         )
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
 
         let event = RevisionEvent::new(
             document.doc_id.clone(),
@@ -187,6 +186,7 @@ impl PgReportStore {
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = %document.doc_id, "failed to publish create revision");
         }
+        tx.commit().await?;
         if let Some(session_id) = &document.session_id {
             let session_event = SessionEvent {
                 event: "doc_created".into(),
@@ -230,6 +230,101 @@ impl PgReportStore {
         Ok(DocumentSnapshot {
             current_rev: loaded.document.revision,
             document: loaded.document,
+        })
+    }
+
+    pub async fn get_document_session_id(
+        &self,
+        doc_id: &DocId,
+    ) -> Result<Option<SessionId>, StoreError> {
+        let row = sqlx::query!(
+            r#"SELECT session_id FROM report.documents WHERE doc_id = $1"#,
+            doc_id.as_str()
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Err(StoreError::NotFound {
+                doc_id: doc_id.clone(),
+            });
+        };
+        row.session_id
+            .map(SessionId::parse)
+            .transpose()
+            .map_err(StoreError::from)
+    }
+
+    pub async fn list_reports_for_scope(
+        &self,
+        query: Option<&str>,
+        limit: i64,
+        offset: i64,
+        allowed_sessions: &[String],
+        allowed_docs: &[String],
+    ) -> Result<ReportList, StoreError> {
+        let limit = limit.clamp(1, 100);
+        let offset = offset.max(0);
+        let query = query
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| format!("%{value}%"));
+        let rows = sqlx::query!(
+            r#"
+            SELECT d.doc_id,
+                   COALESCE(NULLIF(d.cover->>'title',''), d.doc_id) AS "title!",
+                   d.session_id,
+                   d.current_rev,
+                   (SELECT COUNT(*) FROM report.blocks b WHERE b.doc_id = d.doc_id) AS "block_count!",
+                   d.updated_at
+            FROM report.documents d
+            WHERE ($1::text IS NULL
+                   OR d.doc_id ILIKE $1
+                   OR COALESCE(d.cover->>'title','') ILIKE $1)
+              AND (d.session_id = ANY($2) OR d.doc_id = ANY($3))
+            ORDER BY d.updated_at DESC, d.doc_id ASC
+            LIMIT $4 OFFSET $5
+            "#,
+            query.as_deref(),
+            allowed_sessions,
+            allowed_docs,
+            limit,
+            offset,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let total = sqlx::query!(
+            r#"
+            SELECT COUNT(*) AS "count!"
+            FROM report.documents d
+            WHERE ($1::text IS NULL
+                   OR d.doc_id ILIKE $1
+                   OR COALESCE(d.cover->>'title','') ILIKE $1)
+              AND (d.session_id = ANY($2) OR d.doc_id = ANY($3))
+            "#,
+            query.as_deref(),
+            allowed_sessions,
+            allowed_docs,
+        )
+        .fetch_one(&self.pool)
+        .await?
+        .count;
+        Ok(ReportList {
+            reports: rows
+                .into_iter()
+                .map(|row| {
+                    Ok(ReportSummary {
+                        doc_id: DocId::parse(row.doc_id)?,
+                        title: row.title,
+                        session_id: row.session_id.map(SessionId::parse).transpose()?,
+                        current_rev: Revision::new(row.current_rev)?,
+                        block_count: row.block_count,
+                        updated_at: row.updated_at,
+                    })
+                })
+                .collect::<Result<Vec<_>, StoreError>>()?,
+            total,
+            limit,
+            offset,
         })
     }
 

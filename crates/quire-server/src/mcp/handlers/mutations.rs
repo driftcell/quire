@@ -93,9 +93,11 @@ impl QuireMcpServer {
     #[tool(name = "list_sources", annotations(read_only_hint = true))]
     pub async fn list_sources(
         &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ListSourcesParams>,
     ) -> Result<String, ErrorData> {
-        let receipt = QuireReportService::list_sources(self, request).await?;
+        let context = request_context(&context)?;
+        let receipt = QuireReportService::list_sources(self, context, request).await?;
         receipt.render_markdown()
     }
 
@@ -197,9 +199,11 @@ impl QuireMcpServer {
     #[tool(name = "lint_document", annotations(read_only_hint = true))]
     pub async fn lint_document(
         &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<LintParams>,
     ) -> Result<String, ErrorData> {
-        let receipt = QuireReportService::lint_document(self, request).await?;
+        let context = request_context(&context)?;
+        let receipt = QuireReportService::lint_document(self, context, request).await?;
         receipt.render_markdown()
     }
 
@@ -212,9 +216,11 @@ impl QuireMcpServer {
     #[tool(name = "list_comments", annotations(read_only_hint = true))]
     pub async fn list_comments(
         &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ListCommentsParams>,
     ) -> Result<String, ErrorData> {
-        let receipt = QuireReportService::list_comments(self, request).await?;
+        let context = request_context(&context)?;
+        let receipt = QuireReportService::list_comments(self, context, request).await?;
         receipt.render_markdown()
     }
 

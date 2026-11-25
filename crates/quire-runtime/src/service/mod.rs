@@ -274,6 +274,7 @@ pub struct RuntimeService {
     config: Arc<Config>,
     model_stream: Arc<dyn ModelStreamProvider>,
     queue: PendingQueueCoordinator,
+    instance_id: Arc<str>,
 }
 
 impl RuntimeService {
@@ -294,6 +295,7 @@ impl RuntimeService {
             config,
             model_stream: Arc::new(StubStreamProvider),
             queue,
+            instance_id: Arc::from(short_id("inst")),
         }
     }
 
@@ -350,7 +352,10 @@ impl RuntimeService {
         let _queue = tokio::spawn(async move {
             queue_service.pending_queue_loop().await;
         });
-        let recoverable = self.store.list_recoverable_running_runs().await?;
+        let recoverable = self
+            .store
+            .claim_recoverable_running_runs(Some(&self.instance_id), 15)
+            .await?;
         let count = recoverable.len();
         for run in recoverable {
             let token = CancellationToken::new();
@@ -480,7 +485,39 @@ impl RuntimeService {
     }
 
     pub async fn delete_session(&self, session_id: &str) -> RuntimeResult<()> {
+        let gate = self.session_gate(session_id).await;
+        let _guard = gate.lock_owned().await;
+        let running_ids = self.store.list_running_run_ids(session_id).await?;
+        for run_id in &running_ids {
+            let _ = self.runs.cancel(run_id).await;
+            let _ = self
+                .store
+                .bus()
+                .publish_interrupt(&InterruptCommand {
+                    session_id: session_id.to_string(),
+                    run_id: run_id.clone(),
+                })
+                .await;
+        }
+        if !running_ids.is_empty() {
+            for _ in 0..40 {
+                if self
+                    .store
+                    .list_running_run_ids(session_id)
+                    .await
+                    .map(|ids| ids.is_empty())
+                    .unwrap_or(true)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+            for run_id in &running_ids {
+                self.runs.remove(run_id).await;
+            }
+        }
         let result = self.store.delete_session(session_id).await;
+        drop(_guard);
         if result.is_ok() {
             self.queue.remove_session_gate(session_id).await;
         }

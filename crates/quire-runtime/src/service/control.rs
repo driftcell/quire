@@ -53,6 +53,14 @@ impl RuntimeService {
     pub async fn retry(&self, session_id: &str) -> RuntimeResult<SessionDetail> {
         let gate = self.session_gate(session_id).await;
         let _guard = gate.lock_owned().await;
+        let session = self.store.get_session_summary(session_id).await?;
+        if session.active_run_status == ActiveRunStatus::Running
+            || self.store.latest_running_run(session_id).await?.is_some()
+        {
+            return Err(RuntimeError::InvalidRequest(format!(
+                "session `{session_id}` already has an active run; interrupt or wait for it to finish before retrying"
+            )));
+        }
         let messages = self.store.list_messages(session_id).await?;
         let Some(last_user) = messages
             .iter()
@@ -334,6 +342,10 @@ impl RuntimeService {
             .store
             .create_run(session_id, None, "main", &self.config.default_model)
             .await?;
+        let _ = self
+            .store
+            .acquire_run_lease(&run.run_id, &self.instance_id, 15)
+            .await?;
         let token = self.runs.register(&run.run_id).await;
         Ok((run.run_id, token))
     }
@@ -365,6 +377,30 @@ impl RuntimeService {
         });
     }
 
+    fn spawn_lease_heartbeat(
+        &self,
+        run_id: &str,
+        token: &CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
+        let store = self.store.clone();
+        let instance_id = self.instance_id.clone();
+        let run_id = run_id.to_string();
+        let cancel = token.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(4));
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    _ = interval.tick() => {
+                        if !store.renew_run_lease(&run_id, &instance_id, 15).await.unwrap_or(false) {
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    }
+
     pub(crate) fn launch_resumed_turn(
         &self,
         session_id: String,
@@ -374,9 +410,11 @@ impl RuntimeService {
         let service = self.clone();
         tokio::spawn(async move {
             let _run_guard = RunTurnGuard::new(&run_id, token.clone(), service.runs.clone());
+            let heartbeat = service.spawn_lease_heartbeat(&run_id, &token);
             let result = service
                 .execute_resumed_turn(&session_id, &run_id, &token)
                 .await;
+            heartbeat.abort();
             if let Err(error) = service
                 .finish_turn_outcome(&session_id, &run_id, &token, result)
                 .await
@@ -467,9 +505,11 @@ impl RuntimeService {
         token: CancellationToken,
     ) -> RuntimeResult<()> {
         let _run_guard = RunTurnGuard::new(run_id, token.clone(), self.runs.clone());
+        let heartbeat = self.spawn_lease_heartbeat(run_id, &token);
         let result = self
             .execute_turn(session_id, run_id, content, current_message_id, &token)
             .await;
+        heartbeat.abort();
         self.finish_turn_outcome(session_id, run_id, &token, result)
             .await
     }

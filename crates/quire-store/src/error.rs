@@ -100,6 +100,8 @@ pub enum StoreError {
     RankExhausted(String),
     #[error("snapshot compression failed: {0}")]
     Snapshot(String),
+    #[error("access denied: {0}")]
+    Forbidden(String),
     #[error("invalid request: {0}")]
     InvalidRequest(String),
     #[error("internal storage error: {0}")]
@@ -146,6 +148,9 @@ impl StoreError {
                 "Inspect GET /api/docs/{doc_id}/revisions and choose a valid rollback target."
                     .into()
             }
+            Self::Forbidden(_) => {
+                "Verify that your account or session owns the target report before accessing it.".into()
+            }
             Self::InvalidRequest(_) => {
                 "Check the request JSON against contracts/report-protocol.schema.json; invalid IDs and oversized payloads are rejected.".into()
             }
@@ -173,6 +178,7 @@ impl StoreError {
             Self::CommentTargetNotFound { .. } => "COMMENT_TARGET_NOT_FOUND",
             Self::RankExhausted(_) => "RANK_EXHAUSTED",
             Self::Snapshot(_) => "SNAPSHOT_ERROR",
+            Self::Forbidden(_) => "FORBIDDEN",
             Self::InvalidRequest(_) => "INVALID_REQUEST",
             Self::Internal(_) => "INTERNAL_ERROR",
         }

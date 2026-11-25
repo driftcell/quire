@@ -6,7 +6,8 @@ use std::{
     path::PathBuf,
 };
 
-use secrecy::SecretString;
+use quire_protocol::short_token;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::{models::EvaluatorConfig, oss::OssConfig, sandbox::SandboxConfig};
 
@@ -98,7 +99,13 @@ impl Config {
                     .ok()
                     .filter(|value| !value.trim().is_empty())
             })
-            .unwrap_or_else(|| "quire-dev-jwt-secret-change-in-production".into());
+            .unwrap_or_else(|| {
+                if is_loopback_bind(&bind_addr) {
+                    format!("ephemeral-loopback-jwt-{}", short_token(32))
+                } else {
+                    String::new()
+                }
+            });
         let jwt_secret = SecretString::from(jwt_secret_raw);
         let jwt_ttl_secs = env::var("JWT_TTL_SECS")
             .ok()
@@ -117,8 +124,14 @@ impl Config {
         let admin_password = SecretString::from(
             env::var("ADMIN_PASSWORD")
                 .ok()
-                .filter(|value| !value.is_empty())
-                .unwrap_or_else(|| "admin123456".into()),
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| {
+                    if is_loopback_bind(&bind_addr) {
+                        format!("ephemeral-admin-{}", short_token(24))
+                    } else {
+                        String::new()
+                    }
+                }),
         );
         let model_api_key = env::var("MODEL_API_KEY")
             .ok()
@@ -210,6 +223,47 @@ impl Config {
             })
     }
 
+    /// Reject missing or well-known default JWT/admin secrets on non-loopback binds.
+    pub fn validate_security(&self) -> Result<(), String> {
+        let jwt = self.jwt_secret.expose_secret().trim();
+        if jwt.is_empty() {
+            return Err("JWT_SECRET (or RUNTIME_MASTER_KEY) must be configured when binding to a non-loopback address".into());
+        }
+        if !is_loopback_bind(&self.bind_addr) {
+            if matches!(
+                jwt,
+                "quire-dev-jwt-secret-change-in-production" | "dev-jwt-secret-change-me"
+            ) {
+                return Err("refusing to start on a non-loopback address with an insecure example JWT_SECRET".into());
+            }
+            let admin_pw = self.admin_password.expose_secret().trim();
+            if admin_pw.is_empty() || admin_pw == "admin123456" {
+                return Err("ADMIN_PASSWORD must be explicitly set to a strong password when binding to a non-loopback address".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve whether automatic schema migrations are enabled (`RUNTIME_AUTO_MIGRATE` takes
+    /// precedence over `AUTO_MIGRATE`, defaulting to `true`).
+    pub fn auto_migrate_enabled() -> bool {
+        env::var("RUNTIME_AUTO_MIGRATE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                env::var("AUTO_MIGRATE")
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+            })
+            .map(|value| {
+                !matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "false" | "0" | "no" | "off"
+                )
+            })
+            .unwrap_or(true)
+    }
+
     /// Build the shared in-process `quire_server::Config` from this runtime config.
     pub fn to_report_server_config(&self) -> quire_server::Config {
         let bind_addr: std::net::SocketAddr = self
@@ -230,6 +284,15 @@ impl Config {
             mcp_json_response: true,
         }
     }
+}
+
+pub fn is_loopback_bind(bind_addr: &str) -> bool {
+    let host = bind_addr
+        .trim()
+        .rsplit_once(':')
+        .map(|(h, _)| h.trim_matches(|c| c == '[' || c == ']'))
+        .unwrap_or(bind_addr.trim());
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 #[cfg(test)]

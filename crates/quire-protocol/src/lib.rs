@@ -69,8 +69,8 @@ pub use evaluation::{
 };
 pub use events::{
     AgentPresenceEvent, CommentUpdatedEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralClearEvent,
-    EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor, PreviewStatus,
-    RevisionDelta, SessionDelta, SyncRequiredDelta,
+    EphemeralPayload, EphemeralPreviewEvent, MAX_PREVIEW_TTL_MS, PartialBlockPreview,
+    PreviewAnchor, PreviewStatus, RevisionDelta, SessionDelta, SyncRequiredDelta,
 };
 pub use ids::{BlockId, DocId, Rank, Revision, SessionId, SourceId};
 pub use inline::inline_citations;
@@ -86,8 +86,9 @@ pub use model::{
     ThemeSummary, TocConfig, is_safe_css_token_value, is_valid_css_token_name,
 };
 pub use ops::{
-    BlockPatch, BlockStylePatch, CellUpdate, IdAssignment, PatchError, PatchOp, PatchOutcome,
-    apply_operations, apply_operations_in_place, remap_operations_sources, remap_source_references,
+    BlockPatch, BlockStylePatch, CellUpdate, IdAssignment, MetadataField, PatchError, PatchOp,
+    PatchOutcome, apply_operations, apply_operations_in_place, remap_operations_sources,
+    remap_source_references,
 };
 pub use rank::{RankError, rank_after, rank_before, rank_between, try_rank_between};
 pub use short_id::{DEFAULT_SHORT_ID_LEN, bpe_word_pair, compact_id, short_id, short_token};

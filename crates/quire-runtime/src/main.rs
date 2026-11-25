@@ -21,13 +21,14 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let config = Config::from_env();
+    config
+        .validate_security()
+        .map_err(anyhow::Error::msg)
+        .context("validate runtime security configuration")?;
     let store = RuntimeStore::connect(&config.database_url, &config.redis_url)
         .await
         .context("connect runtime PostgreSQL/Redis")?;
-    let auto_migrate = std::env::var("RUNTIME_AUTO_MIGRATE")
-        .map(|value| value != "false")
-        .unwrap_or(true);
-    if auto_migrate {
+    if Config::auto_migrate_enabled() {
         store.migrate().await.context("run runtime migrations")?;
     }
     let kb = KbService::new(store.clone());

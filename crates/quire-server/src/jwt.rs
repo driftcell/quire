@@ -12,6 +12,10 @@ pub struct JwtClaims {
     pub role: String,
     pub iat: i64,
     pub exp: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_doc_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_chart_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

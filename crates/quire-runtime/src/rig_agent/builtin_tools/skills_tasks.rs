@@ -456,6 +456,8 @@ pub(crate) fn in_process_request_context(
         session_id: Some(session_id),
         actor,
         user_id: None,
+        is_admin: false,
+        preview_doc_id: None,
     })
 }
 

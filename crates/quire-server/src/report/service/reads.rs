@@ -10,9 +10,14 @@ impl QuireReportService {
     /// Passing any unregistered ID in `source_ids` returns an error listing all valid registered source IDs.
     pub async fn list_sources(
         &self,
+        context: RequestContext,
         request: ListSourcesParams,
     ) -> Result<ListSourcesReceipt, ErrorData> {
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, false)
+            .await
+            .map_err(mcp_error)?;
         let document = self
             .state
             .store
@@ -69,8 +74,16 @@ impl QuireReportService {
     /// - Call `lint_document` during the `VERIFY` stage after authoring or editing blocks.
     /// - Resolve all `error`-severity diagnostics before declaring the report complete.
     /// - Review `warning` diagnostics and `suppressed_blocks` (`block_id -> lint_ignore` codes); only suppress a rule via a block's `lint_ignore` when `suppressible: true` and the exception is deliberate.
-    pub async fn lint_document(&self, request: LintParams) -> Result<LintReceipt, ErrorData> {
+    pub async fn lint_document(
+        &self,
+        context: RequestContext,
+        request: LintParams,
+    ) -> Result<LintReceipt, ErrorData> {
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, false)
+            .await
+            .map_err(mcp_error)?;
         let document = self
             .state
             .store
@@ -124,9 +137,14 @@ impl QuireReportService {
     /// By default returns `open` and `addressed` threads (excluding `archived` unless `status: "archived"` is explicitly requested), including each thread's `block_id`, `anchor_blocks`, text `quote`, and `anchor_detached` flag.
     pub async fn list_comments(
         &self,
+        context: RequestContext,
         request: ListCommentsParams,
     ) -> Result<ListCommentsReceipt, ErrorData> {
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, false)
+            .await
+            .map_err(mcp_error)?;
         let block_id = request
             .block_id
             .as_deref()

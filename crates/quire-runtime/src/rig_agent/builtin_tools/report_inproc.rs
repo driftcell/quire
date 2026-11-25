@@ -104,9 +104,13 @@ pub(crate) async fn list_reports_tool(
     limit: Option<i64>,
 ) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let request_context = in_process_request_context(context)?;
     let receipt = runtime
         .report
-        .list_reports(contracts::ListReportsParams { query, limit })
+        .list_reports(
+            request_context,
+            contracts::ListReportsParams { query, limit },
+        )
         .await
         .map_err(mcp_error_to_tool_error)?;
     receipt.render_markdown().map_err(mcp_error_to_tool_error)
@@ -126,13 +130,17 @@ pub(crate) async fn get_document_digest_tool(
     target_prose_chars: Option<NonZeroU32>,
 ) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let request_context = in_process_request_context(context)?;
     let receipt = runtime
         .report
-        .get_document_digest(contracts::DigestParams {
-            doc_id,
-            query,
-            target_prose_chars,
-        })
+        .get_document_digest(
+            request_context,
+            contracts::DigestParams {
+                doc_id,
+                query,
+                target_prose_chars,
+            },
+        )
         .await
         .map_err(mcp_error_to_tool_error)?;
     receipt.render_markdown().map_err(mcp_error_to_tool_error)
@@ -156,15 +164,19 @@ pub(crate) async fn read_as_markdown_tool(
     include_chart_data: Option<bool>,
 ) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let request_context = in_process_request_context(context)?;
     let receipt = runtime
         .report
-        .read_as_markdown(contracts::ReadMarkdownParams {
-            doc_id,
-            section_id,
-            section_heading,
-            block_ids,
-            include_chart_data,
-        })
+        .read_as_markdown(
+            request_context,
+            contracts::ReadMarkdownParams {
+                doc_id,
+                section_id,
+                section_heading,
+                block_ids,
+                include_chart_data,
+            },
+        )
         .await
         .map_err(mcp_error_to_tool_error)?;
     receipt.render_markdown().map_err(mcp_error_to_tool_error)
@@ -182,9 +194,13 @@ pub(crate) async fn read_blocks_tool(
     block_ids: Vec<String>,
 ) -> Result<contracts::ReadBlocksReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let request_context = in_process_request_context(context)?;
     runtime
         .report
-        .read_blocks(contracts::ReadBlocksParams { doc_id, block_ids })
+        .read_blocks(
+            request_context,
+            contracts::ReadBlocksParams { doc_id, block_ids },
+        )
         .await
         .map_err(mcp_error_to_tool_error)
 }
@@ -388,9 +404,13 @@ pub(crate) async fn list_sources_tool(
 ) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     if let Some(doc_id) = resolve_existing_session_doc_id(context, &runtime, &doc_id).await? {
+        let request_context = in_process_request_context(context)?;
         let receipt = runtime
             .report
-            .list_sources(contracts::ListSourcesParams { doc_id, source_ids })
+            .list_sources(
+                request_context,
+                contracts::ListSourcesParams { doc_id, source_ids },
+            )
             .await
             .map_err(mcp_error_to_tool_error)?;
         return receipt.render_markdown().map_err(mcp_error_to_tool_error);
@@ -595,13 +615,17 @@ pub(crate) async fn lint_document_tool(
     ignore: Vec<String>,
 ) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let request_context = in_process_request_context(context)?;
     let receipt = runtime
         .report
-        .lint_document(contracts::LintParams {
-            doc_id,
-            select,
-            ignore,
-        })
+        .lint_document(
+            request_context,
+            contracts::LintParams {
+                doc_id,
+                select,
+                ignore,
+            },
+        )
         .await
         .map_err(mcp_error_to_tool_error)?;
     receipt.render_markdown().map_err(mcp_error_to_tool_error)
@@ -621,13 +645,17 @@ pub(crate) async fn list_comments_tool(
     block_id: Option<String>,
 ) -> Result<String, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
+    let request_context = in_process_request_context(context)?;
     let receipt = runtime
         .report
-        .list_comments(contracts::ListCommentsParams {
-            doc_id,
-            status,
-            block_id,
-        })
+        .list_comments(
+            request_context,
+            contracts::ListCommentsParams {
+                doc_id,
+                status,
+                block_id,
+            },
+        )
         .await
         .map_err(mcp_error_to_tool_error)?;
     receipt.render_markdown().map_err(mcp_error_to_tool_error)

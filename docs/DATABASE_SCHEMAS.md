@@ -44,6 +44,8 @@ index in its parent table's schema. The current migrations create no objects in 
 5. `0005_rig.sql`
 6. `0006_external_mcp.sql` adds `identity.api_keys` and `runtime.sessions.created_via` as an incremental
    migration; applied migrations must never be rewritten to introduce those objects.
+7. `0007_run_leases_and_chart_identity.sql` adds recoverable run leases and scopes chat chart primary
+   keys to `(session_id, chart_id)` without rewriting `0004_runtime.sql`.
 
 The runtime migrator creates `runtime` and records history in `runtime._quire_runtime_migrations`.
 `runtime.sessions.user_id` references `identity.users(user_id)` with `ON DELETE SET NULL`; runtime and

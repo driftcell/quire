@@ -22,6 +22,16 @@ pub struct RequestContext {
     pub actor: String,
     /// Authenticated user ID when authorized via a user API key or JWT.
     pub user_id: Option<String>,
+    /// Whether the authenticated user holds administrator privileges.
+    pub is_admin: bool,
+    /// When authenticated via a short-lived preview JWT, the single `doc_id` it is permitted to read.
+    pub preview_doc_id: Option<String>,
+}
+
+impl Default for RequestContext {
+    fn default() -> Self {
+        Self::system()
+    }
 }
 
 impl RequestContext {
@@ -60,12 +70,29 @@ impl RequestContext {
             })
             .unwrap_or("agent")
             .to_string();
-        let user_id = verified_user.map(|u| u.user_id.clone());
+        let user_id = verified_user
+            .filter(|u| u.preview_doc_id.is_none())
+            .map(|u| u.user_id.clone());
+        let is_admin = verified_user.is_some_and(|u| u.is_admin);
+        let preview_doc_id = verified_user.and_then(|u| u.preview_doc_id.clone());
         Ok(Self {
             session_id,
             actor,
             user_id,
+            is_admin,
+            preview_doc_id,
         })
+    }
+
+    /// Unrestricted internal context for direct Rust callers and unit tests.
+    pub fn system() -> Self {
+        Self {
+            session_id: None,
+            actor: "agent".to_string(),
+            user_id: None,
+            is_admin: true,
+            preview_doc_id: None,
+        }
     }
 
     /// Resolve one MCP call's identity from transport headers and trusted per-call metadata.
@@ -220,17 +247,35 @@ async fn authorize(
     if let Some(secret) = configured_jwt
         && let Ok(claims) = crate::jwt::verify_jwt(secret.expose_secret().as_bytes(), presented)
     {
-        let allowed = match access {
-            Access::Rw => claims.role != "preview",
-            Access::Ro => true,
-        };
-        if allowed {
-            let identity = (claims.role != "preview").then_some(VerifiedExternalIdentity {
-                user_id: claims.sub,
-                username: claims.username,
-            });
-            return Ok(identity);
+        if claims.role == "preview" {
+            if matches!(access, Access::Ro)
+                && let Some(preview_doc_id) = claims
+                    .preview_doc_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|id| !id.is_empty())
+            {
+                return Ok(Some(VerifiedExternalIdentity {
+                    user_id: "preview".to_string(),
+                    username: "preview".to_string(),
+                    is_admin: false,
+                    preview_doc_id: Some(preview_doc_id.to_string()),
+                }));
+            }
+            return Err(Box::new(missing_token()));
         }
+        if let Some(bridge) = state.harness_bridge.as_ref() {
+            if let Some(identity) = bridge.verify_active_user(&claims.sub).await {
+                return Ok(Some(identity));
+            }
+            return Err(Box::new(missing_token()));
+        }
+        return Ok(Some(VerifiedExternalIdentity {
+            user_id: claims.sub,
+            username: claims.username,
+            is_admin: claims.role == "admin",
+            preview_doc_id: None,
+        }));
     }
     if let Some(bridge) = state.harness_bridge.as_ref()
         && let Some(identity) = bridge.verify_api_key(presented).await

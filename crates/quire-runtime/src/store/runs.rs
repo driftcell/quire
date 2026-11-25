@@ -213,12 +213,33 @@ impl RuntimeStore {
     }
 
     /// Mark orphaned subagent runs as interrupted and return surviving main-agent runs
-    /// so `boot()` can automatically resume them from their latest checkpoint.
+    /// whose lease is unowned or expired so `boot()` can resume them without stealing active runs.
     pub async fn list_recoverable_running_runs(&self) -> RuntimeResult<Vec<RecoverableRun>> {
+        self.claim_recoverable_running_runs(None, 15).await
+    }
+
+    pub async fn claim_recoverable_running_runs(
+        &self,
+        instance_id: Option<&str>,
+        lease_ttl_secs: i64,
+    ) -> RuntimeResult<Vec<RecoverableRun>> {
         let orphaned_subs = sqlx::query(
-            r#"SELECT run_id FROM runtime.runs
-               WHERE status = 'running' AND parent_run_id IS NOT NULL"#,
+            r#"SELECT r.run_id
+               FROM runtime.runs r
+               WHERE r.status = 'running'
+                 AND r.parent_run_id IS NOT NULL
+                 AND (r.lease_expires_at IS NULL
+                      OR r.lease_expires_at <= NOW()
+                      OR ($1::text IS NOT NULL AND r.lease_owner = $1))
+                 AND NOT EXISTS (
+                     SELECT 1 FROM runtime.runs p
+                     WHERE p.run_id = r.parent_run_id
+                       AND p.status = 'running'
+                       AND p.lease_expires_at > NOW()
+                       AND ($1::text IS NULL OR p.lease_owner IS DISTINCT FROM $1)
+                 )"#,
         )
+        .bind(instance_id)
         .fetch_all(&self.pool)
         .await?;
         for row in &orphaned_subs {
@@ -237,11 +258,26 @@ impl RuntimeStore {
         }
 
         let rows = sqlx::query(
-            r#"SELECT run_id, session_id
-               FROM runtime.runs
-               WHERE status = 'running' AND parent_run_id IS NULL
-               ORDER BY started_at ASC"#,
+            r#"UPDATE runtime.runs
+               SET lease_owner = COALESCE($1, lease_owner),
+                   lease_expires_at = CASE
+                       WHEN $1 IS NOT NULL THEN NOW() + ($2 * INTERVAL '1 second')
+                       ELSE lease_expires_at
+                   END
+               WHERE run_id IN (
+                   SELECT run_id
+                   FROM runtime.runs
+                   WHERE status = 'running'
+                     AND parent_run_id IS NULL
+                     AND (lease_expires_at IS NULL
+                          OR lease_expires_at <= NOW()
+                          OR ($1::text IS NOT NULL AND lease_owner = $1))
+                   ORDER BY started_at ASC
+               )
+               RETURNING run_id, session_id"#,
         )
+        .bind(instance_id)
+        .bind(lease_ttl_secs.max(1))
         .fetch_all(&self.pool)
         .await?;
         let mut out = Vec::with_capacity(rows.len());
@@ -252,6 +288,57 @@ impl RuntimeStore {
             });
         }
         Ok(out)
+    }
+
+    pub async fn acquire_run_lease(
+        &self,
+        run_id: &str,
+        instance_id: &str,
+        lease_ttl_secs: i64,
+    ) -> RuntimeResult<bool> {
+        let updated = sqlx::query(
+            r#"UPDATE runtime.runs
+               SET lease_owner = $2,
+                   lease_expires_at = NOW() + ($3 * INTERVAL '1 second')
+               WHERE run_id = $1
+                 AND status = 'running'
+                 AND (lease_owner IS NULL OR lease_owner = $2 OR lease_expires_at IS NULL OR lease_expires_at <= NOW())"#,
+        )
+        .bind(run_id)
+        .bind(instance_id)
+        .bind(lease_ttl_secs.max(1))
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() > 0)
+    }
+
+    pub async fn renew_run_lease(
+        &self,
+        run_id: &str,
+        instance_id: &str,
+        lease_ttl_secs: i64,
+    ) -> RuntimeResult<bool> {
+        let updated = sqlx::query(
+            r#"UPDATE runtime.runs
+               SET lease_expires_at = NOW() + ($3 * INTERVAL '1 second')
+               WHERE run_id = $1 AND status = 'running' AND lease_owner = $2"#,
+        )
+        .bind(run_id)
+        .bind(instance_id)
+        .bind(lease_ttl_secs.max(1))
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() > 0)
+    }
+
+    pub async fn list_running_run_ids(&self, session_id: &str) -> RuntimeResult<Vec<String>> {
+        let rows = sqlx::query_scalar::<_, String>(
+            "SELECT run_id FROM runtime.runs WHERE session_id = $1 AND status = 'running'",
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 
     /// Mark every surviving `running` run as interrupted after a runtime restart.

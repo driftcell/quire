@@ -13,8 +13,12 @@ impl QuireReportService {
                 None,
             ));
         }
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let expected_revision = parse_revision(request.expected_revision)?;
         let source_upserts = inline_source_upserts(request.sources)?;
         let preview_ids = normalize_preview_ids(request.preview_ids)?;
@@ -73,8 +77,12 @@ impl QuireReportService {
         context: RequestContext,
         request: RollbackParams,
     ) -> Result<RollbackReceipt, ErrorData> {
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let target_revision = parse_revision(request.target_revision)?;
         let result = self
             .state
@@ -112,8 +120,12 @@ impl QuireReportService {
                 None,
             ));
         }
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let upserts: Vec<SourceUpsert> = request
             .sources
             .into_iter()
@@ -175,8 +187,12 @@ impl QuireReportService {
         context: RequestContext,
         request: DeleteSourcesParams,
     ) -> Result<DeleteSourcesReceipt, ErrorData> {
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let parsed_ids: Vec<SourceId> = request
             .source_ids
             .iter()

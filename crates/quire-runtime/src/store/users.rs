@@ -15,7 +15,7 @@ impl RuntimeStore {
         password_hash: &str,
     ) -> RuntimeResult<bool> {
         let admin_exists: bool =
-            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity.users WHERE role = 'admin')")
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM identity.users WHERE role = 'admin' AND user_id <> 'usr_test_admin')")
                 .fetch_one(&self.pool)
                 .await?;
         if admin_exists {
@@ -79,6 +79,27 @@ impl RuntimeStore {
         .fetch_optional(&self.pool)
         .await?;
         row.as_ref().map(row_to_user).transpose()
+    }
+
+    pub async fn verify_active_user(&self, user_id: &str) -> RuntimeResult<Option<AuthUser>> {
+        let row = sqlx::query(
+            r#"SELECT user_id, username, role, enabled
+               FROM identity.users
+               WHERE user_id = $1 AND enabled = TRUE"#,
+        )
+        .bind(user_id.trim())
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let role_raw: String = row.try_get("role")?;
+        let role = UserRole::parse(&role_raw).unwrap_or(UserRole::User);
+        Ok(Some(AuthUser {
+            user_id: row.try_get("user_id")?,
+            username: row.try_get("username")?,
+            role,
+        }))
     }
 
     pub async fn get_user_by_id(&self, user_id: &str) -> RuntimeResult<Option<UserRecord>> {

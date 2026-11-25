@@ -161,7 +161,6 @@ impl PgReportStore {
         )
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
 
         let event = RevisionEvent::new(
             doc_id.clone(),
@@ -173,6 +172,7 @@ impl PgReportStore {
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish source revision");
         }
+        tx.commit().await?;
         self.maybe_snapshot(doc_id.as_str(), new_revision, after.clone());
 
         let warnings = inline_warnings(&after);
@@ -280,7 +280,6 @@ impl PgReportStore {
         )
         .execute(&mut *tx)
         .await?;
-        tx.commit().await?;
 
         let event = RevisionEvent::new(
             doc_id.clone(),
@@ -292,6 +291,7 @@ impl PgReportStore {
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish source deletion revision");
         }
+        tx.commit().await?;
         self.maybe_snapshot(doc_id.as_str(), new_revision, after.clone());
 
         Ok(DeleteSourcesResult {

@@ -224,6 +224,30 @@ pub fn revision_stream(
                             if entry.event.revision <= last_sent_rev {
                                 continue;
                             }
+                            if entry.event.revision.get() > last_sent_rev.get() + 1 {
+                                match state
+                                    .store
+                                    .revision_events_since_pg(&doc_id, last_sent_rev, 500)
+                                    .await
+                                {
+                                    Ok(missing_events) => {
+                                        for event in missing_events {
+                                            if event.revision <= last_sent_rev
+                                                || event.revision >= entry.event.revision
+                                            {
+                                                continue;
+                                            }
+                                            last_sent_rev = event.revision;
+                                            yield Ok(sse_json("revision", &event));
+                                        }
+                                    }
+                                    Err(error) => {
+                                        warn!(%error, doc_id = doc_id.as_str(), "failed to backfill gap in live revision stream");
+                                        yield Ok(sync_required(&doc_id, last_sent_rev, "revision stream gap backfill failed"));
+                                        break;
+                                    }
+                                }
+                            }
                             last_sent_rev = entry.event.revision;
                             yield Ok(sse_json("revision", &entry.event));
                         }

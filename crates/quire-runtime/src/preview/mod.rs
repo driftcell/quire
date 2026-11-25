@@ -289,7 +289,7 @@ fn percent_encode(input: &str) -> String {
 pub fn build_preview_url(config: &Config, input: &PreviewReportInput) -> String {
     build_preview_url_for_base(
         &config.preview_base_url,
-        crate::auth::issue_preview_jwt(config)
+        crate::auth::issue_doc_preview_jwt(config, input.doc_id.trim())
             .unwrap_or_default()
             .as_str(),
         input,
@@ -298,14 +298,7 @@ pub fn build_preview_url(config: &Config, input: &PreviewReportInput) -> String 
 }
 
 fn build_public_preview_url(config: &Config, input: &PreviewReportInput) -> String {
-    build_preview_url_for_base(
-        &config.preview_public_url,
-        crate::auth::issue_preview_jwt(config)
-            .unwrap_or_default()
-            .as_str(),
-        input,
-        false,
-    )
+    build_preview_url_for_base(&config.preview_public_url, "", input, false)
 }
 
 fn build_preview_url_for_base(
@@ -370,7 +363,8 @@ fn chart_preview_path(preview_id: &str) -> String {
 /// Internal URL opened by Playwright MCP. The read-only token stays in the hash fragment.
 pub fn build_chart_preview_url(config: &Config, preview_id: &str) -> String {
     let base = config.preview_base_url.trim_end_matches('/');
-    let ro_token = crate::auth::issue_preview_jwt(config).unwrap_or_default();
+    let ro_token =
+        crate::auth::issue_chart_preview_jwt(config, preview_id.trim()).unwrap_or_default();
     let hash = if ro_token.is_empty() {
         String::new()
     } else {

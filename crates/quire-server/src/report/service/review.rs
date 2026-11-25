@@ -6,8 +6,12 @@ impl QuireReportService {
         context: RequestContext,
         request: AddCommentParams,
     ) -> Result<AddCommentReceipt, ErrorData> {
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let block_id = parse_block_id(&request.block_id)?;
         let end_block_id = request
             .end_block_id
@@ -70,8 +74,12 @@ impl QuireReportService {
         context: RequestContext,
         request: ReplyCommentParams,
     ) -> Result<ReplyCommentReceipt, ErrorData> {
-        let actor = context.actor;
         let doc_id = parse_doc_id(&request.doc_id)?;
+        self.state
+            .authorize_doc_access(&context, &doc_id, true)
+            .await
+            .map_err(mcp_error)?;
+        let actor = context.actor;
         let addressed_rev = request.addressed_rev.map(parse_revision).transpose()?;
         let thread = self
             .state

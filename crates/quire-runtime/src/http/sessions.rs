@@ -66,10 +66,33 @@ pub(crate) async fn get_session(
 
 pub(crate) async fn get_chart_preview(
     State(service): State<RuntimeService>,
+    Extension(access): Extension<ChartPreviewAccess>,
     Path(preview_id): Path<String>,
 ) -> RuntimeResult<Json<ChartPreviewRecord>> {
-    if let Some(chart) = service.store().load_chat_chart(&preview_id).await? {
-        return Ok(Json(chart));
+    match access {
+        ChartPreviewAccess::User(user) => {
+            if let Some(chart) = service
+                .store()
+                .load_chat_chart_for_user(
+                    &preview_id,
+                    &user.user_id,
+                    user.role == crate::auth::UserRole::Admin,
+                )
+                .await?
+            {
+                return Ok(Json(chart));
+            }
+        }
+        ChartPreviewAccess::PreviewChart(chart_id) => {
+            if chart_id != preview_id {
+                return Err(RuntimeError::Forbidden(
+                    "chart preview token does not match the requested chart".into(),
+                ));
+            }
+            if let Some(chart) = service.store().load_chat_chart(&preview_id).await? {
+                return Ok(Json(chart));
+            }
+        }
     }
     service
         .store()

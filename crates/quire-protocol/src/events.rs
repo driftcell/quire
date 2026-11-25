@@ -12,6 +12,8 @@ use crate::{BlockId, CommentStatus, DocId, Revision, SessionId};
 
 /// Suggested lifetime for a transient preview when the producer omits `ttl_ms`.
 pub const DEFAULT_PREVIEW_TTL_MS: u64 = 15_000;
+/// Hard ceiling on ephemeral preview `ttl_ms` to prevent browser `setTimeout` 32-bit overflow.
+pub const MAX_PREVIEW_TTL_MS: u64 = 300_000;
 
 /// Payload of an SSE `revision` event.
 ///
@@ -240,6 +242,13 @@ impl EphemeralPayload {
                 }
                 if preview.block.block_type.trim().is_empty() {
                     return Err("block.block_type must not be empty".into());
+                }
+                if let Some(ttl_ms) = preview.ttl_ms
+                    && (ttl_ms == 0 || ttl_ms > MAX_PREVIEW_TTL_MS)
+                {
+                    return Err(format!(
+                        "ttl_ms must be between 1 and {MAX_PREVIEW_TTL_MS} milliseconds"
+                    ));
                 }
             }
             Self::Presence { event: presence } => {

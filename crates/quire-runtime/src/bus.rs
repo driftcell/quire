@@ -492,3 +492,53 @@ mod tests {
         assert_eq!(CHART_PREVIEW_TTL_SECONDS, 1800);
     }
 }
+
+const OSS_PRESIGN_PREFIX: &str = "quire:oss_presign:";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OssPresignTicket {
+    pub session_id: String,
+    pub attachment_id: String,
+    pub object_key: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+}
+
+impl RedisBus {
+    fn oss_presign_key(session_id: &str, object_key: &str) -> String {
+        format!("{OSS_PRESIGN_PREFIX}{session_id}:{object_key}")
+    }
+
+    pub async fn store_oss_presign_ticket(
+        &self,
+        ticket: &OssPresignTicket,
+        ttl_secs: u64,
+    ) -> RuntimeResult<()> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let payload = serde_json::to_string(ticket)?;
+        let _: () = connection
+            .set_ex(
+                Self::oss_presign_key(&ticket.session_id, &ticket.object_key),
+                payload,
+                ttl_secs.max(60),
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub async fn take_oss_presign_ticket(
+        &self,
+        session_id: &str,
+        object_key: &str,
+    ) -> RuntimeResult<Option<OssPresignTicket>> {
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let key = Self::oss_presign_key(session_id, object_key);
+        let raw: Option<String> = connection.get(&key).await?;
+        if raw.is_some() {
+            let _: i64 = connection.del(&key).await?;
+        }
+        raw.map(|s| serde_json::from_str(&s).map_err(Into::into))
+            .transpose()
+    }
+}

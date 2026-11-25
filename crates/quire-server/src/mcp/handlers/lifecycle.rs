@@ -56,9 +56,11 @@ impl QuireMcpServer {
     #[tool(name = "list_reports", annotations(read_only_hint = true))]
     pub async fn list_reports(
         &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ListReportsParams>,
     ) -> Result<String, ErrorData> {
-        let receipt = QuireReportService::list_reports(self, request).await?;
+        let context = request_context(&context)?;
+        let receipt = QuireReportService::list_reports(self, context, request).await?;
         receipt.render_markdown()
     }
 
@@ -74,9 +76,11 @@ impl QuireMcpServer {
     #[tool(name = "get_document_digest", annotations(read_only_hint = true))]
     pub async fn get_document_digest(
         &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<DigestParams>,
     ) -> Result<String, ErrorData> {
-        let receipt = QuireReportService::get_document_digest(self, request).await?;
+        let context = request_context(&context)?;
+        let receipt = QuireReportService::get_document_digest(self, context, request).await?;
         receipt.render_markdown()
     }
 
@@ -92,9 +96,11 @@ impl QuireMcpServer {
     #[tool(name = "read_as_markdown", annotations(read_only_hint = true))]
     pub async fn read_as_markdown(
         &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ReadMarkdownParams>,
     ) -> Result<String, ErrorData> {
-        let receipt = QuireReportService::read_as_markdown(self, request).await?;
+        let context = request_context(&context)?;
+        let receipt = QuireReportService::read_as_markdown(self, context, request).await?;
         receipt.render_markdown()
     }
 
@@ -110,9 +116,11 @@ impl QuireMcpServer {
     #[tool(name = "read_blocks", annotations(read_only_hint = true))]
     pub async fn read_blocks(
         &self,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
         Parameters(request): Parameters<ReadBlocksParams>,
     ) -> Result<Json<ReadBlocksReceipt>, ErrorData> {
-        QuireReportService::read_blocks(self, request)
+        let context = request_context(&context)?;
+        QuireReportService::read_blocks(self, context, request)
             .await
             .map(Json)
     }
