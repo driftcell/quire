@@ -66,6 +66,49 @@ fn describe_task_input_defaults_missing_status_to_pending() {
 }
 
 #[test]
+fn describe_task_progress_tracks_incremental_title_advances() {
+    use quire_session_protocol::{TaskTodoItem, TaskTodoStatus, merge_task_todos};
+
+    let initial = vec![
+        TaskTodoItem {
+            id: Some("t1".into()),
+            title: "立项调研".into(),
+            status: TaskTodoStatus::InProgress,
+            detail: None,
+            section_id: None,
+        },
+        TaskTodoItem {
+            id: Some("t2".into()),
+            title: "框架建桩".into(),
+            status: TaskTodoStatus::Pending,
+            detail: None,
+            section_id: None,
+        },
+    ];
+    let step1 = summarize_todo_progress(&initial).expect("summary for initial todos");
+    assert!(step1.progress.contains("0/2 completed"));
+    assert_eq!(step1.active_title.as_deref(), Some("立项调研"));
+    assert_eq!(step1.next_pending_title.as_deref(), Some("框架建桩"));
+    assert!(
+        describe_task_next_hint(Some(&step1))
+            .is_some_and(|hint| hint.contains("describe_task(title=\"框架建桩\")"))
+    );
+
+    let advanced = merge_task_todos(Some(&initial), "框架建桩", None, None, &[]);
+    assert_eq!(advanced.len(), 2);
+    assert_eq!(advanced[0].status, TaskTodoStatus::Completed);
+    assert_eq!(advanced[1].status, TaskTodoStatus::InProgress);
+    let step2 = summarize_todo_progress(&advanced).expect("summary for final todo");
+    assert!(step2.progress.contains("1/2 completed"));
+    assert_eq!(step2.active_title.as_deref(), Some("框架建桩"));
+    assert!(step2.next_pending_title.is_none());
+    assert!(
+        describe_task_next_hint(Some(&step2))
+            .is_some_and(|hint| hint.contains("Final todo active (\"框架建桩\")"))
+    );
+}
+
+#[test]
 fn exact_allow_list_stays_scoped() {
     let allowed = vec!["spawn_subagents".to_string(), "lint_document".to_string()];
     assert!(allow_list_matches(&allowed, "spawn_subagents"));

@@ -8,7 +8,6 @@ use rig::{
     tool::{ToolContext, ToolExecutionError},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use tokio::task::JoinSet;
 use tracing::warn;
 
@@ -18,7 +17,9 @@ use crate::{error::RuntimeError, model_stream::ModelStreamEvent};
 
 use super::{
     AgentExecution, RigModelCore, SharedDocId, StreamEventSender,
-    builtin_tools::{quire_turn_meta, runtime_tool_scope, tool_other},
+    builtin_tools::{
+        TodoProgressSummary, quire_turn_meta, runtime_tool_scope, summarize_todo_progress,
+    },
 };
 
 /// One subagent task dispatched by `spawn_subagents`.
@@ -49,12 +50,58 @@ pub struct SubagentTask {
     pub fork: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig::schemars::JsonSchema)]
 pub struct SubagentOutcome {
     pub agent_name: String,
     pub status: String,
     pub summary: String,
     pub subagent_run_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rig::schemars::JsonSchema)]
+pub struct SpawnSubagentsReceipt {
+    pub outcomes: Vec<SubagentOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub todo_progress: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub _next_hint: Option<String>,
+}
+
+fn spawn_subagents_next_hint(summary: Option<&TodoProgressSummary>) -> String {
+    match summary {
+        Some(summary) => {
+            if let Some(next) = summary.next_pending_title.as_deref() {
+                format!(
+                    "Subagents finished. When moving to the next stage, call describe_task(title=\"{next}\") to advance todo progress; verify document changes with get_document_digest or lint_document."
+                )
+            } else if let Some(active) = summary.active_title.as_deref() {
+                format!(
+                    "Subagents finished. Final todo active (\"{active}\"); mark all todos completed with describe_task before finishing, and verify document changes with get_document_digest or lint_document."
+                )
+            } else {
+                "Subagents finished. Verify document changes with get_document_digest or lint_document."
+                    .into()
+            }
+        }
+        None => {
+            "Subagents finished. Call describe_task to track stage todos, and verify document changes with get_document_digest or lint_document."
+                .into()
+        }
+    }
+}
+
+fn build_spawn_subagents_receipt(
+    outcomes: Vec<SubagentOutcome>,
+    todos: &[quire_session_protocol::TaskTodoItem],
+) -> SpawnSubagentsReceipt {
+    let summary = summarize_todo_progress(todos);
+    let _next_hint = Some(spawn_subagents_next_hint(summary.as_ref()));
+    let todo_progress = summary.map(|item| item.progress);
+    SpawnSubagentsReceipt {
+        outcomes,
+        todo_progress,
+        _next_hint,
+    }
 }
 
 #[derive(Clone)]
@@ -71,11 +118,13 @@ pub(super) struct SubagentParent {
 /// Never add placeholder, backup, disabled, duplicate, or no-op tasks to make the call appear parallel.
 /// The number of items in `tasks` must exactly match the number of real subagents to launch.
 ///
-/// Call `list_subagents` first if you need valid subagent names. Outcomes are returned in the exact
-/// input `tasks` order with `agent_name`, `status` (`"completed" | "failed" | "cancelled"`), `summary`,
-/// and `subagent_run_id` (passable as `resume_run_id` on follow-up calls). Call `describe_task`
-/// to activate the current delegation phase before dispatching, update `describe_task` once subagents
-/// return, and verify document changes via `get_document_digest` or `lint_document`.
+/// Call `list_subagents` first if you need valid subagent names. Outcomes are returned under
+/// `outcomes` in the exact input `tasks` order with `agent_name`, `status`
+/// (`"completed" | "failed" | "cancelled"`), `summary`, and `subagent_run_id` (passable as
+/// `resume_run_id` on follow-up calls), alongside `todo_progress` and `_next_hint`. Call
+/// `describe_task` to activate the current delegation phase before dispatching, update
+/// `describe_task` once subagents return when moving to the next stage, and verify document
+/// changes via `get_document_digest` or `lint_document`.
 #[rig_tool(name = "spawn_subagents")]
 pub(super) async fn run_subagents_tool(
     #[rig(context)] context: &mut ToolContext,
@@ -84,7 +133,7 @@ pub(super) async fn run_subagents_tool(
     /// duplicate, and no-op items are invalid. Assign disjoint `block_id` prefixes when multiple
     /// subagents write to the same report in parallel.
     tasks: Vec<SubagentTask>,
-) -> Result<Value, ToolExecutionError> {
+) -> Result<SpawnSubagentsReceipt, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
     let parent_history = tasks
@@ -143,7 +192,8 @@ pub(super) async fn run_subagents_tool(
         }
     }
     let outcomes = ordered_outcomes(slots, assignments);
-    serde_json::to_value(outcomes).map_err(tool_other)
+    let todos = runtime.task_todo_snapshot();
+    Ok(build_spawn_subagents_receipt(outcomes, &todos))
 }
 
 fn ordered_outcomes(
@@ -322,6 +372,75 @@ mod tests {
         assert_eq!(
             missing.first().map(|item| item.status.as_str()),
             Some("failed")
+        );
+    }
+
+    #[test]
+    fn spawn_subagents_receipt_surfaces_active_and_next_todo_hints() {
+        use quire_session_protocol::{TaskTodoItem, TaskTodoStatus};
+
+        let outcome = vec![SubagentOutcome {
+            agent_name: "researcher".into(),
+            status: "completed".into(),
+            summary: "done".into(),
+            subagent_run_id: "run_sub_1".into(),
+        }];
+        let empty = build_spawn_subagents_receipt(outcome.clone(), &[]);
+        assert!(empty.todo_progress.is_none());
+        assert!(
+            empty
+                ._next_hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("Call describe_task"))
+        );
+
+        let todos = vec![
+            TaskTodoItem {
+                id: Some("t1".into()),
+                title: "立项锚定与并行调研".into(),
+                status: TaskTodoStatus::InProgress,
+                detail: None,
+                section_id: None,
+            },
+            TaskTodoItem {
+                id: Some("t2".into()),
+                title: "交叉补证与框架建桩".into(),
+                status: TaskTodoStatus::Pending,
+                detail: None,
+                section_id: None,
+            },
+        ];
+        let mid = build_spawn_subagents_receipt(outcome.clone(), &todos);
+        assert!(mid.todo_progress.as_deref().is_some_and(
+            |p| p.contains("0/2 completed") && p.contains("next: \"交叉补证与框架建桩\"")
+        ));
+        assert!(
+            mid._next_hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("describe_task(title=\"交叉补证与框架建桩\")"))
+        );
+
+        let final_stage = vec![
+            TaskTodoItem {
+                id: Some("t1".into()),
+                title: "立项锚定与并行调研".into(),
+                status: TaskTodoStatus::Completed,
+                detail: None,
+                section_id: None,
+            },
+            TaskTodoItem {
+                id: Some("t2".into()),
+                title: "润色审校与交付".into(),
+                status: TaskTodoStatus::InProgress,
+                detail: None,
+                section_id: None,
+            },
+        ];
+        let last = build_spawn_subagents_receipt(outcome, &final_stage);
+        assert!(
+            last._next_hint
+                .as_deref()
+                .is_some_and(|hint| hint.contains("Final todo active (\"润色审校与交付\")"))
         );
     }
 }

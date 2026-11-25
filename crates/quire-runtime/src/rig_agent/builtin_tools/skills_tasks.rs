@@ -77,6 +77,79 @@ pub(crate) async fn read_skill_resource_tool(
     })
 }
 
+pub(crate) struct TodoProgressSummary {
+    pub(crate) progress: String,
+    pub(crate) active_title: Option<String>,
+    pub(crate) next_pending_title: Option<String>,
+}
+
+/// Summarize current todo completion counts alongside active and next pending item titles.
+pub(crate) fn summarize_todo_progress(
+    todos: &[quire_session_protocol::TaskTodoItem],
+) -> Option<TodoProgressSummary> {
+    if todos.is_empty() {
+        return None;
+    }
+    let total = todos.len();
+    let mut completed = 0usize;
+    let mut in_progress = 0usize;
+    let mut pending = 0usize;
+    let mut active_title = None;
+    let mut next_pending_title = None;
+
+    for item in todos {
+        match item.status {
+            quire_session_protocol::TaskTodoStatus::Completed => completed += 1,
+            quire_session_protocol::TaskTodoStatus::InProgress => {
+                in_progress += 1;
+                if active_title.is_none() {
+                    active_title = Some(item.title.clone());
+                }
+            }
+            quire_session_protocol::TaskTodoStatus::Pending => {
+                pending += 1;
+                if next_pending_title.is_none() {
+                    next_pending_title = Some(item.title.clone());
+                }
+            }
+            quire_session_protocol::TaskTodoStatus::Skipped => {}
+        }
+    }
+
+    let mut progress =
+        format!("{completed}/{total} completed, {in_progress} in_progress, {pending} pending");
+    if let Some(active) = active_title.as_deref() {
+        progress.push_str(&format!(" (active: \"{active}\""));
+        if let Some(next) = next_pending_title.as_deref() {
+            progress.push_str(&format!("; next: \"{next}\""));
+        }
+        progress.push(')');
+    } else if let Some(next) = next_pending_title.as_deref() {
+        progress.push_str(&format!(" (next: \"{next}\")"));
+    }
+
+    Some(TodoProgressSummary {
+        progress,
+        active_title,
+        next_pending_title,
+    })
+}
+
+pub(super) fn describe_task_next_hint(summary: Option<&TodoProgressSummary>) -> Option<String> {
+    let summary = summary?;
+    if let Some(next) = summary.next_pending_title.as_deref() {
+        Some(format!(
+            "Next todo: \"{next}\". Call describe_task(title=\"{next}\") when transitioning to that stage."
+        ))
+    } else if let Some(active) = summary.active_title.as_deref() {
+        Some(format!(
+            "Final todo active (\"{active}\"). Mark all todos completed with describe_task before finishing."
+        ))
+    } else {
+        Some("All todos completed.".into())
+    }
+}
+
 /// Report the current work stage and step-by-step todo progress to the user interface.
 ///
 /// When to call (both lead agent and subagents):
@@ -124,41 +197,31 @@ pub(crate) async fn describe_task_tool(
             }
         })
         .collect();
+    let effective_todos = runtime.update_task_todos(
+        &title,
+        detail.as_deref(),
+        section_id.as_deref(),
+        &normalized_todos,
+    );
     runtime
         .event_scope
         .send(ModelStreamEvent::TaskFocus {
             title: title.clone(),
             detail: detail.clone(),
             section_id: section_id.clone(),
-            todos: normalized_todos.clone(),
+            todos: normalized_todos,
         })
         .await;
-    let progress = if normalized_todos.is_empty() {
-        None
-    } else {
-        let total = normalized_todos.len();
-        let completed = normalized_todos
-            .iter()
-            .filter(|t| t.status == quire_session_protocol::TaskTodoStatus::Completed)
-            .count();
-        let in_progress = normalized_todos
-            .iter()
-            .filter(|t| t.status == quire_session_protocol::TaskTodoStatus::InProgress)
-            .count();
-        let pending = normalized_todos
-            .iter()
-            .filter(|t| t.status == quire_session_protocol::TaskTodoStatus::Pending)
-            .count();
-        Some(format!(
-            "{completed}/{total} completed, {in_progress} in_progress, {pending} pending"
-        ))
-    };
+    let summary = summarize_todo_progress(&effective_todos);
+    let _next_hint = describe_task_next_hint(summary.as_ref());
+    let progress = summary.map(|item| item.progress);
     Ok(DescribeTaskReceipt {
         title,
         detail,
         section_id,
-        todos: normalized_todos,
+        todos: effective_todos,
         progress,
+        _next_hint,
     })
 }
 

@@ -44,7 +44,7 @@ mod tool_schemas;
 
 pub use builtin_tools::BUILTIN_TOOLS;
 pub use preview_stream::{PreviewThrottle, ToolPreviewStreamer};
-pub use subagents::{SubagentOutcome, SubagentTask};
+pub use subagents::{SpawnSubagentsReceipt, SubagentOutcome, SubagentTask};
 
 use builtin_tools::{ToolBuildContext, warn_missing_allowed_tools};
 use hooks::{

@@ -177,6 +177,40 @@ pub(super) struct RuntimeToolScope {
     pub(super) doc_id: SharedDocId,
     /// Snapshot of the parent agent's live conversation history for `fork: true` subagents.
     pub(super) parent_history: super::SharedForkHistory,
+    /// Live todo list for this agent run so incremental `describe_task` updates and
+    /// `spawn_subagents` receipts share the latest todo state without awaiting across locks.
+    task_todos: std::sync::Mutex<Vec<quire_session_protocol::TaskTodoItem>>,
+}
+
+impl RuntimeToolScope {
+    pub(super) fn update_task_todos(
+        &self,
+        title: &str,
+        detail: Option<&str>,
+        section_id: Option<&str>,
+        incoming: &[quire_session_protocol::TaskTodoItem],
+    ) -> Vec<quire_session_protocol::TaskTodoItem> {
+        let mut guard = self
+            .task_todos
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let merged = quire_session_protocol::merge_task_todos(
+            Some(guard.as_slice()),
+            title,
+            detail,
+            section_id,
+            incoming,
+        );
+        *guard = merged.clone();
+        merged
+    }
+
+    pub(super) fn task_todo_snapshot(&self) -> Vec<quire_session_protocol::TaskTodoItem> {
+        self.task_todos
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }
 
 pub(super) fn runtime_tool_scope(
@@ -242,6 +276,7 @@ impl RigModelCore {
             cancellation: execution.cancellation.clone(),
             doc_id: Arc::clone(&execution.doc_id),
             parent_history,
+            task_todos: std::sync::Mutex::new(Vec::new()),
         });
         let mut server = ToolServer::new();
         let mut names = BTreeSet::new();

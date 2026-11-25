@@ -622,7 +622,12 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
     traces.into_iter().map(|trace| trace.summary).collect()
 }
 
-fn merge_task_todos(
+/// Merge an incoming `describe_task` update into the existing todo list.
+///
+/// When `incoming` is non-empty, it replaces the list directly; when `incoming` is empty, any
+/// active `in_progress` item with a different title is marked `completed` and the matching
+/// `title` item (or a newly appended item) becomes `in_progress`.
+pub fn merge_task_todos(
     previous: Option<&[TaskTodoItem]>,
     title: &str,
     detail: Option<&str>,

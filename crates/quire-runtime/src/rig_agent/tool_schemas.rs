@@ -101,6 +101,8 @@ pub struct DescribeTaskReceipt {
     pub todos: Vec<quire_session_protocol::TaskTodoItem>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub progress: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub _next_hint: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

@@ -18,4 +18,4 @@ pub use session::{
     SessionStatus, SessionSummary, TaskTodoItem, TaskTodoStatus, ToolCallDetail,
     UpdatePendingMessageRequest,
 };
-pub use trace::aggregate_run_traces;
+pub use trace::{aggregate_run_traces, merge_task_todos};
