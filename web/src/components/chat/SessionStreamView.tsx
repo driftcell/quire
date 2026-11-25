@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   HistoricalRunTrace,
   LiveTraceSegments,
@@ -309,14 +303,14 @@ export function SessionStreamView({
     : false;
   const showLiveMain = Boolean(
     liveMain &&
-      (liveMain.isStreaming ||
-        !liveRunId ||
-        !(
-          traceByRunId.has(liveRunId) &&
-          visibleMessages.some(
-            (msg) => msg.run_id === liveRunId && msg.role !== "user",
-          )
-        )),
+    (liveMain.isStreaming ||
+      !liveRunId ||
+      !(
+        traceByRunId.has(liveRunId) &&
+        visibleMessages.some(
+          (msg) => msg.run_id === liveRunId && msg.role !== "user",
+        )
+      )),
   );
   const orphanTraces = useMemo(() => {
     const rendered = new Set<string>();
@@ -340,7 +334,11 @@ export function SessionStreamView({
     | { kind: "orphan-trace"; trace: RunTraceSummary };
 
   const timelineEntries = useMemo<TimelineEntry[]>(() => {
-    const timestamped: Array<{ trace: RunTraceSummary; startedAtMs: number; order: number }> = [];
+    const timestamped: Array<{
+      trace: RunTraceSummary;
+      startedAtMs: number;
+      order: number;
+    }> = [];
     const untimestamped: RunTraceSummary[] = [];
     orphanTraces.forEach((trace, order) => {
       const parsed = trace.started_at ? Date.parse(trace.started_at) : NaN;
@@ -350,7 +348,9 @@ export function SessionStreamView({
         untimestamped.push(trace);
       }
     });
-    timestamped.sort((a, b) => a.startedAtMs - b.startedAtMs || a.order - b.order);
+    timestamped.sort(
+      (a, b) => a.startedAtMs - b.startedAtMs || a.order - b.order,
+    );
 
     const entries: TimelineEntry[] = [];
     let orphanCursor = 0;
@@ -492,7 +492,9 @@ export function SessionStreamView({
                         />
                       )}
                       {unpersistedLiveQuestion &&
-                        renderQuestionCard({ question: unpersistedLiveQuestion })}
+                        renderQuestionCard({
+                          question: unpersistedLiveQuestion,
+                        })}
                     </MessageContent>
                   </Message>
                 </MessageGroup>

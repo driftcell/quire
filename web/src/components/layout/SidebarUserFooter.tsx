@@ -45,9 +45,9 @@ export function SidebarUserFooter() {
     return null;
   }
 
-  const monogram = Array.from(
-    user.display_name.trim() || user.username,
-  )[0]?.toUpperCase() || "U";
+  const monogram =
+    Array.from(user.display_name.trim() || user.username)[0]?.toUpperCase() ||
+    "U";
 
   const handlePasswordSubmit = async (event: FormEvent) => {
     event.preventDefault();

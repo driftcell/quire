@@ -1,7 +1,10 @@
 import { memo, useState } from "react";
 import { ChevronRightIcon } from "lucide-react";
 import { cn } from "cn";
-import { AgentAvatar, resolveAgentIdentity } from "@/components/chat/agentAvatar";
+import {
+  AgentAvatar,
+  resolveAgentIdentity,
+} from "@/components/chat/agentAvatar";
 import { SubagentOutput } from "@/components/chat/SubagentOutput";
 import { ThinkingTrace } from "@/components/chat/ThinkingTrace";
 import { ToolCallList } from "@/components/chat/ToolCallList";
@@ -92,11 +95,7 @@ export const SubagentTrace = memo(function SubagentTrace({
               className="size-1.5 shrink-0 animate-pulse rounded-full bg-primary/80"
             />
           )}
-          <span
-            className={cn(
-              model.status === "failed" && "text-destructive",
-            )}
-          >
+          <span className={cn(model.status === "failed" && "text-destructive")}>
             {telemetrySummary}
           </span>
           <ChevronRightIcon

@@ -104,16 +104,13 @@ export const ThinkingTrace = memo(function ThinkingTrace({
           <BrainIcon
             className={cn(
               "size-3.5",
-              isStreaming ? "text-primary animate-pulse" : "text-muted-foreground",
+              isStreaming
+                ? "text-primary animate-pulse"
+                : "text-muted-foreground",
             )}
           />
         </span>
-        <span
-          className={cn(
-            "font-medium",
-            isStreaming && "text-foreground",
-          )}
-        >
+        <span className={cn("font-medium", isStreaming && "text-foreground")}>
           {title}
         </span>
         {hasDuration && (
@@ -132,7 +129,9 @@ export const ThinkingTrace = memo(function ThinkingTrace({
       <div
         className={cn(
           "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
-          expanded ? "mt-1.5 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+          expanded
+            ? "mt-1.5 grid-rows-[1fr] opacity-100"
+            : "grid-rows-[0fr] opacity-0",
         )}
       >
         <div className="min-h-0 overflow-hidden">

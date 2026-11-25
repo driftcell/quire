@@ -85,10 +85,7 @@ export function isVisibleTraceTool(tool: ToolCallTraceItem): boolean {
   ) {
     return false;
   }
-  if (
-    tool.toolName === "spawn_subagents" ||
-    tool.toolName === "ask_user"
-  ) {
+  if (tool.toolName === "spawn_subagents" || tool.toolName === "ask_user") {
     return tool.status === "failed";
   }
   return true;

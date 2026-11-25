@@ -12,6 +12,10 @@ function referenceDomain(url: string | null | undefined): string | null {
   }
 }
 
+function referenceBadge(entry: BibliographyEntry): string {
+  return entry.label.trim() || `[${entry.number}]`;
+}
+
 export interface ReportBibliographyProps {
   entries: BibliographyEntry[];
   title: string;
@@ -41,6 +45,10 @@ export function ReportBibliography({
   if (visibleEntries.length === 0) {
     return null;
   }
+  const badges = entries.map(referenceBadge);
+  const numericBadgeWidth = badges.every((badge) => /^\[\d+\]$/.test(badge))
+    ? Math.max(...badges.map((badge) => badge.length))
+    : null;
   const isContinued = start > 0 || continued;
   return (
     <section
@@ -63,7 +71,7 @@ export function ReportBibliography({
           const attribution =
             source.publisher?.trim() || source.authors?.join(", ") || null;
           const domain = referenceDomain(source.url);
-          const badge = entry.label.trim() || `[${entry.number}]`;
+          const badge = referenceBadge(entry);
           const hasMetadata = Boolean(attribution || source.date || source.url);
           return (
             <li
@@ -72,7 +80,16 @@ export function ReportBibliography({
               id={measurementOnly ? undefined : `bib-${entry.source_id}`}
               className="flex scroll-mt-24 gap-3"
             >
-              <span className="mt-px shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums">
+              <span
+                className={`mt-px shrink-0 font-mono text-[11px] text-muted-foreground tabular-nums${
+                  numericBadgeWidth === null ? "" : " text-right"
+                }`}
+                style={
+                  numericBadgeWidth === null
+                    ? undefined
+                    : { width: `${numericBadgeWidth}ch` }
+                }
+              >
                 {badge}
               </span>
               <div className="min-w-0 flex-1 space-y-0.5">

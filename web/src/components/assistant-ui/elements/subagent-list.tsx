@@ -69,10 +69,7 @@ export function SubagentList({
             )}
           >
             <div className="flex items-center gap-2">
-              <AgentAvatar
-                actor={agent.actor ?? agent.name}
-                size="xs"
-              />
+              <AgentAvatar actor={agent.actor ?? agent.name} size="xs" />
               <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-foreground">
                 {agent.name}
               </span>
@@ -106,7 +103,10 @@ export function SubagentList({
                   const tDone =
                     !tSkipped && (done || todo.status === "completed");
                   const tActive =
-                    !done && !tSkipped && !tDone && todo.status === "in_progress";
+                    !done &&
+                    !tSkipped &&
+                    !tDone &&
+                    todo.status === "in_progress";
                   return (
                     <li
                       key={todo.id ?? `${todo.label}-${tIdx}`}
@@ -172,10 +172,7 @@ export function SubagentList({
       })}
       {showSummary && (
         <div
-          className={cn(
-            paper,
-            "flex flex-col gap-1.5 rounded-xl px-3 py-2",
-          )}
+          className={cn(paper, "flex flex-col gap-1.5 rounded-xl px-3 py-2")}
         >
           <div className="flex items-center gap-2">
             <span

@@ -2,7 +2,11 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { getDeepCheckStatus, triggerDeepCheck, type DeepCheckStatus } from "@/api/runtime";
+import {
+  getDeepCheckStatus,
+  triggerDeepCheck,
+  type DeepCheckStatus,
+} from "@/api/runtime";
 import {
   BookOpenIcon,
   FileTextIcon,
@@ -95,7 +99,9 @@ export function ReportPaneToolbar({
   const isDeepCheckRunning =
     deepCheck?.status === "running" || deepCheckMutation.isPending;
   const isDeepCheckEnabled = deepCheck?.enabled ?? false;
-  const prevStatusRef = useRef<DeepCheckStatus["status"] | undefined>(undefined);
+  const prevStatusRef = useRef<DeepCheckStatus["status"] | undefined>(
+    undefined,
+  );
 
   useEffect(() => {
     const prev = prevStatusRef.current;

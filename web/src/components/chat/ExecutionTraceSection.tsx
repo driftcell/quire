@@ -93,14 +93,12 @@ export function LiveTraceSegments({
     .reverse()
     .find((seg) => seg.kind === "text");
 
-  if (
-    !(
-      showFinalText &&
-      trace?.isStreaming === false &&
-      lastTextSegment &&
-      lastTextSegment.kind === "text"
-    )
-  ) {
+  if (!(
+    showFinalText &&
+    trace?.isStreaming === false &&
+    lastTextSegment &&
+    lastTextSegment.kind === "text"
+  )) {
     return null;
   }
 

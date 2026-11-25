@@ -167,7 +167,12 @@ function AdminPage() {
 
   const handleCreateProvider = (e: FormEvent) => {
     e.preventDefault();
-    if (!providerId.trim() || !providerName.trim() || !baseUrl.trim() || !apiKeyRef.trim()) {
+    if (
+      !providerId.trim() ||
+      !providerName.trim() ||
+      !baseUrl.trim() ||
+      !apiKeyRef.trim()
+    ) {
       toast.error("请完整填写供应商信息");
       return;
     }
@@ -392,7 +397,9 @@ function AdminPage() {
                     const isSelf = u.user_id === user?.user_id;
                     return (
                       <tr key={u.user_id} className="hover:bg-muted/20">
-                        <td className="px-4 py-2.5 font-medium">@{u.username}</td>
+                        <td className="px-4 py-2.5 font-medium">
+                          @{u.username}
+                        </td>
                         <td className="px-4 py-2.5">
                           <div>{u.display_name}</div>
                           <div className="text-[11px] text-muted-foreground">
@@ -440,7 +447,9 @@ function AdminPage() {
                                 })
                               }
                             >
-                              {u.role === "admin" ? "设为普通用户" : "设为管理员"}
+                              {u.role === "admin"
+                                ? "设为普通用户"
+                                : "设为管理员"}
                             </Button>
                             <Button
                               type="button"
@@ -520,7 +529,9 @@ function AdminPage() {
                       className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-xs shadow-xs"
                     >
                       <option value="anthropic">anthropic</option>
-                      <option value="openai_compatible">openai_compatible</option>
+                      <option value="openai_compatible">
+                        openai_compatible
+                      </option>
                     </select>
                   </div>
                   <div className="space-y-1">
@@ -653,7 +664,8 @@ function AdminPage() {
                           {m.id}
                         </div>
                         <div className="truncate text-[11px] text-muted-foreground">
-                          {m.provider_id} ({prov?.protocol ?? "-"}) · {m.model_id}
+                          {m.provider_id} ({prov?.protocol ?? "-"}) ·{" "}
+                          {m.model_id}
                         </div>
                       </div>
                       <Button
@@ -689,7 +701,9 @@ function AdminPage() {
                       <th className="px-4 py-2.5 font-medium">供应商 / 协议</th>
                       <th className="px-4 py-2.5 font-medium">上游模型</th>
                       <th className="px-4 py-2.5 font-medium">状态</th>
-                      <th className="px-4 py-2.5 text-right font-medium">操作</th>
+                      <th className="px-4 py-2.5 text-right font-medium">
+                        操作
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50">
@@ -730,7 +744,10 @@ function AdminPage() {
                     })}
                     {(modelsQuery.data ?? []).length === 0 && (
                       <tr>
-                        <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">
+                        <td
+                          colSpan={5}
+                          className="px-4 py-6 text-center text-muted-foreground"
+                        >
                           暂无已注册模型
                         </td>
                       </tr>
@@ -800,10 +817,7 @@ function AdminPage() {
                       <td className="px-4 py-2.5">
                         {s.enabled ? "已启用" : "已禁用"}
                       </td>
-                      <td
-                        className="px-4 py-2.5 text-right"
-                        aria-label="操作"
-                      >
+                      <td className="px-4 py-2.5 text-right" aria-label="操作">
                         <Button
                           type="button"
                           size="sm"
@@ -817,7 +831,10 @@ function AdminPage() {
                   ))}
                   {(mcpQuery.data ?? []).length === 0 && (
                     <tr>
-                      <td colSpan={5} className="px-4 py-6 text-center text-muted-foreground">
+                      <td
+                        colSpan={5}
+                        className="px-4 py-6 text-center text-muted-foreground"
+                      >
                         暂无已配置 MCP 服务
                       </td>
                     </tr>

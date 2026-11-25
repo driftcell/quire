@@ -31,7 +31,10 @@ export const Route = createFileRoute("/docs/$docId_/preview")({
         ? Math.floor(rawPage)
         : undefined;
     const rawRev = Number(search.rev);
-    if (search.rev !== undefined && (!Number.isSafeInteger(rawRev) || rawRev < 1)) {
+    if (
+      search.rev !== undefined &&
+      (!Number.isSafeInteger(rawRev) || rawRev < 1)
+    ) {
       throw new Error("预览版本号必须是正整数。");
     }
     const rev = search.rev === undefined ? undefined : rawRev;

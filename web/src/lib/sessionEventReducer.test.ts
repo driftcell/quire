@@ -205,7 +205,6 @@ describe("run lifecycle guards", () => {
     }
   });
 
-
   test("streaming deltas accumulate estimated output tokens and reconcile on context_usage", () => {
     let state = reduceSessionEvent(emptyLiveSessionState(), {
       seq: 1,

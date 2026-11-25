@@ -7,10 +7,7 @@ import { mono } from "./surfaces";
 import { announced, pct, progressOf } from "../utils/range";
 
 export type AgentPlanStepStatus =
-  | "pending"
-  | "in_progress"
-  | "completed"
-  | "skipped";
+  "pending" | "in_progress" | "completed" | "skipped";
 
 export type AgentPlanStep = {
   id?: string | undefined;
@@ -36,9 +33,7 @@ export function AgentPlan({
   const normalizedSteps: AgentPlanStep[] = steps.map((step) =>
     typeof step === "string" ? { label: step } : step,
   );
-  const hasExplicitStatus = normalizedSteps.some(
-    (s) => s.status !== undefined,
-  );
+  const hasExplicitStatus = normalizedSteps.some((s) => s.status !== undefined);
   const allFinished = activeIndex >= total;
 
   const completed = allFinished

@@ -14,11 +14,7 @@ import {
 
 export type SourcesProps = React.ComponentProps<typeof TraceCollapsible>;
 
-function Sources({
-  className,
-  defaultOpen = false,
-  ...props
-}: SourcesProps) {
+function Sources({ className, defaultOpen = false, ...props }: SourcesProps) {
   return (
     <Trace data-slot="sources" className={cn("mt-2", className)}>
       <TraceCollapsible defaultOpen={defaultOpen} {...props} />
@@ -71,7 +67,10 @@ function SourcesContent({
   return (
     <TraceCollapsibleContent
       data-slot="sources-content"
-      className={cn("mt-2 space-y-1.5 border-l border-border/60 pl-3", className)}
+      className={cn(
+        "mt-2 space-y-1.5 border-l border-border/60 pl-3",
+        className,
+      )}
       {...props}
     >
       <Trace className="gap-1.5">{children}</Trace>

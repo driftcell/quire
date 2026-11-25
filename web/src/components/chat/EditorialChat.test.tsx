@@ -441,8 +441,16 @@ describe("Borderless editorial chat", () => {
           },
         ]}
         traces={[
-          { run_id: "run_1", status: "completed", segments: [{ kind: "text", text: "我先确认一个参数：" }] },
-          { run_id: "run_2", status: "completed", segments: [{ kind: "text", text: "已按 C9 口径完成分析。" }] },
+          {
+            run_id: "run_1",
+            status: "completed",
+            segments: [{ kind: "text", text: "我先确认一个参数：" }],
+          },
+          {
+            run_id: "run_2",
+            status: "completed",
+            segments: [{ kind: "text", text: "已按 C9 口径完成分析。" }],
+          },
         ]}
         liveMain={null}
         liveSubagents={[]}
@@ -636,7 +644,7 @@ describe("Borderless editorial chat", () => {
     ]);
 
     const markdown = [
-      "核心结论已由官方渠道验证<citation id=\"zstu_web\"/>并参考研究所数据<citation id=\"ihe_rep\"/>，忽略未登记的占位引用<citation id=\"source_id\"/>与幻觉引用<citation id=\"dangling_unknown\"/>。",
+      '核心结论已由官方渠道验证<citation id="zstu_web"/>并参考研究所数据<citation id="ihe_rep"/>，忽略未登记的占位引用<citation id="source_id"/>与幻觉引用<citation id="dangling_unknown"/>。',
       "",
       "| 高校 | 指标 |",
       "| --- | --- |",

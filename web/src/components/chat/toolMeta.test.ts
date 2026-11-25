@@ -78,7 +78,11 @@ describe("getToolMeta", () => {
     expectMeta("sandbox_mount_attachment", "挂载附件到沙箱", PaperclipIcon);
     expectMeta("deepseek_search", "检索权威资料", SearchIcon);
     expectMeta("deepseek_fetch", "读取网页原文", GlobeIcon);
-    expectMeta("panorama_report_universities", "查询高教全景数据", DatabaseIcon);
+    expectMeta(
+      "panorama_report_universities",
+      "查询高教全景数据",
+      DatabaseIcon,
+    );
     expectMeta("shuangyou_intel_list", "查询双优建设数据", DatabaseIcon);
     expectMeta("subjectcloud_overview", "查询学科云数据", DatabaseIcon);
   });

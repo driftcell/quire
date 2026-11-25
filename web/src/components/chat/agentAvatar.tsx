@@ -374,9 +374,7 @@ export const AgentAvatar = memo(function AgentAvatar({
       data-actor={identity.actor}
       data-avatar-kind={isMain ? "agent-icon" : "identicon"}
       title={
-        identity.role
-          ? `${identity.label} · ${identity.role}`
-          : identity.label
+        identity.role ? `${identity.label} · ${identity.role}` : identity.label
       }
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full ring-1 ring-border/70 select-none",

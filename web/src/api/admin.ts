@@ -121,7 +121,10 @@ function decodeMcpServer(raw: unknown): McpServerRecord | null {
   };
 }
 
-async function adminRequest(path: string, init: RequestInit = {}): Promise<unknown> {
+async function adminRequest(
+  path: string,
+  init: RequestInit = {},
+): Promise<unknown> {
   const token = getAccessToken();
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type")) {
@@ -249,10 +252,13 @@ export async function updateModel(
   modelId: string,
   patch: { enabled?: boolean },
 ): Promise<ModelRecord> {
-  const data = await adminRequest(`/api/models/${encodeURIComponent(modelId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(patch),
-  });
+  const data = await adminRequest(
+    `/api/models/${encodeURIComponent(modelId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    },
+  );
   const decoded = decodeModel(data);
   if (!decoded) {
     throw new Error("Invalid model response");
@@ -269,8 +275,7 @@ export async function listMcpServers(): Promise<McpServerRecord[]> {
 }
 
 export function syncMcpServer(serverId: string): Promise<unknown> {
-  return adminRequest(
-    `/api/mcp/servers/${encodeURIComponent(serverId)}/sync`,
-    { method: "POST" },
-  );
+  return adminRequest(`/api/mcp/servers/${encodeURIComponent(serverId)}/sync`, {
+    method: "POST",
+  });
 }

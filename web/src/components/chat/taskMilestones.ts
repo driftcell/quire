@@ -86,7 +86,10 @@ export function isDomainMeaningfulTool(tool: ToolCallTraceItem): boolean {
   return !LOW_SIGNAL_PLUMBING_TOOLS.has(tool.toolName);
 }
 
-function extractJsonStringField(raw: string, field: string): string | undefined {
+function extractJsonStringField(
+  raw: string,
+  field: string,
+): string | undefined {
   if (!raw) return undefined;
   const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`"${escaped}"\\s*:\\s*"([^"\\\\]{1,120})"`);
@@ -207,7 +210,10 @@ export function extractHistoricalSubagentTodos(
     }
   }
   const todos = collectTodosFromTools(sub.task_focus?.todos, segmentTools);
-  return finalizeTodos(todos, sub.status !== "failed" && sub.status !== "running");
+  return finalizeTodos(
+    todos,
+    sub.status !== "failed" && sub.status !== "running",
+  );
 }
 
 export function finalizeTodos(
@@ -360,9 +366,7 @@ function buildSubagentMilestonesFromSegments(
     milestones.push({
       id: `${subId}-ms-${stepNumber}`,
       stepNumber,
-      title:
-        currentTitle ||
-        defaultPhaseTitle(),
+      title: currentTitle || defaultPhaseTitle(),
       detail: currentDetail,
       sectionId: currentSection,
       status,
@@ -457,9 +461,7 @@ function buildLiveSubagentMilestonesFromSegments(
     milestones.push({
       id: `${subId}-ms-${stepNumber}`,
       stepNumber,
-      title:
-        currentTitle ||
-        defaultPhaseTitle(),
+      title: currentTitle || defaultPhaseTitle(),
       detail: currentDetail,
       sectionId: currentSection,
       status,
@@ -754,15 +756,13 @@ export function buildHistoricalMilestones(
     milestones.push({
       id: `${trace.run_id}-ms-${stepNumber}`,
       stepNumber,
-      title:
-        explicitTitle ||
-        defaultPhaseTitle(),
+      title: explicitTitle || defaultPhaseTitle(),
       detail:
         currentDetail ??
-        (isFinal ? trace.task_focus?.detail ?? undefined : undefined),
+        (isFinal ? (trace.task_focus?.detail ?? undefined) : undefined),
       sectionId:
         currentSection ??
-        (isFinal ? trace.task_focus?.section_id ?? undefined : undefined),
+        (isFinal ? (trace.task_focus?.section_id ?? undefined) : undefined),
       status,
       isExplicitStage: currentExplicit || Boolean(explicitTitle),
       semanticPills: buildSemanticActionPills(visibleTools),
@@ -893,11 +893,8 @@ export function buildLiveMilestones(
     milestones.push({
       id: `${trace.runId ?? "live"}-ms-${stepNumber}`,
       stepNumber,
-      title:
-        explicitTitle ||
-        defaultPhaseTitle(),
-      detail:
-        currentDetail ?? (isFinal ? trace.taskFocus?.detail : undefined),
+      title: explicitTitle || defaultPhaseTitle(),
+      detail: currentDetail ?? (isFinal ? trace.taskFocus?.detail : undefined),
       sectionId:
         currentSection ?? (isFinal ? trace.taskFocus?.sectionId : undefined),
       status,

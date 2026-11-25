@@ -282,7 +282,8 @@ export function reduceSessionEvent(
       next = {
         ...next,
         streamingEstimatedOutputTokens:
-          next.streamingEstimatedOutputTokens + estimateDeltaTokens(event.delta),
+          next.streamingEstimatedOutputTokens +
+          estimateDeltaTokens(event.delta),
       };
       if (isSubagentEvent) {
         next = {
@@ -311,7 +312,8 @@ export function reduceSessionEvent(
       next = {
         ...next,
         streamingEstimatedOutputTokens:
-          next.streamingEstimatedOutputTokens + estimateDeltaTokens(event.delta),
+          next.streamingEstimatedOutputTokens +
+          estimateDeltaTokens(event.delta),
       };
       if (isSubagentEvent) {
         next = {

@@ -554,13 +554,15 @@ export const RunActivityHeader = memo(function RunActivityHeader({
         )}
       </div>
 
-      {(isStreaming || detailsOpen) && !collapsedDuplicateDetail && model.detail && (
-        <div className="ml-6.5">
-          <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
-            {model.detail}
-          </p>
-        </div>
-      )}
+      {(isStreaming || detailsOpen) &&
+        !collapsedDuplicateDetail &&
+        model.detail && (
+          <div className="ml-6.5">
+            <p className="mt-0.5 text-xs leading-5 text-pretty break-words text-muted-foreground">
+              {model.detail}
+            </p>
+          </div>
+        )}
 
       {((isStreaming && hasMultiStepPlan) ||
         (!isStreaming && detailsOpen && planSteps.length > 0)) && (

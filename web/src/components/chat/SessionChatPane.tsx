@@ -114,70 +114,72 @@ export function SessionChatPane({
 
   return (
     <ChatRichContext.Provider value={richContext}>
-    <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
-      <div className="min-h-0 flex-1">
-        {isLoading ? (
-          <div className="no-scrollbar h-full overflow-y-auto px-4">
-            <div className="mx-auto max-w-3xl space-y-4 py-6">
-              <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
-              <Skeleton className="h-24 w-5/6 rounded-2xl" />
-              <Skeleton className="h-16 w-3/4 rounded-2xl" />
+      <div className="flex h-full min-w-0 flex-col overflow-hidden bg-background">
+        <div className="min-h-0 flex-1">
+          {isLoading ? (
+            <div className="no-scrollbar h-full overflow-y-auto px-4">
+              <div className="mx-auto max-w-3xl space-y-4 py-6">
+                <Skeleton className="ml-auto h-10 w-2/3 rounded-2xl" />
+                <Skeleton className="h-24 w-5/6 rounded-2xl" />
+                <Skeleton className="h-16 w-3/4 rounded-2xl" />
+              </div>
             </div>
-          </div>
-        ) : (
-          <SessionStreamView
-            sessionId={sessionId}
-            messages={messages}
-            contentClassName={
+          ) : (
+            <SessionStreamView
+              sessionId={sessionId}
+              messages={messages}
+              contentClassName={
+                hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"
+              }
+              attachments={attachments}
+              traces={traces}
+              liveMain={liveMain}
+              liveSubagents={liveSubagents}
+              pendingQuestion={pendingQuestion}
+              resolvedQuestions={resolvedQuestions}
+              isAnsweringQuestion={isAnsweringQuestion}
+              onAnswerQuestion={onAnswerQuestion}
+              onJumpToSection={onJumpToSection}
+              pendingQueue={pendingQueue}
+              busyQueueIds={busyQueueIds}
+              onEditPending={onEditPending}
+              onRecallPending={onRecallPending}
+              onDeletePending={onDeletePending}
+            />
+          )}
+        </div>
+
+        <div
+          className={
+            hasReportData
+              ? "shrink-0 border-t border-border/40 bg-gradient-to-t from-background via-background to-background/85 px-3 pt-2 pb-3"
+              : "shrink-0 border-t border-border/40 bg-gradient-to-t from-background via-background to-background/85 px-4 pt-2 pb-5"
+          }
+        >
+          <div
+            className={
               hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"
             }
-            attachments={attachments}
-            traces={traces}
-            liveMain={liveMain}
-            liveSubagents={liveSubagents}
-            pendingQuestion={pendingQuestion}
-            resolvedQuestions={resolvedQuestions}
-            isAnsweringQuestion={isAnsweringQuestion}
-            onAnswerQuestion={onAnswerQuestion}
-            onJumpToSection={onJumpToSection}
-            pendingQueue={pendingQueue}
-            busyQueueIds={busyQueueIds}
-            onEditPending={onEditPending}
-            onRecallPending={onRecallPending}
-            onDeletePending={onDeletePending}
-          />
-        )}
-      </div>
-
-      <div
-        className={
-          hasReportData
-            ? "shrink-0 border-t border-border/40 bg-gradient-to-t from-background via-background to-background/85 px-3 pt-2 pb-3"
-            : "shrink-0 border-t border-border/40 bg-gradient-to-t from-background via-background to-background/85 px-4 pt-2 pb-5"
-        }
-      >
-        <div
-          className={hasReportData ? "mx-auto max-w-full" : "mx-auto max-w-3xl"}
-        >
-          <PromptComposer
-            runStatus={runStatus}
-            compacting={compacting}
-            contextUsage={contextUsage}
-            streamingEstimatedOutputTokens={streamingEstimatedOutputTokens}
-            quotedSnippet={quotedSnippet}
-            pendingCommentRefs={pendingCommentRefs}
-            prefill={prefill}
-            onClearQuote={onClearQuote}
-            onRemoveCommentRef={onRemoveCommentRef}
-            onClearCommentRefs={onClearCommentRefs}
-            onSend={onSend}
-            onInterrupt={onInterrupt}
-            onRetry={onRetry}
-            onCompact={onCompact}
-          />
+          >
+            <PromptComposer
+              runStatus={runStatus}
+              compacting={compacting}
+              contextUsage={contextUsage}
+              streamingEstimatedOutputTokens={streamingEstimatedOutputTokens}
+              quotedSnippet={quotedSnippet}
+              pendingCommentRefs={pendingCommentRefs}
+              prefill={prefill}
+              onClearQuote={onClearQuote}
+              onRemoveCommentRef={onRemoveCommentRef}
+              onClearCommentRefs={onClearCommentRefs}
+              onSend={onSend}
+              onInterrupt={onInterrupt}
+              onRetry={onRetry}
+              onCompact={onCompact}
+            />
+          </div>
         </div>
       </div>
-    </div>
     </ChatRichContext.Provider>
   );
 }

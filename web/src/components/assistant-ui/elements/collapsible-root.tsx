@@ -16,10 +16,7 @@ export function CollapsibleTrigger({
   ...props
 }: CollapsiblePrimitive.Trigger.Props) {
   return (
-    <CollapsiblePrimitive.Trigger
-      data-slot="collapsible-trigger"
-      {...props}
-    />
+    <CollapsiblePrimitive.Trigger data-slot="collapsible-trigger" {...props} />
   );
 }
 
@@ -27,9 +24,6 @@ export function CollapsibleContent({
   ...props
 }: CollapsiblePrimitive.Panel.Props) {
   return (
-    <CollapsiblePrimitive.Panel
-      data-slot="collapsible-content"
-      {...props}
-    />
+    <CollapsiblePrimitive.Panel data-slot="collapsible-content" {...props} />
   );
 }

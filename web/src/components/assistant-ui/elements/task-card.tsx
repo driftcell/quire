@@ -1,21 +1,12 @@
 "use client";
 
 import { Children, type ComponentProps, type ReactNode, useState } from "react";
-import {
-  Ban,
-  CheckIcon,
-  ChevronRightIcon,
-  XIcon,
-} from "lucide-react";
+import { Ban, CheckIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mono, paper } from "./surfaces";
 
 export type TaskCardState =
-  | "working"
-  | "waiting"
-  | "done"
-  | "failed"
-  | "cancelled";
+  "working" | "waiting" | "done" | "failed" | "cancelled";
 
 const isRenderable = (node: ReactNode) =>
   node !== undefined && node !== null && node !== false && node !== true;

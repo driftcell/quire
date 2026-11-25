@@ -679,7 +679,10 @@ export function PromptComposer({
                   })();
                 }}
               >
-                <SquareIcon className="size-3 fill-current" aria-hidden="true" />
+                <SquareIcon
+                  className="size-3 fill-current"
+                  aria-hidden="true"
+                />
               </Button>
             ) : (
               <Button

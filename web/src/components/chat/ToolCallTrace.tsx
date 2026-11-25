@@ -180,7 +180,9 @@ export function ToolCallTrace({ sessionId, item }: ToolCallTraceProps) {
       <div
         className={cn(
           "grid transition-[grid-template-rows,opacity] duration-150 ease-out",
-          open ? "mt-1 grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+          open
+            ? "mt-1 grid-rows-[1fr] opacity-100"
+            : "grid-rows-[0fr] opacity-0",
         )}
       >
         <div className="min-h-0 overflow-hidden pl-6">
