@@ -377,10 +377,7 @@ fn check_citations(document: &ReportDocument, engine: &mut Engine, scan: &Citati
                 "{} `{}` in block `{}` is not registered. Valid source_ids: {}",
                 location, usage.source_id, usage.block_id, valid_ids
             ),
-            format!(
-                "register it with upsert_sources, or change the marker to one of: {}",
-                valid_ids
-            ),
+            "register it with upsert_sources, or change the marker to a valid source_id",
             Some(usage.block_id.clone()),
             Some(format!("sources.{}", usage.source_id)),
             document.sources.keys().map(ToString::to_string).collect(),
@@ -396,20 +393,12 @@ fn check_citations(document: &ReportDocument, engine: &mut Engine, scan: &Citati
         if cited.contains(source_id) {
             continue;
         }
-        engine.report_values(
+        engine.report(
             RuleId::UnusedSource,
             format!("source `{source_id}` is registered but never cited"),
-            format!(
-                "add [^{source_id}] to prose or include `{source_id}` in a block source_ids array; valid source_ids: {}",
-                valid_ids
-            ),
+            "add [^<source_id>] to prose or include it in a block source_ids array",
             None,
             Some(format!("sources.{source_id}")),
-            document
-                .sources
-                .keys()
-                .map(ToString::to_string)
-                .collect(),
         );
     }
 }

@@ -75,12 +75,6 @@ fn check_table_schema(
         Ok(shape) => {
             let unknown = unknown_row_keys(table, shape);
             if !unknown.is_empty() {
-                let valid = shape
-                    .leaves
-                    .iter()
-                    .map(|leaf| leaf.key.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
                 engine.report_values(
                     RuleId::TableUnknownRowKey,
                     format!(
@@ -88,7 +82,7 @@ fn check_table_schema(
                         block.id,
                         unknown.join(", ")
                     ),
-                    format!("valid leaf keys: {valid}"),
+                    "use one of the table's leaf column keys",
                     Some(block.id.clone()),
                     Some(format!("blocks[{index}].rows")),
                     shape.leaves.iter().map(|leaf| leaf.key.clone()).collect(),
@@ -96,12 +90,6 @@ fn check_table_schema(
             }
             let unknown_widths = unknown_width_overrides(&block.style, shape);
             if !unknown_widths.is_empty() {
-                let valid = shape
-                    .leaves
-                    .iter()
-                    .map(|leaf| leaf.key.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
                 engine.report_values(
                     RuleId::TableUnknownWidthOverride,
                     format!(
@@ -109,7 +97,7 @@ fn check_table_schema(
                         block.id,
                         unknown_widths.join(", ")
                     ),
-                    format!("valid leaf keys: {valid}"),
+                    "use one of the table's leaf column keys in style.column_widths",
                     Some(block.id.clone()),
                     Some(format!("blocks[{index}].style.column_widths")),
                     shape.leaves.iter().map(|leaf| leaf.key.clone()).collect(),

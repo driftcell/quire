@@ -140,13 +140,19 @@ pub(super) fn render_document_digest(
 }
 
 struct LintDiagnosticRow<'a> {
-    severity: &'static str,
-    code: &'a str,
-    rule: &'a str,
     block_id: Option<&'a str>,
     message: &'a str,
     hint: &'a str,
     valid_values: String,
+}
+
+struct LintDiagnosticGroup<'a> {
+    severity: &'static str,
+    code: &'a str,
+    rule: &'a str,
+    shared_hint: &'a str,
+    shared_valid_values: String,
+    items: Vec<LintDiagnosticRow<'a>>,
 }
 
 struct SuppressedBlockRow<'a> {
@@ -164,7 +170,7 @@ struct LintDocumentTemplate<'a> {
     warnings: usize,
     infos: usize,
     suppressed: usize,
-    diagnostics: Vec<LintDiagnosticRow<'a>>,
+    groups: Vec<LintDiagnosticGroup<'a>>,
     suppressed_blocks: Vec<SuppressedBlockRow<'a>>,
     next_hint: Option<&'a str>,
 }
@@ -175,23 +181,53 @@ pub(super) fn render_lint_document(
     let clean =
         receipt.ok && receipt.diagnostics.is_empty() && receipt.suppressed_blocks.is_empty();
     let summary = receipt.summary.as_ref();
-    let diagnostics = receipt
-        .diagnostics
-        .iter()
-        .map(|d| LintDiagnosticRow {
-            severity: match d.severity {
-                Severity::Error => "error",
-                Severity::Warning => "warning",
-                Severity::Info => "info",
-            },
-            code: &d.code,
-            rule: &d.rule,
+
+    let mut groups: Vec<LintDiagnosticGroup<'_>> = Vec::new();
+    for d in &receipt.diagnostics {
+        let severity = match d.severity {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        };
+        let item = LintDiagnosticRow {
             block_id: d.block_id.as_ref().map(|id| id.as_str()),
             message: &d.message,
             hint: &d.hint,
             valid_values: d.valid_values.join(", "),
-        })
-        .collect();
+        };
+        if let Some(group) = groups
+            .iter_mut()
+            .find(|g| g.severity == severity && g.code == d.code.as_str())
+        {
+            group.items.push(item);
+        } else {
+            groups.push(LintDiagnosticGroup {
+                severity,
+                code: &d.code,
+                rule: &d.rule,
+                shared_hint: "",
+                shared_valid_values: String::new(),
+                items: vec![item],
+            });
+        }
+    }
+
+    for group in &mut groups {
+        if let Some(first) = group.items.first() {
+            if !first.hint.is_empty() && group.items.iter().all(|item| item.hint == first.hint) {
+                group.shared_hint = first.hint;
+            }
+            if !first.valid_values.is_empty()
+                && group
+                    .items
+                    .iter()
+                    .all(|item| item.valid_values == first.valid_values)
+            {
+                group.shared_valid_values = first.valid_values.clone();
+            }
+        }
+    }
+
     let suppressed_blocks = receipt
         .suppressed_blocks
         .iter()
@@ -208,7 +244,7 @@ pub(super) fn render_lint_document(
         warnings: summary.map_or(0, |s| s.warnings),
         infos: summary.map_or(0, |s| s.infos),
         suppressed: summary.map_or(0, |s| s.suppressed),
-        diagnostics,
+        groups,
         suppressed_blocks,
         next_hint: receipt._next_hint.as_deref(),
     })
@@ -330,5 +366,48 @@ mod tests {
         assert!(dirty_text.contains("[error] `QR201` (missing-source) @ `sec_1`"));
         assert!(dirty_text.contains("Call upsert_sources first."));
         assert!(dirty_text.contains("> Next: Fix errors first."));
+
+        let grouped = contracts::LintReceipt {
+            ok: true,
+            rev: 7,
+            summary: Some(LintSummary {
+                errors: 0,
+                warnings: 2,
+                infos: 0,
+                suppressed: 0,
+            }),
+            suppressed_blocks: BTreeMap::new(),
+            diagnostics: vec![
+                Diagnostic {
+                    code: "QR102".into(),
+                    rule: "unused-source".into(),
+                    severity: Severity::Warning,
+                    message: "source `src_a` is registered but never cited".into(),
+                    hint: "add [^<source_id>] to prose".into(),
+                    suppressible: true,
+                    block_id: None,
+                    path: Some("sources.src_a".into()),
+                    valid_values: Vec::new(),
+                },
+                Diagnostic {
+                    code: "QR102".into(),
+                    rule: "unused-source".into(),
+                    severity: Severity::Warning,
+                    message: "source `src_b` is registered but never cited".into(),
+                    hint: "add [^<source_id>] to prose".into(),
+                    suppressible: true,
+                    block_id: None,
+                    path: Some("sources.src_b".into()),
+                    valid_values: Vec::new(),
+                },
+            ],
+            _next_hint: None,
+        };
+        let grouped_text = render_lint_document(&grouped).expect("render grouped lint");
+        assert!(grouped_text.contains("[warning] `QR102` (unused-source) × 2"));
+        assert_eq!(
+            grouped_text.matches("add [^<source_id>] to prose").count(),
+            1
+        );
     }
 }
