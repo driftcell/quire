@@ -12,7 +12,6 @@ allowed_tools:
   - preview_echarts
   - commit_chart
   - preview_report
-  - upsert_sources
   - lint_document
   - list_comments
   - reply_comment

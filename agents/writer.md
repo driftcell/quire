@@ -15,16 +15,6 @@ allowed_tools:
   - read_skill_resource
   - list_comments
   - reply_comment
-  - panorama_report_indicator_info
-  - panorama_report_drill
-  - shuangyou_industry_source
-  - shuangyou_intel_*
-  - shuangyou_planning_*
-  - subjectcloud_detail
-  - subjectcloud_result
-  - subjectcloud_talent_search
-  - subjectcloud_talent_batch
-  - subjectcloud_talent_detail
 enabled: true
 ---
 

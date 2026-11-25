@@ -19,6 +19,9 @@ static YEAR_KEY_RE: LazyLock<Result<Regex, regex::Error>> =
     LazyLock::new(|| Regex::new(r"(?-u:\b)20\d{2}\s*=\s*\d+"));
 static LOCAL_METRIC_RE: LazyLock<Result<Regex, regex::Error>> =
     LazyLock::new(|| Regex::new(r"(?-u:\b)local:\d+(?:\.\d+)+"));
+static PAREN_MODULE_RE: LazyLock<Result<Regex, regex::Error>> = LazyLock::new(|| {
+    Regex::new(r"(?i)[（(]\s*(?:reporting|subject|subjectcloud|panorama_report|shuangyou)\s*[）)]")
+});
 
 const INTERNAL_NAMES: &[&str] = &[
     "FacultyInfo",
@@ -35,9 +38,11 @@ const INTERNAL_NAMES: &[&str] = &[
     "指标库记录",
     "左panel",
     "右panel",
+    "panorama_report",
+    "subjectcloud",
 ];
 
-const SUGGESTION: &str = "将内部参数、数据库主键、结构体名转译为正式出版级业务中文：删去 `(record_id=42)`、`(includeSub=true)`、`(local:4.1.1)` 等实现细节；`FacultyInfo` 写为“高层次人才称号记录”，`指标库口径/指标库记录` 写为“全省统一统计口径”或“数据平台统计记录”，`左panel/右panel` 写为“左图/右图”，无数据单元格填 `—` 或“暂未收录”。";
+const SUGGESTION: &str = "将内部参数、数据库主键、MCP 模块名或结构体名转译为正式出版级业务中文：删去 `(record_id=42)`、`(includeSub=true)`、`(local:4.1.1)`、`（reporting）`、`（subject）`、`panorama_report`、`subjectcloud` 等实现细节；内部库请使用“青塔高等教育全景数据库”“青塔学科发展监测平台”等正式名称，`FacultyInfo` 写为“高层次人才称号记录”，`指标库口径/指标库记录` 写为“全省统一统计口径”或“数据平台统计记录”，`左panel/右panel` 写为“左图/右图”，无数据单元格填 `—` 或“暂未收录”。";
 
 struct VisibleField<'a> {
     text: Cow<'a, str>,
@@ -158,6 +163,42 @@ pub(crate) fn check(context: &LintContext<'_>) -> Vec<Finding> {
             );
         }
     }
+    for (source_id, entry) in &context.document.sources {
+        let mut source_fields = Vec::new();
+        push(
+            &mut source_fields,
+            &entry.title,
+            format!("sources.{source_id}.title"),
+            false,
+        );
+        push_option(
+            &mut source_fields,
+            entry.publisher.as_deref(),
+            format!("sources.{source_id}.publisher"),
+        );
+        push_option(
+            &mut source_fields,
+            entry.note.as_deref(),
+            format!("sources.{source_id}.note"),
+        );
+        for field in source_fields {
+            let leaks = internal_leaks(&field.text, false);
+            if leaks.is_empty() {
+                continue;
+            }
+            engine.report(
+                RuleId::InternalIdentifierLeak,
+                format!(
+                    "source `{}` exposes internal implementation identifiers: {}",
+                    source_id,
+                    leaks.into_iter().collect::<Vec<_>>().join("、")
+                ),
+                SUGGESTION,
+                None,
+                Some(field.path),
+            );
+        }
+    }
     engine.into_findings()
 }
 
@@ -181,6 +222,7 @@ fn internal_leaks(text: &str, table_cell: bool) -> BTreeSet<String> {
         ("assignment", &*ASSIGNMENT_RE),
         ("year key", &*YEAR_KEY_RE),
         ("local metric", &*LOCAL_METRIC_RE),
+        ("parenthetical module", &*PAREN_MODULE_RE),
     ] {
         match pattern {
             Ok(pattern) => {
@@ -252,6 +294,10 @@ mod tests {
             "local:4.1.1",
             "省部级科研平台（指标库口径）",
             "指标库记录显示为12个",
+            "青塔数据库（reporting）",
+            "青塔学科云（subject）",
+            "panorama_report 统计数据",
+            "subjectcloud 数据",
         ] {
             assert!(!internal_leaks(text, false).is_empty(), "{text}");
         }
@@ -272,5 +318,28 @@ mod tests {
             assert!(internal_leaks(text, false).is_empty(), "{text}");
         }
         assert!(internal_leaks("暂未收录", true).is_empty());
+    }
+
+    #[test]
+    fn sources_with_internal_module_tags_trigger_qr424() {
+        let mut doc =
+            quire_protocol::ReportDocument::new(quire_protocol::DocId::parse("doc_1").unwrap());
+        doc.sources.insert(
+            quire_protocol::SourceId::parse("qt_rep_25").unwrap(),
+            quire_protocol::SourceEntry::new("青塔数据库（reporting）"),
+        );
+        doc.sources.insert(
+            quire_protocol::SourceId::parse("qt_ok_25").unwrap(),
+            quire_protocol::SourceEntry::new("青塔高等教育全景数据库 — 国家自然科学基金立项统计"),
+        );
+        let report = crate::lint_document(&doc);
+        let qr424: Vec<_> = report
+            .diagnostics
+            .iter()
+            .filter(|d| d.code == "QR424")
+            .collect();
+        assert_eq!(qr424.len(), 1);
+        assert!(qr424[0].message.contains("qt_rep_25"));
+        assert_eq!(qr424[0].path.as_deref(), Some("sources.qt_rep_25.title"));
     }
 }
