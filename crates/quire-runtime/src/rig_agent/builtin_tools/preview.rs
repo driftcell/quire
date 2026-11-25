@@ -344,9 +344,9 @@ pub(crate) async fn commit_chart_tool(
             ))
         })?;
     let Some(doc_id) = resolved_doc_id else {
-        // Pure chat-session mode: alias the cached preview under `block_id` in Redis
-        // so `<echarts id="block_id"/>` and `<echarts id="preview_id"/>` both render
-        // in chat without creating or linking a report document.
+        // Pure chat-session mode: persist the committed chart under `block_id` in PostgreSQL
+        // so `<echarts id="block_id"/>` renders durably in chat without creating or linking a
+        // report document (and without Redis dual-write / stale-cache drift).
         let target_id = BlockId::parse(block_id.trim()).map_err(tool_other)?;
         let mut aliased = preview.clone();
         aliased.preview_id = target_id.as_str().to_string();
@@ -364,13 +364,6 @@ pub(crate) async fn commit_chart_tool(
             .save_chat_chart(&turn.session_id, &aliased)
             .await
             .map_err(tool_other)?;
-        let _ = runtime
-            .engine
-            .kb
-            .store()
-            .bus()
-            .store_chart_preview(&aliased)
-            .await;
         return Ok(CommitChartReceipt {
             mutation: quire_server::report::ApplyOperationsReceipt {
                 new_revision: 0,

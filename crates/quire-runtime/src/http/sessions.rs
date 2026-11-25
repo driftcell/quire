@@ -68,17 +68,13 @@ pub(crate) async fn get_chart_preview(
     State(service): State<RuntimeService>,
     Path(preview_id): Path<String>,
 ) -> RuntimeResult<Json<ChartPreviewRecord>> {
-    if let Some(cached) = service
-        .store()
-        .bus()
-        .load_chart_preview(&preview_id)
-        .await?
-    {
-        return Ok(Json(cached));
+    if let Some(chart) = service.store().load_chat_chart(&preview_id).await? {
+        return Ok(Json(chart));
     }
     service
         .store()
-        .load_chat_chart(&preview_id)
+        .bus()
+        .load_chart_preview(&preview_id)
         .await?
         .map(Json)
         .ok_or_else(|| RuntimeError::ChartPreviewNotFound(preview_id))

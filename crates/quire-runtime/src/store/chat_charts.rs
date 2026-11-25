@@ -9,17 +9,17 @@ impl RuntimeStore {
         record: &ChartPreviewRecord,
     ) -> RuntimeResult<()> {
         let payload = serde_json::to_value(record)?;
-        sqlx::query!(
+        sqlx::query(
             r#"INSERT INTO chat_charts (chart_id, session_id, payload)
                VALUES ($1, $2, $3)
                ON CONFLICT (chart_id)
                DO UPDATE SET session_id = EXCLUDED.session_id,
                              payload = EXCLUDED.payload,
                              updated_at = NOW()"#,
-            record.preview_id,
-            session_id,
-            payload
         )
+        .bind(&record.preview_id)
+        .bind(session_id)
+        .bind(payload)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -29,13 +29,13 @@ impl RuntimeStore {
         &self,
         chart_id: &str,
     ) -> RuntimeResult<Option<ChartPreviewRecord>> {
-        let row = sqlx::query!(
-            r#"SELECT payload FROM chat_charts WHERE chart_id = $1"#,
-            chart_id.trim()
-        )
-        .fetch_optional(&self.pool)
-        .await?;
-        row.map(|r| serde_json::from_value(r.payload).map_err(Into::into))
+        let payload: Option<serde_json::Value> =
+            sqlx::query_scalar(r#"SELECT payload FROM chat_charts WHERE chart_id = $1"#)
+                .bind(chart_id.trim())
+                .fetch_optional(&self.pool)
+                .await?;
+        payload
+            .map(|value| serde_json::from_value(value).map_err(Into::into))
             .transpose()
     }
 }

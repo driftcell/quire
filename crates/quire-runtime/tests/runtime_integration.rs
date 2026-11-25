@@ -5427,6 +5427,134 @@ async fn chart_preview_endpoint_accepts_preview_jwt_and_hides_expired_previews()
 }
 
 #[tokio::test]
+async fn chat_chart_persists_in_postgres_and_prefers_pg_over_redis() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let session = service
+        .create_session(&unique("chat-chart-session"), None)
+        .await
+        .unwrap();
+    let chart_id = unique("chat-chart");
+    let redis_record = ChartPreviewRecord {
+        preview_id: chart_id.clone(),
+        chart: EchartsBlock {
+            title: Some("Redis Stale".into()),
+            height: 300,
+            option: json!({"series": [{"type": "bar", "data": [1, 2]}]}),
+            option_patch: None,
+            fallback_summary: "Redis stale.".into(),
+            numbering: None,
+            note: None,
+        },
+        requirements: ChartRequirements::default(),
+        tables: vec![],
+        title: Some("Redis Stale".into()),
+        note: None,
+        based_on_preview_id: None,
+        source_ids: vec![],
+        source_note: None,
+    };
+    let mut pg_record = redis_record.clone();
+    pg_record.title = Some("Postgres Durable".into());
+    pg_record.chart.title = Some("Postgres Durable".into());
+    pg_record.chart.option = json!({"series": [{"type": "line", "data": [3, 4]}]});
+
+    store
+        .bus()
+        .store_chart_preview(&redis_record)
+        .await
+        .unwrap();
+    store
+        .save_chat_chart(&session.session_id, &pg_record)
+        .await
+        .unwrap();
+    let loaded = store
+        .load_chat_chart(&chart_id)
+        .await
+        .unwrap()
+        .expect("chat chart persisted in postgres");
+    assert_eq!(loaded.title.as_deref(), Some("Postgres Durable"));
+
+    let preview_token = quire_runtime::auth::issue_preview_jwt(service.config()).unwrap();
+    let app = quire_runtime::http::router(service.clone());
+
+    let pg_over_redis = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/chart-previews/{chart_id}"))
+                .header("authorization", format!("Bearer {preview_token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pg_over_redis.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(pg_over_redis.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["title"], "Postgres Durable");
+    assert_eq!(body["chart"]["option"]["series"][0]["type"], "line");
+
+    store.bus().delete_chart_preview(&chart_id).await.unwrap();
+
+    let after_redis_delete = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/chart-previews/{chart_id}"))
+                .header("authorization", format!("Bearer {preview_token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_redis_delete.status(), axum::http::StatusCode::OK);
+
+    pg_record.title = Some("Postgres Updated".into());
+    pg_record.chart.title = Some("Postgres Updated".into());
+    store
+        .save_chat_chart(&session.session_id, &pg_record)
+        .await
+        .unwrap();
+    let after_upsert = app
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/chart-previews/{chart_id}"))
+                .header("authorization", format!("Bearer {preview_token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_upsert.status(), axum::http::StatusCode::OK);
+    let body = axum::body::to_bytes(after_upsert.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(body["title"], "Postgres Updated");
+
+    service.delete_session(&session.session_id).await.unwrap();
+    assert!(store.load_chat_chart(&chart_id).await.unwrap().is_none());
+    let after_session_delete = app
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!("/api/chart-previews/{chart_id}"))
+                .header("authorization", format!("Bearer {preview_token}"))
+                .body(axum::body::Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        after_session_delete.status(),
+        axum::http::StatusCode::NOT_FOUND
+    );
+}
+
+#[tokio::test]
 async fn session_detail_returns_an_atomic_active_run_snapshot() {
     let _guard = test_lock().lock().await;
     let (service, store) = test_service().await;
