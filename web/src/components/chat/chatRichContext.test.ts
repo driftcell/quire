@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeChatMl } from "@/components/chat/chatRichContext";
+import {
+  buildChatRichContext,
+  normalizeChatMl,
+} from "@/components/chat/chatRichContext";
+import { resolveShortCitationLabel } from "@/components/ui/inline-citation";
 
 describe("normalizeChatMl short ChatML protocol", () => {
   test("extracts self-closing and paired <citation> tags in appearance order and deduplicates", () => {
@@ -29,9 +33,83 @@ describe("normalizeChatMl short ChatML protocol", () => {
   });
 
   test("strips incomplete trailing ChatML tag during streaming without corrupting preceding text", () => {
-    const input = "正在输出结论<citation id=\"nsfc_20";
+    const input = '正在输出结论<citation id="nsfc_20';
     const result = normalizeChatMl(input);
     expect(result.markdown).toBe("正在输出结论");
     expect(result.citedSourceIds).toEqual([]);
+  });
+
+  test("ignores literal placeholder IDs and citation syntax inside inline code or fenced code blocks", () => {
+    const input =
+      '真实数据结论<citation id="zstu_official"/>，占位示例 `[^source_id]` 与 `<citation id="source_id"/>` 以及裸占位 [^source_id] 不应计入引用。';
+    const result = normalizeChatMl(input);
+    expect(result.citedSourceIds).toEqual(["zstu_official"]);
+    expect(result.markdown).toContain(
+      '<citation id="zstu_official"></citation>',
+    );
+    expect(result.markdown).toContain("`[^source_id]`");
+    expect(result.markdown).toContain('`<citation id="source_id"/>`');
+    expect(result.markdown).not.toContain(
+      '<citation id="source_id"></citation>',
+    );
+  });
+
+  test("extracts sources from apply_operations object maps and resolves Mapped canonical aliases", () => {
+    const ctx = buildChatRichContext(
+      null,
+      [
+        {
+          run_id: "run_1",
+          status: "completed",
+          segments: [
+            {
+              kind: "execution",
+              tools: [
+                {
+                  tool_call_id: "tc_1",
+                  tool_name: "apply_operations",
+                  status: "completed",
+                  input_preview: JSON.stringify({
+                    sources: {
+                      zstu_25: {
+                        title: "浙江理工大学2025年科研统计公报",
+                        publisher: "浙江理工大学官网",
+                        url: "https://www.zstu.edu.cn/report",
+                      },
+                    },
+                  }),
+                },
+                {
+                  tool_call_id: "tc_2",
+                  tool_name: "upsert_sources",
+                  status: "completed",
+                  input_preview: JSON.stringify({
+                    sources: [
+                      {
+                        id: "zstu_dup",
+                        title: "浙江理工大学2025年科研统计公报",
+                        publisher: "浙江理工大学官网",
+                      },
+                    ],
+                  }),
+                  output_preview: JSON.stringify({
+                    text: "OK — doc rev=2\nMapped: zstu_dup -> zstu_25",
+                  }),
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      null,
+      [],
+    );
+
+    const resolved = ctx.sources.get("zstu_25");
+    expect(resolved?.publisher).toBe("浙江理工大学官网");
+    expect(resolveShortCitationLabel(resolved, "zstu_25")).toBe(
+      "浙江理工大学官网",
+    );
+    expect(ctx.sources.get("zstu_dup")?.publisher).toBe("浙江理工大学官网");
   });
 });

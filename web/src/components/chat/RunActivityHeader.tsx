@@ -419,7 +419,9 @@ export const RunActivityHeader = memo(function RunActivityHeader({
           }));
 
   const hasMultiStepPlan = model.todos.length > 0 || planSteps.length > 1;
-  const hasExpandableStages = planSteps.length > 0 || subCount > 0;
+  const hasExpandableDetail = Boolean(!isStreaming && model.detail);
+  const hasExpandableStages =
+    planSteps.length > 0 || subCount > 0 || hasExpandableDetail;
   const activeStepDetail =
     planSteps.find((step) => step.status === "in_progress")?.description ??
     planSteps.find((step) => step.status === "pending")?.description;
@@ -479,10 +481,20 @@ export const RunActivityHeader = memo(function RunActivityHeader({
           type="button"
           data-live-header-toggle="true"
           data-activity-trigger="true"
-          aria-expanded={detailsOpen}
-          aria-label={detailsOpen ? "收起执行过程" : "展开执行过程"}
-          onClick={onToggleDetails}
-          className="group/canvas flex min-w-0 flex-1 items-start gap-2.5 rounded-sm py-0.5 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          disabled={!hasExpandableStages}
+          aria-expanded={hasExpandableStages ? detailsOpen : undefined}
+          aria-label={
+            hasExpandableStages
+              ? detailsOpen
+                ? "收起执行过程"
+                : "展开执行过程"
+              : undefined
+          }
+          onClick={hasExpandableStages ? onToggleDetails : undefined}
+          className={cn(
+            "group/canvas flex min-w-0 flex-1 items-start gap-2.5 rounded-sm py-0.5 text-left focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+            !hasExpandableStages && "cursor-default",
+          )}
         >
           <span
             data-slot="agent-status"

@@ -7,8 +7,11 @@ import {
 import { HistoricalMessageItem } from "@/components/chat/HistoricalMessageItem";
 import { SessionStreamView } from "@/components/chat/SessionStreamView";
 import { UserMessageBubble } from "@/components/chat/UserMessageBubble";
+import { ChatRichContext } from "@/components/chat/chatRichContext";
 import { PromptComposer } from "@/components/chat/PromptComposer";
 import { QuestionCard } from "@/components/chat/QuestionCard";
+import { RunActivityHeader } from "@/components/chat/RunActivityHeader";
+import { SmoothStreamdown } from "@/components/chat/SmoothStreamdown";
 import type { RenderSegment } from "@/components/chat/traceSegments";
 import type {
   PendingQuestion,
@@ -606,5 +609,81 @@ describe("Borderless editorial chat", () => {
 
     expect(html).toContain("确认研报范围");
     expect(html).not.toContain('data-live-header="true"');
+  });
+
+  test("SmoothStreamdown renders full tables without max-height, short citation tags, and omits empty source_id footer entries", () => {
+    const sources = new Map([
+      [
+        "zstu_web",
+        {
+          id: "zstu_web",
+          index: 1,
+          title: "浙江理工大学“十四五”学科建设规划",
+          publisher: "浙江理工大学官网",
+          url: "https://www.zstu.edu.cn/plan",
+        },
+      ],
+      [
+        "ihe_rep",
+        {
+          id: "ihe_rep",
+          index: 2,
+          title: "省属高校学科竞争力评估报告",
+          publisher: "高等教育研究所",
+          excerpt: "省属重点高校在纺织科学与工程等学科保持领先。",
+        },
+      ],
+    ]);
+
+    const markdown = [
+      "核心结论已由官方渠道验证<citation id=\"zstu_web\"/>并参考研究所数据<citation id=\"ihe_rep\"/>，忽略未登记的占位引用<citation id=\"source_id\"/>与幻觉引用<citation id=\"dangling_unknown\"/>。",
+      "",
+      "| 高校 | 指标 |",
+      "| --- | --- |",
+      "| 浙江理工大学 | 18 |",
+    ].join("\n");
+
+    const html = renderToStaticMarkup(
+      <ChatRichContext.Provider value={{ sources, charts: new Map() }}>
+        <SmoothStreamdown text={markdown} isStreaming={false} />
+      </ChatRichContext.Provider>,
+    );
+
+    // 1. No vertical max-height on streamdown table container
+    expect(html).toContain('data-streamdown="table"');
+    expect(html).not.toContain("max-height:300px");
+
+    // 2. Inline citations render short publisher/source labels instead of bare numbers
+    expect(html).toContain(">浙江理工大学官网</span>");
+    expect(html).toContain(">高等教育研究所</span>");
+
+    // 3. Sources footer includes only real resolved sources (2 sources, no "source_id" or dangling entry)
+    expect(html).toContain("2 个参考来源");
+    expect(html).not.toContain(">source_id<");
+    expect(html).not.toContain("dangling_unknown");
+  });
+
+  test("RunActivityHeader disables pointer and toggle button when settled run has no expandable stages", () => {
+    const html = renderToStaticMarkup(
+      <RunActivityHeader
+        model={{
+          title: "已完成问答回复",
+          status: "completed",
+          toolCount: 0,
+          completedToolCount: 0,
+          recentMainTools: [],
+          subagents: [],
+          milestones: [],
+          todos: [],
+        }}
+        isStreaming={false}
+        detailsOpen={false}
+        onToggleDetails={() => {}}
+      />,
+    );
+
+    expect(html).toContain("disabled");
+    expect(html).toContain("cursor-default");
+    expect(html).not.toContain("aria-expanded");
   });
 });

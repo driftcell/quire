@@ -12,6 +12,7 @@ import {
 } from "@/components/chat/chatMarkdown";
 import {
   ChatMessageCitationOrderContext,
+  isPlaceholderCitationId,
   normalizeChatMl,
   stripClobberPrefix,
   useChatMessageCitationOrder,
@@ -44,6 +45,25 @@ const CHATML_ALLOWED_TAGS: AllowedTags = {
   echarts: ["id"],
 };
 
+function hasRenderableSourceMetadata(
+  source: InlineCitationSource | undefined,
+): source is InlineCitationSource {
+  if (!source) return false;
+  const title = source.title?.trim() ?? "";
+  const hasDistinctTitle =
+    title.length > 0 &&
+    title !== source.id &&
+    !isPlaceholderCitationId(title);
+  return Boolean(
+    hasDistinctTitle ||
+      source.url?.trim() ||
+      source.publisher?.trim() ||
+      source.author?.trim() ||
+      source.excerpt?.trim() ||
+      source.note?.trim(),
+  );
+}
+
 const ChatMlFallbackRenderer: ComponentType<
   Record<string, unknown> & ExtraProps
 > = ({ node, ...props }) => {
@@ -58,10 +78,19 @@ const ChatMlFallbackRenderer: ComponentType<
   }
 
   if (tagName === "citation") {
+    if (isPlaceholderCitationId(rawId)) {
+      return null;
+    }
+    const source = sources.get(rawId);
+    // When sources are registered in this session, suppress dangling / hallucinated IDs
+    // that have no metadata instead of rendering raw internal slugs.
+    if (!hasRenderableSourceMetadata(source) && sources.size > 0) {
+      return null;
+    }
     return (
       <InlineCitation
         sourceId={rawId}
-        source={sources.get(rawId)}
+        source={source}
         index={citationOrderMap.get(rawId)}
       />
     );
@@ -81,27 +110,36 @@ export function ChatSourcesFooter({
   citedSourceIds: string[];
   sourcesMap: ReadonlyMap<string, InlineCitationSource>;
 }) {
-  if (citedSourceIds.length === 0) {
+  const resolvedEntries = useMemo(() => {
+    const items: Array<{ sourceId: string; entry: InlineCitationSource }> = [];
+    for (const sourceId of citedSourceIds) {
+      if (isPlaceholderCitationId(sourceId)) continue;
+      const entry = sourcesMap.get(sourceId);
+      if (hasRenderableSourceMetadata(entry)) {
+        items.push({ sourceId, entry });
+      }
+    }
+    return items;
+  }, [citedSourceIds, sourcesMap]);
+
+  if (resolvedEntries.length === 0) {
     return null;
   }
 
   return (
     <Sources defaultOpen={false}>
-      <SourcesTrigger count={citedSourceIds.length} />
+      <SourcesTrigger count={resolvedEntries.length} />
       <SourcesContent>
-        {citedSourceIds.map((sourceId, idx) => {
-          const entry = sourcesMap.get(sourceId);
-          return (
-            <Source
-              key={sourceId}
-              index={idx + 1}
-              href={entry?.url ?? undefined}
-              title={entry?.title ?? sourceId}
-              publisher={entry?.publisher ?? entry?.author ?? undefined}
-              excerpt={entry?.excerpt ?? undefined}
-            />
-          );
-        })}
+        {resolvedEntries.map(({ sourceId, entry }, idx) => (
+          <Source
+            key={sourceId}
+            index={idx + 1}
+            href={entry.url ?? undefined}
+            title={entry.title}
+            publisher={entry.publisher ?? entry.author ?? undefined}
+            excerpt={entry.excerpt ?? undefined}
+          />
+        ))}
       </SourcesContent>
     </Sources>
   );
@@ -136,13 +174,23 @@ export function SmoothStreamdown({
     [smoothedText],
   );
 
+  const validCitedSourceIds = useMemo(
+    () =>
+      citedSourceIds.filter((id) => {
+        if (isPlaceholderCitationId(id)) return false;
+        const entry = sources.get(id);
+        return hasRenderableSourceMetadata(entry) || sources.size === 0;
+      }),
+    [citedSourceIds, sources],
+  );
+
   const citationOrderMap = useMemo(() => {
     const map = new Map<string, number>();
-    citedSourceIds.forEach((id, index) => {
+    validCitedSourceIds.forEach((id, index) => {
       map.set(id, index + 1);
     });
     return map;
-  }, [citedSourceIds]);
+  }, [validCitedSourceIds]);
 
   return (
     <ChatMessageCitationOrderContext.Provider value={citationOrderMap}>
@@ -153,6 +201,7 @@ export function SmoothStreamdown({
             isAnimating={animating}
             animated={false}
             controls={controls}
+            tableMaxHeight="none"
             allowedTags={CHATML_ALLOWED_TAGS}
             fallbackComponent={ChatMlFallbackRenderer}
           >
@@ -160,7 +209,7 @@ export function SmoothStreamdown({
           </Streamdown>
         </div>
         <ChatSourcesFooter
-          citedSourceIds={citedSourceIds}
+          citedSourceIds={validCitedSourceIds}
           sourcesMap={sources}
         />
       </div>

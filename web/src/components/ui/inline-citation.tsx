@@ -36,10 +36,50 @@ function extractDomainLabel(url: string | null | undefined): string | null {
   }
 }
 
+function truncateShortLabel(text: string, maxChars = 16): string {
+  const clean = text.replace(/^[《「『【]|[》」』】]$/g, "").trim();
+  const chars = Array.from(clean);
+  if (chars.length <= maxChars) {
+    return clean;
+  }
+  return `${chars.slice(0, maxChars).join("")}…`;
+}
+
 /**
- * Vercel / Perplexity-inspired Inline Citation badge + HoverCard.
- * Renders a refined, compact numeric pill inline so prose line-height and
- * copy-paste rhythm are never disrupted, and reveals the full source card on hover or click.
+ * Derive a concise, human-readable short tag for an inline citation badge
+ * (e.g. "浙江理工大学官网", "高等教育研究所", "青塔教育", "浙江省人民政府").
+ */
+export function resolveShortCitationLabel(
+  source: InlineCitationSource | undefined,
+  sourceId: string,
+): string {
+  const publisher = source?.publisher?.trim();
+  if (publisher) {
+    return truncateShortLabel(publisher);
+  }
+  const author = source?.author?.trim();
+  if (author) {
+    return truncateShortLabel(author);
+  }
+  const rawTitle = source?.title?.trim();
+  if (rawTitle && rawTitle !== sourceId) {
+    const prefix = rawTitle.split(/\s*(?:[—–\-｜|·:：]|——)\s*/)[0]?.trim();
+    if (prefix && prefix.length >= 2) {
+      return truncateShortLabel(prefix);
+    }
+    return truncateShortLabel(rawTitle);
+  }
+  const domain = extractDomainLabel(source?.url);
+  if (domain) {
+    return truncateShortLabel(domain, 20);
+  }
+  return truncateShortLabel(sourceId, 16);
+}
+
+/**
+ * Inline Citation short-tag badge + HoverCard.
+ * Renders a concise semantic source label inline (e.g. "浙江理工大学官网", "高等教育研究所")
+ * and reveals the full source provenance card on hover or click.
  */
 export function InlineCitation({
   sourceId,
@@ -55,10 +95,7 @@ export function InlineCitation({
     source?.author?.trim() ||
     extractDomainLabel(source?.url);
 
-  const badgeText =
-    displayIndex !== undefined
-      ? String(displayIndex)
-      : sourceId.slice(0, 6);
+  const badgeText = resolveShortCitationLabel(source, sourceId);
 
   return (
     <HoverCard open={open} onOpenChange={setOpen}>
@@ -75,13 +112,13 @@ export function InlineCitation({
               setOpen((prev) => !prev);
             }}
             className={cn(
-              "mx-0.5 inline-flex h-[18px] min-w-[18px] -translate-y-[1px] cursor-pointer items-center justify-center rounded-full border border-border/80 bg-foreground/[0.045] px-1.5 font-mono text-[10.5px] leading-none font-medium text-foreground/80 tabular-nums align-baseline transition-colors hover:border-foreground/50 hover:bg-foreground hover:text-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+              "mx-0.5 inline-flex h-[19px] max-w-[14rem] -translate-y-[0.5px] cursor-pointer items-center justify-center rounded-full border border-border/80 bg-foreground/[0.045] px-2 text-[11px] leading-none font-medium text-foreground/80 align-baseline transition-colors hover:border-foreground/50 hover:bg-foreground hover:text-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
               className,
             )}
           />
         }
       >
-        {badgeText}
+        <span className="truncate">{badgeText}</span>
       </HoverCardTrigger>
 
       <HoverCardContent
