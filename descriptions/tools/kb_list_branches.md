@@ -1,1 +1,0 @@
-List all knowledge-base branches (`active`, `draft`, `archived`) with their `base_version`, `head_version`, and the 20 most recent immutable snapshots (`recent_snapshots`, used to select a target `version` for `kb_rollback_active`).

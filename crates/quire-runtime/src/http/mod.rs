@@ -96,6 +96,10 @@ pub fn router(service: RuntimeService) -> Router {
         )
         .route("/api/sessions/{session_id}/messages", post(post_message))
         .route(
+            "/api/docs/{doc_id}/deep-check",
+            get(get_deep_check_status).post(trigger_deep_check),
+        )
+        .route(
             "/api/sessions/{session_id}/comments",
             post(create_session_comment),
         )
@@ -214,6 +218,7 @@ pub fn router(service: RuntimeService) -> Router {
 
 pub(crate) use auth::*;
 pub(crate) use auth_routes::*;
+pub(crate) use deep_check::*;
 pub(crate) use kb::*;
 pub(crate) use registry::*;
 pub(crate) use session_events::*;
@@ -221,6 +226,7 @@ pub(crate) use sessions::*;
 
 mod auth;
 mod auth_routes;
+mod deep_check;
 mod kb;
 mod registry;
 mod session_events;

@@ -256,25 +256,10 @@ impl RuntimeService {
     }
 
     pub fn report_app_state(&self) -> quire_server::AppState {
-        let bind_addr: std::net::SocketAddr = self
-            .config
-            .bind_addr
-            .parse()
-            .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 8081)));
-        let server_config = quire_server::Config {
-            bind_addr,
-            database_url: secrecy::SecretString::from(self.config.database_url.clone()),
-            redis_url: secrecy::SecretString::from(self.config.redis_url.clone()),
-            rw_token: None,
-            ro_token: None,
-            jwt_secret: Some(self.config.jwt_secret.clone()),
-            allowed_hosts: self.config.mcp_allowed_hosts(),
-            cors_allowed_origins: Vec::new(),
-            sse_heartbeat: Duration::from_millis(self.config.sse_heartbeat_ms),
-            auto_migrate: false,
-            mcp_json_response: true,
-        };
-        quire_server::AppState::new(self.store.report_store().clone(), server_config)
+        quire_server::AppState::new(
+            self.store.report_store().clone(),
+            self.config.to_report_server_config(),
+        )
     }
 
     async fn delete_server_comment(&self, session_id: &str, thread_id: &str) -> RuntimeResult<()> {

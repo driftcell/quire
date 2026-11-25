@@ -1,1 +1,0 @@
-Reply to a review comment thread (`thread_id`) in `doc_id` and optionally transition an `"open"` thread to `"addressed"` by setting `mark_addressed: true` and `addressed_rev` (defaults to the current document revision). Always commit the underlying document fix via `apply_operations` or `commit_chart` before marking a thread addressed. Agents cannot archive or reopen threads.

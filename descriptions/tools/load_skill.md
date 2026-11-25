@@ -1,1 +1,0 @@
-Load a skill definition (`SKILL.md` body and list of bundled resource file paths) by `name` (e.g. `"higher-education-writing"`) from the session's knowledge-base branch. To read a specific bundled reference file listed in the skill, follow up with `read_skill_resource(skill, path)`.

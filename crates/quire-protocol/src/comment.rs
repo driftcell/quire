@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{BlockId, DocId, Revision};
+use crate::{BlockId, DocId, EvaluationThreadMeta, Revision};
 
 /// Who wrote a comment or reply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -102,7 +102,7 @@ pub struct CommentMessage {
 }
 
 /// A side-channel review thread anchored to one or more blocks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct CommentThread {
     pub thread_id: String,
     pub doc_id: DocId,
@@ -131,6 +131,8 @@ pub struct CommentThread {
     pub addressed_rev: Option<Revision>,
     /// True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.
     pub anchor_detached: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluation_meta: Option<EvaluationThreadMeta>,
     pub messages: Vec<CommentMessage>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -180,6 +182,7 @@ mod tests {
             created_rev: revision(4),
             addressed_rev: None,
             anchor_detached: false,
+            evaluation_meta: None,
             messages: vec![message()],
             created_at: Utc::now(),
             updated_at: Utc::now(),

@@ -1,1 +1,0 @@
-Globally enable or disable one synced MCP tool (`server_id`, `tool_name`, `enabled`). The tool must already exist in `mcp_list_tools` (synced via `mcp_sync_tools`), or the call will fail. Disabled tools are stripped from all agents even if matched by an agent's `allowed_tools`.

@@ -8,7 +8,7 @@ use std::{
 
 use secrecy::SecretString;
 
-use crate::{oss::OssConfig, sandbox::SandboxConfig};
+use crate::{models::EvaluatorConfig, oss::OssConfig, sandbox::SandboxConfig};
 
 #[derive(Clone)]
 pub struct Config {
@@ -36,6 +36,7 @@ pub struct Config {
     pub playwright_mcp_url: Option<String>,
     pub sandbox: SandboxConfig,
     pub oss: OssConfig,
+    pub evaluator: EvaluatorConfig,
 }
 
 impl Debug for Config {
@@ -72,6 +73,7 @@ impl Debug for Config {
             .field("playwright_mcp_url", &self.playwright_mcp_url)
             .field("sandbox", &self.sandbox)
             .field("oss", &self.oss)
+            .field("evaluator", &self.evaluator)
             .finish()
     }
 }
@@ -155,6 +157,7 @@ impl Config {
             .filter(|value| !value.trim().is_empty());
         let sandbox = SandboxConfig::from_env();
         let oss = OssConfig::from_env();
+        let evaluator = EvaluatorConfig::from_env();
         Self {
             database_url,
             redis_url,
@@ -180,6 +183,7 @@ impl Config {
             playwright_mcp_url,
             sandbox,
             oss,
+            evaluator,
         }
     }
 
@@ -204,6 +208,27 @@ impl Config {
                     "[::1]".into(),
                 ]
             })
+    }
+
+    /// Build the shared in-process `quire_server::Config` from this runtime config.
+    pub fn to_report_server_config(&self) -> quire_server::Config {
+        let bind_addr: std::net::SocketAddr = self
+            .bind_addr
+            .parse()
+            .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 8081)));
+        quire_server::Config {
+            bind_addr,
+            database_url: SecretString::from(self.database_url.clone()),
+            redis_url: SecretString::from(self.redis_url.clone()),
+            rw_token: None,
+            ro_token: None,
+            jwt_secret: Some(self.jwt_secret.clone()),
+            allowed_hosts: self.mcp_allowed_hosts(),
+            cors_allowed_origins: Vec::new(),
+            sse_heartbeat: std::time::Duration::from_millis(self.sse_heartbeat_ms),
+            auto_migrate: false,
+            mcp_json_response: true,
+        }
     }
 }
 
@@ -245,6 +270,10 @@ mod tests {
             playwright_mcp_url: None,
             sandbox,
             oss,
+            evaluator: EvaluatorConfig {
+                api_key: Some(SecretString::from("jev-secret-value")),
+                ..EvaluatorConfig::default()
+            },
         };
         let rendered = format!("{config:?}");
         assert!(rendered.contains("[REDACTED]"));
@@ -255,5 +284,6 @@ mod tests {
         assert!(!rendered.contains("sandbox-secret"));
         assert!(!rendered.contains("oss-access-key"));
         assert!(!rendered.contains("oss-secret-value"));
+        assert!(!rendered.contains("jev-secret-value"));
     }
 }

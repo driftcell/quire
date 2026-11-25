@@ -146,6 +146,38 @@ pub struct ResolvedModel {
     pub api_key: SecretString,
 }
 
+/// Compute the RMB (CNY) cost of a single completion call from its token counts
+/// using `rig::completion::{CacheCost, CacheRates}` for cache-split accounting.
+pub fn calculate_usage_cost_rmb(
+    cost_input: Option<f64>,
+    cost_output: Option<f64>,
+    cost_cache_read: Option<f64>,
+    input_tokens: u64,
+    output_tokens: u64,
+    cached_tokens: u64,
+) -> Option<f64> {
+    if cost_input.is_none() && cost_output.is_none() && cost_cache_read.is_none() {
+        return None;
+    }
+    let usage = rig::completion::Usage::new()
+        .input_tokens(input_tokens)
+        .output_tokens(output_tokens)
+        .cached_input_tokens(cached_tokens.min(input_tokens));
+    let cache_cost = rig::completion::CacheCost::from_usage(&usage);
+    let input_rate = cost_input.unwrap_or(0.0);
+    let cache_rate = cost_cache_read.or(cost_input).unwrap_or(0.0);
+    let output_rate = cost_output.unwrap_or(0.0);
+    let rates = rig::completion::CacheRates {
+        input: input_rate,
+        cached_read: cache_rate,
+        cache_write: 0.0,
+        storage_per_hour: 0.0,
+    };
+    let input_cost = cache_cost.usd(&rates);
+    let output_cost = ((output_tokens as f64) * output_rate) / 1_000_000.0;
+    Some(input_cost + output_cost)
+}
+
 impl ResolvedModel {
     /// Compute the RMB (CNY) cost of a single completion call from its token counts.
     /// `cost_input`, `cost_output`, and `cost_cache_read` are priced in RMB per 1,000,000 tokens.
@@ -155,19 +187,13 @@ impl ResolvedModel {
         output_tokens: u64,
         cached_tokens: u64,
     ) -> Option<f64> {
-        if self.cost_input.is_none() && self.cost_output.is_none() && self.cost_cache_read.is_none()
-        {
-            return None;
-        }
-        let uncached_input = input_tokens.saturating_sub(cached_tokens);
-        let input_rate = self.cost_input.unwrap_or(0.0);
-        let output_rate = self.cost_output.unwrap_or(0.0);
-        let cache_rate = self.cost_cache_read.or(self.cost_input).unwrap_or(0.0);
-        Some(
-            ((uncached_input as f64) * input_rate
-                + (cached_tokens as f64) * cache_rate
-                + (output_tokens as f64) * output_rate)
-                / 1_000_000.0,
+        calculate_usage_cost_rmb(
+            self.cost_input,
+            self.cost_output,
+            self.cost_cache_read,
+            input_tokens,
+            output_tokens,
+            cached_tokens,
         )
     }
 }

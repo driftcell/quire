@@ -1,1 +1,0 @@
-Read a file at `path` (up to 256 KiB) from this run's sandbox. Returns `encoding: "utf-8"` with plain text or `encoding: "base64"` for binary files. Reading a file larger than 256 KiB will fail—use `sandbox_execute` with Python or Bash to inspect or chunk large files.

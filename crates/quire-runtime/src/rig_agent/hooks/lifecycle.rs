@@ -86,6 +86,17 @@ impl ToolLifecycleHook {
 }
 
 impl AgentHook for ToolLifecycleHook {
+    fn observes(&self, kind: StepEventKind) -> bool {
+        matches!(
+            kind,
+            StepEventKind::CompletionCall
+                | StepEventKind::ModelTurnFinished
+                | StepEventKind::ToolCallDelta
+                | StepEventKind::ToolDispatch
+                | StepEventKind::InvalidToolCall
+        )
+    }
+
     async fn on_completion_call(
         &self,
         _ctx: &HookContext,

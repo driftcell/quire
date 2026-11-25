@@ -73,7 +73,6 @@ fn quickstart() -> GuideReceipt {
 Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
 
 1. INIT
-   - Send `X-Session-Id` on MCP HTTP requests so the frontend can discover your report.
    - Call `create_report(title, idempotency_key?)`. If the user agreed a total length, pass `target_prose_chars` (e.g. 30000 for 约3万字). It returns `doc_id` and `revision`.
    - If you already have a doc, call `list_reports` and `get_document_digest(doc_id)`.
 
@@ -96,7 +95,6 @@ Workflow: INIT -> SCHEMA -> AUTHOR -> VERIFY.
    - Only when a diagnostic has `suppressible: true` and the rule genuinely does not apply may you ignore it through `PatchBlock.lint_ignore`. Never use ignore to hide a real problem; core contract and safety rules are never suppressible.
    - `read_as_markdown(doc_id)` gives block anchors, flattened tables and expanded chart data for review.
    - On the delivery revision check digest `prose_char_count`, `target_prose_chars`, and `prose_char_delta` (actual minus agreed). If under the agreed length, add substantive analysis or disclose the gap; do not treat clean lint as meeting the target.
-   - `GET /api/docs/{doc_id}` supplies canonical JSON plus `computed.table_layouts`, `computed.citation_map`, `computed.bibliography`, `computed.toc_tree` to the external frontend.
 
 Rules:
 - Do not invent IDs. On lookup failure use the `hint`/`valid_values` in the error.

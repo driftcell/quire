@@ -7,7 +7,8 @@ use rig::{
         AgentHook, CompletionCallAction, CompletionCallEvent, DispatchAction, DispatchEvent,
         HookContext, InvalidToolCallAction, InvalidToolCallContext, InvalidToolCallReason,
         ModelTurnAction, ModelTurnFinished, ObservationAction, OutcomeAction, OutcomeEvent,
-        ReasoningDelta, RequestPatch, RunStart, RunStartAction, TextDelta, ToolCallDelta,
+        ReasoningDelta, RequestPatch, RunStart, RunStartAction, StepEventKind, TextDelta,
+        ToolCallDelta,
     },
     completion::Document,
     message::AssistantContent,
@@ -76,19 +77,13 @@ impl ModelTurnPricing {
         output_tokens: u64,
         cached_tokens: u64,
     ) -> Option<f64> {
-        if self.cost_input.is_none() && self.cost_output.is_none() && self.cost_cache_read.is_none()
-        {
-            return None;
-        }
-        let uncached_input = input_tokens.saturating_sub(cached_tokens);
-        let input_rate = self.cost_input.unwrap_or(0.0);
-        let output_rate = self.cost_output.unwrap_or(0.0);
-        let cache_rate = self.cost_cache_read.or(self.cost_input).unwrap_or(0.0);
-        Some(
-            ((uncached_input as f64) * input_rate
-                + (cached_tokens as f64) * cache_rate
-                + (output_tokens as f64) * output_rate)
-                / 1_000_000.0,
+        crate::models::calculate_usage_cost_rmb(
+            self.cost_input,
+            self.cost_output,
+            self.cost_cache_read,
+            input_tokens,
+            output_tokens,
+            cached_tokens,
         )
     }
 }
@@ -170,20 +165,27 @@ impl TurnControlHook {
         }
     }
 
-    pub(super) fn session_documents(&self) -> Vec<Document> {
-        let mut documents = Vec::new();
-        if let Some(notice) = self.kb_update_notice.as_ref() {
-            documents.push(Document {
-                id: "quire-knowledge-update".into(),
-                text: notice.clone(),
-                additional_props: Default::default(),
-            });
-        }
-        documents
+    pub(super) fn session_document(&self) -> Option<Document> {
+        self.kb_update_notice.as_ref().map(|notice| Document {
+            id: "quire-knowledge-update".into(),
+            text: notice.clone(),
+            additional_props: Default::default(),
+        })
     }
 }
 
 impl AgentHook for TurnControlHook {
+    fn observes(&self, kind: StepEventKind) -> bool {
+        matches!(
+            kind,
+            StepEventKind::RunStart
+                | StepEventKind::CompletionCall
+                | StepEventKind::ModelTurnFinished
+                | StepEventKind::TextDelta
+                | StepEventKind::ReasoningDelta
+        )
+    }
+
     async fn on_run_start(&self, _ctx: &HookContext, _event: RunStart<'_>) -> RunStartAction {
         if self.execution.cancellation.is_cancelled() {
             terminate(&self.state, RunTermination::Cancelled).await;
@@ -242,11 +244,10 @@ impl AgentHook for TurnControlHook {
                 }
             }
         }
-        let documents = self.session_documents();
-        if documents.is_empty() {
-            CompletionCallAction::continue_run()
+        if let Some(document) = self.session_document() {
+            CompletionCallAction::patch(RequestPatch::new().context(document))
         } else {
-            CompletionCallAction::patch(RequestPatch::new().extra_context(documents))
+            CompletionCallAction::continue_run()
         }
     }
 

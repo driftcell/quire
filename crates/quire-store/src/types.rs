@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use quire_protocol::{
-    BlockId, CommentAuthorType, Diagnostic, DocId, PatchOutcome, ReportDocument, Revision,
-    SessionId, SourceEntry, SourceId, TextQuoteSelector,
+    BlockId, CommentAuthorType, Diagnostic, DocId, EvaluationThreadMeta, PatchOutcome,
+    ReportDocument, Revision, SessionId, SourceEntry, SourceId, TextQuoteSelector,
 };
 use serde::{Deserialize, Serialize};
 
@@ -111,6 +111,7 @@ pub struct NewCommentThread {
     pub end_quote: Option<TextQuoteSelector>,
     /// Optional frontend-authored snapshot containing media placeholders.
     pub anchor_snapshot: Option<String>,
+    pub evaluation_meta: Option<EvaluationThreadMeta>,
 }
 
 /// Input for appending one reply to an existing comment thread.

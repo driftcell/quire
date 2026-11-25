@@ -310,6 +310,7 @@ pub(crate) async fn create_session_comment(
                 quote: request.quote,
                 end_quote: request.end_quote,
                 anchor_snapshot: request.anchor_snapshot,
+                evaluation_meta: None,
             },
         )
         .await

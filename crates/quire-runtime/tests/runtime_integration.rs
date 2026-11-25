@@ -238,6 +238,7 @@ fn test_config(base_url: &str) -> Config {
         playwright_mcp_url: None,
         sandbox: quire_runtime::sandbox::SandboxConfig::default(),
         oss: quire_runtime::oss::OssConfig::default(),
+        evaluator: quire_runtime::models::EvaluatorConfig::default(),
     }
 }
 
@@ -4956,6 +4957,7 @@ async fn addressed_comment_reply_auto_triggers_agent() {
                 quote: None,
                 end_quote: None,
                 anchor_snapshot: None,
+                evaluation_meta: None,
             },
         )
         .await
@@ -5035,6 +5037,7 @@ async fn open_comment_reply_also_triggers_agent() {
                 quote: None,
                 end_quote: None,
                 anchor_snapshot: None,
+                evaluation_meta: None,
             },
         )
         .await

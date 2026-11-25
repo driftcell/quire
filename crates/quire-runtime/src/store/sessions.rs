@@ -270,9 +270,15 @@ impl RuntimeStore {
             };
         let mut sessions = Vec::with_capacity(rows.len());
         for row in &rows {
-            let mut summary = row_to_summary(row)?;
-            summary.last_event_seq = self.bus.current_event_seq(&summary.session_id).await?;
-            sessions.push(summary);
+            sessions.push(row_to_summary(row)?);
+        }
+        let session_ids: Vec<String> = sessions
+            .iter()
+            .map(|summary| summary.session_id.clone())
+            .collect();
+        let seqs = self.bus.current_event_seqs(&session_ids).await?;
+        for (summary, seq) in sessions.iter_mut().zip(seqs) {
+            summary.last_event_seq = seq;
         }
         Ok(sessions)
     }

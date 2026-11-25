@@ -541,6 +541,7 @@ async fn cross_block_comments_persist_anchor_range_and_survive_partial_deletion(
                     prefix: Some("End paragraph ".into()),
                     suffix: None,
                 }),
+                evaluation_meta: None,
                 anchor_snapshot: Some(
                     "Start paragraph selected text … [表格: Bridge table] … End paragraph selected text"
                         .into(),
@@ -929,6 +930,7 @@ async fn comments_survive_block_deletion_without_touching_revisions() {
                 }),
                 end_quote: None,
                 anchor_snapshot: None,
+                evaluation_meta: None,
             },
         )
         .await

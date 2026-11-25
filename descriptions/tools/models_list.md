@@ -1,1 +1,0 @@
-List registered LLM model routes with `id` (referenced by `kb_upsert_agent.model`), `provider_id`, `model_id`, `context_limit`, `max_output_tokens`, capability flags (`supports_reasoning`, `supports_tools`, `supports_vision`), and pricing (`cost_input`, `cost_output`, `cost_cache_read` in RMB/CNY per 1M tokens).

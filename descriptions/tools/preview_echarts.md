@@ -1,4 +1,0 @@
-Validate and render an ECharts 6.0 chart in headless Chromium before committing it to the report.
-- First call: Pass the complete native ECharts `option` JSON object (no JS functions `function(` or `=>`), plus outer block metadata: `title` (do not duplicate the main title inside `option.title`), `note` (units and scope, <=120 chars), `fallback_summary` (one-sentence quantitative takeaway with extremes/trends), `height` (default `360`; use `460..520` for 2x2 grids), and `source_ids` / `source_note`.
-- Refinement calls: Pass `based_on_preview_id` and a minimal `option_patch` (arrays like `series`/`xAxis`/`yAxis`/`grid` merge element-by-element); never resend `option` when `based_on_preview_id` is set, or the call will fail.
-- Receipt: Returns `preview_id` (valid for 30 minutes), `lint_issues`, `preview_url`, and a rendered PNG screenshot for vision-capable models. Fix all errors and visual overlaps before calling `commit_chart`.

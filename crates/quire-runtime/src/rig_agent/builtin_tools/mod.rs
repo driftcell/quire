@@ -11,7 +11,7 @@ use quire_protocol::{
 use quire_session_protocol::QuestionItem;
 use rig::tool::server::ToolServer;
 use rig::{
-    message::{ImageMediaType, ToolResultContent},
+    message::{ImageMediaType, MimeType as _, ToolResultContent},
     rig_tool,
     tool::{ToolContext, ToolExecutionError, ToolOutput},
 };
@@ -45,11 +45,7 @@ const REPORT_PREVIEW_CAPTION: &str = "Rendered screenshot from preview_report. I
 const CHART_PREVIEW_CAPTION: &str = "Rendered ECharts screenshot from preview_echarts. Verify the chart type, series data, axis labels, legend, tooltip/static labels, colors, clipping/overflow, and that the visual matches fallback_summary. Refine with preview_echarts + based_on_preview_id + option_patch only, then call commit_chart once it looks right.";
 
 fn image_media_type(mime_type: &str) -> ImageMediaType {
-    match mime_type {
-        "image/jpeg" => ImageMediaType::JPEG,
-        "image/webp" => ImageMediaType::WEBP,
-        _ => ImageMediaType::PNG,
-    }
+    ImageMediaType::from_mime_type(mime_type).unwrap_or(ImageMediaType::PNG)
 }
 
 pub const BUILTIN_TOOLS: &[&str] = &[

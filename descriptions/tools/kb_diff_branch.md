@@ -1,1 +1,0 @@
-Compute a three-way diff (`added`, `modified`, `deleted`, `conflict`) of branch `name` against its `base_version` snapshot and the current `"active"` branch, returning three-way content payloads for inspection. Always run `kb_diff_branch` to verify changes and conflicts before calling `kb_promote_branch`.

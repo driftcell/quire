@@ -1,3 +1,0 @@
-Render the committed report in headless Chromium and return A4 pagination metrics, horizontal overflow diagnostics (`layout_diagnostics.overflow_count` and `overflow_elements`), computed CSS styles, and page screenshots for vision models.
-- Targeted vs Full preview: Pass `block_ids` (e.g. `["tbl_peers"]`) or `section_id` (e.g. `"ch2"`) for fast partial inspection—partial previews automatically suppress the cover, TOC, and bibliography so Page 1 directly renders the target table, chart, or section. Omit both for a full-document preview (use `page` to inspect a specific 1-based A4 page in `"paged"` `mode`, or set `mode: "continuous"`).
-- Revision check: Pass `rev` (>=1) to assert an exact committed revision, or omit for the latest revision.

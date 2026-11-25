@@ -1,1 +1,0 @@
-Batch-import model route specifications into an existing `provider_id` from an inline models.dev catalog `payload`, a custom `url`, or the default models.dev catalog URL, optionally filtered by `provider_filter` and `model_ids`. Generated route IDs follow `"{provider_id}/{spec.id}"`.

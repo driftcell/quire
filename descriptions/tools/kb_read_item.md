@@ -1,1 +1,0 @@
-Read the full content and configuration of one item (`item_kind`: `"doc" | "agent" | "skill"`, `item_key`) in `branch`. Returns `found: false` with a hint to call `kb_list_items` if the key does not exist. Always read an existing item before calling `kb_upsert_*` so you preserve fields like skill `resources` or agent `allowed_tools`.

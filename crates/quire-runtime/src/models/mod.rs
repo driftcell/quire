@@ -1,9 +1,11 @@
 //! Unified provider/model registry, secret references and models.dev import.
 
+pub mod evaluators;
 mod records;
 mod registry;
 mod secrets;
 
+pub use evaluators::*;
 pub(crate) use records::model_http_client;
 pub use records::*;
 pub use secrets::{mask_secret_ref, normalize_secret_ref, resolve_api_key_ref};

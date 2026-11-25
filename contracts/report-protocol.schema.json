@@ -2736,6 +2736,16 @@
           "description": "True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.",
           "type": "boolean"
         },
+        "evaluation_meta": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvaluationThreadMeta"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "messages": {
           "type": "array",
           "items": {
@@ -2786,6 +2796,55 @@
       "additionalProperties": false,
       "required": [
         "exact"
+      ]
+    },
+    "EvaluationThreadMeta": {
+      "description": "Metadata attached to a `CommentThread` created by a contextual decision/evaluation model.",
+      "type": "object",
+      "properties": {
+        "provider": {
+          "description": "Evaluator provider identifier (`\"jev\"`, `\"jina\"`, `\"google\"`, or `\"composite\"`).",
+          "type": "string"
+        },
+        "model": {
+          "description": "Exact model ID or alias returned by the provider (e.g. `\"jev-1.14.0\"`).",
+          "type": "string"
+        },
+        "dimension": {
+          "description": "Open evaluation rubric / dimension key (e.g. `\"source_groundedness\"`, `\"information_density\"`).",
+          "type": "string"
+        },
+        "confidence": {
+          "description": "Decision confidence (`max_k p_k` or provider-calibrated confidence in `0.0..=1.0`).",
+          "type": "number",
+          "format": "float"
+        },
+        "score": {
+          "description": "Optional normalized quality score (`0.0..=1.0`) from ordered `Score` primitives.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "escalated": {
+          "description": "True when confidence fell below the escalation threshold `tau` and requires reasoning-LLM review.",
+          "type": "boolean"
+        },
+        "evidence_fact_id": {
+          "description": "Optional `GroundingFact::fact_id` that triggered or contradicted the claim.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "dimension",
+        "confidence",
+        "escalated"
       ]
     },
     "CommentMessage": {

@@ -272,26 +272,10 @@ impl StreamEventSender {
 
 impl RigModelCore {
     pub(super) fn build_report_service(&self) -> quire_server::report::QuireReportService {
-        let bind_addr: std::net::SocketAddr = self
-            .config
-            .bind_addr
-            .parse()
-            .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 8081)));
-        let server_config = quire_server::Config {
-            bind_addr,
-            database_url: secrecy::SecretString::from(self.config.database_url.clone()),
-            redis_url: secrecy::SecretString::from(self.config.redis_url.clone()),
-            rw_token: None,
-            ro_token: None,
-            jwt_secret: Some(self.config.jwt_secret.clone()),
-            allowed_hosts: self.config.mcp_allowed_hosts(),
-            cors_allowed_origins: Vec::new(),
-            sse_heartbeat: std::time::Duration::from_millis(self.config.sse_heartbeat_ms),
-            auto_migrate: false,
-            mcp_json_response: true,
-        };
-        let state =
-            quire_server::AppState::new(self.kb.store().report_store().clone(), server_config);
+        let state = quire_server::AppState::new(
+            self.kb.store().report_store().clone(),
+            self.config.to_report_server_config(),
+        );
         quire_server::report::QuireReportService::new(state)
     }
 
@@ -411,9 +395,9 @@ impl RigModelCore {
             };
             let conversation = memory.load(&memory_key).await?;
             let recorded_history: Vec<Message> = conversation
-                .messages()
-                .iter()
-                .map(|message| message.as_ref().clone())
+                .into_messages()
+                .into_iter()
+                .map(Arc::unwrap_or_clone)
                 .collect();
             let (prompt, initial_history) = resolve_turn_prompt_and_history(
                 &recorded_history,

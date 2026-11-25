@@ -22,11 +22,11 @@ fn document_binding_keeps_prefix_and_extra_context_stable() {
         StreamEventSender::top(sender),
         SharedTurnState::default(),
     );
-    assert!(control.session_documents().is_empty());
+    assert!(control.session_document().is_none());
 
     update_doc_id(&execution.doc_id, Some("doc_lazy".into()));
     assert_eq!(static_preamble(&execution), before);
-    assert!(control.session_documents().is_empty());
+    assert!(control.session_document().is_none());
 }
 
 #[test]

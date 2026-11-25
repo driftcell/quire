@@ -1296,6 +1296,7 @@ export interface CommentThread {
    * True when none of `block_id`, `end_block_id` or `anchor_blocks` still exist.
    */
   anchor_detached: boolean;
+  evaluation_meta?: EvaluationThreadMeta | null;
   messages: CommentMessage[];
   created_at: string;
   updated_at: string;
@@ -1308,6 +1309,40 @@ export interface TextQuoteSelector {
   exact: string;
   prefix?: string | null;
   suffix?: string | null;
+}
+/**
+ * Metadata attached to a `CommentThread` created by a contextual decision/evaluation model.
+ */
+export interface EvaluationThreadMeta {
+  /**
+   * Evaluator provider identifier (`"jev"`, `"jina"`, `"google"`, or `"composite"`).
+   */
+  provider: string;
+  /**
+   * Exact model ID or alias returned by the provider (e.g. `"jev-1.14.0"`).
+   */
+  model: string;
+  /**
+   * Open evaluation rubric / dimension key (e.g. `"source_groundedness"`, `"information_density"`).
+   */
+  dimension: string;
+  /**
+   * Decision confidence (`max_k p_k` or provider-calibrated confidence in `0.0..=1.0`).
+   */
+  confidence: number;
+  /**
+   * Optional normalized quality score (`0.0..=1.0`) from ordered `Score` primitives.
+   */
+  score?: number | null;
+  /**
+   * True when confidence fell below the escalation threshold `tau` and requires reasoning-LLM review.
+   */
+  escalated: boolean;
+  /**
+   * Optional `GroundingFact::fact_id` that triggered or contradicted the claim.
+   */
+  evidence_fact_id?: string | null;
+  [k: string]: unknown;
 }
 /**
  * One message in a review thread.

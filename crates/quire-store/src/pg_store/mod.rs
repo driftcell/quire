@@ -64,6 +64,7 @@ struct CommentThreadRow {
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
     anchor_detached: bool,
+    evaluation_meta: Option<Value>,
 }
 
 #[derive(Clone)]

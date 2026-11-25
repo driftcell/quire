@@ -120,6 +120,16 @@ impl RedisBus {
             .unwrap_or(0))
     }
 
+    pub async fn current_event_seqs(&self, session_ids: &[String]) -> RuntimeResult<Vec<u64>> {
+        if session_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let keys: Vec<String> = session_ids.iter().map(|id| Self::hot_seq_key(id)).collect();
+        let mut connection = self.client.get_multiplexed_async_connection().await?;
+        let values: Vec<Option<u64>> = connection.mget(keys).await?;
+        Ok(values.into_iter().map(|seq| seq.unwrap_or(0)).collect())
+    }
+
     pub async fn hot_event_payloads(&self, session_id: &str) -> RuntimeResult<Vec<String>> {
         let mut connection = self.client.get_multiplexed_async_connection().await?;
         Ok(connection

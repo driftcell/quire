@@ -1,1 +1,0 @@
-Set or refine the current chat session title (automatically trimmed and capped at 60 characters) once the user's topic is clear. Available only to the lead agent; call once in the opening turn of a new task.

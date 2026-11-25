@@ -15,6 +15,7 @@ pub mod diff;
 pub(crate) mod echarts;
 pub(crate) mod echarts_view;
 pub mod error;
+pub mod evaluation;
 pub mod events;
 pub mod ids;
 pub(crate) mod inline;
@@ -60,6 +61,12 @@ pub use echarts_view::{
     EchartsTextStyleView, EchartsTitleView,
 };
 pub use error::{ApiErrorEnvelope, ApiErrorInfo, ProtocolError};
+pub use evaluation::{
+    BlockEvaluationResult, ClaimGroundingScore, ContextualBlockSpan, ContextualDocumentView,
+    EmbeddingTaskType, EscalationStatus, EvaluationDimension, EvaluationFinding,
+    EvaluationThreadMeta, GroundingFact, SectionEvaluationBatch, SentenceSpan,
+    build_contextual_document_view, partition_section_batches, segment_prose_sentences,
+};
 pub use events::{
     AgentPresenceEvent, CommentUpdatedEvent, DEFAULT_PREVIEW_TTL_MS, EphemeralClearEvent,
     EphemeralPayload, EphemeralPreviewEvent, PartialBlockPreview, PreviewAnchor, PreviewStatus,

@@ -1,1 +1,0 @@
-Delete a document, agent, or skill (`item_kind`, `item_key`) from `branch`. Always pass the target `"draft"` `branch` explicitly—omitting `branch` defaults to deleting directly from the live production `"active"` branch.

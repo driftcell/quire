@@ -291,12 +291,16 @@ pub(crate) async fn resolve_existing_session_doc_id(
 /// Register or update bibliography sources actually retrieved during research, deduplicating by URL
 /// and normalized title. Call before citing new sources in report blocks or `<citation id="SOURCE_ID"/>`
 /// chat tags, and always cite the mapped IDs from `canonical_id_map`.
+///
+/// Progressive-disclosure & provenance rules:
+/// - Register ONLY real sources retrieved during research; never fabricate URLs, DOIs, or excerpts.
+/// - `excerpt` is optional and reader-facing: include a short verbatim passage only for natural-language documents when it directly supports a claim; omit `excerpt` for structured database/API records and use `note` for concise natural-Chinese statistical scope and time window.
 #[rig_tool(name = "upsert_sources", required(sources))]
 pub(crate) async fn upsert_sources_tool(
     #[rig(context)] context: &mut ToolContext,
     /// Report ID; omit to use the session's currently bound report.
     doc_id: String,
-    /// Non-empty list of source records. Fill `url`, `publisher`, `date`, `accessed`, `note`, and `excerpt` per `SourceEntry` rules.
+    /// Non-empty list of source records (`url`, `publisher`, `date`, `accessed`, `note` for statistical caliber/scope, and optional verbatim `excerpt` for prose documents).
     sources: Vec<contracts::SourceInput>,
 ) -> Result<Value, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;

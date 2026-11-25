@@ -68,6 +68,11 @@ impl PgReportStore {
             .map(serde_json::to_value)
             .transpose()?;
         let anchor_blocks_json = serde_json::to_value(&anchor_blocks)?;
+        let evaluation_meta_json = request
+            .evaluation_meta
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()?;
         let now = Utc::now();
         let thread_id = short_id("th");
         let message_id = short_id("msg");
@@ -77,8 +82,8 @@ impl PgReportStore {
             r#"INSERT INTO report_comment_threads
                (doc_id, thread_id, block_id, end_block_id, anchor_blocks, section_id,
                 anchor_snapshot, quote, end_quote, status, created_rev, addressed_rev,
-                created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $12)"#,
+                created_at, updated_at, evaluation_meta)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NULL, $12, $12, $13)"#,
             doc_id.as_str(),
             &thread_id,
             request.block_id.as_str(),
@@ -91,6 +96,7 @@ impl PgReportStore {
             status.as_str(),
             document.revision.get(),
             now,
+            evaluation_meta_json,
         )
         .execute(&mut *tx)
         .await?;
@@ -124,6 +130,7 @@ impl PgReportStore {
             created_rev: document.revision,
             addressed_rev: None,
             anchor_detached: false,
+            evaluation_meta: request.evaluation_meta,
             messages: vec![CommentMessage {
                 message_id,
                 thread_id,
@@ -147,7 +154,7 @@ impl PgReportStore {
         let rows = sqlx::query!(
             r#"SELECT t.doc_id, t.thread_id, t.block_id, t.end_block_id, t.anchor_blocks,
                       t.section_id, t.anchor_snapshot, t.quote, t.end_quote, t.status,
-                      t.created_rev, t.addressed_rev, t.created_at, t.updated_at,
+                      t.created_rev, t.addressed_rev, t.created_at, t.updated_at, t.evaluation_meta,
                       (NOT EXISTS (
                           SELECT 1 FROM report_blocks b
                           WHERE b.doc_id = t.doc_id
@@ -213,6 +220,7 @@ impl PgReportStore {
                     created_at: row.created_at,
                     updated_at: row.updated_at,
                     anchor_detached: row.anchor_detached,
+                    evaluation_meta: row.evaluation_meta,
                 };
                 let messages = messages_by_thread
                     .remove(&row.thread_id)
@@ -382,7 +390,7 @@ impl PgReportStore {
         let row = sqlx::query!(
             r#"SELECT t.doc_id, t.thread_id, t.block_id, t.end_block_id, t.anchor_blocks,
                       t.section_id, t.anchor_snapshot, t.quote, t.end_quote, t.status,
-                      t.created_rev, t.addressed_rev, t.created_at, t.updated_at,
+                      t.created_rev, t.addressed_rev, t.created_at, t.updated_at, t.evaluation_meta,
                       (NOT EXISTS (
                           SELECT 1 FROM report_blocks b
                           WHERE b.doc_id = t.doc_id
@@ -442,6 +450,7 @@ impl PgReportStore {
             created_at: row.created_at,
             updated_at: row.updated_at,
             anchor_detached: row.anchor_detached,
+            evaluation_meta: row.evaluation_meta,
         }
         .into_thread(messages)
     }
@@ -474,6 +483,10 @@ impl CommentThreadRow {
             created_rev: Revision::new(self.created_rev)?,
             addressed_rev: self.addressed_rev.map(Revision::new).transpose()?,
             anchor_detached: self.anchor_detached,
+            evaluation_meta: self
+                .evaluation_meta
+                .map(|value| parse_json(value, "report_comment_threads.evaluation_meta"))
+                .transpose()?,
             messages,
             created_at: self.created_at,
             updated_at: self.updated_at,

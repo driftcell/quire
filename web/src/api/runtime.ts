@@ -616,3 +616,45 @@ export function deleteSessionQueueItem(
     { method: "DELETE" },
   );
 }
+
+export interface DeepCheckStatus {
+  doc_id: string;
+  enabled: boolean;
+  status: "idle" | "running" | "completed" | "failed";
+  provider?: string | null;
+  model?: string | null;
+  revision?: number | null;
+  evaluated_blocks: number;
+  created_threads: number;
+  escalated_count: number;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+}
+
+function isDeepCheckStatus(value: unknown): value is DeepCheckStatus {
+  return (
+    isRecord(value) &&
+    typeof value.doc_id === "string" &&
+    typeof value.enabled === "boolean" &&
+    (value.status === "idle" ||
+      value.status === "running" ||
+      value.status === "completed" ||
+      value.status === "failed")
+  );
+}
+
+export function getDeepCheckStatus(docId: string): Promise<DeepCheckStatus> {
+  return runtimeFetch(
+    `/api/docs/${encodeURIComponent(docId)}/deep-check`,
+    (raw) => decodeWith(raw, isDeepCheckStatus, "deep check status"),
+  );
+}
+
+export function triggerDeepCheck(docId: string): Promise<DeepCheckStatus> {
+  return runtimeFetch(
+    `/api/docs/${encodeURIComponent(docId)}/deep-check`,
+    (raw) => decodeWith(raw, isDeepCheckStatus, "deep check status"),
+    { method: "POST" },
+  );
+}

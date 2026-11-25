@@ -1,9 +1,14 @@
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { getDeepCheckStatus, triggerDeepCheck, type DeepCheckStatus } from "@/api/runtime";
 import {
   BookOpenIcon,
   FileTextIcon,
+  Loader2Icon,
   MessageSquareQuoteIcon,
+  ShieldCheckIcon,
   PrinterIcon,
   ScrollTextIcon,
 } from "lucide-react";
@@ -65,6 +70,50 @@ export function ReportPaneToolbar({
   className = "",
   leading,
 }: ReportPaneToolbarProps) {
+  const queryClient = useQueryClient();
+  const deepCheckQuery = useQuery({
+    queryKey: ["deep-check", docId],
+    queryFn: () => getDeepCheckStatus(docId),
+    enabled: Boolean(docId),
+    refetchInterval: (query) =>
+      query.state.data?.status === "running" ? 2000 : false,
+  });
+
+  const deepCheckMutation = useMutation({
+    mutationFn: () => triggerDeepCheck(docId),
+    onSuccess: (next) => {
+      queryClient.setQueryData<DeepCheckStatus>(["deep-check", docId], next);
+      toast.info("已启动深度检查，结果将自动写入批注列表");
+    },
+    onError: (err: unknown) => {
+      const msg = err instanceof Error ? err.message : "启动深度检查失败";
+      toast.error(msg);
+    },
+  });
+
+  const deepCheck = deepCheckQuery.data;
+  const isDeepCheckRunning =
+    deepCheck?.status === "running" || deepCheckMutation.isPending;
+  const isDeepCheckEnabled = deepCheck?.enabled ?? false;
+  const prevStatusRef = useRef<DeepCheckStatus["status"] | undefined>(undefined);
+
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const curr = deepCheck?.status;
+    prevStatusRef.current = curr;
+    if (prev === "running" && curr === "completed") {
+      void queryClient.invalidateQueries({ queryKey: ["comments", docId] });
+      const created = deepCheck?.created_threads ?? 0;
+      toast.success(
+        created > 0
+          ? `深度检查完成，新增 ${created} 条批注`
+          : "深度检查完成，未发现新的问题",
+      );
+    } else if (prev === "running" && curr === "failed") {
+      toast.error(deepCheck?.error_message ?? "深度检查执行失败");
+    }
+  }, [deepCheck, docId, queryClient]);
+
   return (
     <div
       className={`flex shrink-0 items-center justify-between gap-3 border-b border-border/90 bg-card/95 px-3.5 backdrop-blur-xs ${className}`}
@@ -140,6 +189,38 @@ export function ReportPaneToolbar({
 
         {/* Group 2: Review Annotations & Print/PDF Export */}
         <div className="flex items-center gap-1">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  aria-label="深度检查"
+                  disabled={!isDeepCheckEnabled || isDeepCheckRunning}
+                  className="h-7 gap-1.5 rounded-md px-2 text-xs font-medium text-foreground/85 hover:bg-secondary hover:text-foreground disabled:opacity-50"
+                  onClick={() => deepCheckMutation.mutate()}
+                />
+              }
+            >
+              {isDeepCheckRunning ? (
+                <Loader2Icon className="size-3.5 animate-spin text-[#1D4ED8]" />
+              ) : (
+                <ShieldCheckIcon className="size-3.5 text-muted-foreground" />
+              )}
+              <span className="hidden @min-[540px]:inline">
+                {isDeepCheckRunning ? "检查中..." : "深度检查"}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              {!isDeepCheckEnabled
+                ? "未启用决策模型：请在环境变量配置 EVALUATOR_PROVIDER=jev 与 JEV_API_KEY"
+                : isDeepCheckRunning
+                  ? "决策模型正在后台扫描全文并生成批注，刷新页面后仍会保持进度"
+                  : "使用决策模型对全文进行语义与数据一致性深度检查，并生成批注"}
+            </TooltipContent>
+          </Tooltip>
+
           <Tooltip>
             <TooltipTrigger
               render={

@@ -1,1 +1,0 @@
-Create or update a knowledge-base document (`doc_id`, `name`, `content`) inside `branch`. Target a `"draft"` branch to stage and test changes safely; passing the `"active"` branch modifies live production immediately and broadcasts a global cache invalidation, while `"archived"` branches are read-only and will fail.
