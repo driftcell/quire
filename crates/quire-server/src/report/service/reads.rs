@@ -143,7 +143,7 @@ impl QuireReportService {
         }
         let count = comments.len();
         let _next_hint = if comments.is_empty() {
-            "No matching review comments. Human reviewers can create threads with POST /api/docs/{doc_id}/comments.".to_string()
+            "Proceed with drafting or call lint_document when ready.".to_string()
         } else {
             "Reply with reply_comment(doc_id, thread_id, body, mark_addressed=true, addressed_rev=...) after fixing the block. Only humans can archive a thread.".to_string()
         };

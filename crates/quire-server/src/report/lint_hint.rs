@@ -175,20 +175,18 @@ pub(super) fn lint_document_next_hint(report: &LintReport) -> String {
     let summary = summarize_diagnostics_for_hint(&report.diagnostics);
     if report.has_errors() {
         return format!(
-            "Found {} error(s) and {} warning(s). Priority targets: {summary}. Fix errors first, batching co-occurring warnings on the same block in one apply_operations call.",
-            report.summary.errors, report.summary.warnings
+            "Priority targets: {summary}. Fix errors first, batching co-occurring warnings on the same block in one apply_operations call."
         );
     }
     if report.summary.warnings > 0 {
         return format!(
-            "0 errors, {} warning(s), {} suppressed. Priority targets: {summary}. Fix structural/chart warnings before prose polish in one apply_operations batch per block; use block.lint_ignore only when a suppressible warning is genuinely intentional, or call read_as_markdown if ready.",
-            report.summary.warnings, report.summary.suppressed
+            "Priority targets: {summary}. Fix structural/chart warnings before prose polish in one apply_operations batch per block; use block.lint_ignore only when a suppressible warning is genuinely intentional, or call read_as_markdown if ready."
         );
     }
-    format!(
-        "0 errors, 0 warnings ({} info(s), {} suppressed). Review info items or call read_as_markdown.",
-        report.summary.infos, report.summary.suppressed
-    )
+    if report.summary.infos > 0 {
+        return format!("Review info items ({summary}) or call read_as_markdown.");
+    }
+    "No active diagnostics; call read_as_markdown for a final read-through if needed.".to_string()
 }
 
 #[cfg(test)]
@@ -356,7 +354,21 @@ mod tests {
         };
         let hint = lint_document_next_hint(&warning_report);
         assert!(hint.contains("b_layout"), "{hint}");
-        assert!(hint.contains("2 suppressed"), "{hint}");
+        assert!(!hint.contains("suppressed"), "{hint}");
+        assert!(hint.contains("Priority targets:"), "{hint}");
+
+        let clean_report = LintReport {
+            diagnostics: vec![],
+            summary: LintSummary {
+                errors: 0,
+                warnings: 0,
+                infos: 0,
+                suppressed: 5,
+            },
+        };
+        let clean_hint = lint_document_next_hint(&clean_report);
+        assert!(!clean_hint.contains("Review info items"), "{clean_hint}");
+        assert!(clean_hint.contains("No active diagnostics"), "{clean_hint}");
         Ok(())
     }
 }

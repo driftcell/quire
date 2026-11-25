@@ -155,9 +155,11 @@ struct LintDiagnosticGroup<'a> {
     items: Vec<LintDiagnosticRow<'a>>,
 }
 
-struct SuppressedBlockRow<'a> {
-    block_id: &'a str,
-    codes: String,
+struct SuppressedRuleGroup<'a> {
+    code: String,
+    rule: &'a str,
+    count: usize,
+    block_ids: String,
 }
 
 #[derive(Template)]
@@ -171,7 +173,7 @@ struct LintDocumentTemplate<'a> {
     infos: usize,
     suppressed: usize,
     groups: Vec<LintDiagnosticGroup<'a>>,
-    suppressed_blocks: Vec<SuppressedBlockRow<'a>>,
+    suppressed_groups: Vec<SuppressedRuleGroup<'a>>,
     next_hint: Option<&'a str>,
 }
 
@@ -228,12 +230,35 @@ pub(super) fn render_lint_document(
         }
     }
 
-    let suppressed_blocks = receipt
-        .suppressed_blocks
-        .iter()
-        .map(|(block_id, codes)| SuppressedBlockRow {
-            block_id,
-            codes: codes.join(", "),
+    let mut blocks_by_code: std::collections::BTreeMap<String, Vec<&str>> =
+        std::collections::BTreeMap::new();
+    for (block_id, codes) in &receipt.suppressed_blocks {
+        for code in codes {
+            blocks_by_code
+                .entry(code.clone())
+                .or_default()
+                .push(block_id.as_str());
+        }
+    }
+    let suppressed_groups = blocks_by_code
+        .into_iter()
+        .map(|(code, block_ids)| {
+            let rule = quire_lint::RuleId::all()
+                .iter()
+                .find(|meta| meta.code == code)
+                .map_or("", |meta| meta.name);
+            let count = block_ids.len();
+            let block_ids = block_ids
+                .into_iter()
+                .map(|id| format!("`{id}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            SuppressedRuleGroup {
+                code,
+                rule,
+                count,
+                block_ids,
+            }
         })
         .collect();
     render_template(&LintDocumentTemplate {
@@ -245,7 +270,7 @@ pub(super) fn render_lint_document(
         infos: summary.map_or(0, |s| s.infos),
         suppressed: summary.map_or(0, |s| s.suppressed),
         groups,
-        suppressed_blocks,
+        suppressed_groups,
         next_hint: receipt._next_hint.as_deref(),
     })
 }
@@ -408,6 +433,27 @@ mod tests {
         assert_eq!(
             grouped_text.matches("add [^<source_id>] to prose").count(),
             1
+        );
+
+        let mut suppressed_blocks = BTreeMap::new();
+        suppressed_blocks.insert("c12_p05".into(), vec!["QR423".into()]);
+        suppressed_blocks.insert("c21_p01".into(), vec!["QR423".into()]);
+        let suppressed_only = contracts::LintReceipt {
+            ok: true,
+            rev: 70,
+            summary: Some(LintSummary {
+                errors: 0,
+                warnings: 0,
+                infos: 0,
+                suppressed: 2,
+            }),
+            suppressed_blocks,
+            diagnostics: Vec::new(),
+            _next_hint: None,
+        };
+        let sup_text = render_lint_document(&suppressed_only).expect("render suppressed lint");
+        assert!(
+            sup_text.contains("`QR423` (higher-ed-policy-term-format) × 2: `c12_p05`, `c21_p01`")
         );
     }
 }

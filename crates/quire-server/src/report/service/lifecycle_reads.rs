@@ -46,7 +46,7 @@ impl QuireReportService {
             .await
             .map_err(mcp_error)?;
         let _next_hint = if list.reports.is_empty() {
-            "No reports matched. Call create_report to start one.".to_string()
+            "Call create_report to start a new report.".to_string()
         } else {
             "Call get_document_digest(doc_id) for the report you want to edit.".to_string()
         };
@@ -104,10 +104,7 @@ impl QuireReportService {
         let _next_hint = if digest.blocks.is_empty() {
             "No blocks matched this query. Omit query to list the document outline.".to_string()
         } else {
-            format!(
-                "rev={}; pass a heading's id to read_as_markdown(section_id) to read the section.",
-                digest.current_rev
-            )
+            "Pass a heading's id to read_as_markdown(section_id) to read the section.".to_string()
         };
         Ok(DigestReceipt { digest, _next_hint })
     }

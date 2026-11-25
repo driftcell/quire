@@ -20,10 +20,10 @@ Errors: {{ errors }} | Warnings: {{ warnings }} | Info: {{ infos }} | Suppressed
 {% endif -%}
 {% endfor -%}
 {% endif -%}
-{% if !suppressed_blocks.is_empty() -%}
-## Suppressed Blocks (`lint_ignore`)
-{% for sb in suppressed_blocks -%}
-- `{{ sb.block_id }}`: {{ sb.codes }}
+{% if !suppressed_groups.is_empty() -%}
+## Suppressed Rules (`lint_ignore`)
+{% for sg in suppressed_groups -%}
+- `{{ sg.code }}`{% if !sg.rule.is_empty() %} ({{ sg.rule }}){% endif %} × {{ sg.count }}: {{ sg.block_ids }}
 {% endfor -%}
 {% endif -%}
 {% match next_hint %}{% when Some with (hint) %}
