@@ -315,16 +315,23 @@ describe("RunStatusModel & Borderless Editorial Stream", () => {
           kind: "execution",
           tools: [
             {
+              tool_call_id: "tc_u1",
+              tool_name: "update_todos",
+              status: "completed",
+              input_preview: JSON.stringify({
+                todos: [
+                  { title: "阶段一：采集经费来源", status: "in_progress" },
+                  { title: "已完成双优建设报告", status: "pending" },
+                ],
+              }),
+            },
+            {
               tool_call_id: "tc_d1",
               tool_name: "describe_task",
               status: "completed",
               input_preview: JSON.stringify({
                 title: "阶段一：采集经费来源",
                 detail: "汇总教育部与省级拨款",
-                todos: [
-                  { title: "阶段一：采集经费来源", status: "in_progress" },
-                  { title: "已完成双优建设报告", status: "pending" },
-                ],
               }),
             },
             {

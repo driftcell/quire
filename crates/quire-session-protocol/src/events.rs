@@ -82,10 +82,6 @@ pub enum SessionEventKind {
         detail: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         section_id: Option<String>,
-        /// Retained only for legacy `task_focus` replay payloads; live checklist mutations arrive
-        /// through [`SessionEventKind::TodosUpdated`].
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        todos: Vec<TaskTodoItem>,
     },
     TodosUpdated {
         todos: Vec<TaskTodoItem>,
@@ -251,7 +247,6 @@ impl SessionEventKind {
                 title: "title".into(),
                 detail: None,
                 section_id: None,
-                todos: Vec::new(),
             },
             Self::TodosUpdated { todos: Vec::new() },
             Self::ToolCallStarted {
@@ -400,11 +395,11 @@ mod tests {
                 title: "正在绘制人才分布图".into(),
                 detail: Some("按学科门类拆分".into()),
                 section_id: Some("sec3_h2".into()),
-                todos: Vec::new(),
             },
         );
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json["event"], "task_focus");
+        assert!(json.get("todos").is_none());
         assert_eq!(json["title"], "正在绘制人才分布图");
         assert_eq!(json["detail"], "按学科门类拆分");
         assert_eq!(json["section_id"], "sec3_h2");

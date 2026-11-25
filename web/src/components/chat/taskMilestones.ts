@@ -130,13 +130,11 @@ export function parseDescribeTaskInput(inputPreview: string): {
   title?: string;
   detail?: string;
   sectionId?: string;
-  todos?: TaskTodoItem[];
 } {
   if (!inputPreview) return {};
   try {
     const parsed: unknown = JSON.parse(inputPreview);
     if (isRecord(parsed)) {
-      const todos = parseTodosFromParsedJson(parsed.todos);
       return {
         title:
           typeof parsed.title === "string" && parsed.title.trim()
@@ -150,7 +148,6 @@ export function parseDescribeTaskInput(inputPreview: string): {
           typeof parsed.section_id === "string" && parsed.section_id.trim()
             ? parsed.section_id.trim()
             : undefined,
-        todos: todos.length > 0 ? todos : undefined,
       };
     }
   } catch {
@@ -189,11 +186,6 @@ function collectTodosFromTools(
       const parsed = parseUpdateTodosInput(tool.inputPreview);
       if (parsed.length > 0) {
         todos = parsed;
-      }
-    } else if (tool.toolName === "describe_task") {
-      const parsed = parseDescribeTaskInput(tool.inputPreview);
-      if (parsed.todos && parsed.todos.length > 0) {
-        todos = parsed.todos.map((item) => ({ ...item }));
       }
     }
   }

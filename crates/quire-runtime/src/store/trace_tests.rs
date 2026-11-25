@@ -68,7 +68,6 @@ fn aggregates_main_and_subagent_tool_traces() {
                 title: "Intro".into(),
                 detail: Some("write".into()),
                 section_id: Some("intro".into()),
-                todos: Vec::new(),
             },
         ),
         SessionEvent::new(
@@ -653,7 +652,6 @@ fn todos_updated_preserves_live_focus_and_task_focus_preserves_todos() {
                 title: "检索省属高校国自然口径".into(),
                 detail: Some("正在比对历史增量".into()),
                 section_id: None,
-                todos: Vec::new(),
             },
         ),
         SessionEvent::new(

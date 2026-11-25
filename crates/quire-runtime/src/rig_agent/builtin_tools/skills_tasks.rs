@@ -227,7 +227,6 @@ pub(crate) async fn describe_task_tool(
             title: title.clone(),
             detail: detail.clone(),
             section_id: section_id.clone(),
-            todos: Vec::new(),
         })
         .await;
 

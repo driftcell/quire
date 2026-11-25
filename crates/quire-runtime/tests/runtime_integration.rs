@@ -3431,7 +3431,6 @@ async fn rig_turn_context_and_task_events_reach_the_persisted_session_contract()
             title: "Review chapter".into(),
             detail: Some("checking citations".into()),
             section_id: Some("ch1".into()),
-            todos: Vec::new(),
         },
         ModelStreamEvent::SubagentStarted {
             subagent_run_id: "run_sub_ctx".into(),

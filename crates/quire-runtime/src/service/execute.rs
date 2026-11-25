@@ -52,7 +52,6 @@ impl RuntimeService {
                     title: "正在从断点恢复任务".into(),
                     detail: Some("服务重启后已自动接续先前进度".into()),
                     section_id: None,
-                    todos: Vec::new(),
                 },
             )
             .await?;

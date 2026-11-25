@@ -93,14 +93,12 @@ pub fn project(scope: EventScope, event: ModelStreamEvent) -> EventAction {
             title,
             detail,
             section_id,
-            todos,
         } => EventAction::Emit {
             scope,
             kind: SessionEventKind::TaskFocus {
                 title,
                 detail,
                 section_id,
-                todos,
             },
         },
         ModelStreamEvent::TodosUpdated { todos } => EventAction::Emit {

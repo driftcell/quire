@@ -59,11 +59,6 @@ export type SessionEvent1 =
       title: string;
       detail?: string | null;
       section_id?: string | null;
-      /**
-       * Retained only for legacy `task_focus` replay payloads; live checklist mutations arrive
-       * through [`SessionEventKind::TodosUpdated`].
-       */
-      todos?: TaskTodoItem[];
       [k: string]: unknown;
     }
   | {

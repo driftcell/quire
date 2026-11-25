@@ -354,7 +354,6 @@ mod tests {
                 title: "Draft".into(),
                 detail: None,
                 section_id: None,
-                todos: Vec::new(),
             },
         )
         .await

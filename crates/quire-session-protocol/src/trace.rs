@@ -427,7 +427,6 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                 title,
                 detail,
                 section_id,
-                todos,
             } => {
                 if subagent_event {
                     if let Some(location) = ensure_subagent(&mut trace.summary.segments, event)
@@ -438,7 +437,6 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                             title,
                             detail.as_deref(),
                             section_id.as_deref(),
-                            todos,
                         );
                     }
                 } else {
@@ -447,7 +445,6 @@ pub fn aggregate_run_traces(events: &[SessionEvent]) -> Vec<RunTraceSummary> {
                         title,
                         detail.as_deref(),
                         section_id.as_deref(),
-                        todos,
                     );
                 }
             }
@@ -622,21 +619,16 @@ fn apply_task_focus(
     title: &str,
     detail: Option<&str>,
     section_id: Option<&str>,
-    legacy_todos: &[TaskTodoItem],
 ) {
-    let preserved_todos = if !legacy_todos.is_empty() {
-        legacy_todos.to_vec()
-    } else {
-        target
-            .as_ref()
-            .map(|existing| existing.todos.clone())
-            .unwrap_or_default()
-    };
+    let todos = target
+        .as_ref()
+        .map(|existing| existing.todos.clone())
+        .unwrap_or_default();
     *target = Some(RunTaskFocus {
         title: title.to_string(),
         detail: detail.map(ToOwned::to_owned),
         section_id: section_id.map(ToOwned::to_owned),
-        todos: preserved_todos,
+        todos,
     });
 }
 
@@ -729,7 +721,6 @@ mod tests {
                     title: "补派研究员核验国自然口径".into(),
                     detail: Some("正在比对2021-2025年立项口径".into()),
                     section_id: Some("sec_1".into()),
-                    todos: Vec::new(),
                 },
             ),
             SessionEvent::new(

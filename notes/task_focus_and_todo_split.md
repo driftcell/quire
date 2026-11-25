@@ -4,6 +4,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-25
+- **Superseded In Part By:** `task_focus_legacy_todos_removal.md`
 - **Promoted To:** `../../docs/RUNTIME_SESSION_EVENTS.md`, `../../docs/TOOL_DESCRIPTIONS.md`
 
 ## 1. Context & Problem
@@ -25,10 +26,10 @@ Previously, `describe_task` handled both live activity reporting (`title`, `deta
 ## 3. Chosen Approach & Trade-offs
 
 - **Two orthogonal tools with explicit role boundaries**:
-  - `describe_task(title, detail?, section_id?)` broadcasts only live current work focus via `SessionEventKind::TaskFocus` (empty `todos` vector never mutates existing todos) and returns `DescribeTaskReceipt` echoing `active_todo` and `todo_progress`.
+  - `describe_task(title, detail?, section_id?)` broadcasts only live current work focus via `SessionEventKind::TaskFocus`, never mutates existing todos, and returns `DescribeTaskReceipt` echoing `active_todo` and `todo_progress`.
   - `update_todos(todos)` atomically replaces the run's structured checklist via `SessionEventKind::TodosUpdated { todos }` without overwriting an explicit `describe_task` status title, and returns `UpdateTodosReceipt` with updated progress and `current_focus`.
 - **Commutative wire & UI state**:
-  - `SessionEventKind::TaskFocus` updates `title`/`detail`/`section_id` while preserving prior `todos` (unless legacy `todos` are explicitly populated on historical replays).
+  - `SessionEventKind::TaskFocus` updates `title`/`detail`/`section_id` while preserving prior `todos`.
   - `SessionEventKind::TodosUpdated` updates `todos` while preserving any existing `title`/`detail`/`section_id` on `RunTaskFocus`.
   - `RunActivityHeader` and `traceSegments` prioritize explicit `describe_task` focus titles for the top status line, fall back to the active todo title on main runs only when `describe_task` has not yet been called, and only hide collapsed `model.detail` when it duplicates the active todo description.
 - **Cost accepted**:

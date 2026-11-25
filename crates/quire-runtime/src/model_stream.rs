@@ -18,7 +18,6 @@ pub enum ModelStreamEvent {
         title: String,
         detail: Option<String>,
         section_id: Option<String>,
-        todos: Vec<TaskTodoItem>,
     },
     TodosUpdated {
         todos: Vec<TaskTodoItem>,
@@ -223,7 +222,6 @@ pub(crate) fn sample_model_stream_events() -> Vec<ModelStreamEvent> {
             title: "title".into(),
             detail: None,
             section_id: None,
-            todos: Vec::new(),
         },
         ModelStreamEvent::TodosUpdated { todos: Vec::new() },
         ModelStreamEvent::DocLinked {

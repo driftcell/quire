@@ -7,7 +7,6 @@ import type {
   RunTraceSubagent,
   RunTraceSummary,
   SessionEvent,
-  TaskTodoItem,
 } from "@/contracts/session-protocol";
 import {
   appendSubagentSegment,
@@ -339,14 +338,6 @@ export function reduceSessionEvent(
       }
       break;
     case "task_focus": {
-      const keepExistingOrLegacyTodos = (
-        prevTodos: TaskTodoItem[] | undefined,
-      ): TaskTodoItem[] | undefined => {
-        if (event.todos && event.todos.length > 0) {
-          return event.todos;
-        }
-        return prevTodos && prevTodos.length > 0 ? prevTodos : undefined;
-      };
       if (isSubagentEvent) {
         next = {
           ...next,
@@ -360,7 +351,7 @@ export function reduceSessionEvent(
                   title: event.title,
                   detail: event.detail ?? undefined,
                   sectionId: event.section_id ?? undefined,
-                  todos: keepExistingOrLegacyTodos(subTrace.taskFocus?.todos),
+                  todos: subTrace.taskFocus?.todos,
                 },
               },
             };
@@ -376,7 +367,7 @@ export function reduceSessionEvent(
               title: event.title,
               detail: event.detail ?? undefined,
               sectionId: event.section_id ?? undefined,
-              todos: keepExistingOrLegacyTodos(mainTrace.taskFocus?.todos),
+              todos: mainTrace.taskFocus?.todos,
             },
           },
         };
