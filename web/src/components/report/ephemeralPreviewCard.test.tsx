@@ -36,6 +36,9 @@ describe("EphemeralPreviewCard WYSIWYG rendering", () => {
       />,
     );
     expect(html).toContain("<h2");
+    expect(html).toContain('data-rpt-h="2"');
+    expect(html).toContain("rpt-h2");
+    expect(html).toContain("var(--rpt-heading-weight, 600)");
     expect(html).toContain("一、核心指标总览");
     expect(html).not.toContain("正在撰写");
     expect(html).not.toContain("正文撰写");
@@ -47,8 +50,27 @@ describe("EphemeralPreviewCard WYSIWYG rendering", () => {
       <EphemeralPreviewCard preview={makePreview({})} />,
     );
     expect(html).toContain("<p");
+    expect(html).toContain("rpt-paragraph");
+    expect(html).toContain("var(--rpt-body-size, 14.5px)");
+    expect(html).toContain("var(--rpt-line-height, 1.82)");
     expect(html).toContain("<strong>加粗指标</strong>");
     expect(html).not.toContain("正文撰写");
+  });
+
+  it("uses the committed quote theme tokens instead of hardcoded slate colors", () => {
+    const html = renderToStaticMarkup(
+      <EphemeralPreviewCard
+        preview={makePreview({
+          block_type: "quote",
+          text: "主题一致的流式引用",
+        })}
+      />,
+    );
+    expect(html).toContain("rpt-quote");
+    expect(html).toContain("var(--rpt-quote-bg,var(--rpt-surface))");
+    expect(html).toContain("text-[var(--rpt-ink)]/90");
+    expect(html).not.toContain("text-slate-");
+    expect(html).not.toContain("bg-slate-");
   });
 
   it("renders left-margin AgentAvatar trigger with actor attribution", () => {
@@ -87,6 +109,9 @@ describe("EphemeralPreviewCard WYSIWYG rendering", () => {
     );
     expect(html).toContain("表 1 营收对比");
     expect(html).toContain("120 亿元");
+    expect(html).toContain("text-[var(--rpt-ink)]");
+    expect(html).not.toContain("text-slate-");
+    expect(html).not.toContain("bg-slate-");
     expect(html).not.toContain("text-left text-[12.5px]");
     expect(html).not.toContain("加载中");
   });

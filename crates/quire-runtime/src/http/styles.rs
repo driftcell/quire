@@ -104,6 +104,22 @@ pub(crate) async fn create_style(
     Ok(Json(created))
 }
 
+pub(crate) async fn set_default_style(
+    State(service): State<RuntimeService>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(style_id): Path<String>,
+) -> RuntimeResult<StatusCode> {
+    service
+        .store()
+        .set_default_style_preset(
+            &auth_user.user_id,
+            &style_id,
+            auth_user.role == UserRole::Admin,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(crate) async fn update_style(
     State(service): State<RuntimeService>,
     Extension(auth_user): Extension<AuthUser>,

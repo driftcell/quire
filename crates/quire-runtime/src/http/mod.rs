@@ -88,6 +88,10 @@ pub fn router(service: RuntimeService) -> Router {
         )
         .route("/api/styles", get(list_styles).post(create_style))
         .route(
+            "/api/styles/default/{style_id}",
+            axum::routing::put(set_default_style),
+        )
+        .route(
             "/api/styles/{style_id}",
             patch(update_style).delete(delete_style),
         )

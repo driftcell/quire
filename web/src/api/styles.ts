@@ -255,6 +255,14 @@ export async function deleteStylePreset(styleId: string): Promise<void> {
   }
 }
 
+export async function setDefaultStylePreset(styleId: string): Promise<void> {
+  return stylesFetch(
+    `/api/styles/default/${encodeURIComponent(styleId)}`,
+    () => undefined,
+    { method: "PUT" },
+  );
+}
+
 export interface ApplyStyleToDocResponse {
   doc_id: string;
   revision: number;

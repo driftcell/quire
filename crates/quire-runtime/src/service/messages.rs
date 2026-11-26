@@ -447,6 +447,47 @@ impl RuntimeExternalHarnessBridge {
     }
 }
 
+fn style_preset_to_template(
+    preset: crate::store::StylePresetRecord,
+) -> quire_server::state::ExternalReportTemplate {
+    let bundle = preset.bundle;
+    let mut template = quire_server::state::ExternalReportTemplate {
+        theme: bundle.theme,
+        ..quire_server::state::ExternalReportTemplate::default()
+    };
+    if let Some(enabled) = bundle.cover_enabled {
+        template.cover.enabled = enabled;
+    }
+    if let Some(variant) = bundle.cover_variant {
+        template.cover.variant = variant;
+    }
+    if let Some(enabled) = bundle.toc_enabled {
+        template.toc.enabled = enabled;
+    }
+    if let Some(depth) = bundle.toc_max_depth {
+        template.toc.max_depth = depth;
+    }
+    if let Some(variant) = bundle.toc_variant {
+        template.toc.variant = variant;
+    }
+    if let Some(page_break) = bundle.toc_page_break_before {
+        template.toc.page_break_before = page_break;
+    }
+    if let Some(page_break) = bundle.toc_page_break_after {
+        template.toc.page_break_after = page_break;
+    }
+    if let Some(style) = bundle.citation_style {
+        template.references.style = style;
+    }
+    if let Some(enabled) = bundle.references_enabled {
+        template.references.enabled = enabled;
+    }
+    if let Some(page_break) = bundle.references_page_break_before {
+        template.references.page_break_before = page_break;
+    }
+    template
+}
+
 impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge {
     fn verify_api_key<'a>(
         &'a self,
@@ -481,6 +522,44 @@ impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge
                 }),
                 _ => None,
             }
+        })
+    }
+
+    fn resolve_report_template<'a>(
+        &'a self,
+        theme_preset: Option<&'a str>,
+        user_id: Option<&'a str>,
+        is_admin: bool,
+    ) -> quire_server::state::BoxFuture<
+        'a,
+        Result<Option<quire_server::state::ExternalReportTemplate>, String>,
+    > {
+        Box::pin(async move {
+            let explicit = theme_preset
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let preset = if let Some(style_id) = explicit {
+                self.store.get_style_preset(style_id).await
+            } else if let Some(user_id) = user_id {
+                self.store
+                    .default_style_preset_for_user(user_id)
+                    .await
+                    .map(Some)
+            } else {
+                return Ok(None);
+            }
+            .map_err(|error| error.to_string())?;
+            let Some(preset) = preset else {
+                return Ok(None);
+            };
+            if !preset.is_builtin
+                && !preset.is_public
+                && !is_admin
+                && preset.owner_user_id.as_deref() != user_id
+            {
+                return Err("无权使用该私有样式".to_string());
+            }
+            Ok(Some(style_preset_to_template(preset)))
         })
     }
 

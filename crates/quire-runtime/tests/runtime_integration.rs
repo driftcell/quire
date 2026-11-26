@@ -7072,7 +7072,7 @@ async fn report_mcp_request(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn user_api_key_authenticates_report_mcp_returns_markdown_and_auto_binds_empty_session() {
     let _guard = test_lock().lock().await;
-    let (service, _store) = test_service().await;
+    let (service, store) = test_service().await;
     service.seed().await.unwrap();
     let app = quire_runtime::http::router(service.clone());
 
@@ -7111,6 +7111,16 @@ async fn user_api_key_authenticates_report_mcp_returns_markdown_and_auto_binds_e
     assert_eq!(keys_arr.len(), 1);
     assert_eq!(keys_arr[0]["key_id"], key_id);
     assert!(keys_arr[0].get("secret_key").is_none());
+
+    let (status, _) = http_json(
+        &app,
+        axum::http::Method::PUT,
+        "/api/styles/default/cyber-terminal",
+        &auth.token,
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::NO_CONTENT);
 
     // Initialize /mcp using the user API key without any X-Session-Id
     let initialize = json!({
@@ -7176,6 +7186,21 @@ async fn user_api_key_authenticates_report_mcp_returns_markdown_and_auto_binds_e
         .expect("auto-bound session_id")
         .to_string();
     assert!(auto_session_id.starts_with("sess_"));
+
+    let stored = store
+        .report_store()
+        .get_document(&quire_protocol::DocId::parse(&doc_id).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(stored.revision.get(), 1);
+    assert_eq!(stored.theme.preset, "cyber-terminal");
+    assert_eq!(
+        stored.theme.tokens.get("--rpt-paper").map(String::as_str),
+        Some("#0F141C")
+    );
+    assert_eq!(stored.cover.variant, "modern");
+    assert_eq!(stored.toc.variant, "numbered");
+    assert!(!stored.references.page_break_before);
 
     // Verify the auto-created empty session appears in the user's session list with created_via="mcp" and bound doc_id
     let (status, user_sessions) = http_json(

@@ -4,7 +4,8 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 use chrono::Utc;
 use quire_protocol::{
-    CommentStatus, CommentThread, CommentUpdatedEvent, DocId, EphemeralPayload, SessionId,
+    CommentStatus, CommentThread, CommentUpdatedEvent, CoverConfig, DocId, EphemeralPayload,
+    ReferencesConfig, SessionId, ThemeConfig, TocConfig,
 };
 use quire_store::{PgReportStore, ReportList, StoreError};
 
@@ -20,6 +21,15 @@ pub struct VerifiedExternalIdentity {
     pub username: String,
     pub is_admin: bool,
     pub preview_doc_id: Option<String>,
+}
+
+/// Complete report configuration supplied by the runtime for a selected or default style.
+#[derive(Debug, Clone, Default)]
+pub struct ExternalReportTemplate {
+    pub theme: ThemeConfig,
+    pub cover: CoverConfig,
+    pub toc: TocConfig,
+    pub references: ReferencesConfig,
 }
 
 /// Pluggable bridge from `quire-server` to `quire-runtime` for API key authentication,
@@ -38,6 +48,14 @@ pub trait ExternalHarnessBridge: Send + Sync {
         &'a self,
         user_id: &'a str,
     ) -> BoxFuture<'a, Option<VerifiedExternalIdentity>>;
+
+    /// Resolve an explicit style preset or the user's default into complete report configuration.
+    fn resolve_report_template<'a>(
+        &'a self,
+        theme_preset: Option<&'a str>,
+        user_id: Option<&'a str>,
+        is_admin: bool,
+    ) -> BoxFuture<'a, Result<Option<ExternalReportTemplate>, String>>;
 
     /// Ensure an active session exists in `runtime.sessions` before `create_report` commits,
     /// returning the canonical `SessionId` to store on `report.documents`.

@@ -20,6 +20,7 @@ import {
   createStylePreset,
   deleteStylePreset,
   listStylePresets,
+  setDefaultStylePreset,
   updateStylePreset,
 } from "@/api/styles";
 import { SidebarEdgeHandle } from "@/components/layout/SidebarEdgeHandle";
@@ -326,6 +327,20 @@ export function StyleCenterPage() {
     },
     onError: (err) => {
       toast.error(errorMessage(err, "保存预设失败"));
+    },
+  });
+
+  const defaultMutation = useMutation({
+    mutationFn: (styleId: string) => setDefaultStylePreset(styleId),
+    onSuccess: (_data, styleId) => {
+      updatePreferences({ defaultStylePresetId: styleId });
+      const name =
+        allPresets.find((preset) => preset.style_id === styleId)?.name ??
+        styleId;
+      toast.success(`已将「${name}」设为默认样式`);
+    },
+    onError: (err) => {
+      toast.error(errorMessage(err, "设置默认样式失败"));
     },
   });
 
@@ -643,12 +658,8 @@ export function StyleCenterPage() {
             type="button"
             size="xs"
             variant={isCurrentDefault ? "secondary" : "outline"}
-            onClick={() => {
-              updatePreferences({
-                defaultStylePresetId: activePreset.style_id,
-              });
-              toast.success(`已将「${activePreset.name}」设为默认样式`);
-            }}
+            disabled={isCurrentDefault || defaultMutation.isPending}
+            onClick={() => defaultMutation.mutate(activePreset.style_id)}
           >
             {isCurrentDefault ? (
               <>

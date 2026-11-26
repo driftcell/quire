@@ -1056,6 +1056,58 @@ impl RuntimeStore {
         row.as_ref().map(row_to_style_preset).transpose()
     }
 
+    pub async fn set_default_style_preset(
+        &self,
+        user_id: &str,
+        style_id: &str,
+        is_admin: bool,
+    ) -> RuntimeResult<()> {
+        let record = self
+            .get_style_preset(style_id)
+            .await?
+            .ok_or_else(|| RuntimeError::InvalidRequest(format!("样式 `{style_id}` 不存在")))?;
+        if !record.is_builtin
+            && !record.is_public
+            && !is_admin
+            && record.owner_user_id.as_deref() != Some(user_id)
+        {
+            return Err(RuntimeError::Forbidden("无权使用该私有样式".into()));
+        }
+        let result = sqlx::query(
+            "UPDATE identity.users SET default_style_id = $2, updated_at = NOW() WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .bind(record.style_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(RuntimeError::InvalidRequest("user not found".into()));
+        }
+        Ok(())
+    }
+
+    pub async fn default_style_preset_for_user(
+        &self,
+        user_id: &str,
+    ) -> RuntimeResult<StylePresetRecord> {
+        let style_id = sqlx::query_scalar::<_, String>(
+            "SELECT default_style_id FROM identity.users WHERE user_id = $1",
+        )
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await?;
+        if let Some(record) = self.get_style_preset(&style_id).await?
+            && (record.is_builtin
+                || record.is_public
+                || record.owner_user_id.as_deref() == Some(user_id))
+        {
+            return Ok(record);
+        }
+        find_builtin_style_preset("quire-folio").ok_or_else(|| {
+            RuntimeError::Internal("missing built-in quire-folio style preset".into())
+        })
+    }
+
     pub async fn create_style_preset(
         &self,
         input: CreateStylePresetInput<'_>,

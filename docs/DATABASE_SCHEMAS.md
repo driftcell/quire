@@ -22,8 +22,8 @@ databases and provides no legacy `public` views, table aliases, or automatic dat
 | `report`   | `documents`, `blocks`, `sources`, `revisions`, `snapshots`, `comment_threads`, `comment_messages`, `deep_checks`; owned by `quire-store`                |
 | `runtime`  | `sessions`, `attachments`, `runs`, `tool_calls`, `questions`, `pending_queue`, `chat_charts`; owned by `quire-runtime`                                  |
 | `kb`       | `meta`, `branches`, `snapshots`, `branch_conflicts`, `documents`, `agent_definitions`, `skill_definitions`, `skill_resources`; owned by `quire-runtime` |
-| `catalog`  | `llm_providers`, `llm_models`, `mcp_servers`, `mcp_tools`; owned by `quire-runtime`                                                                     |
-| `identity` | `users`, `api_keys`; owned by `quire-runtime`                                                                                                           |
+| `catalog`  | `llm_providers`, `llm_models`, `mcp_servers`, `mcp_tools`, `style_presets`; owned by `quire-runtime`                                                  |
+| `identity` | `users` (including `default_style_id`), `api_keys`; owned by `quire-runtime`                                                                            |
 | `rig`      | `rig_memory_logs`, `rig_memory_log_chunks`, `rig_memory_files`, using the fixed upstream `rig-postgres` names                                           |
 
 Application SQL uses explicit schema-qualified table names for every table, foreign key, index target
@@ -46,6 +46,10 @@ index in its parent table's schema. The current migrations create no objects in 
    migration; applied migrations must never be rewritten to introduce those objects.
 7. `0007_run_leases_and_chart_identity.sql` adds recoverable run leases and scopes chat chart primary
    keys to `(session_id, chart_id)` without rewriting `0004_runtime.sql`.
+8. `0008_run_trigger_message.sql` through `0010_acl_and_chart_indexes.sql` add queued turn triggers,
+   authoritative report ownership and ACL/chart indexes.
+9. `0011_style_presets.sql` adds custom style presets to `catalog`.
+10. `0012_user_default_style.sql` adds each user's `default_style_id`, defaulting to `quire-folio`.
 
 The runtime migrator creates `runtime` and records history in `runtime._quire_runtime_migrations`.
 `runtime.sessions.user_id` references `identity.users(user_id)` with `ON DELETE SET NULL`; runtime and

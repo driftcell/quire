@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { createSession, postMessage, uploadAttachment } from "@/api/runtime";
+import { setDefaultStylePreset } from "@/api/styles";
 import type { SessionCommentRef } from "@/contracts/session-protocol";
 import { PromptComposer } from "@/components/chat/PromptComposer";
 import { BrandMark } from "@/components/layout/BrandMark";
@@ -19,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { errorMessage } from "@/lib/errors";
+import { useUiPreferences } from "@/lib/preferences";
 import { randomUuid } from "@/lib/uuid";
 
 export const Route = createFileRoute("/")({
@@ -80,6 +82,7 @@ function HomePage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isMobile = useIsMobile();
+  const prefs = useUiPreferences();
   const { open: leftSidebarOpen, toggleSidebar } = useSidebar();
 
   useEffect(() => {
@@ -92,6 +95,7 @@ function HomePage() {
     commentRefs: SessionCommentRef[] = [],
   ) => {
     try {
+      await setDefaultStylePreset(prefs.defaultStylePresetId);
       const session = await createSession({
         title: deriveSessionTitle(text),
       });

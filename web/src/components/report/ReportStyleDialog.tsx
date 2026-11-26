@@ -17,6 +17,7 @@ import {
   applyStyleToDocument,
   createStylePreset,
   listStylePresets,
+  setDefaultStylePreset,
 } from "@/api/styles";
 import { StyleCustomizerPanel } from "@/components/style/StyleCustomizerPanel";
 import { StyleThumbnailCard } from "@/components/style/StyleThumbnailCard";
@@ -169,12 +170,15 @@ export function ReportStyleDialog({
   });
 
   const applyPresetMutation = useMutation({
-    mutationFn: (preset: StylePresetRecord) =>
-      applyStyleToDocument(docId, {
+    mutationFn: async (preset: StylePresetRecord) => {
+      const response = await applyStyleToDocument(docId, {
         style_id: preset.style_id,
         bundle: preset.bundle,
         sync_layout_variants: true,
-      }),
+      });
+      await setDefaultStylePreset(preset.style_id);
+      return response;
+    },
     onSuccess: (_res, preset) => {
       clearTocConfig(docId);
       clearPageChromeConfig(docId);

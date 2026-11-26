@@ -134,6 +134,18 @@ impl QuireReportService {
                 ));
             }
         };
+        let report_template = if let Some(bridge) = self.state.harness_bridge.as_ref() {
+            bridge
+                .resolve_report_template(
+                    request.theme_preset.as_deref(),
+                    context.user_id.as_deref(),
+                    context.is_admin,
+                )
+                .await
+                .map_err(|error| mcp_error(StoreError::Forbidden(error)))?
+        } else {
+            None
+        };
         let actor = context.actor;
         let scoped_idempotency_key = request.idempotency_key.as_deref().map(|key| {
             let trimmed = key.trim();
@@ -170,6 +182,12 @@ impl QuireReportService {
         };
 
         let mut document = ReportDocument::new(doc_id);
+        if let Some(template) = report_template {
+            document.theme = template.theme;
+            document.cover = template.cover;
+            document.toc = template.toc;
+            document.references = template.references;
+        }
         document.target_prose_chars = request.target_prose_chars;
         document.session_id = Some(session_id.clone());
         document.cover.enabled = request.enable_cover.unwrap_or(true);

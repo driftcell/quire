@@ -4,6 +4,10 @@ import {
   resolveAgentIdentity,
 } from "@/components/chat/agentAvatar";
 import { InlineMarkdown } from "@/components/report/InlineMarkdown";
+import {
+  ReportFigureCaption,
+  ReportTextBlockView,
+} from "@/components/report/ReportBlockPrimitives";
 import { TableBlockView } from "@/components/report/TableBlockView";
 import { useSmoothStreamText } from "@/hooks/useSmoothStreamText";
 import type {
@@ -35,41 +39,6 @@ function blockTypeLabel(
       return "自定义版式";
     default:
       return "报告块";
-  }
-}
-
-function renderHeadingTag(level: number, content: ReactNode) {
-  switch (level) {
-    case 1:
-      return (
-        <h1 className="mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-[var(--rpt-ink)]">
-          {content}
-        </h1>
-      );
-    case 2:
-      return (
-        <h2 className="mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-[var(--rpt-ink)]">
-          {content}
-        </h2>
-      );
-    case 3:
-      return (
-        <h3 className="mt-5 mb-2 text-[15px] font-semibold text-[var(--rpt-ink)]">
-          {content}
-        </h3>
-      );
-    case 4:
-      return (
-        <h4 className="mt-4 mb-1.5 text-[14px] font-semibold text-[var(--rpt-ink)]">
-          {content}
-        </h4>
-      );
-    default:
-      return (
-        <h5 className="mt-3 mb-1 text-[13px] font-semibold text-[var(--rpt-ink)]">
-          {content}
-        </h5>
-      );
   }
 }
 
@@ -283,20 +252,15 @@ export function EphemeralPreviewCard({
   );
 
   let body: ReactNode = null;
-  if (block.block_type === "heading") {
-    body = renderHeadingTag(
-      block.level ?? 2,
-      <>
-        {renderInline(smoothedText)}
-        <StreamingCursor />
-      </>,
-    );
-  } else if (block.block_type === "quote") {
+  if (block.block_type === "heading" || block.block_type === "quote") {
     body = (
-      <blockquote className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700">
+      <ReportTextBlockView
+        type={block.block_type}
+        level={block.block_type === "heading" ? (block.level ?? 2) : undefined}
+      >
         {renderInline(smoothedText)}
         <StreamingCursor />
-      </blockquote>
+      </ReportTextBlockView>
     );
   } else if (block.block_type === "table") {
     const parsedTable = parseStreamingTableText(block.text);
@@ -315,16 +279,14 @@ export function EphemeralPreviewCard({
       body = (
         <figure className="my-5 space-y-2">
           {captionText && (
-            <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
-              {captionText}
-            </figcaption>
+            <ReportFigureCaption>{captionText}</ReportFigureCaption>
           )}
           <TableBlockView
             table={previewTable.table}
             layout={previewTable.layout}
           />
           {parsedTable.footerNote && (
-            <div className="pt-0.5 text-[11.5px] text-slate-500">
+            <div className="pt-0.5 text-[11.5px] text-[var(--rpt-muted)]">
               {parsedTable.footerNote}
             </div>
           )}
@@ -334,18 +296,18 @@ export function EphemeralPreviewCard({
       body = (
         <figure className="my-5 space-y-2">
           {captionText && (
-            <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+            <ReportFigureCaption>
               {captionText}
               <StreamingCursor />
-            </figcaption>
+            </ReportFigureCaption>
           )}
           {block.text ? (
-            <p className="my-2 text-[13.5px] leading-[1.7] text-slate-600">
+            <p className="my-2 text-[13.5px] leading-[1.7] text-[var(--rpt-muted)]">
               {renderInline(smoothedText)}
               <StreamingCursor />
             </p>
           ) : (
-            <div className="h-24 rounded border border-dashed border-slate-200 bg-slate-50/50" />
+            <div className="h-24 rounded border border-dashed border-[var(--rpt-border)] bg-[var(--rpt-surface)]/50" />
           )}
         </figure>
       );
@@ -357,34 +319,32 @@ export function EphemeralPreviewCard({
     const titleText = block.title?.trim();
     body = (
       <figure className="my-5 space-y-2">
-        <div className="flex min-h-[220px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/40 px-6 py-8 text-center">
+        <div className="flex min-h-[220px] flex-col items-center justify-center rounded-lg border border-dashed border-[var(--rpt-border)] bg-[var(--rpt-surface)]/40 px-6 py-8 text-center">
           <div className="flex items-end gap-2.5 opacity-45">
-            <div className="h-8 w-4 rounded-t bg-slate-300" />
-            <div className="h-14 w-4 rounded-t bg-slate-400" />
-            <div className="h-11 w-4 rounded-t bg-slate-300" />
-            <div className="h-16 w-4 rounded-t bg-slate-400" />
-            <div className="h-10 w-4 rounded-t bg-slate-300" />
+            <div className="h-8 w-4 rounded-t bg-[var(--rpt-muted)]/45" />
+            <div className="h-14 w-4 rounded-t bg-[var(--rpt-muted)]/70" />
+            <div className="h-11 w-4 rounded-t bg-[var(--rpt-muted)]/45" />
+            <div className="h-16 w-4 rounded-t bg-[var(--rpt-muted)]/70" />
+            <div className="h-10 w-4 rounded-t bg-[var(--rpt-muted)]/45" />
           </div>
           {block.text && (
-            <p className="mt-4 max-w-md text-[12.5px] leading-relaxed text-slate-600">
+            <p className="mt-4 max-w-md text-[12.5px] leading-relaxed text-[var(--rpt-muted)]">
               {renderInline(smoothedText)}
               <StreamingCursor />
             </p>
           )}
         </div>
         {titleText && (
-          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
-            {titleText}
-          </figcaption>
+          <ReportFigureCaption separated>{titleText}</ReportFigureCaption>
         )}
       </figure>
     );
   } else {
     body = (
-      <p className="my-3 text-[14.5px] leading-[1.82] tracking-[0.01em] text-[var(--rpt-ink)]">
+      <ReportTextBlockView type="paragraph">
         {renderInline(smoothedText)}
         <StreamingCursor />
-      </p>
+      </ReportTextBlockView>
     );
   }
 
