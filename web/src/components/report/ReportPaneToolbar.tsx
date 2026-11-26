@@ -17,6 +17,7 @@ import {
   ScrollTextIcon,
 } from "lucide-react";
 import { PageChromeDialog } from "@/components/report/PageChromeDialog";
+import { ReportStyleDialog } from "@/components/report/ReportStyleDialog";
 import { TocOutline } from "@/components/report/TocOutline";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -27,7 +28,10 @@ import {
 } from "@/components/ui/tooltip";
 import type {
   CommentThread,
+  CoverConfig,
   PageChromeConfig,
+  ReferencesConfig,
+  ThemeConfig,
   TocConfig,
   TocNode,
 } from "@/contracts/report-protocol";
@@ -48,6 +52,9 @@ export interface ReportPaneToolbarProps {
   openCommentsCount: number;
   streamingPreviewsCount?: number;
   onJumpToStreamingPreview?: () => void;
+  theme?: ThemeConfig;
+  cover?: CoverConfig;
+  references?: ReferencesConfig;
   themePageChrome?: PageChromeConfig | null;
   compactViewToggle?: boolean;
   className?: string;
@@ -69,6 +76,9 @@ export function ReportPaneToolbar({
   openCommentsCount,
   streamingPreviewsCount = 0,
   onJumpToStreamingPreview,
+  theme,
+  cover,
+  references,
   themePageChrome,
   compactViewToggle = false,
   className = "",
@@ -173,7 +183,7 @@ export function ReportPaneToolbar({
 
       {/* Right Cluster: Structured Editorial Command Bar */}
       <div className="flex shrink-0 items-center gap-1.5">
-        {/* Group 1: Document Structure & Page Setup */}
+        {/* Group 1: Document Structure, Style & Page Setup */}
         <div className="flex items-center gap-0.5">
           <TocOutline
             placement="bottom"
@@ -184,6 +194,14 @@ export function ReportPaneToolbar({
             activeActorsBySection={activeActorsBySection}
             comments={comments}
             onJumpToSection={onJumpToSection}
+          />
+
+          <ReportStyleDialog
+            docId={docId}
+            currentTheme={theme ?? { preset: "quire-folio" }}
+            currentCover={cover}
+            currentToc={toc}
+            currentReferences={references}
           />
 
           {viewMode === "paged" && (
@@ -216,7 +234,7 @@ export function ReportPaneToolbar({
                   <ShieldCheckIcon className="size-3.5 text-muted-foreground" />
                 )}
                 <span className="hidden @min-[540px]:inline">
-                  {isDeepCheckRunning ? "检查中..." : "深度检查"}
+                  {isDeepCheckRunning ? "检查中…" : "深度检查"}
                 </span>
               </TooltipTrigger>
               <TooltipContent>

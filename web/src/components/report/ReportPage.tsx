@@ -93,7 +93,7 @@ export function ReportPage({
           height: `${A4_PAGE_HEIGHT_PX}px`,
           padding: `${A4_PADDING_Y_PX}px ${A4_PADDING_X_PX}px`,
         }}
-        className="a4-page relative flex flex-col overflow-hidden bg-white text-[var(--rpt-ink)] shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
+        className="a4-page relative flex flex-col overflow-hidden bg-[var(--rpt-paper,#ffffff)] text-[var(--rpt-ink)] shadow-md ring-1 ring-black/10 print:shadow-none print:ring-0"
       >
         <div className="flex min-h-0 flex-1 flex-col overflow-visible print:overflow-hidden">
           {showHeader &&

@@ -21,15 +21,21 @@ export function CustomHtmlView({ block }: CustomHtmlViewProps) {
     while (shadow.firstChild) {
       shadow.removeChild(shadow.firstChild);
     }
+    const baseStyle = document.createElement("style");
+    baseStyle.textContent = `
+      :host {
+        display: block;
+        color: var(--rpt-ink, #18181b);
+        font-family: var(--rpt-font-body, system-ui, sans-serif);
+      }
+      img, canvas, video, svg { -webkit-user-select: none; user-select: none; }
+    `;
+    shadow.appendChild(baseStyle);
     if (css) {
       const style = document.createElement("style");
       style.textContent = css;
       shadow.appendChild(style);
     }
-    const mediaGuard = document.createElement("style");
-    mediaGuard.textContent =
-      "img, canvas, video, svg { -webkit-user-select: none; user-select: none; }";
-    shadow.appendChild(mediaGuard);
     const wrapper = document.createElement("div");
     wrapper.className = "quire-custom-html";
     wrapper.innerHTML = sanitizedHtml;

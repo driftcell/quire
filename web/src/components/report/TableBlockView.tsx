@@ -132,7 +132,7 @@ export const TableBlockView = memo(function TableBlockView({
             ? { minWidth: `${sizing.minTableWidthPx}px` }
             : undefined
         }
-        className="w-full table-fixed border-collapse border-t-[1.5px] border-b-[1.5px] border-slate-800 text-sm"
+        className="w-full table-fixed border-collapse border-t-[1.5px] border-b-[1.5px] border-[var(--rpt-table-border,var(--rpt-ink))] text-sm"
       >
         <colgroup>
           {leafCols.map((col, idx) => (
@@ -150,8 +150,8 @@ export const TableBlockView = memo(function TableBlockView({
               key={rowIdx}
               className={
                 rowIdx === headerRows.length - 1
-                  ? "border-b border-slate-700 bg-slate-100/80 text-slate-800"
-                  : "border-b border-slate-300/80 bg-slate-100/80 text-slate-800"
+                  ? "border-b border-[var(--rpt-table-border,var(--rpt-ink))] bg-[var(--rpt-table-header-bg,var(--rpt-surface))] text-[var(--rpt-ink)]"
+                  : "border-b border-[var(--rpt-border)] bg-[var(--rpt-table-header-bg,var(--rpt-surface))] text-[var(--rpt-ink)]"
               }
             >
               {row.map((cell, cellIdx) => (
@@ -181,7 +181,7 @@ export const TableBlockView = memo(function TableBlockView({
               <tr
                 key={rowStart + rIdx}
                 data-measure-row-index={rowStart + rIdx}
-                className="border-b border-slate-200/70 even:bg-slate-50/70"
+                className="border-b border-[var(--rpt-border)]/70 even:bg-[var(--rpt-table-stripe,transparent)]"
               >
                 {leafCols.map((col) => {
                   const formatted = formatTableCell(
@@ -197,10 +197,10 @@ export const TableBlockView = memo(function TableBlockView({
                       key={col.key}
                       title={formatted.tooltip}
                       style={{ textAlign: formatted.align ?? col.align }}
-                      className={`${cellPaddingClass} text-[13px] leading-5 tabular-nums text-slate-700 ${keepTogether ? "whitespace-nowrap" : "break-words"} ${formatted.className ?? ""}`}
+                      className={`${cellPaddingClass} text-[13px] leading-5 tabular-nums text-[var(--rpt-ink)]/90 ${keepTogether ? "whitespace-nowrap" : "break-words"} ${formatted.className ?? ""}`}
                     >
                       {col.data_type === "badge" && formatted.text ? (
-                        <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap">
+                        <span className="inline-block rounded-full border border-[var(--rpt-accent)]/35 bg-[var(--rpt-surface)] px-2 py-0.5 text-xs font-medium whitespace-nowrap text-[var(--rpt-accent)]">
                           {formatted.text}
                         </span>
                       ) : (
@@ -216,7 +216,7 @@ export const TableBlockView = memo(function TableBlockView({
         {summaryRows.length > 0 && (
           <tfoot
             data-measure-tfoot="true"
-            className="border-t border-slate-700 bg-slate-100/70 font-semibold text-slate-900"
+            className="border-t border-[var(--rpt-table-border,var(--rpt-ink))] bg-[var(--rpt-table-header-bg,var(--rpt-surface))] font-semibold text-[var(--rpt-ink)]"
           >
             {summaryRows.map((row, sIdx) => {
               const rowObj: Record<string, CellValue> = Array.isArray(row)
@@ -230,8 +230,10 @@ export const TableBlockView = memo(function TableBlockView({
               return (
                 <tr
                   key={sIdx}
-                  className={`bg-slate-100/70 font-semibold ${
-                    isLast ? "border-b-[1.5px] border-slate-800" : ""
+                  className={`bg-[var(--rpt-table-header-bg,var(--rpt-surface))] font-semibold ${
+                    isLast
+                      ? "border-b-[1.5px] border-[var(--rpt-table-border,var(--rpt-ink))]"
+                      : ""
                   }`}
                 >
                   {leafCols.map((col) => {
@@ -247,7 +249,7 @@ export const TableBlockView = memo(function TableBlockView({
                       <td
                         key={col.key}
                         style={{ textAlign: formatted.align ?? col.align }}
-                        className={`${cellPaddingClass} text-[13px] leading-5 tabular-nums text-slate-900 ${keepTogether ? "whitespace-nowrap" : "break-words"}`}
+                        className={`${cellPaddingClass} text-[13px] leading-5 tabular-nums text-[var(--rpt-ink)] ${keepTogether ? "whitespace-nowrap" : "break-words"}`}
                       >
                         {formatted.text}
                       </td>

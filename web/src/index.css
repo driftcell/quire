@@ -40,6 +40,19 @@
   --rpt-muted: #575651;
   --rpt-border: #d6d4cd;
   --rpt-surface: #f7f6f2;
+  --rpt-paper: #ffffff;
+  --rpt-quote-bg: #f8fafc;
+  --rpt-table-border: #1e293b;
+  --rpt-table-header-bg: #f1f5f9;
+  --rpt-table-stripe: #f8fafc;
+  --rpt-line-height: 1.82;
+  --rpt-body-size: 14.5px;
+  --rpt-chart-1: #1e3a5f;
+  --rpt-chart-2: #3b6e9c;
+  --rpt-chart-3: #6495b8;
+  --rpt-chart-4: #94b4ce;
+  --rpt-chart-5: #9a6b2f;
+  --rpt-chart-6: #475569;
   --rpt-font-heading:
     "Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
   --rpt-font-body:
@@ -49,13 +62,106 @@
   color: var(--rpt-ink);
 }
 
-.report-root[data-theme-preset="briefing"] {
-  --rpt-accent: #991b1b;
+/* 1. 灵思手札 (field-notes) — Free & Exploratory */
+.report-root[data-theme-preset="field-notes"] {
+  --rpt-accent: #0f766e;
+  --rpt-ink: #1c1917;
+  --rpt-muted: #57534e;
+  --rpt-border: #e7e5e4;
+  --rpt-surface: #f5f4ee;
+  --rpt-paper: #faf9f5;
+  --rpt-quote-bg: #f0fdf4;
+  --rpt-table-border: #0f766e;
+  --rpt-table-header-bg: #f0fdfa;
+  --rpt-table-stripe: #f7f6f1;
+  --rpt-line-height: 1.92;
+  --rpt-body-size: 14.5px;
+  --rpt-font-heading: var(--rpt-font-body);
+  --rpt-chart-1: #0f766e;
+  --rpt-chart-2: #0284c7;
+  --rpt-chart-3: #d97706;
+  --rpt-chart-4: #65a30d;
+  --rpt-chart-5: #7c3aed;
+  --rpt-chart-6: #64748b;
 }
 
+/* 2. 智库简报 (modern-brief / modern) — Crisp Analytic Briefing */
+.report-root[data-theme-preset="modern-brief"],
 .report-root[data-theme-preset="modern"] {
-  --rpt-accent: #0f4c81;
+  --rpt-accent: #1d4ed8;
+  --rpt-ink: #0f172a;
+  --rpt-muted: #475569;
+  --rpt-border: #cbd5e1;
+  --rpt-surface: #f1f5f9;
+  --rpt-paper: #ffffff;
+  --rpt-quote-bg: #eff6ff;
+  --rpt-table-border: #1e293b;
+  --rpt-table-header-bg: #f1f5f9;
+  --rpt-table-stripe: #f8fafc;
+  --rpt-line-height: 1.78;
+  --rpt-body-size: 14.5px;
   --rpt-font-heading: var(--rpt-font-body);
+  --rpt-chart-1: #1d4ed8;
+  --rpt-chart-2: #0d9488;
+  --rpt-chart-3: #3b82f6;
+  --rpt-chart-4: #f59e0b;
+  --rpt-chart-5: #6366f1;
+  --rpt-chart-6: #64748b;
+}
+
+/* 3. 青塔研报 (quire-folio / default) — Balanced Editorial Folio */
+.report-root[data-theme-preset="quire-folio"],
+.report-root[data-theme-preset="default"] {
+  --rpt-accent: #1e3a5f;
+}
+
+/* 4. 学林刊印 (academic-press) — Full-Serif Academic Monograph */
+.report-root[data-theme-preset="academic-press"] {
+  --rpt-accent: #27374d;
+  --rpt-ink: #111111;
+  --rpt-muted: #4b5563;
+  --rpt-border: #9ca3af;
+  --rpt-surface: #f9fafb;
+  --rpt-paper: #ffffff;
+  --rpt-quote-bg: #f9fafb;
+  --rpt-table-border: #111111;
+  --rpt-table-header-bg: #ffffff;
+  --rpt-table-stripe: #ffffff;
+  --rpt-line-height: 1.76;
+  --rpt-body-size: 14px;
+  --rpt-font-body:
+    "Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
+  --rpt-chart-1: #27374d;
+  --rpt-chart-2: #526d82;
+  --rpt-chart-3: #8e7ab5;
+  --rpt-chart-4: #3f72af;
+  --rpt-chart-5: #7f8487;
+  --rpt-chart-6: #9db2bf;
+}
+
+/* 5. 丹宸公文 (crimson-decree / briefing) — Formal Executive Decree */
+.report-root[data-theme-preset="crimson-decree"],
+.report-root[data-theme-preset="briefing"] {
+  --rpt-accent: #991b1b;
+  --rpt-ink: #0a0a0a;
+  --rpt-muted: #525252;
+  --rpt-border: #d4d4d4;
+  --rpt-surface: #fef2f2;
+  --rpt-paper: #ffffff;
+  --rpt-quote-bg: #fffbfb;
+  --rpt-table-border: #171717;
+  --rpt-table-header-bg: #fafafa;
+  --rpt-table-stripe: #ffffff;
+  --rpt-line-height: 1.88;
+  --rpt-body-size: 15px;
+  --rpt-font-body:
+    "Noto Serif SC", "Songti SC", "STSong", "PingFang SC", Georgia, serif;
+  --rpt-chart-1: #991b1b;
+  --rpt-chart-2: #1e3a5f;
+  --rpt-chart-3: #b45309;
+  --rpt-chart-4: #334155;
+  --rpt-chart-5: #dc2626;
+  --rpt-chart-6: #78716c;
 }
 
 .report-root h1,
@@ -65,6 +171,48 @@
 .report-root h5 {
   font-family: var(--rpt-font-heading);
   scroll-margin-top: 3.5rem;
+}
+
+/* Distinct structural heading treatments per preset (Anthropic frontend-design: structure is information) */
+.report-root[data-theme-preset="field-notes"] h1[data-rpt-h="1"] {
+  border-bottom-width: 1px;
+  border-bottom-style: dashed;
+  border-bottom-color: var(--rpt-border);
+}
+
+.report-root[data-theme-preset="field-notes"] h2[data-rpt-h="2"] {
+  border-bottom: none;
+  border-left-width: 3px;
+  border-left-color: var(--rpt-accent);
+  background-color: color-mix(in oklab, var(--rpt-surface) 70%, transparent);
+  border-radius: 0 0.375rem 0.375rem 0;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+.report-root[data-theme-preset="academic-press"] h2[data-rpt-h="2"] {
+  border-left: none;
+  padding-left: 0;
+  border-bottom-width: 1px;
+  border-bottom-color: var(--rpt-ink);
+}
+
+.report-root[data-theme-preset="crimson-decree"] h1[data-rpt-h="1"],
+.report-root[data-theme-preset="briefing"] h1[data-rpt-h="1"] {
+  border-bottom-width: 3px;
+  border-bottom-style: double;
+  border-bottom-color: var(--rpt-accent);
+}
+
+.report-root[data-theme-preset="crimson-decree"] h2[data-rpt-h="2"],
+.report-root[data-theme-preset="briefing"] h2[data-rpt-h="2"] {
+  border-left-width: 4px;
+  border-left-color: var(--rpt-accent);
+  border-bottom-color: color-mix(
+    in oklab,
+    var(--rpt-accent) 28%,
+    var(--rpt-border)
+  );
 }
 
 /* Media must never receive the browser's native blue selection film. */

@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as RegisterRouteImport } from './routes/register'
+import { Route as StylesRouteImport } from './routes/styles'
 import { Route as DocsDocIdRouteImport } from './routes/docs.$docId'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 import { Route as ChartsPreviewIdPreviewRouteImport } from './routes/charts.$previewId.preview'
@@ -37,6 +38,11 @@ const LoginRoute = LoginRouteImport.update({
 const RegisterRoute = RegisterRouteImport.update({
   id: '/register',
   path: '/register',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const StylesRoute = StylesRouteImport.update({
+  id: '/styles',
+  path: '/styles',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocsDocIdRoute = DocsDocIdRouteImport.update({
@@ -70,6 +76,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/styles': typeof StylesRoute
   '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/charts/$previewId/preview': typeof ChartsPreviewIdPreviewRoute
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/styles': typeof StylesRoute
   '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/charts/$previewId/preview': typeof ChartsPreviewIdPreviewRoute
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/login': typeof LoginRoute
   '/register': typeof RegisterRoute
+  '/styles': typeof StylesRoute
   '/docs/$docId': typeof DocsDocIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
   '/charts/$previewId/preview': typeof ChartsPreviewIdPreviewRoute
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/login'
     | '/register'
+    | '/styles'
     | '/docs/$docId'
     | '/sessions/$sessionId'
     | '/charts/$previewId/preview'
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/login'
     | '/register'
+    | '/styles'
     | '/docs/$docId'
     | '/sessions/$sessionId'
     | '/charts/$previewId/preview'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/login'
     | '/register'
+    | '/styles'
     | '/docs/$docId'
     | '/sessions/$sessionId'
     | '/charts/$previewId/preview'
@@ -140,6 +152,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   LoginRoute: typeof LoginRoute
   RegisterRoute: typeof RegisterRoute
+  StylesRoute: typeof StylesRoute
   DocsDocIdRoute: typeof DocsDocIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
   ChartsPreviewIdPreviewRoute: typeof ChartsPreviewIdPreviewRoute
@@ -175,6 +188,13 @@ declare module '@tanstack/react-router' {
       path: '/register'
       fullPath: '/register'
       preLoaderRoute: typeof RegisterRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/styles': {
+      id: '/styles'
+      path: '/styles'
+      fullPath: '/styles'
+      preLoaderRoute: typeof StylesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/docs/$docId': {
@@ -220,6 +240,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   LoginRoute: LoginRoute,
   RegisterRoute: RegisterRoute,
+  StylesRoute: StylesRoute,
   DocsDocIdRoute: DocsDocIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
   ChartsPreviewIdPreviewRoute: ChartsPreviewIdPreviewRoute,

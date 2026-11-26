@@ -11,6 +11,7 @@ function resetPreferences(): void {
     rightSidebarOpen: true,
     reportViewMode: "continuous",
     rightPanelPct: 34,
+    defaultStylePresetId: "quire-folio",
   });
 }
 
@@ -28,6 +29,7 @@ describe("preferences store", () => {
       rightSidebarOpen: false,
       reportViewMode: "paged",
       rightPanelPct: 46,
+      defaultStylePresetId: "quire-folio",
     });
   });
 

@@ -82,7 +82,9 @@ describe("EphemeralPreviewCard WYSIWYG rendering", () => {
     expect(html).toContain("<table");
     expect(html).toContain("table-fixed");
     expect(html).toContain("text-sm");
-    expect(html).toContain("bg-slate-100/80");
+    expect(html).toContain(
+      "bg-[var(--rpt-table-header-bg,var(--rpt-surface))]",
+    );
     expect(html).toContain("表 1 营收对比");
     expect(html).toContain("120 亿元");
     expect(html).not.toContain("text-left text-[12.5px]");

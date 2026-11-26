@@ -164,8 +164,6 @@ export function ReportViewer({
       }
     };
     for (const thread of comments) {
-      // Only open threads stay visible on the report canvas; resolved
-      // (addressed/archived) threads are hidden unless actively selected.
       if (thread.status !== "open" || thread.anchor_detached) {
         continue;
       }
@@ -226,10 +224,6 @@ export function ReportViewer({
         : [],
     [ephemeralPreviews],
   );
-  // NOTE: Ephemeral streaming previews are intentionally restricted to continuous mode.
-  // Paged mode relies on pixel-exact A4 box packing; mixing live streaming preview cards
-  // into A4 pages triggers expensive re-layout/jank and overflows fixed page heights.
-  // Do not re-enable ephemeral previews in paged mode.
   const visiblePreviews = useMemo(
     () => (suppressChrome || isPaged ? [] : previewList),
     [isPaged, previewList, suppressChrome],
@@ -237,7 +231,11 @@ export function ReportViewer({
 
   const layoutSignature = useMemo(
     () =>
-      `${document.revision}:${document.blocks
+      `${document.revision}:${document.theme.preset ?? "default"}:${
+        document.theme.tokens?.["--rpt-body-size"] ?? ""
+      }:${document.theme.tokens?.["--rpt-line-height"] ?? ""}:${
+        document.cover.variant ?? "classic"
+      }:${document.blocks
         .map((block) => block.id)
         .join(
           ",",
@@ -249,6 +247,9 @@ export function ReportViewer({
     [
       document.blocks,
       document.revision,
+      document.theme.preset,
+      document.theme.tokens,
+      document.cover.variant,
       computed.bibliography.length,
       computed.toc_tree.length,
       document.cover.title,
@@ -524,7 +525,7 @@ export function ReportViewer({
       )}
 
       {!isPaged ? (
-        <article className="mx-auto w-full max-w-[760px] bg-white px-5 py-8 text-[var(--rpt-ink)] shadow-sm ring-1 ring-black/5 sm:px-10">
+        <article className="mx-auto w-full max-w-[760px] bg-[var(--rpt-paper,#ffffff)] px-5 py-8 text-[var(--rpt-ink)] shadow-sm ring-1 ring-black/5 sm:px-10">
           {isCustomFullPageCover ? (
             <div
               data-slot="continuous-custom-cover"

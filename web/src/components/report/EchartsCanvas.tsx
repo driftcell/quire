@@ -120,14 +120,6 @@ function deepMerge(base: JsonObject, patch: JsonObject): JsonObject {
   return result;
 }
 
-function chartSeries(option: JsonObject): JsonObject[] {
-  const series = option.series;
-  if (Array.isArray(series)) {
-    return series.filter(isPlainObject);
-  }
-  return isPlainObject(series) ? [series] : [];
-}
-
 function chartHasLegend(option: JsonObject): boolean {
   if (option.legend === false) {
     return false;
@@ -139,6 +131,14 @@ function chartHasLegend(option: JsonObject): boolean {
     (series) =>
       typeof series.name === "string" && series.name.trim().length > 0,
   );
+}
+
+function chartSeries(option: JsonObject): JsonObject[] {
+  const series = option.series;
+  if (Array.isArray(series)) {
+    return series.filter(isPlainObject);
+  }
+  return isPlainObject(series) ? [series] : [];
 }
 
 function applyLegendDefaults(option: JsonObject) {
@@ -157,7 +157,11 @@ function applyLegendDefaults(option: JsonObject) {
   }
 }
 
-export function buildEffectiveOption(chart: EchartsBlock): JsonObject {
+export function buildEffectiveOption(
+  chart: EchartsBlock,
+  themePalette?: readonly string[],
+  fontFamily?: string,
+): JsonObject {
   let option: JsonObject = isPlainObject(chart.option)
     ? { ...chart.option }
     : {};
@@ -180,7 +184,23 @@ export function buildEffectiveOption(chart: EchartsBlock): JsonObject {
       bottom: 16,
     };
   }
-  option = deepMerge(ACADEMIC_DEFAULTS, option);
+  const defaults: JsonObject = {
+    ...ACADEMIC_DEFAULTS,
+    ...(themePalette && themePalette.length > 0
+      ? { color: [...themePalette] }
+      : {}),
+    ...(fontFamily
+      ? {
+          textStyle: {
+            ...(isPlainObject(ACADEMIC_DEFAULTS.textStyle)
+              ? ACADEMIC_DEFAULTS.textStyle
+              : {}),
+            fontFamily,
+          },
+        }
+      : {}),
+  };
+  option = deepMerge(defaults, option);
   applyAxisDefaults(option, "xAxis");
   applyAxisDefaults(option, "yAxis");
   // Reports are screenshot/print artifacts: paint the final frame immediately so
@@ -189,8 +209,34 @@ export function buildEffectiveOption(chart: EchartsBlock): JsonObject {
   return option;
 }
 
+const DEFAULT_CHART_PALETTE = [
+  "#1E3A5F",
+  "#3B6E9C",
+  "#6495B8",
+  "#94B4CE",
+  "#9A6B2F",
+  "#475569",
+] as const;
+
+function readThemeChartConfig(el: HTMLElement | null): {
+  palette: string[];
+  fontFamily?: string;
+} {
+  if (!el || typeof window === "undefined") {
+    return { palette: [...DEFAULT_CHART_PALETTE] };
+  }
+  const style = window.getComputedStyle(el);
+  const palette = [1, 2, 3, 4, 5, 6].map((idx) => {
+    const val = style.getPropertyValue(`--rpt-chart-${idx}`).trim();
+    return val || DEFAULT_CHART_PALETTE[idx - 1] || "#1E3A5F";
+  });
+  const fontFamily =
+    style.getPropertyValue("--rpt-font-body").trim() || undefined;
+  return { palette, fontFamily };
+}
+
 const ACADEMIC_DEFAULTS: JsonObject = {
-  color: ["#1E3A5F", "#3B6E9C", "#6495B8", "#94B4CE", "#9A6B2F", "#475569"],
+  color: [...DEFAULT_CHART_PALETTE],
   textStyle: {
     fontFamily:
       '"Geist Variable", "PingFang SC", "Noto Sans SC", system-ui, sans-serif',
@@ -299,10 +345,10 @@ export const EchartsCanvas = memo(function EchartsCanvas({
       ? chart.title.trim()
       : "图表数据";
 
-  const effectiveOption = useMemo(() => buildEffectiveOption(chart), [chart]);
+  const baseOption = useMemo(() => buildEffectiveOption(chart), [chart]);
   const requiredMaps = useMemo(
-    () => extractRequiredMaps(effectiveOption, requirements),
-    [effectiveOption, requirements],
+    () => extractRequiredMaps(baseOption, requirements),
+    [baseOption, requirements],
   );
 
   useEffect(() => {
@@ -320,7 +366,9 @@ export const EchartsCanvas = memo(function EchartsCanvas({
     let renderGeneration = 0;
 
     const applyOption = (instance: echarts.ECharts) => {
-      instance.setOption(effectiveOption as echarts.EChartsOption, {
+      const { palette, fontFamily } = readThemeChartConfig(el);
+      const themedOption = buildEffectiveOption(chart, palette, fontFamily);
+      instance.setOption(themedOption as echarts.EChartsOption, {
         notMerge: true,
         lazyUpdate: false,
       });
@@ -398,13 +446,30 @@ export const EchartsCanvas = memo(function EchartsCanvas({
     observer.observe(el);
     window.addEventListener("resize", scheduleResize);
 
+    // Watch ancestor `.report-root` attribute/style mutations so switching
+    // style presets or live tokens repaints the ECharts palette immediately.
+    const reportRoot = el.closest(".report-root");
+    let themeObserver: MutationObserver | null = null;
+    if (reportRoot && typeof MutationObserver !== "undefined") {
+      themeObserver = new MutationObserver(() => {
+        if (!disposed && instanceRef.current) {
+          applyOption(instanceRef.current);
+        }
+      });
+      themeObserver.observe(reportRoot, {
+        attributes: true,
+        attributeFilter: ["style", "data-theme-preset"],
+      });
+    }
+
     return () => {
       disposed = true;
       window.clearTimeout(resizeTimer);
       observer.disconnect();
+      themeObserver?.disconnect();
       window.removeEventListener("resize", scheduleResize);
     };
-  }, [effectiveOption, renderer, requiredMaps]);
+  }, [chart, renderer, requiredMaps]);
 
   useEffect(() => {
     return () => {

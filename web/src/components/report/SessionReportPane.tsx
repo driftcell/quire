@@ -118,6 +118,9 @@ export const SessionReportPane = memo(function SessionReportPane({
           openCommentsCount={openCommentsCount}
           streamingPreviewsCount={streamingPreviews.length}
           onJumpToStreamingPreview={handleJumpToStreamingPreview}
+          theme={document.theme}
+          cover={document.cover}
+          references={document.references}
           themePageChrome={document.theme.page_chrome}
           compactViewToggle
         />

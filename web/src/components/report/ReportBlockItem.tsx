@@ -30,7 +30,8 @@ function renderHeadingTag(
       return (
         <h1
           id={domId}
-          className="mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-[var(--rpt-ink)]"
+          data-rpt-h="1"
+          className="mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h1>
@@ -39,7 +40,8 @@ function renderHeadingTag(
       return (
         <h2
           id={domId}
-          className="mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-[var(--rpt-ink)]"
+          data-rpt-h="2"
+          className="mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h2>
@@ -48,7 +50,8 @@ function renderHeadingTag(
       return (
         <h3
           id={domId}
-          className="mt-5 mb-2 text-[15px] font-semibold text-[var(--rpt-ink)]"
+          data-rpt-h="3"
+          className="mt-5 mb-2 text-[15px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h3>
@@ -57,7 +60,8 @@ function renderHeadingTag(
       return (
         <h4
           id={domId}
-          className="mt-4 mb-1.5 text-[14px] font-semibold text-[var(--rpt-ink)]"
+          data-rpt-h="4"
+          className="mt-4 mb-1.5 text-[14px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h4>
@@ -66,7 +70,8 @@ function renderHeadingTag(
       return (
         <h5
           id={domId}
-          className="mt-3 mb-1 text-[13px] font-semibold text-[var(--rpt-ink)]"
+          data-rpt-h="5"
+          className="mt-3 mb-1 text-[13px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h5>
@@ -143,7 +148,7 @@ function BlockFooterNotes({
     .join(" ");
   const hasSource = sourceText.length > 0;
 
-  const className = `space-y-0.5 pt-1 text-[11.5px] leading-relaxed text-slate-500 ${
+  const className = `space-y-0.5 pt-1 text-[11.5px] leading-relaxed text-[var(--rpt-muted)] ${
     align === "center" ? "text-center" : "text-left"
   }`;
 
@@ -241,10 +246,27 @@ export const ReportBlockItem = memo(function ReportBlockItem({
       renderInline(block.text),
     );
   } else if (block.type === "paragraph") {
-    bodyNode = (
+    const isCallout = block.style?.variant === "callout";
+    bodyNode = isCallout ? (
+      <div
+        id={domId}
+        data-block-variant="callout"
+        style={{
+          fontSize: "var(--rpt-body-size, 14.5px)",
+          lineHeight: "var(--rpt-line-height, 1.82)",
+        }}
+        className="my-4 rounded-lg border border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] bg-[var(--rpt-surface)] px-4 py-3 tracking-[0.01em] text-[var(--rpt-ink)]"
+      >
+        {renderInline(block.text)}
+      </div>
+    ) : (
       <p
         id={domId}
-        className="my-3 text-[14.5px] leading-[1.82] tracking-[0.01em] text-[var(--rpt-ink)]"
+        style={{
+          fontSize: "var(--rpt-body-size, 14.5px)",
+          lineHeight: "var(--rpt-line-height, 1.82)",
+        }}
+        className="my-3 tracking-[0.01em] text-[var(--rpt-ink)]"
       >
         {renderInline(block.text)}
       </p>
@@ -253,7 +275,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
     bodyNode = (
       <blockquote
         id={domId}
-        className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-slate-50/90 px-4 py-3 text-[14px] leading-[1.75] text-slate-700"
+        className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-[var(--rpt-quote-bg,var(--rpt-surface))] px-4 py-3 text-[14px] leading-[1.75] text-[var(--rpt-ink)]/90"
       >
         {renderInline(block.text)}
       </blockquote>
@@ -284,7 +306,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
       bodyNode = (
         <figure id={domId} className="my-5 space-y-2">
           {showCaption && (
-            <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+            <figcaption className="text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-[var(--rpt-ink)]">
               {captionText}
               {slice.continuation ? "（续）" : ""}
             </figcaption>
@@ -300,7 +322,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
           {slice.continuation &&
             slice.rowStart !== undefined &&
             slice.rowEnd !== undefined && (
-              <div className="text-right text-[11px] font-normal text-slate-500 tabular-nums">
+              <div className="text-right text-[11px] font-normal text-[var(--rpt-muted)] tabular-nums">
                 接上页 · 第 {slice.rowStart + 1}–{slice.rowEnd} 行 / 共{" "}
                 {totalRows} 行
               </div>
@@ -337,7 +359,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
           showTools={showChartTools}
         />
         {captionText && (
-          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-[var(--rpt-ink)]">
             {captionText}
           </figcaption>
         )}
@@ -362,7 +384,7 @@ export const ReportBlockItem = memo(function ReportBlockItem({
       <figure id={domId} className="my-5 space-y-2">
         <CustomHtmlView block={block} />
         {captionText && (
-          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-slate-800">
+          <figcaption className="pt-1 text-center text-[13.5px] font-semibold tracking-wide whitespace-pre-wrap text-[var(--rpt-ink)]">
             {captionText}
           </figcaption>
         )}

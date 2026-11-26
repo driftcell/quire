@@ -8,6 +8,7 @@ export interface UiPreferences {
   rightSidebarOpen: boolean;
   reportViewMode: ReportViewMode;
   rightPanelPct: number;
+  defaultStylePresetId: string;
 }
 
 const STORAGE_KEY = "quire.ui.preferences.v1";
@@ -17,6 +18,7 @@ const DEFAULT_PREFS: UiPreferences = {
   rightSidebarOpen: true,
   reportViewMode: "continuous",
   rightPanelPct: 34,
+  defaultStylePresetId: "quire-folio",
 };
 
 function parsePreferences(raw: string | null): UiPreferences {
@@ -48,6 +50,11 @@ function parsePreferences(raw: string | null): UiPreferences {
         parsed.rightPanelPct <= 60
           ? parsed.rightPanelPct
           : DEFAULT_PREFS.rightPanelPct,
+      defaultStylePresetId:
+        typeof parsed.defaultStylePresetId === "string" &&
+        parsed.defaultStylePresetId.trim().length > 0
+          ? parsed.defaultStylePresetId.trim()
+          : DEFAULT_PREFS.defaultStylePresetId,
     };
   } catch {
     return DEFAULT_PREFS;
@@ -70,7 +77,8 @@ function preferencesEqual(left: UiPreferences, right: UiPreferences): boolean {
     left.leftSidebarOpen === right.leftSidebarOpen &&
     left.rightSidebarOpen === right.rightSidebarOpen &&
     left.reportViewMode === right.reportViewMode &&
-    left.rightPanelPct === right.rightPanelPct
+    left.rightPanelPct === right.rightPanelPct &&
+    left.defaultStylePresetId === right.defaultStylePresetId
   );
 }
 

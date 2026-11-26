@@ -75,6 +75,9 @@ function DocumentPage() {
             setCommentsOpen(true);
           }}
           openCommentsCount={openCommentsCount}
+          theme={docQuery.data.document.theme}
+          cover={docQuery.data.document.cover}
+          references={docQuery.data.document.references}
           themePageChrome={docQuery.data.document.theme.page_chrome}
           leading={
             <Button

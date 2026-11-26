@@ -1,12 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useRouterState,
+} from "@tanstack/react-router";
 import {
   CheckIcon,
   FileTextIcon,
   LoaderCircleIcon,
   MessageSquareIcon,
   MoreHorizontalIcon,
+  PaletteIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -72,7 +78,11 @@ export function AppSidebar() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
   const activeSessionId = params.sessionId;
+  const isStylesActive = pathname === "/styles";
 
   const sessionsQuery = useQuery({
     queryKey: ["sessions"],
@@ -182,7 +192,7 @@ export function AppSidebar() {
 
   return (
     <Sidebar collapsible="offcanvas" className="border-r border-sidebar-border">
-      <SidebarHeader className="gap-2.5 border-b border-sidebar-border/80 px-3 pt-3.5 pb-3">
+      <SidebarHeader className="gap-2 border-b border-sidebar-border/80 px-3 pt-3.5 pb-3">
         <div className="flex items-center justify-between px-1">
           <Link
             to="/"
@@ -192,25 +202,46 @@ export function AppSidebar() {
           </Link>
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => {
-            void navigate({ to: "/" });
-          }}
-          className="h-9 w-full justify-start gap-2 rounded-lg border-sidebar-border bg-card px-2.5 text-xs font-medium text-foreground shadow-2xs transition-colors hover:bg-background"
-        >
-          <PlusIcon className="size-3.5 text-[#1D4ED8]" aria-hidden="true" />
-          <span>新建对话</span>
-          <span
-            className="ml-auto hidden items-center gap-0.5 md:flex"
-            aria-label="Command or Control plus N"
+        <div className="flex flex-col gap-1">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              void navigate({ to: "/" });
+            }}
+            className="h-9 w-full justify-start gap-2 rounded-lg border-sidebar-border bg-card px-2.5 text-xs font-medium text-foreground shadow-2xs transition-colors hover:bg-background"
           >
-            <kbd className="flex h-5 items-center justify-center rounded border border-border/80 bg-muted/60 px-1 font-sans text-[10px] leading-none font-medium text-muted-foreground">
-              ⌘&nbsp;N
-            </kbd>
-          </span>
-        </Button>
+            <PlusIcon className="size-3.5 text-[#1D4ED8]" aria-hidden="true" />
+            <span>新建对话</span>
+            <span
+              className="ml-auto hidden items-center gap-0.5 md:flex"
+              aria-label="Command or Control plus N"
+            >
+              <kbd className="flex h-5 items-center justify-center rounded border border-border/80 bg-muted/60 px-1 font-sans text-[10px] leading-none font-medium text-muted-foreground">
+                ⌘&nbsp;N
+              </kbd>
+            </span>
+          </Button>
+
+          <Button
+            variant="ghost"
+            nativeButton={false}
+            className={`relative h-8 w-full justify-start gap-2 rounded-lg px-2.5 text-xs transition-colors ${
+              isStylesActive
+                ? "bg-card font-medium text-foreground shadow-2xs ring-1 ring-border/80 before:absolute before:top-1.5 before:bottom-1.5 before:left-0 before:w-[2.5px] before:rounded-r before:bg-[#1D4ED8]"
+                : "font-normal text-foreground/85 hover:bg-sidebar-accent/70 hover:text-foreground"
+            }`}
+            render={<Link to="/styles" />}
+          >
+            <PaletteIcon
+              className={`size-3.5 shrink-0 ${
+                isStylesActive ? "text-[#1D4ED8]" : "text-muted-foreground/75"
+              }`}
+              aria-hidden="true"
+            />
+            <span>样式中心</span>
+          </Button>
+        </div>
 
         {totalCount > 2 && (
           <div className="relative">

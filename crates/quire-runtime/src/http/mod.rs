@@ -86,6 +86,15 @@ pub fn router(service: RuntimeService) -> Router {
             "/api/auth/api-keys/{key_id}",
             axum::routing::delete(delete_api_key),
         )
+        .route("/api/styles", get(list_styles).post(create_style))
+        .route(
+            "/api/styles/{style_id}",
+            patch(update_style).delete(delete_style),
+        )
+        .route(
+            "/api/docs/{doc_id}/apply-style",
+            post(apply_style_to_document),
+        )
         .route("/api/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/sessions/{session_id}",
@@ -234,6 +243,7 @@ pub(crate) use kb::*;
 pub(crate) use registry::*;
 pub(crate) use session_events::*;
 pub(crate) use sessions::*;
+pub(crate) use styles::*;
 
 mod auth;
 mod auth_routes;
@@ -242,3 +252,4 @@ mod kb;
 mod registry;
 mod session_events;
 mod sessions;
+mod styles;

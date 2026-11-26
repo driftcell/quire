@@ -214,6 +214,7 @@ mod helpers;
 mod queue;
 mod runs;
 mod sessions;
+mod styles;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -221,3 +222,7 @@ mod trace_tests;
 mod users;
 
 pub(crate) use helpers::*;
+pub use styles::{
+    CreateStylePresetInput, StylePresetBundle, StylePresetRecord, UpdateStylePresetInput,
+    builtin_style_presets, find_builtin_style_preset,
+};
