@@ -61,9 +61,16 @@ export const Route = createFileRoute("/styles")({
 
 function cloneBundle(bundle: StylePresetBundle): StylePresetBundle {
   return {
+    cover_enabled: bundle.cover_enabled ?? true,
     cover_variant: bundle.cover_variant,
+    toc_enabled: bundle.toc_enabled ?? true,
+    toc_max_depth: bundle.toc_max_depth ?? 3,
     toc_variant: bundle.toc_variant,
+    toc_page_break_before: bundle.toc_page_break_before ?? false,
+    toc_page_break_after: bundle.toc_page_break_after ?? false,
     citation_style: bundle.citation_style,
+    references_enabled: bundle.references_enabled ?? true,
+    references_page_break_before: bundle.references_page_break_before ?? false,
     theme: {
       preset: bundle.theme.preset,
       tokens: { ...(bundle.theme.tokens ?? {}) },
@@ -90,7 +97,7 @@ function readUrlState(): {
   customize: boolean;
 } {
   if (typeof window === "undefined") {
-    return { styleId: null, tab: "all", mode: null, customize: false };
+    return { styleId: null, tab: "all", mode: null, customize: true };
   }
   const params = new URLSearchParams(window.location.search);
   const rawTab = params.get("tab");
@@ -101,7 +108,8 @@ function readUrlState(): {
   const rawMode = params.get("mode");
   const mode: ReportViewMode | null =
     rawMode === "paged" || rawMode === "continuous" ? rawMode : null;
-  const customize = params.get("customize") === "1";
+  const rawCustomize = params.get("customize");
+  const customize = rawCustomize === null ? true : rawCustomize !== "0";
   return {
     styleId: params.get("style"),
     tab,
@@ -135,9 +143,9 @@ function writeUrlState(next: {
   }
   if (next.customize !== undefined) {
     if (next.customize) {
-      url.searchParams.set("customize", "1");
-    } else {
       url.searchParams.delete("customize");
+    } else {
+      url.searchParams.set("customize", "0");
     }
   }
   window.history.replaceState(null, "", `${url.pathname}${url.search}`);
@@ -559,7 +567,7 @@ export function StyleCenterPage() {
             className="gap-1"
           >
             <SlidersHorizontalIcon className="size-3" aria-hidden="true" />
-            <span>调优</span>
+            <span>精调</span>
             {isDirty && (
               <span
                 className="size-1.5 rounded-full bg-[#1D4ED8]"
@@ -617,7 +625,7 @@ export function StyleCenterPage() {
         {/* Left Gallery Column */}
         <aside
           aria-label="样式列表"
-          className="no-scrollbar flex w-full shrink-0 flex-col gap-2.5 overflow-x-auto border-b border-border/80 bg-sidebar/55 p-3 md:w-[300px] md:overflow-y-auto md:border-r md:border-b-0 lg:w-[320px]"
+          className="no-scrollbar flex w-full shrink-0 flex-col gap-2.5 overflow-x-auto border-b border-border/80 bg-sidebar/55 p-3 md:w-[290px] md:overflow-y-auto md:border-r md:border-b-0 lg:w-[310px]"
         >
           <div className="flex gap-2.5 md:flex-col">
             {filteredPresets.map((preset: StylePresetRecord) => {
@@ -674,14 +682,14 @@ export function StyleCenterPage() {
           </div>
         </main>
 
-        {/* Right Customizer Drawer */}
+        {/* Right 6-Partition Customizer Drawer */}
         {customizerOpen && (
           <aside
-            aria-label="样式调优面板"
-            className="no-scrollbar flex w-full shrink-0 flex-col border-t border-border/90 bg-card md:w-[320px] md:border-t-0 md:border-l lg:w-[340px]"
+            aria-label="样式精调面板"
+            className="no-scrollbar flex w-full shrink-0 flex-col border-t border-border/90 bg-card md:w-[340px] md:border-t-0 md:border-l lg:w-[360px]"
           >
             <div className="flex h-10 shrink-0 items-center justify-between border-b border-border/80 px-3.5">
-              <div className="flex items-center gap-2 min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
                 <span className="truncate text-xs font-semibold text-foreground">
                   {activePreset.name}
                 </span>
@@ -691,7 +699,7 @@ export function StyleCenterPage() {
               </div>
               <button
                 type="button"
-                aria-label="关闭调优面板"
+                aria-label="关闭精调面板"
                 onClick={toggleCustomizer}
                 className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               >
@@ -775,7 +783,7 @@ export function StyleCenterPage() {
                   id="save-preset-tag"
                   name="save-preset-tag"
                   autoComplete="off"
-                  placeholder="自由 / 轻快 / 正式…"
+                  placeholder="自由 / 先锋 / 正式…"
                   value={presetTag}
                   onChange={(e) => setPresetTag(e.target.value)}
                 />
@@ -820,11 +828,16 @@ export function StyleCenterPage() {
               <Button
                 type="button"
                 variant="ghost"
+                size="sm"
                 onClick={() => setSaveDialogOpen(false)}
               >
                 取消
               </Button>
-              <Button type="submit" disabled={createMutation.isPending}>
+              <Button
+                type="submit"
+                size="sm"
+                disabled={createMutation.isPending}
+              >
                 {createMutation.isPending && (
                   <LoaderCircleIcon className="mr-1.5 size-3.5 animate-spin" />
                 )}

@@ -1,4 +1,4 @@
-import { memo, type ReactNode } from "react";
+import { memo, type CSSProperties, type ReactNode } from "react";
 import { MessageSquareIcon } from "lucide-react";
 import { CustomHtmlView } from "@/components/report/CustomHtmlView";
 import { EchartsCanvas } from "@/components/report/EchartsCanvas";
@@ -31,7 +31,13 @@ function renderHeadingTag(
         <h1
           id={domId}
           data-rpt-h="1"
-          className="mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-balance text-[var(--rpt-ink)]"
+          style={{
+            fontSize: "var(--rpt-h1-size, 22px)",
+            fontWeight:
+              "var(--rpt-heading-weight, 700)" as CSSProperties["fontWeight"],
+            letterSpacing: "var(--rpt-heading-tracking, -0.01em)",
+          }}
+          className="rpt-h1 mt-8 mb-4 border-b-2 border-[var(--rpt-accent)] pb-2 text-xl font-bold tracking-tight text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h1>
@@ -41,7 +47,12 @@ function renderHeadingTag(
         <h2
           id={domId}
           data-rpt-h="2"
-          className="mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-balance text-[var(--rpt-ink)]"
+          style={{
+            fontWeight:
+              "var(--rpt-heading-weight, 600)" as CSSProperties["fontWeight"],
+            letterSpacing: "var(--rpt-heading-tracking, 0em)",
+          }}
+          className="rpt-h2 mt-7 mb-3 border-b border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] pb-1.5 pl-2.5 text-[17px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h2>
@@ -51,7 +62,7 @@ function renderHeadingTag(
         <h3
           id={domId}
           data-rpt-h="3"
-          className="mt-5 mb-2 text-[15px] font-semibold text-balance text-[var(--rpt-ink)]"
+          className="rpt-h3 mt-5 mb-2 text-[15px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h3>
@@ -61,7 +72,7 @@ function renderHeadingTag(
         <h4
           id={domId}
           data-rpt-h="4"
-          className="mt-4 mb-1.5 text-[14px] font-semibold text-balance text-[var(--rpt-ink)]"
+          className="rpt-h4 mt-4 mb-1.5 text-[14px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h4>
@@ -71,7 +82,7 @@ function renderHeadingTag(
         <h5
           id={domId}
           data-rpt-h="5"
-          className="mt-3 mb-1 text-[13px] font-semibold text-balance text-[var(--rpt-ink)]"
+          className="rpt-h5 mt-3 mb-1 text-[13px] font-semibold text-balance text-[var(--rpt-ink)]"
         >
           {content}
         </h5>
@@ -254,8 +265,9 @@ export const ReportBlockItem = memo(function ReportBlockItem({
         style={{
           fontSize: "var(--rpt-body-size, 14.5px)",
           lineHeight: "var(--rpt-line-height, 1.82)",
+          borderRadius: "var(--rpt-radius, 6px)",
         }}
-        className="my-4 rounded-lg border border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] bg-[var(--rpt-surface)] px-4 py-3 tracking-[0.01em] text-[var(--rpt-ink)]"
+        className="rpt-callout my-4 rounded-lg border border-[var(--rpt-border)] border-l-[3px] border-l-[var(--rpt-accent)] bg-[var(--rpt-surface)] px-4 py-3 tracking-[0.01em] text-[var(--rpt-ink)]"
       >
         {renderInline(block.text)}
       </div>
@@ -265,8 +277,11 @@ export const ReportBlockItem = memo(function ReportBlockItem({
         style={{
           fontSize: "var(--rpt-body-size, 14.5px)",
           lineHeight: "var(--rpt-line-height, 1.82)",
+          marginTop: "var(--rpt-para-gap, 0.75rem)",
+          marginBottom: "var(--rpt-para-gap, 0.75rem)",
+          textIndent: "var(--rpt-para-indent, 0em)",
         }}
-        className="my-3 tracking-[0.01em] text-[var(--rpt-ink)]"
+        className="rpt-paragraph my-3 tracking-[0.01em] text-[var(--rpt-ink)] [text-align:var(--rpt-para-align,left)]"
       >
         {renderInline(block.text)}
       </p>
@@ -275,7 +290,10 @@ export const ReportBlockItem = memo(function ReportBlockItem({
     bodyNode = (
       <blockquote
         id={domId}
-        className="my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-[var(--rpt-quote-bg,var(--rpt-surface))] px-4 py-3 text-[14px] leading-[1.75] text-[var(--rpt-ink)]/90"
+        style={{
+          borderRadius: "var(--rpt-radius, 6px)",
+        }}
+        className="rpt-quote my-4 rounded-r-lg border-l-[3px] border-[var(--rpt-accent)] bg-[var(--rpt-quote-bg,var(--rpt-surface))] px-4 py-3 text-[14px] leading-[1.75] text-[var(--rpt-ink)]/90"
       >
         {renderInline(block.text)}
       </blockquote>

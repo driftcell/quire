@@ -47,6 +47,13 @@
   --rpt-table-stripe: #f8fafc;
   --rpt-line-height: 1.82;
   --rpt-body-size: 14.5px;
+  --rpt-h1-size: 22px;
+  --rpt-heading-weight: 700;
+  --rpt-heading-tracking: 0em;
+  --rpt-para-gap: 0.75rem;
+  --rpt-para-indent: 0em;
+  --rpt-para-align: left;
+  --rpt-radius: 6px;
   --rpt-chart-1: #1e3a5f;
   --rpt-chart-2: #3b6e9c;
   --rpt-chart-3: #6495b8;
@@ -68,14 +75,16 @@
   --rpt-ink: #1c1917;
   --rpt-muted: #57534e;
   --rpt-border: #e7e5e4;
-  --rpt-surface: #f5f4ee;
-  --rpt-paper: #faf9f5;
+  --rpt-surface: #edf7f5;
+  --rpt-paper: #faf8f3;
   --rpt-quote-bg: #f0fdf4;
-  --rpt-table-border: #0f766e;
-  --rpt-table-header-bg: #f0fdfa;
-  --rpt-table-stripe: #f7f6f1;
+  --rpt-table-border: #a7f3d0;
+  --rpt-table-header-bg: #ecfdf5;
+  --rpt-table-stripe: #f5f3ee;
   --rpt-line-height: 1.92;
   --rpt-body-size: 14.5px;
+  --rpt-para-gap: 1.05rem;
+  --rpt-radius: 12px;
   --rpt-font-heading: var(--rpt-font-body);
   --rpt-chart-1: #0f766e;
   --rpt-chart-2: #0284c7;
@@ -92,14 +101,14 @@
   --rpt-ink: #0f172a;
   --rpt-muted: #475569;
   --rpt-border: #cbd5e1;
-  --rpt-surface: #f1f5f9;
+  --rpt-surface: #eff6ff;
   --rpt-paper: #ffffff;
-  --rpt-quote-bg: #eff6ff;
+  --rpt-quote-bg: #f8fafc;
   --rpt-table-border: #1e293b;
-  --rpt-table-header-bg: #f1f5f9;
+  --rpt-table-header-bg: #eff6ff;
   --rpt-table-stripe: #f8fafc;
-  --rpt-line-height: 1.78;
-  --rpt-body-size: 14.5px;
+  --rpt-line-height: 1.76;
+  --rpt-body-size: 14px;
   --rpt-font-heading: var(--rpt-font-body);
   --rpt-chart-1: #1d4ed8;
   --rpt-chart-2: #0d9488;
@@ -123,12 +132,17 @@
   --rpt-border: #9ca3af;
   --rpt-surface: #f9fafb;
   --rpt-paper: #ffffff;
-  --rpt-quote-bg: #f9fafb;
+  --rpt-quote-bg: #ffffff;
   --rpt-table-border: #111111;
   --rpt-table-header-bg: #ffffff;
   --rpt-table-stripe: #ffffff;
   --rpt-line-height: 1.76;
   --rpt-body-size: 14px;
+  --rpt-h1-size: 20px;
+  --rpt-para-gap: 0.55rem;
+  --rpt-para-indent: 2em;
+  --rpt-para-align: justify;
+  --rpt-radius: 0px;
   --rpt-font-body:
     "Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif;
   --rpt-chart-1: #27374d;
@@ -152,8 +166,11 @@
   --rpt-table-border: #171717;
   --rpt-table-header-bg: #fafafa;
   --rpt-table-stripe: #ffffff;
-  --rpt-line-height: 1.88;
+  --rpt-line-height: 1.92;
   --rpt-body-size: 15px;
+  --rpt-para-indent: 2em;
+  --rpt-para-align: justify;
+  --rpt-radius: 0px;
   --rpt-font-body:
     "Noto Serif SC", "Songti SC", "STSong", "PingFang SC", Georgia, serif;
   --rpt-chart-1: #991b1b;
@@ -162,6 +179,143 @@
   --rpt-chart-4: #334155;
   --rpt-chart-5: #dc2626;
   --rpt-chart-6: #78716c;
+}
+
+/* 6. 瑞士网格 (swiss-grid) — International Typographic Grid */
+.report-root[data-theme-preset="swiss-grid"] {
+  --rpt-accent: #ea580c;
+  --rpt-ink: #09090b;
+  --rpt-muted: #52525b;
+  --rpt-border: #18181b;
+  --rpt-surface: #f4f4f5;
+  --rpt-paper: #ffffff;
+  --rpt-quote-bg: #fff7ed;
+  --rpt-table-border: #09090b;
+  --rpt-table-header-bg: #f4f4f5;
+  --rpt-table-stripe: #fafafa;
+  --rpt-line-height: 1.68;
+  --rpt-body-size: 14px;
+  --rpt-heading-weight: 800;
+  --rpt-heading-tracking: -0.02em;
+  --rpt-radius: 0px;
+  --rpt-font-heading:
+    "Geist Variable", "Helvetica Neue", "PingFang SC", sans-serif;
+  --rpt-chart-1: #ea580c;
+  --rpt-chart-2: #09090b;
+  --rpt-chart-3: #2563eb;
+  --rpt-chart-4: #71717a;
+  --rpt-chart-5: #d97706;
+  --rpt-chart-6: #0d9488;
+}
+
+/* 7. 工程蓝图 (blueprint-ledger) — Technical Blueprint & Quantitative Ledger */
+.report-root[data-theme-preset="blueprint-ledger"] {
+  --rpt-accent: #0369a1;
+  --rpt-ink: #0c4a6e;
+  --rpt-muted: #475569;
+  --rpt-border: #bae6fd;
+  --rpt-surface: #e0f2fe;
+  --rpt-paper: #f4f8fb;
+  --rpt-quote-bg: #e0f2fe;
+  --rpt-table-border: #0284c7;
+  --rpt-table-header-bg: #e0f2fe;
+  --rpt-table-stripe: #edf5fa;
+  --rpt-line-height: 1.76;
+  --rpt-body-size: 13.5px;
+  --rpt-h1-size: 20px;
+  --rpt-radius: 4px;
+  --rpt-font-heading: "JetBrains Mono", "Geist Mono", "PingFang SC", monospace;
+  --rpt-font-body: "JetBrains Mono", "Geist Variable", "PingFang SC", monospace;
+  --rpt-chart-1: #0369a1;
+  --rpt-chart-2: #0284c7;
+  --rpt-chart-3: #0d9488;
+  --rpt-chart-4: #6366f1;
+  --rpt-chart-5: #d97706;
+  --rpt-chart-6: #64748b;
+}
+
+/* 8. 琥珀画报 (monocle-magazine) — Editorial Magazine Feature */
+.report-root[data-theme-preset="monocle-magazine"] {
+  --rpt-accent: #9a3412;
+  --rpt-ink: #27221d;
+  --rpt-muted: #78716c;
+  --rpt-border: #e7dec8;
+  --rpt-surface: #f5efe4;
+  --rpt-paper: #fbf7f0;
+  --rpt-quote-bg: #f5efe4;
+  --rpt-table-border: #9a3412;
+  --rpt-table-header-bg: #f5efe4;
+  --rpt-table-stripe: #f8f3e9;
+  --rpt-line-height: 1.92;
+  --rpt-body-size: 15px;
+  --rpt-h1-size: 24px;
+  --rpt-heading-tracking: 0.04em;
+  --rpt-para-gap: 1.05rem;
+  --rpt-para-align: justify;
+  --rpt-font-heading:
+    "Noto Serif SC", "Songti SC", "Playfair Display", Georgia, serif;
+  --rpt-font-body: "Noto Serif SC", "Songti SC", Georgia, serif;
+  --rpt-chart-1: #9a3412;
+  --rpt-chart-2: #d97706;
+  --rpt-chart-3: #1e3a5f;
+  --rpt-chart-4: #0f766e;
+  --rpt-chart-5: #78716c;
+  --rpt-chart-6: #b45309;
+}
+
+/* 9. 曜石终端 (cyber-terminal) — Dark Obsidian Terminal */
+.report-root[data-theme-preset="cyber-terminal"] {
+  --rpt-accent: #10b981;
+  --rpt-ink: #e2e8f0;
+  --rpt-muted: #94a3b8;
+  --rpt-border: #263345;
+  --rpt-surface: #16202e;
+  --rpt-paper: #0f141c;
+  --rpt-quote-bg: #131c28;
+  --rpt-table-border: #334155;
+  --rpt-table-header-bg: #1e293b;
+  --rpt-table-stripe: #131b26;
+  --rpt-line-height: 1.82;
+  --rpt-body-size: 14px;
+  --rpt-font-heading:
+    "JetBrains Mono", "Geist Variable", "PingFang SC", monospace;
+  --rpt-chart-1: #10b981;
+  --rpt-chart-2: #38bdf8;
+  --rpt-chart-3: #f59e0b;
+  --rpt-chart-4: #a78bfa;
+  --rpt-chart-5: #f43f5e;
+  --rpt-chart-6: #2dd4bf;
+}
+
+/* 10. 竹韵书院 (bamboo-scroll) — Oriental Academy & Bamboo Scroll */
+.report-root[data-theme-preset="bamboo-scroll"] {
+  --rpt-accent: #2d5a4c;
+  --rpt-ink: #1f2421;
+  --rpt-muted: #6b7068;
+  --rpt-border: #d5cfc0;
+  --rpt-surface: #efece2;
+  --rpt-paper: #f7f4eb;
+  --rpt-quote-bg: #efece2;
+  --rpt-table-border: #2d5a4c;
+  --rpt-table-header-bg: #efece2;
+  --rpt-table-stripe: #f3f0e6;
+  --rpt-line-height: 2.05;
+  --rpt-body-size: 15px;
+  --rpt-h1-size: 24px;
+  --rpt-heading-tracking: 0.08em;
+  --rpt-para-gap: 1.05rem;
+  --rpt-para-indent: 2em;
+  --rpt-para-align: justify;
+  --rpt-font-heading:
+    "STKaiti", "Kaiti SC", "KaiTi", "Noto Serif SC", "Songti SC", serif;
+  --rpt-font-body:
+    "Noto Serif SC", "Songti SC", "STSong", "STKaiti", Georgia, serif;
+  --rpt-chart-1: #2d5a4c;
+  --rpt-chart-2: #b45309;
+  --rpt-chart-3: #3b6e9c;
+  --rpt-chart-4: #6d4c41;
+  --rpt-chart-5: #557a6e;
+  --rpt-chart-6: #8d6e63;
 }
 
 .report-root h1,
@@ -173,46 +327,293 @@
   scroll-margin-top: 3.5rem;
 }
 
-/* Distinct structural heading treatments per preset (Anthropic frontend-design: structure is information) */
-.report-root[data-theme-preset="field-notes"] h1[data-rpt-h="1"] {
-  border-bottom-width: 1px;
-  border-bottom-style: dashed;
-  border-bottom-color: var(--rpt-border);
+/* ------------------------------------------------------------------------- */
+/* Structural Heading Variants (H1) — 7 Distinct Visual Architectures        */
+/* ------------------------------------------------------------------------- */
+
+/* Variant 1: none — Pure typographic hierarchy, zero underline */
+.report-root[data-theme-preset="field-notes"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-h1-variant="none"] h1[data-rpt-h="1"] {
+  border: none;
+  padding: 0;
+  background: transparent;
 }
 
-.report-root[data-theme-preset="field-notes"] h2[data-rpt-h="2"] {
-  border-bottom: none;
-  border-left-width: 3px;
-  border-left-color: var(--rpt-accent);
-  background-color: color-mix(in oklab, var(--rpt-surface) 70%, transparent);
-  border-radius: 0 0.375rem 0.375rem 0;
-  padding-top: 0.25rem;
-  padding-bottom: 0.25rem;
+/* Variant 2: top-rule — McKinsey/Briefing short crown bar above heading, no bottom line */
+.report-root[data-theme-preset="modern-brief"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-h1-variant="top-rule"] h1[data-rpt-h="1"] {
+  position: relative;
+  border: none;
+  padding-top: 0.65rem;
+  padding-bottom: 0;
+  background: transparent;
 }
 
-.report-root[data-theme-preset="academic-press"] h2[data-rpt-h="2"] {
+.report-root[data-theme-preset="modern-brief"]:not([data-h1-variant])
+  h1[data-rpt-h="1"]::before,
+.report-root[data-h1-variant="top-rule"] h1[data-rpt-h="1"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2.5rem;
+  height: 3.5px;
+  border-radius: 2px;
+  background-color: var(--rpt-accent);
+}
+
+/* Variant 3: left-pillar — Editorial thick left pillar with tinted surface backdrop */
+.report-root[data-theme-preset="quire-folio"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-theme-preset="cyber-terminal"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-h1-variant="left-pillar"] h1[data-rpt-h="1"] {
+  border: none;
+  border-left: 5px solid var(--rpt-accent);
+  background-color: color-mix(in oklab, var(--rpt-surface) 82%, transparent);
+  padding: 0.45rem 0.85rem;
+  border-radius: 0 var(--rpt-radius, 6px) var(--rpt-radius, 6px) 0;
+}
+
+/* Variant 4: pill-banner — Full-bleed high-contrast structural block banner */
+.report-root[data-theme-preset="swiss-grid"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-theme-preset="blueprint-ledger"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-h1-variant="pill-banner"] h1[data-rpt-h="1"] {
+  border: none;
+  border-left: 6px solid var(--rpt-accent);
+  background-color: var(--rpt-ink);
+  color: var(--rpt-paper);
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--rpt-radius, 0px);
+}
+
+/* Variant 5: center-ornament — Centered monograph/magazine header with fine top/bottom rules */
+.report-root[data-theme-preset="academic-press"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-theme-preset="monocle-magazine"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-theme-preset="bamboo-scroll"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-h1-variant="center-ornament"] h1[data-rpt-h="1"] {
+  text-align: center;
   border-left: none;
-  padding-left: 0;
-  border-bottom-width: 1px;
-  border-bottom-color: var(--rpt-ink);
+  border-right: none;
+  border-top: 1px solid var(--rpt-border);
+  border-bottom: 1.5px solid var(--rpt-accent);
+  padding: 0.55rem 1rem;
+  background: transparent;
 }
 
-.report-root[data-theme-preset="crimson-decree"] h1[data-rpt-h="1"],
-.report-root[data-theme-preset="briefing"] h1[data-rpt-h="1"] {
-  border-bottom-width: 3px;
-  border-bottom-style: double;
-  border-bottom-color: var(--rpt-accent);
+/* Variant 6: double-decree — Formal red-header double rule */
+.report-root[data-theme-preset="crimson-decree"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-theme-preset="briefing"]:not([data-h1-variant])
+  h1[data-rpt-h="1"],
+.report-root[data-h1-variant="double-decree"] h1[data-rpt-h="1"] {
+  border: none;
+  border-bottom: 4px double var(--rpt-accent);
+  padding-bottom: 0.45rem;
+  background: transparent;
 }
 
-.report-root[data-theme-preset="crimson-decree"] h2[data-rpt-h="2"],
-.report-root[data-theme-preset="briefing"] h2[data-rpt-h="2"] {
-  border-left-width: 4px;
-  border-left-color: var(--rpt-accent);
-  border-bottom-color: color-mix(
+/* Variant 7: bottom-rule — Classic single bottom rule */
+.report-root[data-h1-variant="bottom-rule"] h1[data-rpt-h="1"] {
+  border: none;
+  border-bottom: 2px solid var(--rpt-accent);
+  padding-bottom: 0.45rem;
+  background: transparent;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Structural Heading Variants (H2) — 7 Distinct Visual Architectures        */
+/* ------------------------------------------------------------------------- */
+
+/* Variant 1: none — Pure typographic subheading without lines or boxes */
+.report-root[data-theme-preset="academic-press"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-theme-preset="crimson-decree"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-theme-preset="monocle-magazine"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-h2-variant="none"] h2[data-rpt-h="2"] {
+  border: none;
+  padding: 0;
+  background: transparent;
+}
+
+/* Variant 2: left-bar — Clean vertical accent bar without bottom underline */
+.report-root[data-theme-preset="quire-folio"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-h2-variant="left-bar"] h2[data-rpt-h="2"] {
+  border: none;
+  border-left: 3.5px solid var(--rpt-accent);
+  padding: 0.1rem 0 0.1rem 0.65rem;
+  background: transparent;
+}
+
+/* Variant 3: soft-pill — Soft tinted capsule without hard border rules */
+.report-root[data-theme-preset="field-notes"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-theme-preset="bamboo-scroll"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-h2-variant="soft-pill"] h2[data-rpt-h="2"] {
+  border: none;
+  background-color: var(--rpt-surface);
+  color: var(--rpt-accent);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--rpt-radius, 8px);
+}
+
+/* Variant 4: dot-prefix — Geometric square marker prefix without underline */
+.report-root[data-theme-preset="modern-brief"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-theme-preset="blueprint-ledger"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-theme-preset="cyber-terminal"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-h2-variant="dot-prefix"] h2[data-rpt-h="2"] {
+  border: none;
+  padding: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.report-root[data-theme-preset="modern-brief"]:not([data-h2-variant])
+  h2[data-rpt-h="2"]::before,
+.report-root[data-theme-preset="blueprint-ledger"]:not([data-h2-variant])
+  h2[data-rpt-h="2"]::before,
+.report-root[data-theme-preset="cyber-terminal"]:not([data-h2-variant])
+  h2[data-rpt-h="2"]::before,
+.report-root[data-h2-variant="dot-prefix"] h2[data-rpt-h="2"]::before {
+  content: "";
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  flex-shrink: 0;
+  background-color: var(--rpt-accent);
+  border-radius: 1px;
+}
+
+/* Variant 5: top-rule — Brutalist full-width top rule above H2 */
+.report-root[data-theme-preset="swiss-grid"]:not([data-h2-variant])
+  h2[data-rpt-h="2"],
+.report-root[data-h2-variant="top-rule"] h2[data-rpt-h="2"] {
+  border: none;
+  border-top: 1.5px solid var(--rpt-ink);
+  padding: 0.45rem 0 0 0;
+  background: transparent;
+}
+
+/* Variant 6: bottom-dashed — Notebook dashed bottom divider */
+.report-root[data-h2-variant="bottom-dashed"] h2[data-rpt-h="2"] {
+  border: none;
+  border-bottom: 1px dashed var(--rpt-border);
+  padding: 0 0 0.35rem 0;
+  background: transparent;
+}
+
+/* Variant 7: bottom-line — Subtle bottom divider without left bar */
+.report-root[data-h2-variant="bottom-line"] h2[data-rpt-h="2"] {
+  border: none;
+  border-bottom: 1px solid var(--rpt-border);
+  padding: 0 0 0.35rem 0;
+  background: transparent;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Callout Block Variants (`--rpt-callout-variant`)                          */
+/* ------------------------------------------------------------------------- */
+.report-root[data-callout-variant="solid-tint"] .rpt-callout {
+  border: none;
+  background-color: color-mix(
     in oklab,
-    var(--rpt-accent) 28%,
-    var(--rpt-border)
+    var(--rpt-accent) 11%,
+    var(--rpt-surface)
   );
+}
+
+.report-root[data-callout-variant="top-banner"] .rpt-callout {
+  border: 1px solid var(--rpt-border);
+  border-top: 3.5px solid var(--rpt-accent);
+  background-color: var(--rpt-surface);
+}
+
+.report-root[data-callout-variant="outline-frame"] .rpt-callout {
+  border: 1.5px solid var(--rpt-accent);
+  background-color: transparent;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Quote Block Variants (`--rpt-quote-variant`)                              */
+/* ------------------------------------------------------------------------- */
+.report-root[data-quote-variant="editorial-mark"] .rpt-quote {
+  position: relative;
+  border: none;
+  border-top: 1px solid var(--rpt-border);
+  border-bottom: 1px solid var(--rpt-border);
+  background: transparent;
+  padding: 0.85rem 1rem 0.85rem 2.35rem;
+}
+
+.report-root[data-quote-variant="editorial-mark"] .rpt-quote::before {
+  content: "“";
+  position: absolute;
+  top: 0.2rem;
+  left: 0.45rem;
+  font-family: Georgia, "Noto Serif SC", serif;
+  font-size: 2.3rem;
+  line-height: 1;
+  color: var(--rpt-accent);
+  opacity: 0.8;
+}
+
+.report-root[data-quote-variant="boxed"] .rpt-quote {
+  border: 1px solid var(--rpt-border);
+  background-color: var(--rpt-quote-bg, var(--rpt-surface));
+}
+
+/* ------------------------------------------------------------------------- */
+/* Table Grid & Density Variants (`--rpt-table-variant` / `density`)         */
+/* ------------------------------------------------------------------------- */
+.report-root[data-table-variant="grid"] .rpt-table {
+  border: 1.5px solid var(--rpt-table-border, var(--rpt-ink));
+}
+
+.report-root[data-table-variant="grid"] .rpt-table th,
+.report-root[data-table-variant="grid"] .rpt-table td {
+  border: 1px solid
+    color-mix(
+      in oklab,
+      var(--rpt-table-border, var(--rpt-border)) 45%,
+      var(--rpt-border)
+    );
+}
+
+.report-root[data-table-variant="minimal"] .rpt-table {
+  border-top: 1px solid var(--rpt-border);
+  border-bottom: 1px solid var(--rpt-border);
+}
+
+.report-root[data-table-variant="minimal"] .rpt-table thead tr {
+  border-bottom: 1px solid var(--rpt-border);
+}
+
+.report-root[data-table-density="compact"] .rpt-table th,
+.report-root[data-table-density="compact"] .rpt-table td {
+  padding-top: 0.3rem;
+  padding-bottom: 0.3rem;
+}
+
+.report-root[data-table-density="relaxed"] .rpt-table th,
+.report-root[data-table-density="relaxed"] .rpt-table td {
+  padding-top: 0.65rem;
+  padding-bottom: 0.65rem;
 }
 
 /* Media must never receive the browser's native blue selection film. */
@@ -336,6 +737,7 @@
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
   --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);

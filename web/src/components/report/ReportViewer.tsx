@@ -229,13 +229,28 @@ export function ReportViewer({
     [isPaged, previewList, suppressChrome],
   );
 
+  const themeTokens = useMemo(
+    () => document.theme.tokens ?? {},
+    [document.theme.tokens],
+  );
+  const h1Variant = themeTokens["--rpt-h1-variant"] || undefined;
+  const h2Variant = themeTokens["--rpt-h2-variant"] || undefined;
+  const calloutVariant = themeTokens["--rpt-callout-variant"] || undefined;
+  const quoteVariant = themeTokens["--rpt-quote-variant"] || undefined;
+  const tableVariant = themeTokens["--rpt-table-variant"] || undefined;
+  const tableDensity = themeTokens["--rpt-table-density"] || undefined;
+
   const layoutSignature = useMemo(
     () =>
       `${document.revision}:${document.theme.preset ?? "default"}:${
-        document.theme.tokens?.["--rpt-body-size"] ?? ""
-      }:${document.theme.tokens?.["--rpt-line-height"] ?? ""}:${
-        document.cover.variant ?? "classic"
-      }:${document.blocks
+        themeTokens["--rpt-body-size"] ?? ""
+      }:${themeTokens["--rpt-line-height"] ?? ""}:${
+        themeTokens["--rpt-h1-size"] ?? ""
+      }:${themeTokens["--rpt-para-gap"] ?? ""}:${h1Variant ?? ""}:${
+        h2Variant ?? ""
+      }:${tableVariant ?? ""}:${tableDensity ?? ""}:${
+        document.cover.enabled ? 1 : 0
+      }:${document.cover.variant ?? "classic"}:${document.blocks
         .map((block) => block.id)
         .join(
           ",",
@@ -243,12 +258,17 @@ export function ReportViewer({
         resolvedToc.enabled ? 1 : 0
       }:${resolvedToc.max_depth}:${resolvedToc.variant}:${resolvedToc.title}:${
         computed.toc_tree.length
-      }:${referencesTitle}`,
+      }:${referencesTitle}:${showReferences ? 1 : 0}`,
     [
       document.blocks,
       document.revision,
       document.theme.preset,
-      document.theme.tokens,
+      themeTokens,
+      h1Variant,
+      h2Variant,
+      tableVariant,
+      tableDensity,
+      document.cover.enabled,
       document.cover.variant,
       computed.bibliography.length,
       computed.toc_tree.length,
@@ -258,6 +278,7 @@ export function ReportViewer({
       resolvedToc.variant,
       resolvedToc.title,
       referencesTitle,
+      showReferences,
     ],
   );
 
@@ -282,7 +303,6 @@ export function ReportViewer({
   }, [document.doc_id, customCss]);
 
   const themeVars: Record<string, string> = {};
-  const themeTokens = document.theme.tokens ?? {};
   for (const [k, v] of Object.entries(themeTokens)) {
     themeVars[k] = v;
   }
@@ -417,6 +437,12 @@ export function ReportViewer({
       ref={rootRef}
       style={themeVars}
       data-theme-preset={document.theme.preset ?? "default"}
+      data-h1-variant={h1Variant}
+      data-h2-variant={h2Variant}
+      data-callout-variant={calloutVariant}
+      data-quote-variant={quoteVariant}
+      data-table-variant={tableVariant}
+      data-table-density={tableDensity}
       className="report-root relative w-full"
     >
       {!suppressChrome && !quoteAction && (
@@ -487,6 +513,13 @@ export function ReportViewer({
           data-measure-root="true"
           aria-hidden="true"
           style={{ width: `${A4_CONTENT_WIDTH_PX}px` }}
+          data-theme-preset={document.theme.preset ?? "default"}
+          data-h1-variant={h1Variant}
+          data-h2-variant={h2Variant}
+          data-callout-variant={calloutVariant}
+          data-quote-variant={quoteVariant}
+          data-table-variant={tableVariant}
+          data-table-density={tableDensity}
           className="report-root pointer-events-none absolute top-0 -left-[99999px] opacity-0 print:hidden"
         >
           <div data-measure-cover="true" className="flow-root">

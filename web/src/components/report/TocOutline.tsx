@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ListTreeIcon, RotateCcwIcon } from "lucide-react";
+import { ListTreeIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,21 +7,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { Switch } from "@/components/ui/switch";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type {
   CommentThread,
   TocConfig,
   TocNode,
 } from "@/contracts/report-protocol";
-import {
-  TOC_MAX_DEPTH_OPTIONS,
-  TOC_VARIANT_OPTIONS,
-  clearTocConfig,
-  saveTocConfigPatch,
-  useTocConfig,
-  type ResolvedTocConfig,
-} from "@/lib/tocConfig";
 
 export interface TocOutlineProps {
   docId: string;
@@ -110,119 +100,7 @@ function TocBranch({
   );
 }
 
-function TocInlineControls({
-  docId,
-  config,
-  isPaged,
-}: {
-  docId: string;
-  config: ResolvedTocConfig;
-  isPaged: boolean;
-}) {
-  const update = (
-    patch: Partial<
-      Pick<ResolvedTocConfig, "enabled" | "max_depth" | "variant">
-    >,
-  ) => {
-    saveTocConfigPatch(docId, patch);
-  };
-
-  return (
-    <div className="mt-2 space-y-2 border-t pt-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] font-medium text-muted-foreground">
-          内嵌目录
-        </span>
-        <Switch
-          size="sm"
-          checked={config.enabled}
-          onCheckedChange={(checked) => update({ enabled: checked })}
-          aria-label="在报告封面下方显示内嵌目录"
-        />
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">层级深度</span>
-        <ToggleGroup
-          multiple={false}
-          value={[String(config.max_depth)]}
-          onValueChange={(values) => {
-            const selected = values[0];
-            if (!selected) return;
-            const depth = Number(selected);
-            if (depth === 1 || depth === 2 || depth === 3) {
-              update({ max_depth: depth });
-            }
-          }}
-          spacing={0}
-          className="rounded-md border bg-muted/40 p-0.5"
-        >
-          {TOC_MAX_DEPTH_OPTIONS.map((depth) => (
-            <ToggleGroupItem
-              key={depth}
-              value={String(depth)}
-              size="sm"
-              className="h-5 min-w-0 rounded-sm px-1.5 py-0.5 text-[10px] tabular-nums aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
-            >
-              {depth}级
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[11px] text-muted-foreground">目录样式</span>
-        <ToggleGroup
-          multiple={false}
-          value={[config.variant]}
-          onValueChange={(values) => {
-            const selected = values[0];
-            if (
-              selected === "standard" ||
-              selected === "numbered" ||
-              selected === "dotted"
-            ) {
-              update({ variant: selected });
-            }
-          }}
-          spacing={0}
-          className="rounded-md border bg-muted/40 p-0.5"
-        >
-          {TOC_VARIANT_OPTIONS.map((option) => (
-            <ToggleGroupItem
-              key={option.value}
-              value={option.value}
-              title={option.description}
-              size="sm"
-              className="h-5 min-w-0 rounded-sm px-1.5 py-0.5 text-[10px] aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs"
-            >
-              {option.label}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </div>
-
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-muted-foreground">
-          {isPaged ? "分页视图显示精确页码" : "切换分页视图显示页码"}
-        </span>
-        <button
-          type="button"
-          onClick={() => clearTocConfig(docId)}
-          className="inline-flex items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <RotateCcwIcon className="size-3" />
-          恢复默认
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export function TocOutline({
-  docId,
-  toc,
-  isPaged = false,
   nodes,
   activeActorsBySection,
   comments,
@@ -230,7 +108,6 @@ export function TocOutline({
   placement = "bottom",
 }: TocOutlineProps) {
   const [open, setOpen] = useState(false);
-  const resolvedToc = useTocConfig(docId, toc, isPaged);
 
   if (nodes.length === 0) {
     return null;
@@ -266,7 +143,7 @@ export function TocOutline({
         className="w-72 p-3"
       >
         <div className="mb-2 flex items-center justify-between text-xs font-semibold">
-          <span>目录大纲与写作状态</span>
+          <span>章节大纲</span>
           {activeActorsBySection.size > 0 && (
             <span className="inline-flex items-center gap-1 text-[10px] font-normal text-emerald-600">
               <span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />
@@ -286,11 +163,6 @@ export function TocOutline({
             }}
           />
         </div>
-        <TocInlineControls
-          docId={docId}
-          config={resolvedToc}
-          isPaged={isPaged}
-        />
       </PopoverContent>
     </Popover>
   );

@@ -132,7 +132,7 @@ export const TableBlockView = memo(function TableBlockView({
             ? { minWidth: `${sizing.minTableWidthPx}px` }
             : undefined
         }
-        className="w-full table-fixed border-collapse border-t-[1.5px] border-b-[1.5px] border-[var(--rpt-table-border,var(--rpt-ink))] text-sm"
+        className="rpt-table w-full table-fixed border-collapse border-t-[1.5px] border-b-[1.5px] border-[var(--rpt-table-border,var(--rpt-ink))] text-sm"
       >
         <colgroup>
           {leafCols.map((col, idx) => (

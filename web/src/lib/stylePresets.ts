@@ -12,9 +12,16 @@ export type CitationStyleMode = "numeric" | "author_year";
 
 export interface StylePresetBundle {
   theme: ThemeConfig;
+  cover_enabled?: boolean;
   cover_variant?: string;
+  toc_enabled?: boolean;
+  toc_max_depth?: 1 | 2 | 3;
   toc_variant?: string;
+  toc_page_break_before?: boolean;
+  toc_page_break_after?: boolean;
   citation_style?: CitationStyleMode;
+  references_enabled?: boolean;
+  references_page_break_before?: boolean;
 }
 
 export interface StylePresetRecord {
@@ -35,11 +42,13 @@ export interface StylePresetRecord {
 const BUILTIN_TIMESTAMP = "2026-01-01T00:00:00Z";
 
 export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
+  // 1. 灵思手札 — Borderless Notion-like exploratory notes, soft pill H2, minimal dividers
   {
     style_id: "field-notes",
     name: "灵思手札",
-    description: "现代无衬线与松石绿点缀，行距舒展，适合课题探索与调研随笔",
-    category_tag: "自由",
+    description:
+      "无下划线纯净大标题与松石绿柔和胶囊，暖米纸面，适配课题探索与随笔",
+    category_tag: "自由 · 随笔",
     is_builtin: true,
     is_public: true,
     owner_user_id: null,
@@ -48,9 +57,16 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
     created_at: BUILTIN_TIMESTAMP,
     updated_at: BUILTIN_TIMESTAMP,
     bundle: {
+      cover_enabled: true,
       cover_variant: "minimal",
+      toc_enabled: true,
+      toc_max_depth: 2,
       toc_variant: "standard",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
       citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: false,
       theme: {
         preset: "field-notes",
         tokens: {
@@ -58,14 +74,27 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
           "--rpt-ink": "#1C1917",
           "--rpt-muted": "#57534E",
           "--rpt-border": "#E7E5E4",
-          "--rpt-surface": "#F5F4EE",
-          "--rpt-paper": "#FAF9F5",
+          "--rpt-surface": "#EDF7F5",
+          "--rpt-paper": "#FAF8F3",
           "--rpt-quote-bg": "#F0FDF4",
-          "--rpt-table-border": "#0F766E",
-          "--rpt-table-header-bg": "#F0FDFA",
-          "--rpt-table-stripe": "#F7F6F1",
+          "--rpt-table-border": "#A7F3D0",
+          "--rpt-table-header-bg": "#ECFDF5",
+          "--rpt-table-stripe": "#F5F3EE",
           "--rpt-line-height": "1.92",
           "--rpt-body-size": "14.5px",
+          "--rpt-h1-size": "22px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "-0.01em",
+          "--rpt-para-gap": "1.05rem",
+          "--rpt-para-indent": "0em",
+          "--rpt-para-align": "left",
+          "--rpt-h1-variant": "none",
+          "--rpt-h2-variant": "soft-pill",
+          "--rpt-callout-variant": "solid-tint",
+          "--rpt-quote-variant": "editorial-mark",
+          "--rpt-table-variant": "minimal",
+          "--rpt-table-density": "relaxed",
+          "--rpt-radius": "12px",
           "--rpt-font-heading":
             '"Geist Variable", "PingFang SC", "Noto Sans SC", system-ui, sans-serif',
           "--rpt-font-body":
@@ -88,12 +117,13 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
       },
     },
   },
+  // 2. 智库简报 — McKinsey-style top-rule crown H1, geometric dot H2, top-banner callouts
   {
     style_id: "modern-brief",
     name: "智库简报",
     description:
-      "高对比群青蓝与无衬线黑体，几何立线清晰，适合发展快报与数据解读",
-    category_tag: "轻快",
+      "顶冠短横线标题与几何方标导航，顶部色条提示卡，适配战略咨询与数据快报",
+    category_tag: "轻快 · 咨询",
     is_builtin: true,
     is_public: true,
     owner_user_id: null,
@@ -102,9 +132,16 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
     created_at: BUILTIN_TIMESTAMP,
     updated_at: BUILTIN_TIMESTAMP,
     bundle: {
+      cover_enabled: true,
       cover_variant: "modern",
+      toc_enabled: true,
+      toc_max_depth: 3,
       toc_variant: "numbered",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
       citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: false,
       theme: {
         preset: "modern-brief",
         tokens: {
@@ -112,14 +149,27 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
           "--rpt-ink": "#0F172A",
           "--rpt-muted": "#475569",
           "--rpt-border": "#CBD5E1",
-          "--rpt-surface": "#F1F5F9",
+          "--rpt-surface": "#EFF6FF",
           "--rpt-paper": "#FFFFFF",
-          "--rpt-quote-bg": "#EFF6FF",
+          "--rpt-quote-bg": "#F8FAFC",
           "--rpt-table-border": "#1E293B",
-          "--rpt-table-header-bg": "#F1F5F9",
+          "--rpt-table-header-bg": "#EFF6FF",
           "--rpt-table-stripe": "#F8FAFC",
-          "--rpt-line-height": "1.78",
-          "--rpt-body-size": "14.5px",
+          "--rpt-line-height": "1.76",
+          "--rpt-body-size": "14px",
+          "--rpt-h1-size": "22px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "-0.015em",
+          "--rpt-para-gap": "0.75rem",
+          "--rpt-para-indent": "0em",
+          "--rpt-para-align": "left",
+          "--rpt-h1-variant": "top-rule",
+          "--rpt-h2-variant": "dot-prefix",
+          "--rpt-callout-variant": "top-banner",
+          "--rpt-quote-variant": "left-rule",
+          "--rpt-table-variant": "striped",
+          "--rpt-table-density": "standard",
+          "--rpt-radius": "6px",
           "--rpt-font-heading":
             '"Geist Variable", "PingFang SC", "Noto Sans SC", system-ui, sans-serif',
           "--rpt-font-body":
@@ -146,11 +196,13 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
       },
     },
   },
+  // 3. 青塔研报 — Default flagship style: Left pillar H1, serif heading + sans body, split cover
   {
     style_id: "quire-folio",
     name: "青塔研报",
-    description: "牛津蓝配人文衬线标题与现代无衬线正文，兼顾数字阅读与 A4 归档",
-    category_tag: "均衡",
+    description:
+      "牛津蓝厚立柱章节头、人文衬线标题配无衬线正文，兼顾数字阅读与 A4 归档",
+    category_tag: "均衡 · 标杆",
     is_builtin: true,
     is_public: true,
     owner_user_id: null,
@@ -159,9 +211,16 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
     created_at: BUILTIN_TIMESTAMP,
     updated_at: BUILTIN_TIMESTAMP,
     bundle: {
+      cover_enabled: true,
       cover_variant: "split",
+      toc_enabled: true,
+      toc_max_depth: 3,
       toc_variant: "dotted",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
       citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: false,
       theme: {
         preset: "quire-folio",
         tokens: {
@@ -177,6 +236,19 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
           "--rpt-table-stripe": "#F8FAFC",
           "--rpt-line-height": "1.82",
           "--rpt-body-size": "14.5px",
+          "--rpt-h1-size": "22px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "0em",
+          "--rpt-para-gap": "0.75rem",
+          "--rpt-para-indent": "0em",
+          "--rpt-para-align": "left",
+          "--rpt-h1-variant": "left-pillar",
+          "--rpt-h2-variant": "left-bar",
+          "--rpt-callout-variant": "left-accent",
+          "--rpt-quote-variant": "left-rule",
+          "--rpt-table-variant": "three-line",
+          "--rpt-table-density": "standard",
+          "--rpt-radius": "6px",
           "--rpt-font-heading":
             '"Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif',
           "--rpt-font-body":
@@ -203,12 +275,13 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
       },
     },
   },
+  // 4. 学林刊印 — Academic Monograph: Centered ornament H1, unadorned H2, 2em indent, justify, pure 3-line table, author_year
   {
     style_id: "academic-press",
     name: "学林刊印",
     description:
-      "全衬线宋体学术排版、纯粹细三线表与著者-出版年引文制，适配专刊与评审材料",
-    category_tag: "严谨",
+      "居中刊头章节、首行缩进两字符与两端对齐宋体，纯白三线表与著者年份引文",
+    category_tag: "严谨 · 期刊",
     is_builtin: true,
     is_public: true,
     owner_user_id: null,
@@ -217,9 +290,16 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
     created_at: BUILTIN_TIMESTAMP,
     updated_at: BUILTIN_TIMESTAMP,
     bundle: {
+      cover_enabled: true,
       cover_variant: "classic",
+      toc_enabled: true,
+      toc_max_depth: 3,
       toc_variant: "dotted",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
       citation_style: "author_year",
+      references_enabled: true,
+      references_page_break_before: true,
       theme: {
         preset: "academic-press",
         tokens: {
@@ -229,12 +309,25 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
           "--rpt-border": "#9CA3AF",
           "--rpt-surface": "#F9FAFB",
           "--rpt-paper": "#FFFFFF",
-          "--rpt-quote-bg": "#F9FAFB",
+          "--rpt-quote-bg": "#FFFFFF",
           "--rpt-table-border": "#111111",
           "--rpt-table-header-bg": "#FFFFFF",
           "--rpt-table-stripe": "#FFFFFF",
           "--rpt-line-height": "1.76",
           "--rpt-body-size": "14px",
+          "--rpt-h1-size": "20px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "0.02em",
+          "--rpt-para-gap": "0.55rem",
+          "--rpt-para-indent": "2em",
+          "--rpt-para-align": "justify",
+          "--rpt-h1-variant": "center-ornament",
+          "--rpt-h2-variant": "none",
+          "--rpt-callout-variant": "outline-frame",
+          "--rpt-quote-variant": "boxed",
+          "--rpt-table-variant": "three-line",
+          "--rpt-table-density": "compact",
+          "--rpt-radius": "0px",
           "--rpt-font-heading":
             '"Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif',
           "--rpt-font-body":
@@ -257,12 +350,13 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
       },
     },
   },
+  // 5. 丹宸公文 — Formal Red-Header Decree: Double red rule H1, pure serif H2, 2em indent, 15px
   {
     style_id: "crimson-decree",
     name: "丹宸公文",
     description:
-      "朱砂红文武双线、宋体庄重标题与标准公文页码，适配呈报校领导决策参阅件",
-    category_tag: "正式",
+      "朱砂红文武双线、首行缩进两字符与 15px 宋体，适配呈报校领导决策参阅件",
+    category_tag: "正式 · 红头",
     is_builtin: true,
     is_public: true,
     owner_user_id: null,
@@ -271,9 +365,16 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
     created_at: BUILTIN_TIMESTAMP,
     updated_at: BUILTIN_TIMESTAMP,
     bundle: {
+      cover_enabled: true,
       cover_variant: "classic",
+      toc_enabled: true,
+      toc_max_depth: 3,
       toc_variant: "dotted",
+      toc_page_break_before: false,
+      toc_page_break_after: true,
       citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: true,
       theme: {
         preset: "crimson-decree",
         tokens: {
@@ -287,8 +388,21 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
           "--rpt-table-border": "#171717",
           "--rpt-table-header-bg": "#FAFAFA",
           "--rpt-table-stripe": "#FFFFFF",
-          "--rpt-line-height": "1.88",
+          "--rpt-line-height": "1.92",
           "--rpt-body-size": "15px",
+          "--rpt-h1-size": "22px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "0.02em",
+          "--rpt-para-gap": "0.75rem",
+          "--rpt-para-indent": "2em",
+          "--rpt-para-align": "justify",
+          "--rpt-h1-variant": "double-decree",
+          "--rpt-h2-variant": "none",
+          "--rpt-callout-variant": "left-accent",
+          "--rpt-quote-variant": "boxed",
+          "--rpt-table-variant": "three-line",
+          "--rpt-table-density": "relaxed",
+          "--rpt-radius": "0px",
           "--rpt-font-heading":
             '"Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, serif',
           "--rpt-font-body":
@@ -306,6 +420,404 @@ export const BUILTIN_STYLE_PRESETS: readonly StylePresetRecord[] = [
           footer: {
             left: "{authors}",
             center: "— 第 {page} 页 / 共 {total} 页 —",
+            right: "{date}",
+          },
+          hide_header_on_first_page: true,
+          hide_footer_on_first_page: false,
+          heading_page_break: "h1",
+        },
+      },
+    },
+  },
+  // 6. 瑞士网格 — Swiss International Brutalist Grid: Full-bleed dark banner H1, signal orange, 0px radius, full grid table
+  {
+    style_id: "swiss-grid",
+    name: "瑞士网格",
+    description:
+      "黑底反白满幅章节横幅、信号橙几何构成与零圆角全网格表，现代主义视觉张力",
+    category_tag: "先锋 · 构成",
+    is_builtin: true,
+    is_public: true,
+    owner_user_id: null,
+    owner_display_name: "Quire",
+    base_preset_id: "swiss-grid",
+    created_at: BUILTIN_TIMESTAMP,
+    updated_at: BUILTIN_TIMESTAMP,
+    bundle: {
+      cover_enabled: true,
+      cover_variant: "split",
+      toc_enabled: true,
+      toc_max_depth: 2,
+      toc_variant: "numbered",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
+      citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: false,
+      theme: {
+        preset: "swiss-grid",
+        tokens: {
+          "--rpt-accent": "#EA580C",
+          "--rpt-ink": "#09090B",
+          "--rpt-muted": "#52525B",
+          "--rpt-border": "#18181B",
+          "--rpt-surface": "#F4F4F5",
+          "--rpt-paper": "#FFFFFF",
+          "--rpt-quote-bg": "#FFF7ED",
+          "--rpt-table-border": "#09090B",
+          "--rpt-table-header-bg": "#F4F4F5",
+          "--rpt-table-stripe": "#FAFAFA",
+          "--rpt-line-height": "1.68",
+          "--rpt-body-size": "14px",
+          "--rpt-h1-size": "22px",
+          "--rpt-heading-weight": "800",
+          "--rpt-heading-tracking": "-0.02em",
+          "--rpt-para-gap": "0.75rem",
+          "--rpt-para-indent": "0em",
+          "--rpt-para-align": "left",
+          "--rpt-h1-variant": "pill-banner",
+          "--rpt-h2-variant": "top-rule",
+          "--rpt-callout-variant": "outline-frame",
+          "--rpt-quote-variant": "left-rule",
+          "--rpt-table-variant": "grid",
+          "--rpt-table-density": "compact",
+          "--rpt-radius": "0px",
+          "--rpt-font-heading":
+            '"Geist Variable", "Helvetica Neue", "PingFang SC", sans-serif',
+          "--rpt-font-body":
+            '"Geist Variable", "Helvetica Neue", "PingFang SC", sans-serif',
+          "--rpt-chart-1": "#EA580C",
+          "--rpt-chart-2": "#09090B",
+          "--rpt-chart-3": "#2563EB",
+          "--rpt-chart-4": "#71717A",
+          "--rpt-chart-5": "#D97706",
+          "--rpt-chart-6": "#0D9488",
+        },
+        custom_css: "",
+        page_chrome: {
+          header: {
+            left: "SWISS GRID // {kicker}",
+            center: "",
+            right: "{date}",
+          },
+          footer: {
+            left: "{title}",
+            center: "",
+            right: "[ {page} / {total} ]",
+          },
+          hide_header_on_first_page: false,
+          hide_footer_on_first_page: false,
+          heading_page_break: "none",
+        },
+      },
+    },
+  },
+  // 7. 工程蓝图 — Technical Blueprint & Quantitative Ledger
+  {
+    style_id: "blueprint-ledger",
+    name: "工程蓝图",
+    description:
+      "冷钢蓝图纸底色、技术等宽字族与全网格精密账本，适配经费决算与实验室指标盘点",
+    category_tag: "精密 · 档案",
+    is_builtin: true,
+    is_public: true,
+    owner_user_id: null,
+    owner_display_name: "Quire",
+    base_preset_id: "blueprint-ledger",
+    created_at: BUILTIN_TIMESTAMP,
+    updated_at: BUILTIN_TIMESTAMP,
+    bundle: {
+      cover_enabled: true,
+      cover_variant: "modern",
+      toc_enabled: true,
+      toc_max_depth: 3,
+      toc_variant: "numbered",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
+      citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: false,
+      theme: {
+        preset: "blueprint-ledger",
+        tokens: {
+          "--rpt-accent": "#0369A1",
+          "--rpt-ink": "#0C4A6E",
+          "--rpt-muted": "#475569",
+          "--rpt-border": "#BAE6FD",
+          "--rpt-surface": "#E0F2FE",
+          "--rpt-paper": "#F4F8FB",
+          "--rpt-quote-bg": "#E0F2FE",
+          "--rpt-table-border": "#0284C7",
+          "--rpt-table-header-bg": "#E0F2FE",
+          "--rpt-table-stripe": "#EDF5FA",
+          "--rpt-line-height": "1.76",
+          "--rpt-body-size": "13.5px",
+          "--rpt-h1-size": "20px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "0.02em",
+          "--rpt-para-gap": "0.75rem",
+          "--rpt-para-indent": "0em",
+          "--rpt-para-align": "left",
+          "--rpt-h1-variant": "pill-banner",
+          "--rpt-h2-variant": "dot-prefix",
+          "--rpt-callout-variant": "outline-frame",
+          "--rpt-quote-variant": "boxed",
+          "--rpt-table-variant": "grid",
+          "--rpt-table-density": "compact",
+          "--rpt-radius": "4px",
+          "--rpt-font-heading":
+            '"JetBrains Mono", "Geist Mono", "PingFang SC", monospace',
+          "--rpt-font-body":
+            '"JetBrains Mono", "Geist Variable", "PingFang SC", monospace',
+          "--rpt-chart-1": "#0369A1",
+          "--rpt-chart-2": "#0284C7",
+          "--rpt-chart-3": "#0D9488",
+          "--rpt-chart-4": "#6366F1",
+          "--rpt-chart-5": "#D97706",
+          "--rpt-chart-6": "#64748B",
+        },
+        custom_css: "",
+        page_chrome: {
+          header: { left: "SPEC // {kicker}", center: "", right: "{title}" },
+          footer: {
+            left: "{authors}",
+            center: "SHEET {page} OF {total}",
+            right: "{date}",
+          },
+          hide_header_on_first_page: false,
+          hide_footer_on_first_page: false,
+          heading_page_break: "none",
+        },
+      },
+    },
+  },
+  // 8. 琥珀画报 — Monocle / Economist Magazine Feature
+  {
+    style_id: "monocle-magazine",
+    name: "琥珀画报",
+    description:
+      "羊皮奶油画报纸面、琥珀金居中特稿标题与巨型装饰引号，极具人文杂志叙事感",
+    category_tag: "杂志 · 叙事",
+    is_builtin: true,
+    is_public: true,
+    owner_user_id: null,
+    owner_display_name: "Quire",
+    base_preset_id: "monocle-magazine",
+    created_at: BUILTIN_TIMESTAMP,
+    updated_at: BUILTIN_TIMESTAMP,
+    bundle: {
+      cover_enabled: true,
+      cover_variant: "classic",
+      toc_enabled: true,
+      toc_max_depth: 2,
+      toc_variant: "dotted",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
+      citation_style: "author_year",
+      references_enabled: true,
+      references_page_break_before: false,
+      theme: {
+        preset: "monocle-magazine",
+        tokens: {
+          "--rpt-accent": "#9A3412",
+          "--rpt-ink": "#27221D",
+          "--rpt-muted": "#78716C",
+          "--rpt-border": "#E7DEC8",
+          "--rpt-surface": "#F5EFE4",
+          "--rpt-paper": "#FBF7F0",
+          "--rpt-quote-bg": "#F5EFE4",
+          "--rpt-table-border": "#9A3412",
+          "--rpt-table-header-bg": "#F5EFE4",
+          "--rpt-table-stripe": "#F8F3E9",
+          "--rpt-line-height": "1.92",
+          "--rpt-body-size": "15px",
+          "--rpt-h1-size": "24px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "0.04em",
+          "--rpt-para-gap": "1.05rem",
+          "--rpt-para-indent": "0em",
+          "--rpt-para-align": "justify",
+          "--rpt-h1-variant": "center-ornament",
+          "--rpt-h2-variant": "none",
+          "--rpt-callout-variant": "top-banner",
+          "--rpt-quote-variant": "editorial-mark",
+          "--rpt-table-variant": "minimal",
+          "--rpt-table-density": "relaxed",
+          "--rpt-radius": "6px",
+          "--rpt-font-heading":
+            '"Noto Serif SC", "Songti SC", "Playfair Display", Georgia, serif',
+          "--rpt-font-body": '"Noto Serif SC", "Songti SC", Georgia, serif',
+          "--rpt-chart-1": "#9A3412",
+          "--rpt-chart-2": "#D97706",
+          "--rpt-chart-3": "#1E3A5F",
+          "--rpt-chart-4": "#0F766E",
+          "--rpt-chart-5": "#78716C",
+          "--rpt-chart-6": "#B45309",
+        },
+        custom_css: "",
+        page_chrome: {
+          header: { left: "", center: "{kicker}", right: "" },
+          footer: { left: "{authors}", center: "No. {page}", right: "{date}" },
+          hide_header_on_first_page: true,
+          hide_footer_on_first_page: false,
+          heading_page_break: "none",
+        },
+      },
+    },
+  },
+  // 9. 曜石终端 — Dark Obsidian Terminal
+  {
+    style_id: "cyber-terminal",
+    name: "曜石终端",
+    description:
+      "突破白纸局限的深邃曜石暗色画布、荧光翠绿立柱与霓虹多维图表，适配大屏演示与数字看板",
+    category_tag: "暗色 · 极客",
+    is_builtin: true,
+    is_public: true,
+    owner_user_id: null,
+    owner_display_name: "Quire",
+    base_preset_id: "cyber-terminal",
+    created_at: BUILTIN_TIMESTAMP,
+    updated_at: BUILTIN_TIMESTAMP,
+    bundle: {
+      cover_enabled: true,
+      cover_variant: "modern",
+      toc_enabled: true,
+      toc_max_depth: 3,
+      toc_variant: "numbered",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
+      citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: false,
+      theme: {
+        preset: "cyber-terminal",
+        tokens: {
+          "--rpt-accent": "#10B981",
+          "--rpt-ink": "#E2E8F0",
+          "--rpt-muted": "#94A3B8",
+          "--rpt-border": "#263345",
+          "--rpt-surface": "#16202E",
+          "--rpt-paper": "#0F141C",
+          "--rpt-quote-bg": "#131C28",
+          "--rpt-table-border": "#334155",
+          "--rpt-table-header-bg": "#1E293B",
+          "--rpt-table-stripe": "#131B26",
+          "--rpt-line-height": "1.82",
+          "--rpt-body-size": "14px",
+          "--rpt-h1-size": "22px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "0.01em",
+          "--rpt-para-gap": "0.75rem",
+          "--rpt-para-indent": "0em",
+          "--rpt-para-align": "left",
+          "--rpt-h1-variant": "left-pillar",
+          "--rpt-h2-variant": "dot-prefix",
+          "--rpt-callout-variant": "outline-frame",
+          "--rpt-quote-variant": "left-rule",
+          "--rpt-table-variant": "grid",
+          "--rpt-table-density": "compact",
+          "--rpt-radius": "6px",
+          "--rpt-font-heading":
+            '"JetBrains Mono", "Geist Variable", "PingFang SC", monospace',
+          "--rpt-font-body":
+            '"Geist Variable", "PingFang SC", "Noto Sans SC", system-ui, sans-serif',
+          "--rpt-chart-1": "#10B981",
+          "--rpt-chart-2": "#38BDF8",
+          "--rpt-chart-3": "#F59E0B",
+          "--rpt-chart-4": "#A78BFA",
+          "--rpt-chart-5": "#F43F5E",
+          "--rpt-chart-6": "#2DD4BF",
+        },
+        custom_css: "",
+        page_chrome: {
+          header: {
+            left: "TERMINAL // {kicker}",
+            center: "",
+            right: "{date}",
+          },
+          footer: {
+            left: "{title}",
+            center: "",
+            right: "PAGE {page} / {total}",
+          },
+          hide_header_on_first_page: true,
+          hide_footer_on_first_page: false,
+          heading_page_break: "none",
+        },
+      },
+    },
+  },
+  // 10. 竹韵书院 — Oriental Academy & Bamboo Scroll
+  {
+    style_id: "bamboo-scroll",
+    name: "竹韵书院",
+    description:
+      "温润宣纸底色、竹青黛绿卷首刊头与楷宋人文排版，适配文史哲学科评估与书院专题",
+    category_tag: "东方 · 雅集",
+    is_builtin: true,
+    is_public: true,
+    owner_user_id: null,
+    owner_display_name: "Quire",
+    base_preset_id: "bamboo-scroll",
+    created_at: BUILTIN_TIMESTAMP,
+    updated_at: BUILTIN_TIMESTAMP,
+    bundle: {
+      cover_enabled: true,
+      cover_variant: "classic",
+      toc_enabled: true,
+      toc_max_depth: 3,
+      toc_variant: "dotted",
+      toc_page_break_before: false,
+      toc_page_break_after: false,
+      citation_style: "numeric",
+      references_enabled: true,
+      references_page_break_before: false,
+      theme: {
+        preset: "bamboo-scroll",
+        tokens: {
+          "--rpt-accent": "#2D5A4C",
+          "--rpt-ink": "#1F2421",
+          "--rpt-muted": "#6B7068",
+          "--rpt-border": "#D5CFC0",
+          "--rpt-surface": "#EFECE2",
+          "--rpt-paper": "#F7F4EB",
+          "--rpt-quote-bg": "#EFECE2",
+          "--rpt-table-border": "#2D5A4C",
+          "--rpt-table-header-bg": "#EFECE2",
+          "--rpt-table-stripe": "#F3F0E6",
+          "--rpt-line-height": "2.05",
+          "--rpt-body-size": "15px",
+          "--rpt-h1-size": "24px",
+          "--rpt-heading-weight": "700",
+          "--rpt-heading-tracking": "0.08em",
+          "--rpt-para-gap": "1.05rem",
+          "--rpt-para-indent": "2em",
+          "--rpt-para-align": "justify",
+          "--rpt-h1-variant": "center-ornament",
+          "--rpt-h2-variant": "soft-pill",
+          "--rpt-callout-variant": "outline-frame",
+          "--rpt-quote-variant": "boxed",
+          "--rpt-table-variant": "three-line",
+          "--rpt-table-density": "relaxed",
+          "--rpt-radius": "6px",
+          "--rpt-font-heading":
+            '"STKaiti", "Kaiti SC", "KaiTi", "Noto Serif SC", "Songti SC", serif',
+          "--rpt-font-body":
+            '"Noto Serif SC", "Songti SC", "STSong", "STKaiti", Georgia, serif',
+          "--rpt-chart-1": "#2D5A4C",
+          "--rpt-chart-2": "#B45309",
+          "--rpt-chart-3": "#3B6E9C",
+          "--rpt-chart-4": "#6D4C41",
+          "--rpt-chart-5": "#557A6E",
+          "--rpt-chart-6": "#8D6E63",
+        },
+        custom_css: "",
+        page_chrome: {
+          header: { left: "{kicker}", center: "", right: "{title}" },
+          footer: {
+            left: "{authors}",
+            center: "卷叶 · 第 {page} 页 / 共 {total} 页",
             right: "{date}",
           },
           hide_header_on_first_page: true,
@@ -368,8 +880,15 @@ export function buildSpecimenDocument(bundle: StylePresetBundle): {
   pageChrome: PageChromeConfig;
 } {
   const citationStyle: CitationStyleMode = bundle.citation_style ?? "numeric";
+  const coverEnabled = bundle.cover_enabled ?? true;
   const coverVariant = bundle.cover_variant ?? "split";
+  const tocEnabled = bundle.toc_enabled ?? true;
+  const tocMaxDepth = bundle.toc_max_depth ?? 3;
   const tocVariant = bundle.toc_variant ?? "dotted";
+  const tocBreakBefore = bundle.toc_page_break_before ?? false;
+  const tocBreakAfter = bundle.toc_page_break_after ?? false;
+  const referencesEnabled = bundle.references_enabled ?? true;
+  const referencesBreakBefore = bundle.references_page_break_before ?? false;
 
   const pageChrome: PageChromeConfig = bundle.theme.page_chrome ?? {
     header: { left: "{kicker}", center: "", right: "{title}" },
@@ -390,7 +909,7 @@ export function buildSpecimenDocument(bundle: StylePresetBundle): {
     revision: 1,
     target_prose_chars: 2800,
     cover: {
-      enabled: true,
+      enabled: coverEnabled,
       variant: coverVariant,
       title: "2026 年“双一流”高校学科建设与科研创新竞争力对标样本报告",
       subtitle:
@@ -403,12 +922,12 @@ export function buildSpecimenDocument(bundle: StylePresetBundle): {
       },
     },
     toc: {
-      enabled: true,
+      enabled: tocEnabled,
       title: "目录",
-      max_depth: 3,
+      max_depth: tocMaxDepth,
       variant: tocVariant,
-      page_break_before: false,
-      page_break_after: false,
+      page_break_before: tocBreakBefore,
+      page_break_after: tocBreakAfter,
     },
     theme: {
       preset: bundle.theme.preset ?? "quire-folio",
@@ -418,10 +937,10 @@ export function buildSpecimenDocument(bundle: StylePresetBundle): {
     },
     sources: { ...SPECIMEN_SOURCES },
     references: {
-      enabled: true,
+      enabled: referencesEnabled,
       title: "参考文献",
       style: citationStyle,
-      page_break_before: false,
+      page_break_before: referencesBreakBefore,
     },
     lint: {
       ignore: [],
@@ -472,7 +991,7 @@ export function buildSpecimenDocument(bundle: StylePresetBundle): {
             border: 1px solid var(--rpt-border, #d6d4cd);
             background: var(--rpt-surface, #f7f6f2);
             border-top: 3px solid var(--rpt-accent, #1e3a5f);
-            border-radius: 6px;
+            border-radius: var(--rpt-radius, 6px);
             padding: 12px 14px;
           }
           .kpi-label {

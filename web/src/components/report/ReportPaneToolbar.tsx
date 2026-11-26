@@ -202,6 +202,7 @@ export function ReportPaneToolbar({
             currentCover={cover}
             currentToc={toc}
             currentReferences={references}
+            themePageChrome={themePageChrome}
           />
 
           {viewMode === "paged" && (

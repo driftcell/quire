@@ -203,28 +203,84 @@ pub(crate) async fn apply_style_to_document(
         });
 
         if request.sync_layout_variants {
-            if let Some(cover_variant) = &resolved_bundle.cover_variant {
-                let mut cover = document.cover.clone();
-                if cover.variant != *cover_variant {
-                    cover.variant = cover_variant.clone();
-                    ops.push(PatchOp::SetCover {
-                        cover: Box::new(cover),
-                    });
-                }
+            let mut cover = document.cover.clone();
+            let mut cover_changed = false;
+            if let Some(enabled) = resolved_bundle.cover_enabled
+                && cover.enabled != enabled
+            {
+                cover.enabled = enabled;
+                cover_changed = true;
             }
-            if let Some(toc_variant) = &resolved_bundle.toc_variant {
-                let mut toc = document.toc.clone();
-                if toc.variant != *toc_variant {
-                    toc.variant = toc_variant.clone();
-                    ops.push(PatchOp::SetToc { toc });
-                }
+            if let Some(cover_variant) = &resolved_bundle.cover_variant
+                && cover.variant != *cover_variant
+            {
+                cover.variant = cover_variant.clone();
+                cover_changed = true;
             }
-            if let Some(citation_style) = resolved_bundle.citation_style {
-                let mut references = document.references.clone();
-                if references.style != citation_style {
-                    references.style = citation_style;
-                    ops.push(PatchOp::SetReferences { references });
-                }
+            if cover_changed {
+                ops.push(PatchOp::SetCover {
+                    cover: Box::new(cover),
+                });
+            }
+
+            let mut toc = document.toc.clone();
+            let mut toc_changed = false;
+            if let Some(enabled) = resolved_bundle.toc_enabled
+                && toc.enabled != enabled
+            {
+                toc.enabled = enabled;
+                toc_changed = true;
+            }
+            if let Some(max_depth) = resolved_bundle.toc_max_depth
+                && toc.max_depth != max_depth
+            {
+                toc.max_depth = max_depth;
+                toc_changed = true;
+            }
+            if let Some(toc_variant) = &resolved_bundle.toc_variant
+                && toc.variant != *toc_variant
+            {
+                toc.variant = toc_variant.clone();
+                toc_changed = true;
+            }
+            if let Some(break_before) = resolved_bundle.toc_page_break_before
+                && toc.page_break_before != break_before
+            {
+                toc.page_break_before = break_before;
+                toc_changed = true;
+            }
+            if let Some(break_after) = resolved_bundle.toc_page_break_after
+                && toc.page_break_after != break_after
+            {
+                toc.page_break_after = break_after;
+                toc_changed = true;
+            }
+            if toc_changed {
+                ops.push(PatchOp::SetToc { toc });
+            }
+
+            let mut references = document.references.clone();
+            let mut refs_changed = false;
+            if let Some(citation_style) = resolved_bundle.citation_style
+                && references.style != citation_style
+            {
+                references.style = citation_style;
+                refs_changed = true;
+            }
+            if let Some(enabled) = resolved_bundle.references_enabled
+                && references.enabled != enabled
+            {
+                references.enabled = enabled;
+                refs_changed = true;
+            }
+            if let Some(break_before) = resolved_bundle.references_page_break_before
+                && references.page_break_before != break_before
+            {
+                references.page_break_before = break_before;
+                refs_changed = true;
+            }
+            if refs_changed {
+                ops.push(PatchOp::SetReferences { references });
             }
         }
 
