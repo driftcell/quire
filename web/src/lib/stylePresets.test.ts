@@ -130,5 +130,8 @@ describe("stylePresets", () => {
     expect(panelHtml).toContain("表与图");
     expect(panelHtml).toContain("封面目录");
     expect(panelHtml).toContain("分页与CSS");
+    expect(panelHtml).toContain("重置修改");
+    expect(panelHtml.match(/title="重置当前预设修改"/g)).toHaveLength(1);
+    expect(panelHtml).toContain('aria-label="样式调优分区" class="grid w-full');
   });
 });

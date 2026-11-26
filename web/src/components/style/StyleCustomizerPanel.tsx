@@ -258,12 +258,24 @@ export function StyleCustomizerPanel({
 
   return (
     <div className="space-y-3.5 text-xs">
-      {/* Partition Segmented Navigation Header */}
-      <div className="flex items-center justify-between gap-2">
+      {/* Partition navigation owns the full width; reset stays a quiet utility action. */}
+      <div className="space-y-2">
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onReset}
+            title="重置当前预设修改"
+            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            <RotateCcwIcon className="size-3" aria-hidden="true" />
+            重置修改
+          </button>
+        </div>
+
         <div
           role="tablist"
           aria-label="样式调优分区"
-          className="grid flex-1 grid-cols-3 gap-1 rounded-lg border border-border/85 bg-muted/45 p-1"
+          className="grid w-full grid-cols-3 gap-1 rounded-lg border border-border/85 bg-muted/45 p-1"
         >
           {SECTIONS.map((sec) => {
             const Icon = sec.icon;
@@ -287,16 +299,6 @@ export function StyleCustomizerPanel({
             );
           })}
         </div>
-
-        <button
-          type="button"
-          onClick={onReset}
-          title="重置当前预设修改"
-          className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border/80 bg-card px-2 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        >
-          <RotateCcwIcon className="size-3" aria-hidden="true" />
-          重置
-        </button>
       </div>
 
       {/* Partition 1: Palette & Surface */}

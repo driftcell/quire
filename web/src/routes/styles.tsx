@@ -686,7 +686,7 @@ export function StyleCenterPage() {
         {customizerOpen && (
           <aside
             aria-label="样式精调面板"
-            className="no-scrollbar flex w-full shrink-0 flex-col border-t border-border/90 bg-card md:w-[340px] md:border-t-0 md:border-l lg:w-[360px]"
+            className="no-scrollbar flex w-full shrink-0 flex-col border-t border-border/90 bg-card md:w-[360px] md:border-t-0 md:border-l lg:w-[400px] xl:w-[440px]"
           >
             <div className="flex h-10 shrink-0 items-center justify-between border-b border-border/80 px-3.5">
               <div className="flex min-w-0 items-center gap-2">
