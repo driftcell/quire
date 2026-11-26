@@ -140,12 +140,12 @@ impl PgReportStore {
         .execute(&mut *tx)
         .await?;
 
+        tx.commit().await?;
         let event = RevisionEvent::new(doc_id.clone(), new_revision, actor, summary, forward_ops)
             .with_cleared_preview_ids(cleared_preview_ids);
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish revision");
         }
-        tx.commit().await?;
         self.maybe_snapshot(doc_id.as_str(), new_revision, after.clone());
 
         Ok(ApplyResult {
@@ -240,11 +240,11 @@ impl PgReportStore {
 
         let mut warnings = normalization_warnings;
         warnings.extend(inline_warnings(&after));
+        tx.commit().await?;
         let event = RevisionEvent::new(doc_id.clone(), new_revision, actor, &summary, forward_ops);
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = doc_id.as_str(), revision = %new_revision, "failed to publish rollback revision");
         }
-        tx.commit().await?;
         self.maybe_snapshot(doc_id.as_str(), new_revision, after);
 
         Ok(RollbackResult {

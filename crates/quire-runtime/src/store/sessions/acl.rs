@@ -61,6 +61,20 @@ impl RuntimeStore {
                         )));
                     }
                 }
+                if let Some(doc_id) = doc_id {
+                    sqlx::query(
+                        r#"UPDATE report.documents d
+                           SET owner_user_id = COALESCE(d.owner_user_id, $2, s.user_id)
+                           FROM runtime.sessions s
+                           WHERE d.doc_id = $1
+                             AND s.session_id = $3"#,
+                    )
+                    .bind(doc_id)
+                    .bind(user_id)
+                    .bind(existing_id)
+                    .execute(&self.pool)
+                    .await?;
+                }
                 return Ok(existing_id.to_string());
             }
         }
@@ -101,6 +115,20 @@ impl RuntimeStore {
                 "session `{session_id}` belongs to another user"
             )));
         }
+        if let Some(doc_id) = doc_id {
+            sqlx::query(
+                r#"UPDATE report.documents d
+                   SET owner_user_id = COALESCE(d.owner_user_id, $2, s.user_id)
+                   FROM runtime.sessions s
+                   WHERE d.doc_id = $1
+                     AND s.session_id = $3"#,
+            )
+            .bind(doc_id)
+            .bind(user_id)
+            .bind(&session_id)
+            .execute(&self.pool)
+            .await?;
+        }
         Ok(session_id)
     }
 
@@ -115,27 +143,36 @@ impl RuntimeStore {
         if is_admin {
             return Ok(());
         }
+        let doc_row =
+            sqlx::query("SELECT session_id, owner_user_id FROM report.documents WHERE doc_id = $1")
+                .bind(doc_id)
+                .fetch_optional(&self.pool)
+                .await?;
         let effective_doc_session = match doc_session_id {
             Some(sid) => Some(sid.to_string()),
-            None => sqlx::query_scalar::<_, Option<String>>(
-                "SELECT session_id FROM report.documents WHERE doc_id = $1",
+            None => doc_row.as_ref().and_then(|row| {
+                row.try_get::<Option<String>, _>("session_id")
+                    .ok()
+                    .flatten()
+            }),
+        };
+        let authoritative_owner = doc_row.as_ref().and_then(|row| {
+            row.try_get::<Option<String>, _>("owner_user_id")
+                .ok()
+                .flatten()
+        });
+        let doc_session_owner = if let Some(doc_sid) = effective_doc_session.as_deref() {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT user_id FROM runtime.sessions WHERE session_id = $1",
             )
-            .bind(doc_id)
+            .bind(doc_sid)
             .fetch_optional(&self.pool)
             .await?
-            .flatten(),
+            .flatten()
+        } else {
+            None
         };
-        let owner_rows = sqlx::query(
-            r#"SELECT session_id, user_id
-               FROM runtime.sessions
-               WHERE ($1::text IS NOT NULL AND session_id = $1)
-                  OR doc_id = $2
-                  OR linked_doc_id = $2"#,
-        )
-        .bind(effective_doc_session.as_deref())
-        .bind(doc_id)
-        .fetch_all(&self.pool)
-        .await?;
+        let effective_owner = authoritative_owner.or(doc_session_owner);
 
         if let Some(caller_uid) = user_id {
             if let Some(req_sid) = caller_session_id {
@@ -153,14 +190,7 @@ impl RuntimeStore {
                     )));
                 }
             }
-            let owns_doc = owner_rows.iter().any(|row| {
-                row.try_get::<Option<String>, _>("user_id")
-                    .ok()
-                    .flatten()
-                    .as_deref()
-                    == Some(caller_uid)
-            });
-            if owns_doc {
+            if effective_owner.as_deref() == Some(caller_uid) {
                 return Ok(());
             }
             return Err(RuntimeError::Forbidden(format!(
@@ -169,39 +199,24 @@ impl RuntimeStore {
         }
 
         if let Some(caller_sid) = caller_session_id {
-            let caller_row = sqlx::query(
-                "SELECT user_id, doc_id, linked_doc_id FROM runtime.sessions WHERE session_id = $1",
-            )
-            .bind(caller_sid)
-            .fetch_optional(&self.pool)
-            .await?;
+            let caller_uid: Option<String> =
+                sqlx::query_scalar("SELECT user_id FROM runtime.sessions WHERE session_id = $1")
+                    .bind(caller_sid)
+                    .fetch_optional(&self.pool)
+                    .await?
+                    .flatten();
 
-            if effective_doc_session.as_deref() == Some(caller_sid)
-                || owner_rows.iter().any(|row| {
-                    row.try_get::<String, _>("session_id").ok().as_deref() == Some(caller_sid)
-                })
-            {
-                return Ok(());
-            }
-            if let Some(caller_row) = caller_row {
-                let bound_doc: Option<String> = caller_row.try_get("doc_id")?;
-                let linked_doc: Option<String> = caller_row.try_get("linked_doc_id")?;
-                if bound_doc.as_deref() == Some(doc_id) || linked_doc.as_deref() == Some(doc_id) {
+            if let Some(owner_uid) = effective_owner.as_deref() {
+                if caller_uid.as_deref() == Some(owner_uid) {
                     return Ok(());
                 }
-                let caller_uid: Option<String> = caller_row.try_get("user_id")?;
-                if let Some(caller_uid) = caller_uid.as_deref() {
-                    let same_user = owner_rows.iter().any(|row| {
-                        row.try_get::<Option<String>, _>("user_id")
-                            .ok()
-                            .flatten()
-                            .as_deref()
-                            == Some(caller_uid)
-                    });
-                    if same_user {
-                        return Ok(());
-                    }
-                }
+                return Err(RuntimeError::Forbidden(format!(
+                    "session `{caller_sid}` does not have permission to access report `{doc_id}`"
+                )));
+            }
+
+            if effective_doc_session.as_deref() == Some(caller_sid) {
+                return Ok(());
             }
             return Err(RuntimeError::Forbidden(format!(
                 "session `{caller_sid}` does not have permission to access report `{doc_id}`"
@@ -246,53 +261,44 @@ impl RuntimeStore {
             return Ok(None);
         }
         let mut effective_uid = user_id.map(ToString::to_string);
-        let mut sessions = Vec::new();
+        let sessions = Vec::new();
         let mut docs = Vec::new();
 
         if effective_uid.is_none()
             && let Some(sid) = caller_session_id
         {
-            sessions.push(sid.to_string());
-            if let Some(row) = sqlx::query(
-                "SELECT user_id, doc_id, linked_doc_id FROM runtime.sessions WHERE session_id = $1",
+            effective_uid = sqlx::query_scalar::<_, Option<String>>(
+                "SELECT user_id FROM runtime.sessions WHERE session_id = $1",
             )
             .bind(sid)
             .fetch_optional(&self.pool)
             .await?
-            {
-                effective_uid = row.try_get("user_id")?;
-                if let Some(d) = row.try_get::<Option<String>, _>("doc_id")? {
-                    docs.push(d);
-                }
-                if let Some(d) = row.try_get::<Option<String>, _>("linked_doc_id")? {
-                    docs.push(d);
-                }
+            .flatten();
+            if effective_uid.is_none() {
+                let doc_ids: Vec<String> = sqlx::query_scalar(
+                    r#"SELECT doc_id
+                       FROM report.documents
+                       WHERE owner_user_id IS NULL AND session_id = $1"#,
+                )
+                .bind(sid)
+                .fetch_all(&self.pool)
+                .await?;
+                docs.extend(doc_ids);
             }
         }
 
         if let Some(uid) = effective_uid.as_deref() {
-            let rows = sqlx::query(
-                "SELECT session_id, doc_id, linked_doc_id FROM runtime.sessions WHERE user_id = $1",
+            let doc_ids: Vec<String> = sqlx::query_scalar(
+                r#"SELECT d.doc_id
+                   FROM report.documents d
+                   LEFT JOIN runtime.sessions s ON s.session_id = d.session_id
+                   WHERE d.owner_user_id = $1
+                      OR (d.owner_user_id IS NULL AND s.user_id = $1)"#,
             )
             .bind(uid)
             .fetch_all(&self.pool)
             .await?;
-            for row in rows {
-                let sid: String = row.try_get("session_id")?;
-                if !sessions.contains(&sid) {
-                    sessions.push(sid);
-                }
-                if let Some(d) = row.try_get::<Option<String>, _>("doc_id")?
-                    && !docs.contains(&d)
-                {
-                    docs.push(d);
-                }
-                if let Some(d) = row.try_get::<Option<String>, _>("linked_doc_id")?
-                    && !docs.contains(&d)
-                {
-                    docs.push(d);
-                }
-            }
+            docs.extend(doc_ids);
         }
         Ok(Some((sessions, docs)))
     }

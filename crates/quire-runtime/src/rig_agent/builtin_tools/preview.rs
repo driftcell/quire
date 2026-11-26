@@ -31,8 +31,17 @@ pub(crate) async fn preview_report_tool(
 ) -> Result<ToolOutput, ToolExecutionError> {
     let runtime = runtime_tool_scope(context)?;
     let turn = quire_turn_meta(context)?;
+    let request_context = in_process_request_context(context)?;
+    let parsed_doc_id = quire_protocol::DocId::parse(doc_id.trim())
+        .map_err(|error| ToolExecutionError::invalid_args(error.to_string()))?;
+    runtime
+        .report
+        .state()
+        .authorize_doc_access(&request_context, &parsed_doc_id, false)
+        .await
+        .map_err(tool_other)?;
     let input = crate::preview::PreviewReportInput {
-        doc_id,
+        doc_id: parsed_doc_id.to_string(),
         mode: mode.unwrap_or_default(),
         section_id,
         block_ids,

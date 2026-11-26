@@ -332,6 +332,14 @@ impl RuntimeService {
     }
 
     async fn prepare_turn(&self, session_id: &str) -> RuntimeResult<(String, CancellationToken)> {
+        self.prepare_turn_for_message(session_id, None).await
+    }
+
+    async fn prepare_turn_for_message(
+        &self,
+        session_id: &str,
+        trigger_message_id: Option<&str>,
+    ) -> RuntimeResult<(String, CancellationToken)> {
         self.store.get_session_summary(session_id).await?;
         if self.store.latest_running_run(session_id).await?.is_some() {
             return Err(RuntimeError::InvalidRequest(format!(
@@ -340,12 +348,24 @@ impl RuntimeService {
         }
         let run = self
             .store
-            .create_run(session_id, None, "main", &self.config.default_model)
+            .create_run_for_message(
+                session_id,
+                None,
+                "main",
+                &self.config.default_model,
+                trigger_message_id,
+            )
             .await?;
-        let _ = self
+        let acquired = self
             .store
             .acquire_run_lease(&run.run_id, &self.instance_id, 15)
             .await?;
+        if !acquired {
+            return Err(RuntimeError::Internal(format!(
+                "failed to acquire lease for run `{}`",
+                run.run_id
+            )));
+        }
         let token = self.runs.register(&run.run_id).await;
         Ok((run.run_id, token))
     }
@@ -388,12 +408,28 @@ impl RuntimeService {
         let cancel = token.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(4));
+            let mut consecutive_errors = 0u8;
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => break,
                     _ = interval.tick() => {
-                        if !store.renew_run_lease(&run_id, &instance_id, 15).await.unwrap_or(false) {
-                            break;
+                        match store.renew_run_lease(&run_id, &instance_id, 15).await {
+                            Ok(true) => {
+                                consecutive_errors = 0;
+                            }
+                            Ok(false) => {
+                                warn!(%run_id, %instance_id, "lost run lease during heartbeat; cancelling run");
+                                cancel.cancel();
+                                break;
+                            }
+                            Err(error) => {
+                                consecutive_errors = consecutive_errors.saturating_add(1);
+                                warn!(%error, %run_id, %instance_id, consecutive_errors, "failed to renew run lease");
+                                if consecutive_errors >= 2 {
+                                    cancel.cancel();
+                                    break;
+                                }
+                            }
                         }
                     }
                 }
@@ -464,6 +500,10 @@ impl RuntimeService {
         Ok(run_id)
     }
 
+    pub(crate) async fn maybe_compact_before_claim(&self, session_id: &str) {
+        self.maybe_auto_compact(session_id, None).await;
+    }
+
     pub(crate) async fn spawn_turn_for_message(
         &self,
         session_id: &str,
@@ -471,7 +511,9 @@ impl RuntimeService {
         content: String,
     ) -> RuntimeResult<String> {
         self.maybe_auto_compact(session_id, Some(message_id)).await;
-        let (run_id, token) = self.prepare_turn(session_id).await?;
+        let (run_id, token) = self
+            .prepare_turn_for_message(session_id, Some(message_id))
+            .await?;
         if let Err(error) = self
             .emit(
                 session_id,
@@ -538,13 +580,14 @@ impl RuntimeService {
                 // must not leave the agent executing tools after the run is marked as failed.
                 token.cancel();
                 if was_cancelled {
-                    self.finish_cancelled_run(run_id).await?;
+                    self.finish_cancelled_run_for_lease(run_id).await?;
                 } else {
                     let message = error.to_string();
                     let _ = self
                         .store
-                        .finish_run_with_event(
+                        .finish_run_with_event_for_lease(
                             run_id,
+                            &self.instance_id,
                             "failed",
                             Some(&message),
                             SessionEventKind::TurnFailed {
@@ -566,6 +609,23 @@ impl RuntimeService {
             .store
             .finish_run_with_event(
                 run_id,
+                "cancelled",
+                Some("interrupted by user"),
+                SessionEventKind::TurnFailed {
+                    error: "interrupted by user".into(),
+                    recoverable: true,
+                },
+            )
+            .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn finish_cancelled_run_for_lease(&self, run_id: &str) -> RuntimeResult<()> {
+        let _ = self
+            .store
+            .finish_run_with_event_for_lease(
+                run_id,
+                &self.instance_id,
                 "cancelled",
                 Some("interrupted by user"),
                 SessionEventKind::TurnFailed {

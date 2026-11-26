@@ -691,4 +691,21 @@ describe("sanitizeCoverHtml", () => {
     expect(sanitized).toContain('style="color:red"');
     expect(sanitized).not.toContain("script:alert");
   });
+
+  test("strips svg onload, data:text/html, srcdoc, and meta refresh vectors", () => {
+    const sanitized = sanitizeCoverHtml(`
+      <div class="kpi">
+        <svg onload="steal()"><set attributeName="onbegin" to="alert(1)" /><circle r="4" /></svg>
+        <meta http-equiv="refresh" content="0;url=javascript:alert(1)" />
+        <a href="data:text/html,<script>alert(1)</script>">bad</a>
+      </div>
+    `);
+
+    expect(sanitized).toContain('class="kpi"');
+    expect(sanitized).toContain("<circle");
+    expect(sanitized.toLowerCase()).not.toContain("onload");
+    expect(sanitized.toLowerCase()).not.toContain("onbegin");
+    expect(sanitized.toLowerCase()).not.toContain("<meta");
+    expect(sanitized.toLowerCase()).not.toContain("data:text/html");
+  });
 });

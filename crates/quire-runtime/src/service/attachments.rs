@@ -208,4 +208,49 @@ impl RuntimeService {
         }
         Ok(())
     }
+
+    pub(crate) async fn delete_attachment_blob(
+        &self,
+        attachment: &StoredAttachment,
+    ) -> RuntimeResult<()> {
+        match attachment.storage_provider.as_str() {
+            "local" => {
+                match tokio::fs::remove_file(&attachment.storage_path).await {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.into()),
+                }
+                Ok(())
+            }
+            "oss" => {
+                if !self.config.oss.is_configured() || !self.config.oss.is_live_endpoint() {
+                    return Ok(());
+                }
+                let delete_url = self
+                    .config
+                    .oss
+                    .presign_delete(&attachment.storage_path, 60)?;
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(10))
+                    .build()
+                    .map_err(|error| {
+                        RuntimeError::Internal(format!("build OSS HTTP client: {error}"))
+                    })?;
+                let response = client.delete(&delete_url).send().await.map_err(|error| {
+                    RuntimeError::Internal(format!("failed to delete OSS attachment: {error}"))
+                })?;
+                if !response.status().is_success()
+                    && response.status() != reqwest::StatusCode::NOT_FOUND
+                {
+                    return Err(RuntimeError::Internal(format!(
+                        "OSS DELETE `{}` failed with status {}",
+                        attachment.storage_path,
+                        response.status()
+                    )));
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
 }

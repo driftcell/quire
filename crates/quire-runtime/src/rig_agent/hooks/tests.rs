@@ -14,6 +14,7 @@ use super::super::{SharedDocId, new_shared_doc_id};
 fn execution() -> AgentExecution {
     AgentExecution {
         agent_id: "main".into(),
+        user_id: None,
         display_name: None,
         model_route: "test/model".into(),
         allowed_tools: vec!["ask_user".into(), "apply_operations".into()],

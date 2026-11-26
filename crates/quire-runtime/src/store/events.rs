@@ -105,8 +105,33 @@ impl RuntimeStore {
             "failed" => "failed",
             _ => "idle",
         };
-        self.finish_run_inner(run_id, status, session_status, error, kind)
+        self.finish_run_inner(run_id, None, status, session_status, error, kind)
             .await
+    }
+
+    pub async fn finish_run_with_event_for_lease(
+        &self,
+        run_id: &str,
+        lease_owner: &str,
+        status: &str,
+        error: Option<&str>,
+        kind: SessionEventKind,
+    ) -> RuntimeResult<Option<SessionEvent>> {
+        let session_status = match status {
+            "completed" => "idle",
+            "cancelled" | "interrupted" => "interrupted",
+            "failed" => "failed",
+            _ => "idle",
+        };
+        self.finish_run_inner(
+            run_id,
+            Some(lease_owner),
+            status,
+            session_status,
+            error,
+            kind,
+        )
+        .await
     }
 
     /// Close a run cleanly as `completed` while keeping the session input gate in `awaiting_input`.
@@ -116,6 +141,23 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<SessionEvent>> {
         self.finish_run_inner(
             run_id,
+            None,
+            "completed",
+            "awaiting_input",
+            None,
+            SessionEventKind::TurnFinished,
+        )
+        .await
+    }
+
+    pub async fn finish_run_for_question_for_lease(
+        &self,
+        run_id: &str,
+        lease_owner: &str,
+    ) -> RuntimeResult<Option<SessionEvent>> {
+        self.finish_run_inner(
+            run_id,
+            Some(lease_owner),
             "completed",
             "awaiting_input",
             None,
@@ -127,6 +169,7 @@ impl RuntimeStore {
     async fn finish_run_inner(
         &self,
         run_id: &str,
+        expected_lease_owner: Option<&str>,
         status: &str,
         session_status: &str,
         error: Option<&str>,
@@ -134,7 +177,7 @@ impl RuntimeStore {
     ) -> RuntimeResult<Option<SessionEvent>> {
         let mut tx = self.pool.begin().await?;
         let row = sqlx::query(
-            r#"SELECT session_id, agent_id, parent_run_id, start_seq, status
+            r#"SELECT session_id, agent_id, parent_run_id, start_seq, status, lease_owner
                FROM runtime.runs
                WHERE run_id = $1
                FOR UPDATE"#,
@@ -148,6 +191,12 @@ impl RuntimeStore {
         let current_status: String = row.try_get("status")?;
         if current_status != "running" {
             return Ok(None);
+        }
+        if let Some(expected_owner) = expected_lease_owner {
+            let lease_owner: Option<String> = row.try_get("lease_owner")?;
+            if lease_owner.as_deref() != Some(expected_owner) {
+                return Ok(None);
+            }
         }
         let session_id: String = row.try_get("session_id")?;
         let agent_id: String = row.try_get("agent_id")?;

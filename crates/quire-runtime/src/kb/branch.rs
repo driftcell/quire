@@ -341,12 +341,23 @@ impl KbService {
             .collect()
     }
 
-    /// Resolve the branch a new session should use and reject archived branches.
-    pub async fn session_branch(&self, branch: Option<&str>) -> RuntimeResult<String> {
+    /// Resolve the branch a new session should use, rejecting archived branches
+    /// and restricting draft branches to admin/internal callers.
+    pub async fn session_branch(
+        &self,
+        branch: Option<&str>,
+        allow_draft: bool,
+    ) -> RuntimeResult<String> {
         let branch = self.resolve_branch(branch).await?;
         if branch.status == KbBranchStatus::Archived {
             return Err(RuntimeError::InvalidRequest(format!(
                 "branch `{}` is archived and cannot back a new session",
+                branch.name
+            )));
+        }
+        if branch.status == KbBranchStatus::Draft && !allow_draft {
+            return Err(RuntimeError::Forbidden(format!(
+                "branch `{}` is a draft and cannot be used by non-admin users",
                 branch.name
             )));
         }

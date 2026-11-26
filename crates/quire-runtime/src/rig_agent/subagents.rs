@@ -107,6 +107,7 @@ fn build_spawn_subagents_receipt(
 #[derive(Clone)]
 pub(super) struct SubagentParent {
     session_id: String,
+    user_id: Option<String>,
     kb_branch: Option<String>,
     doc_id: SharedDocId,
     cancellation: tokio_util::sync::CancellationToken,
@@ -142,6 +143,7 @@ pub(super) async fn run_subagents_tool(
         .then(|| super::current_fork_history(&runtime.parent_history));
     let parent = SubagentParent {
         session_id: turn.session_id,
+        user_id: turn.user_id,
         kb_branch: turn.kb_branch,
         doc_id: Arc::clone(&runtime.doc_id),
         cancellation: runtime.cancellation.clone(),
@@ -268,6 +270,7 @@ impl RigModelCore {
                 })?;
             let execution = AgentExecution {
                 agent_id: task.agent_name.clone(),
+                user_id: parent.user_id.clone(),
                 display_name: task.display_name.clone(),
                 model_route: task.model.clone().unwrap_or(definition.model),
                 allowed_tools: definition.allowed_tools,

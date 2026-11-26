@@ -96,6 +96,18 @@ impl RuntimeStore {
         agent_id: &str,
         model: &str,
     ) -> RuntimeResult<RunRecord> {
+        self.create_run_for_message(session_id, parent_run_id, agent_id, model, None)
+            .await
+    }
+
+    pub async fn create_run_for_message(
+        &self,
+        session_id: &str,
+        parent_run_id: Option<&str>,
+        agent_id: &str,
+        model: &str,
+        trigger_message_id: Option<&str>,
+    ) -> RuntimeResult<RunRecord> {
         let mut tx = self.pool.begin().await?;
         if parent_run_id.is_none() {
             let status: Option<String> = sqlx::query_scalar(
@@ -115,14 +127,16 @@ impl RuntimeStore {
         }
         let run_id = short_id("run");
         sqlx::query(
-            r#"INSERT INTO runtime.runs (run_id, session_id, parent_run_id, agent_id, status, model)
-               VALUES ($1, $2, $3, $4, 'running', $5)"#,
+            r#"INSERT INTO runtime.runs
+               (run_id, session_id, parent_run_id, agent_id, status, model, trigger_message_id)
+               VALUES ($1, $2, $3, $4, 'running', $5, $6)"#,
         )
         .bind(&run_id)
         .bind(session_id)
         .bind(parent_run_id)
         .bind(agent_id)
         .bind(model)
+        .bind(trigger_message_id)
         .execute(&mut *tx)
         .await?;
         sqlx::query(
@@ -134,6 +148,21 @@ impl RuntimeStore {
         .await?;
         tx.commit().await?;
         self.get_run(&run_id).await
+    }
+
+    pub async fn has_run_for_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+    ) -> RuntimeResult<bool> {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM runtime.runs WHERE session_id = $1 AND trigger_message_id = $2)",
+        )
+        .bind(session_id)
+        .bind(message_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists)
     }
 
     /// Append `turn_started` and retain its hot sequence for trace materialization.

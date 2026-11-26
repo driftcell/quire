@@ -38,7 +38,7 @@ use crate::{
     models::ModelRegistry,
     store::{
         AttachmentInsert, CompactionWrite, EnqueuePendingMessage, RunRecord, RuntimeStore,
-        SessionPatch,
+        SessionPatch, StoredAttachment,
     },
 };
 
@@ -145,11 +145,6 @@ impl Drop for CompactionFlagGuard {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct PendingBatch {
-    pub message: SessionMessage,
-}
-
 /// Single source of truth for pending-queue dequeue, persistence and event broadcast.
 #[derive(Clone)]
 pub struct PendingQueueCoordinator {
@@ -187,11 +182,15 @@ impl PendingQueueCoordinator {
         self.notify.notify_one();
     }
 
-    /// Atomically take the next queue batch while the caller already owns the session gate.
-    pub(crate) async fn take_pending_batch_locked(
+    /// Atomically take the next queue batch and create its run while the caller owns the session gate.
+    pub(crate) async fn take_pending_batch_for_run_locked(
         &self,
         session_id: &str,
-    ) -> RuntimeResult<Option<PendingBatch>> {
+        instance_id: &str,
+        model: &str,
+        lease_ttl_secs: i64,
+        allow_awaiting_input: bool,
+    ) -> RuntimeResult<Option<(quire_session_protocol::SessionMessage, RunRecord)>> {
         let items = self.store.list_pending_queue(session_id).await?;
         let Some(first) = items.first() else {
             return Ok(None);
@@ -210,7 +209,11 @@ impl PendingQueueCoordinator {
             .map(|item| item.content.trim())
             .filter(|content| !content.is_empty())
             .collect::<Vec<_>>()
-            .join("\n\n");
+            .join(
+                "
+
+",
+            );
         let comment_refs = batch
             .iter()
             .flat_map(|item| item.comment_refs.clone())
@@ -234,14 +237,17 @@ impl PendingQueueCoordinator {
             .iter()
             .map(|item| item.queue_id.clone())
             .collect::<Vec<_>>();
-        let Some(message) = self
-            .store
-            .claim_pending_batch(session_id, &request, &queue_ids)
-            .await?
-        else {
-            return Ok(None);
-        };
-        Ok(Some(PendingBatch { message }))
+        self.store
+            .claim_pending_batch_and_create_run(
+                session_id,
+                &request,
+                &queue_ids,
+                instance_id,
+                model,
+                lease_ttl_secs,
+                allow_awaiting_input,
+            )
+            .await
     }
 
     /// Release the in-memory gate when a session is deleted.
@@ -358,7 +364,7 @@ impl RuntimeService {
             .await?;
         let count = recoverable.len();
         for run in recoverable {
-            let token = CancellationToken::new();
+            let token = self.runs.register(&run.run_id).await;
             self.launch_resumed_turn(run.session_id, run.run_id, token);
         }
         Ok(count)
@@ -366,6 +372,7 @@ impl RuntimeService {
 
     async fn pending_queue_loop(self) {
         let mut interval = tokio::time::interval(Duration::from_secs(2));
+        let concurrency = Arc::new(tokio::sync::Semaphore::new(16));
         loop {
             tokio::select! {
                 _ = self.queue.notified() => {}
@@ -379,9 +386,16 @@ impl RuntimeService {
                 }
             };
             for session_id in sessions {
-                if let Err(error) = self.drain_pending(&session_id).await {
-                    warn!(%error, %session_id, "failed to drain pending session queue");
-                }
+                let Ok(permit) = Arc::clone(&concurrency).try_acquire_owned() else {
+                    break;
+                };
+                let service = self.clone();
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    if let Err(error) = service.drain_pending(&session_id).await {
+                        warn!(%error, %session_id, "failed to drain pending session queue");
+                    }
+                });
             }
         }
     }
@@ -410,18 +424,36 @@ impl RuntimeService {
         doc_id: Option<&str>,
         kb_branch: Option<&str>,
     ) -> RuntimeResult<SessionSummary> {
-        self.create_session_for_user(None, title, doc_id, kb_branch)
+        self.create_session_for_user(None, false, title, doc_id, kb_branch)
             .await
     }
 
     pub async fn create_session_for_user(
         &self,
         user_id: Option<&str>,
+        is_admin: bool,
         title: &str,
         doc_id: Option<&str>,
         kb_branch: Option<&str>,
     ) -> RuntimeResult<SessionSummary> {
-        let branch = self.kb.session_branch(kb_branch).await?;
+        let doc_id = doc_id.map(str::trim).filter(|s| !s.is_empty());
+        if let Some(doc_id) = doc_id {
+            let parsed_doc_id = quire_protocol::DocId::parse(doc_id)
+                .map_err(|error| RuntimeError::InvalidRequest(error.to_string()))?;
+            if let Some(uid) = user_id {
+                self.store
+                    .authorize_document_access(
+                        parsed_doc_id.as_str(),
+                        None,
+                        Some(uid),
+                        None,
+                        is_admin,
+                    )
+                    .await?;
+            }
+        }
+        let allow_draft = is_admin || user_id.is_none();
+        let branch = self.kb.session_branch(kb_branch, allow_draft).await?;
         self.store
             .create_session_for_user(user_id, title, doc_id, &branch)
             .await
@@ -506,15 +538,25 @@ impl RuntimeService {
                     .list_running_run_ids(session_id)
                     .await
                     .map(|ids| ids.is_empty())
-                    .unwrap_or(true)
+                    .unwrap_or(false)
                 {
                     break;
                 }
-                tokio::time::sleep(Duration::from_millis(25)).await;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            // Force-cancel any remote runs that did not stop within the grace window
+            // so their next lease heartbeat immediately fails and halts execution.
+            let remaining = self.store.list_running_run_ids(session_id).await?;
+            for run_id in &remaining {
+                let _ = self.finish_cancelled_run(run_id).await;
             }
             for run_id in &running_ids {
                 self.runs.remove(run_id).await;
             }
+        }
+        let attachments = self.store.list_stored_attachments(session_id).await?;
+        for attachment in &attachments {
+            self.delete_attachment_blob(attachment).await?;
         }
         let result = self.store.delete_session(session_id).await;
         drop(_guard);
@@ -536,3 +578,4 @@ mod auth;
 mod control;
 mod execute;
 mod messages;
+pub(crate) use messages::RuntimeExternalHarnessBridge;

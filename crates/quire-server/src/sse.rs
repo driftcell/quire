@@ -114,7 +114,11 @@ pub fn revision_stream(
         let covers_expected = relevant
             .first()
             .is_some_and(|entry| entry.event.revision == expected_next);
-        if (covers_expected || current_rev < expected_next) && contiguous_redis {
+        let covers_tail = current_rev < expected_next
+            || relevant
+                .last()
+                .is_some_and(|entry| entry.event.revision >= current_rev);
+        if (covers_expected || current_rev < expected_next) && covers_tail && contiguous_redis {
             replayed_via_redis = !relevant.is_empty();
             for entry in relevant {
                 if entry.event.revision <= last_sent_rev {
@@ -285,6 +289,19 @@ pub fn revision_stream(
                     yield Ok(sse_json(event_name, &payload));
                 }
                 _ = heartbeat.tick() => {
+                    if let Ok(missing_events) = state
+                        .store
+                        .revision_events_since_pg(&doc_id, last_sent_rev, 500)
+                        .await
+                    {
+                        for event in missing_events {
+                            if event.revision <= last_sent_rev {
+                                continue;
+                            }
+                            last_sent_rev = event.revision;
+                            yield Ok(sse_json("revision", &event));
+                        }
+                    }
                     yield Ok(Event::default().comment("heartbeat"));
                 }
             }

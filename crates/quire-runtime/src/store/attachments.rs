@@ -81,4 +81,34 @@ impl RuntimeStore {
             })
             .collect()
     }
+
+    pub async fn list_stored_attachments(
+        &self,
+        session_id: &str,
+    ) -> RuntimeResult<Vec<StoredAttachment>> {
+        let rows = sqlx::query(
+            r#"SELECT attachment_id, session_id, filename, mime_type, size_bytes,
+                      storage_path, storage_provider
+               FROM runtime.attachments
+               WHERE session_id = $1
+               ORDER BY created_at ASC"#,
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.iter()
+            .map(|row| {
+                let size_bytes: i64 = row.try_get("size_bytes")?;
+                Ok(StoredAttachment {
+                    attachment_id: row.try_get("attachment_id")?,
+                    session_id: row.try_get("session_id")?,
+                    filename: row.try_get("filename")?,
+                    mime_type: row.try_get("mime_type")?,
+                    size_bytes: u64::try_from(size_bytes).unwrap_or(0),
+                    storage_path: row.try_get("storage_path")?,
+                    storage_provider: row.try_get("storage_provider")?,
+                })
+            })
+            .collect()
+    }
 }

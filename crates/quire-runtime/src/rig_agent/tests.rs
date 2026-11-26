@@ -4,6 +4,7 @@ use super::*;
 fn document_binding_keeps_prefix_and_extra_context_stable() {
     let execution = AgentExecution {
         agent_id: "main".into(),
+        user_id: None,
         display_name: None,
         model_route: "test/model".into(),
         allowed_tools: Vec::new(),
@@ -48,6 +49,7 @@ fn usage_carries_real_tokens_and_context_limit() {
 fn static_preamble_marks_derived_subagents_without_changing_main_agent() {
     let main_exec = AgentExecution {
         agent_id: "main".into(),
+        user_id: None,
         display_name: None,
         model_route: "stub/main".into(),
         allowed_tools: Vec::new(),

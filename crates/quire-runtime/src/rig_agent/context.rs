@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 #[context(key = "quire.turn_meta")]
 pub struct QuireTurnMeta {
     pub session_id: String,
+    pub user_id: Option<String>,
     pub run_id: String,
     pub agent_id: String,
     pub display_name: Option<String>,

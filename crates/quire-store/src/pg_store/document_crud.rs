@@ -175,6 +175,7 @@ impl PgReportStore {
         .execute(&mut *tx)
         .await?;
 
+        tx.commit().await?;
         let event = RevisionEvent::new(
             document.doc_id.clone(),
             current_rev,
@@ -186,7 +187,6 @@ impl PgReportStore {
         if let Err(error) = self.bus.publish_revision(&event).await {
             warn!(%error, doc_id = %document.doc_id, "failed to publish create revision");
         }
-        tx.commit().await?;
         if let Some(session_id) = &document.session_id {
             let session_event = SessionEvent {
                 event: "doc_created".into(),

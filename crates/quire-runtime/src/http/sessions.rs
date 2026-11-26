@@ -47,6 +47,7 @@ pub(crate) async fn create_session(
     service
         .create_session_for_user(
             Some(&auth_user.user_id),
+            auth_user.role == UserRole::Admin,
             &request.title,
             request.doc_id.as_deref(),
             request.kb_branch.as_deref(),

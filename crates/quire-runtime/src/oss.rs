@@ -198,6 +198,16 @@ impl OssConfig {
         self.presign_at("HEAD", endpoint, object_key, None, ttl_secs, Utc::now())
     }
 
+    /// Presign a DELETE request used to remove an uploaded object when deleting a session.
+    pub fn presign_delete(&self, object_key: &str, ttl_secs: u64) -> RuntimeResult<String> {
+        let endpoint = self
+            .internal_endpoint
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or(self.public_endpoint.as_deref());
+        self.presign_at("DELETE", endpoint, object_key, None, ttl_secs, Utc::now())
+    }
+
     /// Presign a sandbox-facing GET URL, preferring the VPC endpoint.
     pub fn presign_get_for_sandbox(
         &self,

@@ -168,9 +168,18 @@ impl RedisBus {
                 table.insert(keep, payload)
               end
             end
+            if #keep == #frames then
+              if #keep > 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
+              end
+              return 0
+            end
             redis.call('DEL', KEYS[1])
             if #keep > 0 then
-              redis.call('RPUSH', KEYS[1], unpack(keep))
+              for i = 1, #keep, 1000 do
+                local j = math.min(i + 999, #keep)
+                redis.call('RPUSH', KEYS[1], unpack(keep, i, j))
+              end
               redis.call('EXPIRE', KEYS[1], ARGV[2])
             end
             return #frames - #keep

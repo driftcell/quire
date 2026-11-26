@@ -40,6 +40,7 @@ impl RuntimeStore {
                 "session title must not be empty".into(),
             ));
         }
+        let doc_id = doc_id.map(str::trim).filter(|s| !s.is_empty());
         let session_id = short_id("sess");
         sqlx::query(
             r#"INSERT INTO runtime.sessions
@@ -318,17 +319,14 @@ impl RuntimeStore {
     }
 
     pub async fn delete_session(&self, session_id: &str) -> RuntimeResult<()> {
+        let memory = self.memory().await?;
+        memory.delete_session(session_id).await?;
         let deleted = sqlx::query("DELETE FROM runtime.sessions WHERE session_id = $1")
             .bind(session_id)
             .execute(&self.pool)
             .await?;
         if deleted.rows_affected() == 0 {
             return Err(RuntimeError::SessionNotFound(session_id.to_string()));
-        }
-        if let Ok(memory) = self.memory().await
-            && let Err(error) = memory.delete_session(session_id).await
-        {
-            warn!(%error, session_id, "failed to delete canonical conversation logs");
         }
         if let Err(error) = self.bus.delete_session_hot_state(session_id).await {
             warn!(%error, session_id, "failed to delete Redis hot session state");
@@ -349,6 +347,18 @@ impl RuntimeStore {
         if updated.rows_affected() == 0 {
             return Err(RuntimeError::SessionNotFound(session_id.to_string()));
         }
+        sqlx::query(
+            r#"UPDATE report.documents d
+               SET owner_user_id = COALESCE(d.owner_user_id, s.user_id),
+                   session_id = COALESCE(d.session_id, $1)
+               FROM runtime.sessions s
+               WHERE d.doc_id = $2
+                 AND s.session_id = $1"#,
+        )
+        .bind(session_id)
+        .bind(doc_id)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

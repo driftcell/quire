@@ -7241,3 +7241,153 @@ async fn user_api_key_authenticates_report_mcp_returns_markdown_and_auto_binds_e
         report_mcp_request(&app, &secret_key, None, None, "2025-11-25", &initialize).await;
     assert_eq!(status, axum::http::StatusCode::UNAUTHORIZED);
 }
+
+#[tokio::test]
+async fn create_session_rejects_unauthorized_doc_id_binding() {
+    let _guard = test_lock().lock().await;
+    let (service, store) = test_service().await;
+    let owner_username = unique("do");
+    let owner = service
+        .register_user(
+            &owner_username,
+            Some(&format!("{owner_username}@example.com")),
+            Some("Owner"),
+            "password123",
+        )
+        .await
+        .unwrap();
+    let attacker_username = unique("da");
+    let attacker = service
+        .register_user(
+            &attacker_username,
+            Some(&format!("{attacker_username}@example.com")),
+            Some("Attacker"),
+            "password123",
+        )
+        .await
+        .unwrap();
+
+    let doc_id = ensure_test_report_with_block(&store, &unique("report-acl")).await;
+    let owner_session = service
+        .create_session_for_user(
+            Some(&owner.user.user_id),
+            false,
+            &unique("owner-sess"),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+    store
+        .bind_doc(&owner_session.session_id, doc_id.as_str())
+        .await
+        .unwrap();
+
+    let app = quire_runtime::http::router(service.clone());
+
+    let (status, _) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        &attacker.token,
+        Some(json!({
+            "title": unique("hijack"),
+            "doc_id": doc_id.as_str(),
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+
+    let (status, _) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        &attacker.token,
+        Some(json!({
+            "title": unique("squat"),
+            "doc_id": unique("nonexistent-doc"),
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+
+    let (status, owner_created) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        &owner.token,
+        Some(json!({
+            "title": unique("owner-followup"),
+            "doc_id": doc_id.as_str(),
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(owner_created["doc_id"], doc_id.as_str());
+
+    let admin_jwt = test_admin_jwt();
+    let (status, admin_created) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        &admin_jwt,
+        Some(json!({
+            "title": unique("admin-followup"),
+            "doc_id": doc_id.as_str(),
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(admin_created["doc_id"], doc_id.as_str());
+}
+
+#[tokio::test]
+async fn create_session_rejects_draft_kb_branch_for_non_admin() {
+    let _guard = test_lock().lock().await;
+    let (service, _) = test_service().await;
+    let username = unique("du");
+    let user = service
+        .register_user(
+            &username,
+            Some(&format!("{username}@example.com")),
+            Some("Draft User"),
+            "password123",
+        )
+        .await
+        .unwrap();
+    let draft_branch = unique("draft");
+    service
+        .kb()
+        .create_branch(&draft_branch, "Draft branch test", Some("main"))
+        .await
+        .unwrap();
+
+    let app = quire_runtime::http::router(service);
+    let (status, _) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        &user.token,
+        Some(json!({
+            "title": unique("draft-sess"),
+            "kb_branch": draft_branch,
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
+
+    let admin_jwt = test_admin_jwt();
+    let (status, created) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        &admin_jwt,
+        Some(json!({
+            "title": unique("admin-draft-sess"),
+            "kb_branch": draft_branch,
+        })),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    assert_eq!(created["kb_branch"], draft_branch);
+}

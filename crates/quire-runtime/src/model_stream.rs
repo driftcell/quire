@@ -79,6 +79,7 @@ pub enum ModelStreamEvent {
 #[derive(Debug, Clone)]
 pub struct ModelTurnRequest {
     pub session_id: String,
+    pub user_id: Option<String>,
     pub run_id: String,
     pub agent_id: String,
     pub system_prompt: String,

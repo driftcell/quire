@@ -128,6 +128,7 @@ struct RigModelCore {
 #[derive(Clone)]
 struct AgentExecution {
     agent_id: String,
+    user_id: Option<String>,
     display_name: Option<String>,
     model_route: String,
     allowed_tools: Vec<String>,
@@ -284,10 +285,14 @@ impl StreamEventSender {
 
 impl RigModelCore {
     pub(super) fn build_report_service(&self) -> quire_server::report::QuireReportService {
+        let bridge = Arc::new(crate::service::RuntimeExternalHarnessBridge::new(
+            self.kb.store().clone(),
+        ));
         let state = quire_server::AppState::new(
             self.kb.store().report_store().clone(),
             self.config.to_report_server_config(),
-        );
+        )
+        .with_harness_bridge(bridge);
         quire_server::report::QuireReportService::new(state)
     }
 
@@ -320,6 +325,7 @@ impl RigModelCore {
         };
         let execution = AgentExecution {
             agent_id: request.agent_id,
+            user_id: request.user_id,
             display_name: None,
             model_route,
             allowed_tools,
@@ -495,6 +501,7 @@ impl RigModelCore {
             tool_context
                 .insert(context::QuireTurnMeta {
                     session_id: execution.session_id.clone(),
+                    user_id: execution.user_id.clone(),
                     run_id: execution.run_id.clone(),
                     agent_id: execution.agent_id.clone(),
                     display_name: execution.display_name.clone(),

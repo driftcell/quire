@@ -81,17 +81,31 @@ impl RuntimeService {
                 "archived sessions cannot receive new messages".into(),
             ));
         }
+        let awaiting_input = session.active_run_status == ActiveRunStatus::AwaitingInput;
+        let active = !awaiting_input
+            && (session.active_run_status == ActiveRunStatus::Running
+                || self.store.latest_running_run(session_id).await?.is_some());
         if let Some(message) = self
             .store
             .find_message_by_client_id(session_id, &request.client_msg_id)
             .await?
         {
+            if !active
+                && !awaiting_input
+                && !self
+                    .store
+                    .has_run_for_message(session_id, &message.message_id)
+                    .await?
+            {
+                let message_id = message.message_id.clone();
+                let model_input = render_stored_user_message(&message);
+                let run_id = self
+                    .spawn_turn_for_message(session_id, &message_id, model_input)
+                    .await?;
+                return Ok(PostMessageOutcome::Started { message, run_id });
+            }
             return Ok(PostMessageOutcome::Replayed { message });
         }
-        let awaiting_input = session.active_run_status == ActiveRunStatus::AwaitingInput;
-        let active = !awaiting_input
-            && (session.active_run_status == ActiveRunStatus::Running
-                || self.store.latest_running_run(session_id).await?.is_some());
         let queue_non_empty =
             !awaiting_input && !self.store.list_pending_queue(session_id).await?.is_empty();
         if source == PendingQueueSource::Comment
@@ -156,7 +170,12 @@ impl RuntimeService {
             }
         }
         let (message, inserted) = self.store.insert_user_message(session_id, request).await?;
-        if !inserted {
+        if !inserted
+            && self
+                .store
+                .has_run_for_message(session_id, &message.message_id)
+                .await?
+        {
             return Ok(PostMessageOutcome::Replayed { message });
         }
         self.clear_dismissed_questions(session_id, dismissed, "superseded_by_user_message")
@@ -308,19 +327,37 @@ impl RuntimeService {
         if self.store.latest_running_run(session_id).await?.is_some() {
             return Ok(None);
         }
-        let Some(batch) = self.queue.take_pending_batch_locked(session_id).await? else {
+        self.maybe_compact_before_claim(session_id).await;
+        let Some((message, run)) = self
+            .queue
+            .take_pending_batch_for_run_locked(
+                session_id,
+                &self.instance_id,
+                &self.config.default_model,
+                15,
+                force,
+            )
+            .await?
+        else {
             return Ok(None);
         };
-        let model_input = render_stored_user_message(&batch.message);
-        let run_id = self
-            .start_turn_for_stored_message(session_id, &batch.message.message_id, model_input)
-            .await?;
-        Ok(Some(run_id))
+        let token = self.runs.register(&run.run_id).await;
+        let model_input = render_stored_user_message(&message);
+        self.launch_turn(
+            session_id,
+            &run.run_id,
+            model_input,
+            Some(message.message_id),
+            token,
+        );
+        Ok(Some(run.run_id))
     }
 
     pub(crate) async fn drain_pending(&self, session_id: &str) -> RuntimeResult<Option<String>> {
         let gate = self.session_gate(session_id).await;
-        let _guard = gate.lock_owned().await;
+        let Ok(_guard) = gate.try_lock_owned() else {
+            return Ok(None);
+        };
         self.drain_pending_locked(session_id, false).await
     }
 

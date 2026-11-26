@@ -40,7 +40,7 @@ impl RuntimeService {
             )
         });
         if token.is_cancelled() {
-            self.finish_cancelled_run(run_id).await?;
+            self.finish_cancelled_run_for_lease(run_id).await?;
             return Ok(());
         }
         let mut sink = EventSink::new(session_id, self.store.clone());
@@ -61,7 +61,7 @@ impl RuntimeService {
                 .await?;
         }
         if token.is_cancelled() {
-            self.finish_cancelled_run(run_id).await?;
+            self.finish_cancelled_run_for_lease(run_id).await?;
             return Ok(());
         }
         let branch = session.kb_branch.clone();
@@ -73,6 +73,7 @@ impl RuntimeService {
         let allowed_tools = agent.map(|agent| agent.allowed_tools).unwrap_or_default();
         let request = ModelTurnRequest {
             session_id: session_id.to_string(),
+            user_id: session.user_id.clone(),
             run_id: run_id.to_string(),
             agent_id: "main".into(),
             system_prompt: pinned.clone(),
@@ -200,7 +201,7 @@ impl RuntimeService {
         }
         sink.flush().await?;
         if token.is_cancelled() {
-            self.finish_cancelled_run(run_id).await?;
+            self.finish_cancelled_run_for_lease(run_id).await?;
             return Ok(());
         }
         if !response.is_empty() && !self.model_stream.commits_canonical_history() {
@@ -216,7 +217,10 @@ impl RuntimeService {
             self.store
                 .insert_question_message(session_id, run_id, &question)
                 .await?;
-            let _ = self.store.finish_run_for_question(run_id).await?;
+            let _ = self
+                .store
+                .finish_run_for_question_for_lease(run_id, &self.instance_id)
+                .await?;
             return Ok(());
         }
         if superseded {
@@ -225,7 +229,13 @@ impl RuntimeService {
             }
             let _ = self
                 .store
-                .finish_run_with_event(run_id, "superseded", None, SessionEventKind::TurnSuperseded)
+                .finish_run_with_event_for_lease(
+                    run_id,
+                    &self.instance_id,
+                    "superseded",
+                    None,
+                    SessionEventKind::TurnSuperseded,
+                )
                 .await?;
             return Ok(());
         }
@@ -260,12 +270,18 @@ impl RuntimeService {
         };
         self.store.update_context_usage(session_id, &usage).await?;
         if token.is_cancelled() {
-            self.finish_cancelled_run(run_id).await?;
+            self.finish_cancelled_run_for_lease(run_id).await?;
             return Ok(());
         }
         let Some(_terminal) = self
             .store
-            .finish_run_with_event(run_id, "completed", None, SessionEventKind::TurnFinished)
+            .finish_run_with_event_for_lease(
+                run_id,
+                &self.instance_id,
+                "completed",
+                None,
+                SessionEventKind::TurnFinished,
+            )
             .await?
         else {
             // A user interrupt won the terminal transition; do not emit a second

@@ -280,7 +280,7 @@ impl RuntimeStore {
             .await?;
         let remaining = self.list_pending_queue_in(&mut tx, session_id).await?;
         tx.commit().await?;
-        let _queue_event = self
+        if let Err(error) = self
             .append_event(
                 session_id,
                 "queue",
@@ -288,8 +288,11 @@ impl RuntimeStore {
                 None,
                 SessionEventKind::PendingQueueUpdated { items: remaining },
             )
-            .await?;
-        let _added_event = self
+            .await
+        {
+            warn!(%error, %session_id, "failed to append PendingQueueUpdated after claiming batch");
+        }
+        if let Err(error) = self
             .append_event(
                 session_id,
                 "queue",
@@ -299,8 +302,122 @@ impl RuntimeStore {
                     message_id: message.message_id.clone(),
                 },
             )
-            .await?;
+            .await
+        {
+            warn!(%error, %session_id, message_id = %message.message_id, "failed to append UserMessageAdded after claiming batch");
+        }
         Ok(Some(message))
+    }
+
+    /// Atomically claim the next queue batch, persist the user message, and
+    /// create + lease the run in one PostgreSQL transaction so concurrent
+    /// runtime instances cannot race between claim and `create_run`, and a
+    /// transient Redis failure after commit cannot strand the message.
+    #[expect(clippy::too_many_arguments, reason = "atomic queue-to-run transition")]
+    pub async fn claim_pending_batch_and_create_run(
+        &self,
+        session_id: &str,
+        request: &SendMessageRequest,
+        queue_ids: &[String],
+        instance_id: &str,
+        model: &str,
+        lease_ttl_secs: i64,
+        allow_awaiting_input: bool,
+    ) -> RuntimeResult<Option<(SessionMessage, RunRecord)>> {
+        if queue_ids.is_empty() {
+            return Ok(None);
+        }
+        let mut tx = self.pool.begin().await?;
+        let status: String = sqlx::query_scalar(
+            "SELECT active_run_status FROM runtime.sessions WHERE session_id = $1 FOR UPDATE",
+        )
+        .bind(session_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or_else(|| RuntimeError::SessionNotFound(session_id.to_string()))?;
+        if status == "running" || (!allow_awaiting_input && status == "awaiting_input") {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let has_running: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM runtime.runs WHERE session_id = $1 AND status = 'running')",
+        )
+        .bind(session_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if has_running {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let claimable: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM runtime.pending_queue WHERE session_id = $1 AND queue_id = ANY($2)",
+        )
+        .bind(session_id)
+        .bind(queue_ids)
+        .fetch_one(&mut *tx)
+        .await?;
+        if claimable != i64::try_from(queue_ids.len()).unwrap_or(i64::MAX) {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let (message, _replayed) = self
+            .memory()
+            .await?
+            .append_prompt(session_id, request, true)
+            .await?;
+        self.remove_pending_items_in(&mut tx, session_id, queue_ids)
+            .await?;
+        let remaining = self.list_pending_queue_in(&mut tx, session_id).await?;
+        let run_id = short_id("run");
+        sqlx::query(
+            r#"INSERT INTO runtime.runs
+               (run_id, session_id, parent_run_id, agent_id, status, model, trigger_message_id, lease_owner, lease_expires_at)
+               VALUES ($1, $2, NULL, 'main', 'running', $3, $4, $5, NOW() + ($6 * INTERVAL '1 second'))"#,
+        )
+        .bind(&run_id)
+        .bind(session_id)
+        .bind(model)
+        .bind(&message.message_id)
+        .bind(instance_id)
+        .bind(lease_ttl_secs.max(1))
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            r#"UPDATE runtime.sessions SET active_run_status = 'running', updated_at = NOW()
+               WHERE session_id = $1"#,
+        )
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        if let Err(error) = self
+            .append_event(
+                session_id,
+                "queue",
+                "system",
+                None,
+                SessionEventKind::PendingQueueUpdated { items: remaining },
+            )
+            .await
+        {
+            warn!(%error, %session_id, "failed to append PendingQueueUpdated after claiming batch");
+        }
+        if let Err(error) = self
+            .append_event(
+                session_id,
+                "queue",
+                "queue",
+                None,
+                SessionEventKind::UserMessageAdded {
+                    message_id: message.message_id.clone(),
+                },
+            )
+            .await
+        {
+            warn!(%error, %session_id, message_id = %message.message_id, "failed to append UserMessageAdded after claiming batch");
+        }
+        let run = self.get_run(&run_id).await?;
+        Ok(Some((message, run)))
     }
 
     pub async fn remove_pending_comment_thread(
