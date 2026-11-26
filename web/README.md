@@ -43,14 +43,11 @@ bun run build
 `vite.config.ts` proxies API traffic so the SPA can talk to both backends without
 CORS configuration:
 
-| Prefix          | Target                  | Owner           |
-| --------------- | ----------------------- | --------------- |
-| `/api/docs`     | `http://127.0.0.1:8080` | `quire-server`  |
-| `/api/sessions` | `http://127.0.0.1:8081` | `quire-runtime` |
-| `/api/kb`       | `http://127.0.0.1:8081` | `quire-runtime` |
-| `/api/models`   | `http://127.0.0.1:8081` | `quire-runtime` |
-| `/mcp`          | `http://127.0.0.1:8081` | `quire-runtime` |
-| `/attachments`  | `http://127.0.0.1:8081` | `quire-runtime` |
+| Prefix         | Target                  | Owner                         |
+| -------------- | ----------------------- | ----------------------------- |
+| `/api`         | `http://127.0.0.1:8081` | Unified Quire backend         |
+| `/mcp`         | `http://127.0.0.1:8081` | `quire-runtime`               |
+| `/attachments` | `http://127.0.0.1:8081` | `quire-runtime`               |
 
 ## Layout
 
