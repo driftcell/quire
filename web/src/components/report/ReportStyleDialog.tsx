@@ -9,6 +9,7 @@ import {
   LoaderCircleIcon,
   PaletteIcon,
   PlusIcon,
+  RotateCcwIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -233,6 +234,16 @@ export function ReportStyleDialog({
 
   const presets = stylesQuery.data ?? [...BUILTIN_STYLE_PRESETS];
   const activePresetId = currentTheme.preset || "quire-folio";
+  const resetDraft = () =>
+    setDraftBundle(
+      buildBundleFromDocument(
+        currentTheme,
+        currentCover,
+        currentToc,
+        currentReferences,
+        themePageChrome,
+      ),
+    );
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -290,6 +301,18 @@ export function ReportStyleDialog({
           </div>
 
           <div className="flex items-center gap-2">
+            {dialogTab === "customize" && (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                title="重置当前预设修改"
+                onClick={resetDraft}
+              >
+                <RotateCcwIcon data-icon="inline-start" />
+                重置
+              </Button>
+            )}
             <Button
               type="button"
               size="xs"
@@ -423,17 +446,6 @@ export function ReportStyleDialog({
             <StyleCustomizerPanel
               bundle={draftBundle}
               onChange={setDraftBundle}
-              onReset={() =>
-                setDraftBundle(
-                  buildBundleFromDocument(
-                    currentTheme,
-                    currentCover,
-                    currentToc,
-                    currentReferences,
-                    themePageChrome,
-                  ),
-                )
-              }
             />
             <div className="flex items-center justify-end gap-2 border-t pt-3">
               <Button

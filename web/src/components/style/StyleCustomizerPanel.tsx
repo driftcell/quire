@@ -4,7 +4,6 @@ import {
   FileCode2Icon,
   Heading1Icon,
   PaletteIcon,
-  RotateCcwIcon,
   Table2Icon,
   TypeIcon,
 } from "lucide-react";
@@ -22,7 +21,6 @@ export type CustomizerSectionId =
 export interface StyleCustomizerPanelProps {
   bundle: StylePresetBundle;
   onChange: (next: StylePresetBundle) => void;
-  onReset: () => void;
 }
 
 const SECTIONS: ReadonlyArray<{
@@ -166,7 +164,6 @@ const PLACEHOLDERS = [
 export function StyleCustomizerPanel({
   bundle,
   onChange,
-  onReset,
 }: StyleCustomizerPanelProps) {
   const [activeSection, setActiveSection] =
     useState<CustomizerSectionId>("palette");
@@ -258,47 +255,33 @@ export function StyleCustomizerPanel({
 
   return (
     <div className="space-y-3.5 text-xs">
-      {/* Partition navigation owns the full width; reset stays a quiet utility action. */}
-      <div className="space-y-2">
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onReset}
-            title="重置当前预设修改"
-            className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          >
-            <RotateCcwIcon className="size-3" aria-hidden="true" />
-            重置修改
-          </button>
-        </div>
-
-        <div
-          role="tablist"
-          aria-label="样式调优分区"
-          className="grid w-full grid-cols-3 gap-1 rounded-lg border border-border/85 bg-muted/45 p-1"
-        >
-          {SECTIONS.map((sec) => {
-            const Icon = sec.icon;
-            const active = activeSection === sec.id;
-            return (
-              <button
-                key={sec.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                onClick={() => setActiveSection(sec.id)}
-                className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
-                  active
-                    ? "bg-card font-semibold text-foreground shadow-2xs"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Icon className="size-3 shrink-0" aria-hidden="true" />
-                <span className="truncate">{sec.label}</span>
-              </button>
-            );
-          })}
-        </div>
+      {/* Partition navigation owns the full width; panel actions live in the parent title bar. */}
+      <div
+        role="tablist"
+        aria-label="样式调优分区"
+        className="grid w-full grid-cols-3 gap-1 rounded-lg border border-border/85 bg-muted/45 p-1"
+      >
+        {SECTIONS.map((sec) => {
+          const Icon = sec.icon;
+          const active = activeSection === sec.id;
+          return (
+            <button
+              key={sec.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveSection(sec.id)}
+              className={`flex items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+                active
+                  ? "bg-card font-semibold text-foreground shadow-2xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Icon className="size-3 shrink-0" aria-hidden="true" />
+              <span className="truncate">{sec.label}</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Partition 1: Palette & Surface */}

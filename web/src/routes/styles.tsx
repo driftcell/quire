@@ -9,6 +9,7 @@ import {
   LockIcon,
   PanelLeftIcon,
   PlusIcon,
+  RotateCcwIcon,
   ScrollTextIcon,
   SlidersHorizontalIcon,
   Trash2Icon,
@@ -26,6 +27,11 @@ import { ReportViewer } from "@/components/report/ReportViewer";
 import { StyleCustomizerPanel } from "@/components/style/StyleCustomizerPanel";
 import { StyleThumbnailCard } from "@/components/style/StyleThumbnailCard";
 import { Button } from "@/components/ui/button";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import {
   Dialog,
   DialogContent,
@@ -389,6 +395,104 @@ export function StyleCenterPage() {
     createMutation.mutate();
   };
 
+  const resetDraft = () => {
+    setDraftBundle(cloneBundle(activePreset.bundle));
+    setIsDirty(false);
+  };
+
+  const previewPane = (
+    <main
+      aria-label="样式实时标本预览"
+      className="quire-desk-surface no-scrollbar relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain md:h-full"
+    >
+      <div className="py-4">
+        <ReportViewer
+          document={specimen.document}
+          computed={specimen.computed}
+          viewMode={viewMode}
+          pageChrome={specimen.pageChrome}
+        />
+      </div>
+    </main>
+  );
+
+  const customizerPane = customizerOpen ? (
+    <aside
+      aria-label="样式精调面板"
+      className="no-scrollbar flex w-full shrink-0 flex-col border-t border-border/90 bg-card md:h-full md:border-t-0"
+    >
+      <div className="flex h-10 shrink-0 items-center justify-between gap-1 border-b border-border/80 px-3.5">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate text-xs font-semibold text-foreground">
+            {activePreset.name}
+          </span>
+          <span className="rounded bg-secondary px-1.5 py-0.2 text-[10px] text-muted-foreground">
+            {activePreset.category_tag}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            title="重置当前预设修改"
+            onClick={resetDraft}
+          >
+            <RotateCcwIcon data-icon="inline-start" />
+            重置
+          </Button>
+          <button
+            type="button"
+            aria-label="关闭精调面板"
+            onClick={toggleCustomizer}
+            className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          >
+            <XIcon className="size-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+
+      <div className="no-scrollbar flex-1 overflow-y-auto overscroll-contain p-3.5">
+        <StyleCustomizerPanel
+          bundle={draftBundle}
+          onChange={(next) => {
+            setDraftBundle(next);
+            setIsDirty(true);
+          }}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-2 border-t border-border/80 bg-muted/25 px-3.5 py-2.5">
+        {!activePreset.is_builtin && isCurrentMine ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={!isDirty || updateMutation.isPending}
+            onClick={() =>
+              updateMutation.mutate({
+                styleId: activePreset.style_id,
+                bundle: draftBundle,
+              })
+            }
+            className="flex-1 text-xs"
+          >
+            更新当前预设
+          </Button>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          onClick={openSaveDialog}
+          className="flex-1 text-xs"
+        >
+          <PlusIcon className="mr-1 size-3.5" aria-hidden="true" />
+          另存为新预设
+        </Button>
+      </div>
+    </aside>
+  ) : null;
+
   return (
     <div className="relative flex h-full min-w-0 flex-col overflow-hidden bg-background">
       {!isMobile && (
@@ -667,89 +771,39 @@ export function StyleCenterPage() {
           )}
         </aside>
 
-        {/* Center Live Specimen Report Canvas */}
-        <main
-          aria-label="样式实时标本预览"
-          className="quire-desk-surface no-scrollbar relative min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
-        >
-          <div className="py-4">
-            <ReportViewer
-              document={specimen.document}
-              computed={specimen.computed}
-              viewMode={viewMode}
-              pageChrome={specimen.pageChrome}
-            />
-          </div>
-        </main>
-
-        {/* Right 6-Partition Customizer Drawer */}
-        {customizerOpen && (
-          <aside
-            aria-label="样式精调面板"
-            className="no-scrollbar flex w-full shrink-0 flex-col border-t border-border/90 bg-card md:w-[360px] md:border-t-0 md:border-l lg:w-[400px] xl:w-[440px]"
+        {isMobile ? (
+          <>
+            {previewPane}
+            {customizerPane}
+          </>
+        ) : (
+          <ResizablePanelGroup
+            orientation="horizontal"
+            className="min-h-0 min-w-0 flex-1"
           >
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-border/80 px-3.5">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-xs font-semibold text-foreground">
-                  {activePreset.name}
-                </span>
-                <span className="rounded bg-secondary px-1.5 py-0.2 text-[10px] text-muted-foreground">
-                  {activePreset.category_tag}
-                </span>
-              </div>
-              <button
-                type="button"
-                aria-label="关闭精调面板"
-                onClick={toggleCustomizer}
-                className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              >
-                <XIcon className="size-3.5" aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="no-scrollbar flex-1 overflow-y-auto overscroll-contain p-3.5">
-              <StyleCustomizerPanel
-                bundle={draftBundle}
-                onChange={(next) => {
-                  setDraftBundle(next);
-                  setIsDirty(true);
-                }}
-                onReset={() => {
-                  setDraftBundle(cloneBundle(activePreset.bundle));
-                  setIsDirty(false);
-                }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between gap-2 border-t border-border/80 bg-muted/25 px-3.5 py-2.5">
-              {!activePreset.is_builtin && isCurrentMine ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={!isDirty || updateMutation.isPending}
-                  onClick={() =>
-                    updateMutation.mutate({
-                      styleId: activePreset.style_id,
-                      bundle: draftBundle,
-                    })
-                  }
-                  className="flex-1 text-xs"
+            <ResizablePanel
+              id="style-preview"
+              minSize="20%"
+              className="min-h-0 min-w-0"
+            >
+              {previewPane}
+            </ResizablePanel>
+            {customizerOpen && (
+              <>
+                <ResizableHandle withHandle aria-label="调整样式面板宽度" />
+                <ResizablePanel
+                  id="style-customizer"
+                  defaultSize={340}
+                  minSize={320}
+                  maxSize={560}
+                  groupResizeBehavior="preserve-pixel-size"
+                  className="min-h-0 min-w-0"
                 >
-                  更新当前预设
-                </Button>
-              ) : null}
-              <Button
-                type="button"
-                size="sm"
-                onClick={openSaveDialog}
-                className="flex-1 text-xs"
-              >
-                <PlusIcon className="mr-1 size-3.5" aria-hidden="true" />
-                另存为新预设
-              </Button>
-            </div>
-          </aside>
+                  {customizerPane}
+                </ResizablePanel>
+              </>
+            )}
+          </ResizablePanelGroup>
         )}
       </div>
 

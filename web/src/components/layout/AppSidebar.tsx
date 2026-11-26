@@ -17,6 +17,7 @@ import {
   PinOffIcon,
   PlusIcon,
   SearchIcon,
+  SquareTerminalIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -313,7 +314,11 @@ export function AppSidebar() {
                             ? "bg-card font-medium text-foreground shadow-2xs ring-1 ring-border/80 before:absolute before:top-2 before:bottom-2 before:left-0 before:w-[2.5px] before:rounded-r before:bg-[#1D4ED8]"
                             : "font-normal text-foreground/85 hover:bg-sidebar-accent/70 hover:text-foreground"
                         }`}
-                        title={title}
+                        title={
+                          isExternalMcp
+                            ? `${title}（由外部代理 MCP 创建并同步）`
+                            : title
+                        }
                         render={
                           <Link
                             to="/sessions/$sessionId"
@@ -321,7 +326,22 @@ export function AppSidebar() {
                           />
                         }
                       >
-                        {hasDoc ? (
+                        {isExternalMcp ? (
+                          <span
+                            className="inline-flex shrink-0"
+                            title="由外部代理 MCP 创建并同步"
+                          >
+                            <SquareTerminalIcon
+                              aria-hidden="true"
+                              className={`size-3.5 ${
+                                isActive
+                                  ? "text-[#1D4ED8]"
+                                  : "text-muted-foreground/75"
+                              }`}
+                            />
+                            <span className="sr-only">MCP 外部代理会话</span>
+                          </span>
+                        ) : hasDoc ? (
                           <FileTextIcon
                             className={`size-3.5 shrink-0 ${
                               isActive
@@ -341,15 +361,6 @@ export function AppSidebar() {
                           />
                         )}
                         <span className="min-w-0 flex-1 truncate">{title}</span>
-                        {isExternalMcp && (
-                          <span
-                            translate="no"
-                            title="由外部代理 (MCP) 创建并同步"
-                            className="shrink-0 rounded border border-border/80 bg-muted/55 px-1 py-0.2 font-mono text-[9.5px] leading-tight font-medium text-muted-foreground group-hover/session:opacity-0"
-                          >
-                            MCP
-                          </span>
-                        )}
                         {isPinned &&
                           session.active_run_status !== "running" &&
                           session.active_run_status !== "awaiting_input" && (
