@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`, `../notes/runtime_pending_failure_recovery.md`, `../notes/runtime_native_report_tools.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/runtime_rig_streaming_engine.md`, `../notes/runtime_pending_failure_recovery.md`, `../notes/runtime_native_report_tools.md`, `../notes/mcp_preview_tool_exposure.md`
 
 ## 1. Scope & Non-Goals
 
@@ -65,8 +65,10 @@ Runtime handles are not serialized into context. The current report ID lives in 
 metadata from the outcome.
 
 `preview_report` and `preview_echarts` return ordered `ToolOutput::content` blocks containing
-structured diagnostics, an inspection caption and, for vision models, the screenshot. There is no
-`pending_preview_images` side channel or synthetic follow-up user image message.
+structured diagnostics, an inspection caption and, for vision models, the screenshot. Both native tools
+and the unified `/mcp` preview handlers execute through `PreviewToolService`; external callers opt into
+images with `include_image`. There is no `pending_preview_images` side channel or synthetic follow-up
+user image message.
 
 ### 2.3 Canonical rig-memory history
 

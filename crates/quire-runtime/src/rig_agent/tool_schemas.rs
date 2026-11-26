@@ -1,6 +1,5 @@
 //! Concrete receipts returned by runtime built-in tools.
 
-use quire_protocol::{Diagnostic, LintSummary};
 use quire_session_protocol::{TaskTodoItem, TaskTodoStatus};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,24 +37,6 @@ pub struct SandboxMountAttachmentReceipt {
     pub filename: String,
     pub mime_type: String,
     pub size_bytes: u64,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct PreviewEchartsReceipt {
-    pub preview_id: String,
-    pub preview_url: String,
-    pub lint_issues: Vec<Diagnostic>,
-    pub lint_summary: LintSummary,
-    pub image_included: bool,
-    pub preview_error: Option<String>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct CommitChartReceipt {
-    #[serde(flatten)]
-    pub mutation: quire_server::report::ApplyOperationsReceipt,
-    pub preview_id: String,
-    pub block_id: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

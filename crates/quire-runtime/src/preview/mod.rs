@@ -21,6 +21,12 @@ use crate::{
     mcp_client::RmcpClient,
 };
 
+pub use tools::{
+    CommitChartReceipt, PreviewEchartsReceipt, PreviewToolService, external_mcp_error,
+};
+
+mod tools;
+
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -46,6 +52,12 @@ pub struct ChartPreviewRecord {
     pub source_ids: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_note: Option<String>,
+    /// Authenticated user that created this transient draft. Missing on legacy drafts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_user_id: Option<String>,
+    /// Session that owns this draft. Missing on legacy drafts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,49 +70,7 @@ pub struct ChartPreviewResult {
     pub image_base64: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PreviewViewMode {
-    #[default]
-    Paged,
-    Continuous,
-}
-
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PreviewReportInput {
-    /// Target report `doc_id` to render in the headless preview route.
-    pub doc_id: String,
-    /// Layout mode: `"paged"` (default, A4 pagination with page count and page-break checks) or `"continuous"` (single-column scroll).
-    #[serde(default)]
-    pub mode: PreviewViewMode,
-    /// Optional heading `block_id` from `get_document_digest` to preview only that section (automatically suppresses cover, TOC, and bibliography chrome).
-    #[serde(default)]
-    pub section_id: Option<String>,
-    /// Optional list of specific `block_id`s to preview in isolation (automatically suppresses cover, TOC, and bibliography chrome).
-    #[serde(default)]
-    pub block_ids: Option<Vec<String>>,
-    /// Optional 1-based A4 page number to focus and screenshot when `mode` is `"paged"`.
-    #[serde(default)]
-    pub page: Option<usize>,
-    /// Optional exact committed document revision (`>= 1`) assertion; fails if the rendered document revision does not match.
-    #[serde(default)]
-    pub rev: Option<u64>,
-    /// Whether to collect and return active `--rpt-*` theme tokens, `custom_css`, and computed styles (`true` by default).
-    #[serde(default = "default_include_styles")]
-    pub include_styles: bool,
-    /// Whether to capture and return a PNG screenshot (`true` by default for visual MCP clients; forced `false` on text-only models).
-    #[serde(default = "default_include_image")]
-    pub include_image: bool,
-}
-
-fn default_include_styles() -> bool {
-    true
-}
-
-fn default_include_image() -> bool {
-    true
-}
+pub use quire_server::report::{PreviewReportInput, PreviewViewMode};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

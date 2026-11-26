@@ -15,7 +15,7 @@ dependency. Rendering and visual preview belong to the external frontend.
 | `quire-lint`             | Pure, zero-I/O static lint registry and rule engine with layered select/ignore filters                                                      |
 | `quire-store`            | PostgreSQL row-per-block persistence, Smart CAS, inverse-op revisions, Zstd snapshots, Redis Streams publisher                              |
 | `quire-session-protocol` | Pure session/SSE contract types and `contracts/session-protocol.schema.json`                                                                |
-| `quire-server`           | Shared report application service and contracts, Axum REST/SSE endpoints, and the optional 19-tool `rmcp` adapter mounted at `/mcp`         |
+| `quire-server`           | Shared report application service and contracts, Axum REST/SSE endpoints, and the optional 22-tool `rmcp` adapter mounted at `/mcp`         |
 | `quire-runtime`          | Independent session backend, rig.rs agent runtime, KB/skill management, recovery and Session SSE                                            |
 | `quire-migrate`          | Standalone SQLx migration runner for all six PostgreSQL domain schemas                                                                      |
 
@@ -168,7 +168,7 @@ blocks, so a citation can be registered in the same call that references it. Emp
 block IDs are auto-assigned and reported in `assigned_ids`; clients do not need to invent stable IDs
 for transient blocks.
 
-## MCP tools (18)
+## MCP tools (22)
 
 | Tool                    | Purpose                                                                                                       |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------- |
@@ -181,11 +181,16 @@ for transient blocks.
 | `apply_operations`      | atomic Smart CAS batch patch                                                                                  |
 | `rollback_revision`     | replay inverse ops into a new monotonic revision                                                              |
 | `upsert_sources`        | URL/normalized-title deduplicated citation registry                                                           |
+| `delete_sources`        | remove unused report sources or discard chat-only citations                                                   |
+| `list_sources`          | inspect canonical sources and evidence excerpts                                                               |
 | `set_cover`             | partial cover update                                                                                          |
 | `configure_toc`         | enable/title/depth/variant and page breaks before/after the TOC                                               |
 | `configure_references`  | bibliography style/page break + orphan sources                                                                |
 | `configure_page_chrome` | A4 header/footer slots, first-page visibility and automatic heading page breaks (`none` / `h1` / `h1_and_h2`) |
 | `update_style_and_css`  | presets, tokens, validated scoped CSS                                                                         |
+| `preview_report`        | controlled A4/CSS/overflow diagnostics with an optional screenshot                                            |
+| `preview_echarts`       | validate/refine a native ECharts preview without committing a report mutation                                 |
+| `commit_chart`          | commit an owned preview into a report or durable chat chart without re-sending its option                     |
 | `lint_document`         | zero-browser static validation                                                                                |
 | `list_comments`         | side-channel review threads with anchors + `anchor_detached`                                                  |
 | `add_comment`           | agent review comment; never touches revisions or CAS                                                          |

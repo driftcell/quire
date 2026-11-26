@@ -3,11 +3,7 @@
 use std::{collections::BTreeSet, sync::Arc};
 
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use quire_lint::lint_echarts_block;
-use quire_protocol::{
-    Block, BlockId, BlockKind, EchartsBlock, PatchOp, chart_data_tables_for_block,
-    chart_requirements, merge_chart_option_patch,
-};
+use quire_protocol::{Block, BlockId, PatchOp};
 use quire_session_protocol::QuestionItem;
 use rig::tool::server::ToolServer;
 use rig::{
@@ -33,16 +29,13 @@ use super::{
     context::{AskUserRequestedMeta, QuireTurnMeta},
     subagents::RunSubagentsTool,
     tool_schemas::{
-        AskUserReceipt, AttachmentSummaryView, CommitChartReceipt, DescribeTaskReceipt,
-        ListAttachmentsReceipt, ListSkillsReceipt, ListSubagentsReceipt, PreviewEchartsReceipt,
-        ReadSkillResourceReceipt, SandboxExecuteReceipt, SandboxMountAttachmentReceipt,
-        SandboxReadFileReceipt, SandboxWriteFileReceipt, SetSessionTitleReceipt, SkillSummaryView,
-        SubagentSummaryView, TaskTodoInput, UpdateTodosReceipt,
+        AskUserReceipt, AttachmentSummaryView, DescribeTaskReceipt, ListAttachmentsReceipt,
+        ListSkillsReceipt, ListSubagentsReceipt, ReadSkillResourceReceipt, SandboxExecuteReceipt,
+        SandboxMountAttachmentReceipt, SandboxReadFileReceipt, SandboxWriteFileReceipt,
+        SetSessionTitleReceipt, SkillSummaryView, SubagentSummaryView, TaskTodoInput,
+        UpdateTodosReceipt,
     },
 };
-
-const REPORT_PREVIEW_CAPTION: &str = "Rendered screenshot from preview_report. Inspect visual layout, spacing, tables, and charts alongside the diagnostic JSON.";
-const CHART_PREVIEW_CAPTION: &str = "Rendered ECharts screenshot from preview_echarts. Verify the chart type, series data, axis labels, legend, tooltip/static labels, colors, clipping/overflow, and that the visual matches fallback_summary. Refine with preview_echarts + based_on_preview_id + option_patch only, then call commit_chart once it looks right.";
 
 fn image_media_type(mime_type: &str) -> ImageMediaType {
     ImageMediaType::from_mime_type(mime_type).unwrap_or(ImageMediaType::PNG)

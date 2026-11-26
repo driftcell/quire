@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-server`, `quire-runtime`, `quire-lint`
-- **Related Notes:** `../notes/report_quality_systemic_improvement.md`, `../notes/report_prompt_lint_calibration.md`, `../notes/report_verification_receipts.md`
+- **Related Notes:** `../notes/report_quality_systemic_improvement.md`, `../notes/report_prompt_lint_calibration.md`, `../notes/report_verification_receipts.md`, `../notes/mcp_preview_tool_exposure.md`
 
 ## 1. Scope & Non-Goals
 
@@ -120,9 +120,10 @@ value rather than patching isolated prose numbers.
 | `reviewer`   | `read_as_markdown`, `read_blocks`, `list_sources`, `lint_document`, `preview_report`, `deepseek_search`, `deepseek_fetch`                                   | `add_comment`, `reply_comment`                                        | Independent fact/method/source/readability/layout review; no direct report-content edits                                                            |
 | `designer`   | Digest, `list_sources`, `lint_document`, `preview_report`                                                                                                   | Cover, TOC, references, page chrome and theme tools                   | Layout and bibliography presentation only; never repairs content by changing citation ownership                                                     |
 
-`REPORT_TOOL_NAMES` and `BUILTIN_TOOLS` contain the same 19 report-domain tools. The server guide
-progressively discloses source inspection, pilot ownership, revision-bound review and Smart CAS details;
-agent prompts do not duplicate the complete lint catalog.
+`REPORT_TOOL_NAMES` and `BUILTIN_TOOLS` contain the same 19 report-domain tools. The unified `/mcp`
+also exposes the three native preview/commit tools, giving external authors the same 22-tool workflow.
+The server guide progressively discloses source inspection, pilot ownership, revision-bound review and
+Smart CAS details; agent prompts do not duplicate the complete lint catalog.
 
 ### Publication and review invariants
 
@@ -163,8 +164,9 @@ agent prompts do not duplicate the complete lint catalog.
   rejects unknown IDs with valid IDs in the error details. Sources without excerpts register, load and
   support citations normally.
 - Digest aggregates describe the whole document even when `query` filters the returned block list.
-- Native/server tool catalogs have matching 19-tool sets, and the multi-agent workflow E2E covers
-  `list_sources`, digest aggregates, Smart CAS and review tools.
+- Native/server catalogs share the 19 report-domain tools and the same three preview/commit tools;
+  external MCP integration covers tool discovery and `preview_echarts -> commit_chart`, while the
+  multi-agent workflow E2E covers `list_sources`, digest aggregates, Smart CAS and review tools.
 - Lint tests cover editorial labels, length-and-sentence walls, source-note attribution and the
   anti-decorative `QR419` repair contract.
 - The authoring workflow is verified through unit tests, `quire-server/tests/e2e_multi_agent_workflow.rs`,

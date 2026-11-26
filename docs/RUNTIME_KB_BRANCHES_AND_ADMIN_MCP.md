@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`, `quire-session-protocol`
-- **Related Notes:** `../notes/runtime_kb_branch_promotion.md`
+- **Related Notes:** `../notes/runtime_kb_branch_promotion.md`, `../notes/mcp_preview_tool_exposure.md`
 
 ## 1. Scope & Non-Goals
 
@@ -109,6 +109,8 @@ Tools:
   `models_import_models_dev`
 - Sessions: `sessions_list`, `sessions_inspect` (full `SessionDetail`, latest run status and
   `context_usage`)
+- Diagnostics: `preview_report`, delegated to the same `PreviewToolService` used by native and
+  report-authoring MCP calls
 
 `RUNTIME_MCP_ALLOWED_HOSTS` controls the Streamable HTTP Host allowlist.
 

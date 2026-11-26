@@ -5515,6 +5515,8 @@ async fn chart_preview_endpoint_accepts_preview_jwt_and_hides_expired_previews()
         based_on_preview_id: None,
         source_ids: vec![],
         source_note: None,
+        owner_user_id: None,
+        session_id: None,
     };
     store.bus().store_chart_preview(&record).await.unwrap();
     let preview_token =
@@ -5592,6 +5594,8 @@ async fn chat_chart_persists_in_postgres_and_prefers_pg_over_redis() {
         based_on_preview_id: None,
         source_ids: vec![],
         source_note: None,
+        owner_user_id: None,
+        session_id: None,
     };
     let mut pg_record = redis_record.clone();
     pg_record.title = Some("Postgres Durable".into());
@@ -7250,6 +7254,132 @@ async fn user_api_key_authenticates_report_mcp_returns_markdown_and_auto_binds_e
         "expected markdown digest, got: {digest_md}"
     );
     assert!(digest_md.contains("> Next:"));
+
+    let (_, _, tools_res) = report_mcp_request(
+        &app,
+        &secret_key,
+        Some(&mcp_sid),
+        None,
+        &protocol_version,
+        &json!({"jsonrpc": "2.0", "id": 10, "method": "tools/list", "params": {}}),
+    )
+    .await;
+    let tool_names: Vec<&str> = tools_res["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for name in ["preview_report", "preview_echarts", "commit_chart"] {
+        assert!(tool_names.contains(&name), "missing MCP tool: {name}");
+    }
+
+    let (_, _, preview_res) = report_mcp_request(
+        &app,
+        &secret_key,
+        Some(&mcp_sid),
+        Some(&auto_session_id),
+        &protocol_version,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "preview_echarts",
+                "arguments": {
+                    "option": {
+                        "xAxis": {"type": "category", "data": ["2024", "2025"]},
+                        "yAxis": {"type": "value"},
+                        "series": [{"type": "bar", "data": [10, 12]}]
+                    },
+                    "fallback_summary": "示例指标由10项增至12项。",
+                    "include_image": false
+                }
+            }
+        }),
+    )
+    .await;
+    let preview_text = preview_res["result"]["content"][0]["text"]
+        .as_str()
+        .expect("preview_echarts JSON text");
+    let preview_receipt: Value = serde_json::from_str(preview_text).unwrap();
+    assert_eq!(preview_receipt["image_included"], false);
+    let preview_id = preview_receipt["preview_id"].as_str().unwrap().to_string();
+
+    let (_, _, commit_res) = report_mcp_request(
+        &app,
+        &secret_key,
+        Some(&mcp_sid),
+        Some(&auto_session_id),
+        &protocol_version,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 12,
+            "method": "tools/call",
+            "params": {
+                "name": "commit_chart",
+                "arguments": {
+                    "preview_id": preview_id,
+                    "doc_id": doc_id,
+                    "block_id": "external_preview_chart",
+                    "expected_revision": 1,
+                    "scope": "document"
+                }
+            }
+        }),
+    )
+    .await;
+    let commit_text = commit_res["result"]["content"][0]["text"]
+        .as_str()
+        .expect("commit_chart JSON text");
+    let commit_receipt: Value = serde_json::from_str(commit_text).unwrap();
+    assert_eq!(commit_receipt["new_revision"], 2);
+    assert_eq!(commit_receipt["block_id"], "external_preview_chart");
+    let stored = store
+        .report_store()
+        .get_document(&quire_protocol::DocId::parse(&doc_id).unwrap())
+        .await
+        .unwrap();
+    assert!(
+        stored
+            .blocks
+            .iter()
+            .any(|block| block.id.as_str() == "external_preview_chart")
+    );
+
+    let (status, other_session) = http_json(
+        &app,
+        axum::http::Method::POST,
+        "/api/sessions",
+        &auth.token,
+        Some(json!({"title": "other session"})),
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::OK);
+    let other_session_id = other_session["session_id"].as_str().unwrap();
+    let (_, _, foreign_res) = report_mcp_request(
+        &app,
+        &secret_key,
+        Some(&mcp_sid),
+        Some(other_session_id),
+        &protocol_version,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": 13,
+            "method": "tools/call",
+            "params": {
+                "name": "commit_chart",
+                "arguments": {
+                    "preview_id": preview_id,
+                    "doc_id": doc_id,
+                    "block_id": "foreign_preview_chart",
+                    "scope": "document"
+                }
+            }
+        }),
+    )
+    .await;
+    assert_eq!(foreign_res["error"]["data"]["code"], "FORBIDDEN");
 
     // Delete the API key and confirm /mcp rejects it afterwards
     let (status, _) = http_json(

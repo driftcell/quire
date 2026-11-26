@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-runtime`, `quire-server`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_mcp_registry.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/report_quality_systemic_improvement.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_mcp_registry.md`, `../notes/runtime_rig_046_native_migration.md`, `../notes/mcp_preview_tool_exposure.md`, `../notes/report_quality_systemic_improvement.md`
 
 ## 1. Scope & Non-Goals
 
@@ -28,10 +28,12 @@ AES-256-GCM `enc:...` values encrypted with `RUNTIME_MASTER_KEY`. Public records
 
 ### Seed & Native Report Tools
 
-All 19 Quire report authoring tools (`REPORT_TOOL_NAMES` in `quire-server`) are compiled directly
-into `quire-runtime` as native `rig::tool::Tool`s in `BUILTIN_TOOLS` (`33` total built-in tools)
-executing in-process against the shared `PgReportStore`. Consequently, `McpRegistry` is exclusively
-for external third-party MCP servers (such as `subjectcloud_*`).
+All 19 Quire report-domain tools (`REPORT_TOOL_NAMES` in `quire-server`) are compiled directly into
+`quire-runtime` as native `rig::tool::Tool`s in `BUILTIN_TOOLS` (36 total built-in tools), executing
+in-process against the shared services. The unified `/mcp` adds `preview_report`, `preview_echarts`
+and `commit_chart` to those 19 document tools, exposing 22 authoring tools through the runtime-backed
+preview bridge. `McpRegistry` remains exclusively for external third-party MCP servers (such as
+`subjectcloud_*`).
 
 During startup, `RuntimeService::seed` calls `McpRegistry::retire_legacy_quire_report` to remove any
 legacy `server_id = 'quire-report'` entry from `catalog.mcp_servers` (`ON DELETE CASCADE` removes its
@@ -94,9 +96,9 @@ are present; session, actor and run IDs use the same format validation as header
 entry to serve many sessions without trusting model-authored identity fields: metadata is inserted
 by the host runtime, not read from model arguments.
 
-`commit_chart` executes `get_document_digest` and `exec_apply_operations` directly in-process
-against `RuntimeToolScope::report` (`QuireReportService`) using the current session/run/agent
-`quire_server::auth::RequestContext` without any network or MCP loopback.
+`commit_chart` executes `get_document_digest` and `exec_apply_operations` directly in-process through
+`PreviewToolService` and its `QuireReportService`, using the caller's `quire_server::auth::RequestContext`
+without any network or MCP loopback. Native and external MCP calls use this same service.
 
 Administrative discovery and explicit operational helpers may still create dedicated clients when
 they intentionally use a fixed header identity; the normal model tool loop uses the shared pool.
@@ -139,7 +141,8 @@ raw auth token reference.
 - Server/tool mutations publish cache invalidation and retire pooled connections.
 - Main and subagent runs sharing a server do not repeat `initialize` / `tools/list` per run.
 - Independent servers use independent connection locks and can prewarm concurrently.
-- `commit_chart` calls `QuireReportService` directly in-process with the current turn's `RequestContext`.
+- `commit_chart` calls `QuireReportService` directly in-process with the caller's `RequestContext`; the
+  external integration test proves preview/commit, tool discovery and cross-session `FORBIDDEN`.
 - Shared connections carry no fixed session identity; each call forwards host-authored `_meta.quire`.
 - Header/metadata mismatches are rejected and report creation cannot proceed without a session.
 

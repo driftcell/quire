@@ -287,6 +287,7 @@ impl RigModelCore {
     pub(super) fn build_report_service(&self) -> quire_server::report::QuireReportService {
         let bridge = Arc::new(crate::service::RuntimeExternalHarnessBridge::new(
             self.kb.store().clone(),
+            self.config.clone(),
         ));
         let state = quire_server::AppState::new(
             self.kb.store().report_store().clone(),

@@ -306,13 +306,7 @@ pub(crate) async fn resolve_existing_session_doc_id(
 }
 
 /// Target destination for chat-only vs report-bound citations and charts.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum TargetScope {
-    #[default]
-    Document,
-    Chat,
-}
+pub(crate) use quire_server::report::TargetScope;
 
 /// Register or update bibliography sources actually retrieved during research, deduplicating by URL
 /// and normalized title. Call before citing new sources in report blocks or `<citation id="SOURCE_ID"/>`

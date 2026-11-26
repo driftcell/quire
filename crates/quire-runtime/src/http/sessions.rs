@@ -70,7 +70,11 @@ pub(crate) async fn get_chart_preview(
     Extension(access): Extension<ChartPreviewAccess>,
     Path(preview_id): Path<String>,
 ) -> RuntimeResult<Json<ChartPreviewRecord>> {
-    match access {
+    let user_id = match &access {
+        ChartPreviewAccess::User(user) => Some(user.user_id.as_str()),
+        ChartPreviewAccess::PreviewChart(_) => None,
+    };
+    match &access {
         ChartPreviewAccess::User(user) => {
             if let Some(chart) = service
                 .store()
@@ -85,7 +89,7 @@ pub(crate) async fn get_chart_preview(
             }
         }
         ChartPreviewAccess::PreviewChart(chart_id) => {
-            if chart_id != preview_id {
+            if *chart_id != preview_id {
                 return Err(RuntimeError::Forbidden(
                     "chart preview token does not match the requested chart".into(),
                 ));
@@ -95,13 +99,18 @@ pub(crate) async fn get_chart_preview(
             }
         }
     }
-    service
+    let preview = service
         .store()
         .bus()
         .load_chart_preview(&preview_id)
         .await?
-        .map(Json)
-        .ok_or_else(|| RuntimeError::ChartPreviewNotFound(preview_id))
+        .ok_or_else(|| RuntimeError::ChartPreviewNotFound(preview_id.clone()))?;
+    if let Some(user_id) = user_id
+        && preview.owner_user_id.as_deref() != Some(user_id)
+    {
+        return Err(RuntimeError::ChartPreviewNotFound(preview_id));
+    }
+    Ok(Json(preview))
 }
 
 pub(crate) async fn list_session_traces(

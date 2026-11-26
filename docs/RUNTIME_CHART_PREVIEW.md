@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-protocol`, `quire-lint`, `quire-runtime`, `web`
-- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_chart_preview_flow.md`, `../notes/quire_lint_registry_split.md`, `../notes/quire_typed_json_boundaries.md`
+- **Related Notes:** `../notes/runtime_rig_046_lifecycle_consolidation.md`, `../notes/runtime_chart_preview_flow.md`, `../notes/mcp_preview_tool_exposure.md`, `../notes/quire_lint_registry_split.md`, `../notes/quire_typed_json_boundaries.md`
 
 ## 1. Scope & Non-Goals
 
@@ -45,7 +45,9 @@ no chart preset or mode abstraction.
 - Key: `quire:chart_preview:{preview_id}`
 - TTL: 1800 seconds
 - Fields: `preview_id`, `chart` (`EchartsBlock`), `requirements`, `tables`, optional `title`, `note`,
-  `based_on_preview_id`, `source_ids` and `source_note`.
+  `based_on_preview_id`, `source_ids`, `source_note`, plus `owner_user_id` and `session_id` ownership.
+- Ownerless legacy drafts may still be read by a chart-scoped preview JWT, but cannot be refined or
+  committed; callers must generate a fresh preview.
 
 `chart.option` keeps the original complete ECharts option. Refinements accumulate in
 `chart.option_patch`, so the full option is never re-sent after the first call.
@@ -67,8 +69,9 @@ Pure chat commits write only to PostgreSQL and do not dual-write to Redis.
 `GET /api/chart-previews/{preview_id}` checks PostgreSQL `runtime.chat_charts` (`load_chat_chart`) first
 and falls back to Redis `quire:chart_preview:{preview_id}` (`load_chart_preview`) for transient
 `preview_echarts` drafts. It is authenticated by `chart_preview_auth` (`Authorization: Bearer` with
-a signed user JWT or short-lived preview JWT). Missing, malformed or expired records return `404`
-with `CHART_PREVIEW_NOT_FOUND`; missing or invalid credentials return `401`.
+a signed user JWT or short-lived preview JWT). A user JWT reads only drafts owned by that user; a
+preview JWT remains restricted to its signed chart ID. Missing, malformed, expired or foreign records
+return `404` with `CHART_PREVIEW_NOT_FOUND`; missing or invalid credentials return `401`.
 
 The Vite dev proxy maps `/api/chart-previews` to `127.0.0.1:8081`.
 
@@ -106,7 +109,17 @@ province collection with the full South China Sea inset/line and Hainan geometry
 the world asset is the ECharts 4.9.0 world GeoJSON. Source and attribution details live in
 `web/src/assets/maps/README.md`.
 
-### Agent tools
+### Agent and MCP tools
+
+The unified `/mcp` exposes `preview_report`, `preview_echarts` and `commit_chart` alongside the 19
+report-domain tools. `PreviewToolService` owns execution for native Rig tools, external rmcp handlers
+and the administrator `preview_report` adapter. Its transport-neutral result contains JSON diagnostics
+and an optional screenshot; external callers opt into images with `include_image: true`.
+
+Preview calls resolve the same trusted user/session identity as other MCP tools. Chart drafts require
+`X-Session-Id` or `_meta.quire.session_id`; refinement and commit verify both user and session ownership.
+`preview_report` enforces document read ACL. Document commits use the existing digest/Smart CAS path;
+chat commits authorize the owning session before writing `runtime.chat_charts`.
 
 `preview_echarts` has two modes:
 
@@ -125,10 +138,10 @@ Vision-capable models receive the screenshot as a user image with a chart-specif
 `"chat"`). Its schema has no `option` or `option_patch` fields. It loads the stored preview from
 Redis and:
 
-- In report mode (`scope: "document"` with a bound report), calls `get_document_digest` when needed
-  plus `exec_apply_operations` directly in-process on `RuntimeToolScope::report`
-  (`QuireReportService`) with the current turn's `RequestContext`, returning the mutation receipt
-  plus `preview_id` and `block_id`.
+- In report mode (`scope: "document"` with a bound report), `PreviewToolService` calls
+  `get_document_digest` when needed plus `exec_apply_operations` directly in-process on its
+  `QuireReportService` with the caller's `RequestContext`, returning the mutation receipt plus
+  `preview_id` and `block_id`.
 - In pure chat mode (`scope: "chat"` or when no report is bound to the session), persists the chart
   under `block_id` in PostgreSQL `runtime.chat_charts` (`save_chat_chart`) so `<echarts id="..."/>` renders
   durably in reloaded sessions without creating or modifying a report document.
@@ -147,6 +160,9 @@ An expired preview returns an actionable error that tells the agent to call `pre
 - Public preview URLs never contain the read-only or preview token outside the URL `#` fragment.
 - The first `preview_echarts` call contains the full option; later calls contain only a patch.
 - `commit_chart` cannot receive an ECharts option by construction and executes directly in-process against `QuireReportService` with per-call Quire identity metadata.
+- `tools/list` on the unified `/mcp` includes all three preview tools; the runtime integration test
+  executes an external `preview_echarts -> commit_chart` mutation and rejects cross-session reuse with
+  `FORBIDDEN`.
 - Built-in map GeoJSON loads only through dynamic `import()`; the main and `EchartsCanvas` chunks
   contain none of the China/world feature data.
 - `china.json` retains all 34 province-level features plus the South China Sea line, with Hainan

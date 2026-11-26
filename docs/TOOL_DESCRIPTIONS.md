@@ -4,7 +4,7 @@
 
 - **Status:** Settled
 - **Owner Crates:** `quire-server`, `quire-runtime`, `quire-session-protocol`
-- **Related Notes:** `../notes/quire_typed_json_boundaries.md`, `../notes/runtime_native_report_tools.md`, `../notes/task_focus_and_todo_split.md`
+- **Related Notes:** `../notes/quire_typed_json_boundaries.md`, `../notes/runtime_native_report_tools.md`, `../notes/mcp_preview_tool_exposure.md`, `../notes/task_focus_and_todo_split.md`
 
 ## 1. Scope & Non-Goals
 
@@ -46,8 +46,11 @@ implementation:
    - The `///` doc comment on each `#[tool]` handler method defines the **Tool Description**.
    - `///` doc comments on the fields of each `#[derive(Deserialize, JsonSchema)]` `*Params` /
      `*Input` struct define the **Parameter Descriptions**.
-   - Report rmcp handlers are thin transport adapters over the same `QuireReportService`; `/admin/mcp`
-     remains an independent administrative rmcp server.
+   - Report rmcp handlers are thin transport adapters over the same `QuireReportService`; the three
+     preview handlers use `PreviewToolService` through the external harness bridge, with field-level
+     contracts in `PreviewReportInput`, `PreviewEchartsParams` and `CommitChartParams`.
+   - `/admin/mcp` remains an independent administrative rmcp server; its `preview_report` adapter also
+     delegates to `PreviewToolService`.
 
 ## 3. Invariants & Verification
 

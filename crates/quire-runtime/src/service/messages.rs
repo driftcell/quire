@@ -263,7 +263,10 @@ impl RuntimeService {
     }
 
     pub fn report_app_state(&self) -> quire_server::AppState {
-        let bridge = std::sync::Arc::new(RuntimeExternalHarnessBridge::new(self.store.clone()));
+        let bridge = std::sync::Arc::new(RuntimeExternalHarnessBridge::new(
+            self.store.clone(),
+            self.config.clone(),
+        ));
         quire_server::AppState::new(
             self.store.report_store().clone(),
             self.config.to_report_server_config(),
@@ -439,11 +442,19 @@ impl RuntimeService {
 
 pub(crate) struct RuntimeExternalHarnessBridge {
     store: RuntimeStore,
+    config: Arc<Config>,
 }
 
 impl RuntimeExternalHarnessBridge {
-    pub(crate) fn new(store: RuntimeStore) -> Self {
-        Self { store }
+    pub(crate) fn new(store: RuntimeStore, config: Arc<Config>) -> Self {
+        Self { store, config }
+    }
+
+    fn preview_tools(
+        &self,
+        report: quire_server::report::QuireReportService,
+    ) -> crate::preview::PreviewToolService {
+        crate::preview::PreviewToolService::new(self.config.clone(), self.store.clone(), report)
     }
 }
 
@@ -560,6 +571,67 @@ impl quire_server::state::ExternalHarnessBridge for RuntimeExternalHarnessBridge
                 return Err("无权使用该私有样式".to_string());
             }
             Ok(Some(style_preset_to_template(preset)))
+        })
+    }
+
+    fn preview_report<'a>(
+        &'a self,
+        report: quire_server::report::QuireReportService,
+        context: quire_server::auth::RequestContext,
+        request: quire_server::report::PreviewReportInput,
+    ) -> quire_server::state::BoxFuture<
+        'a,
+        Result<quire_server::state::ExternalPreviewToolResult, rmcp::ErrorData>,
+    > {
+        let tools = self.preview_tools(report);
+        Box::pin(async move {
+            tools
+                .preview_report(context, request)
+                .await
+                .map_err(crate::preview::external_mcp_error)
+        })
+    }
+
+    fn preview_echarts<'a>(
+        &'a self,
+        report: quire_server::report::QuireReportService,
+        context: quire_server::auth::RequestContext,
+        request: quire_server::report::PreviewEchartsParams,
+    ) -> quire_server::state::BoxFuture<
+        'a,
+        Result<quire_server::state::ExternalPreviewToolResult, rmcp::ErrorData>,
+    > {
+        let tools = self.preview_tools(report);
+        Box::pin(async move {
+            tools
+                .preview_echarts(context, request)
+                .await
+                .map_err(crate::preview::external_mcp_error)
+        })
+    }
+
+    fn commit_chart<'a>(
+        &'a self,
+        report: quire_server::report::QuireReportService,
+        context: quire_server::auth::RequestContext,
+        request: quire_server::report::CommitChartParams,
+    ) -> quire_server::state::BoxFuture<
+        'a,
+        Result<quire_server::state::ExternalPreviewToolResult, rmcp::ErrorData>,
+    > {
+        let tools = self.preview_tools(report);
+        Box::pin(async move {
+            let receipt = tools
+                .commit_chart(context, request)
+                .await
+                .map_err(crate::preview::external_mcp_error)?;
+            let payload = serde_json::to_value(receipt)
+                .map_err(RuntimeError::from)
+                .map_err(crate::preview::external_mcp_error)?;
+            Ok(quire_server::state::ExternalPreviewToolResult {
+                payload,
+                image: None,
+            })
         })
     }
 

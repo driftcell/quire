@@ -32,6 +32,42 @@ pub struct ExternalReportTemplate {
     pub references: ReferencesConfig,
 }
 
+/// Transport-neutral image returned by runtime preview tools.
+#[derive(Debug, Clone)]
+pub struct ExternalPreviewImage {
+    pub base64: String,
+    pub mime_type: String,
+    pub caption: String,
+}
+
+/// JSON diagnostics plus an optional screenshot shared by Rig and rmcp adapters.
+#[derive(Debug, Clone)]
+pub struct ExternalPreviewToolResult {
+    pub payload: serde_json::Value,
+    pub image: Option<ExternalPreviewImage>,
+}
+
+impl ExternalPreviewToolResult {
+    /// Convert the shared runtime result to an rmcp JSON diagnostic plus optional PNG content.
+    pub fn into_mcp_result(self) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+        let diagnostics = serde_json::to_string_pretty(&self.payload).map_err(|error| {
+            rmcp::ErrorData::internal_error(
+                format!("failed to serialize preview diagnostics: {error}"),
+                None,
+            )
+        })?;
+        let mut content = vec![rmcp::model::ContentBlock::text(diagnostics)];
+        if let Some(image) = self.image {
+            content.push(rmcp::model::ContentBlock::text(image.caption));
+            content.push(rmcp::model::ContentBlock::image(
+                image.base64,
+                image.mime_type,
+            ));
+        }
+        Ok(rmcp::model::CallToolResult::success(content))
+    }
+}
+
 /// Pluggable bridge from `quire-server` to `quire-runtime` for API key authentication,
 /// live JWT account status verification, document/session ACLs, and automatic empty-session
 /// provisioning when an external MCP harness creates a report.
@@ -56,6 +92,27 @@ pub trait ExternalHarnessBridge: Send + Sync {
         user_id: Option<&'a str>,
         is_admin: bool,
     ) -> BoxFuture<'a, Result<Option<ExternalReportTemplate>, String>>;
+
+    fn preview_report<'a>(
+        &'a self,
+        report: crate::report::QuireReportService,
+        context: RequestContext,
+        request: crate::report::PreviewReportInput,
+    ) -> BoxFuture<'a, Result<ExternalPreviewToolResult, rmcp::ErrorData>>;
+
+    fn preview_echarts<'a>(
+        &'a self,
+        report: crate::report::QuireReportService,
+        context: RequestContext,
+        request: crate::report::PreviewEchartsParams,
+    ) -> BoxFuture<'a, Result<ExternalPreviewToolResult, rmcp::ErrorData>>;
+
+    fn commit_chart<'a>(
+        &'a self,
+        report: crate::report::QuireReportService,
+        context: RequestContext,
+        request: crate::report::CommitChartParams,
+    ) -> BoxFuture<'a, Result<ExternalPreviewToolResult, rmcp::ErrorData>>;
 
     /// Ensure an active session exists in `runtime.sessions` before `create_report` commits,
     /// returning the canonical `SessionId` to store on `report.documents`.

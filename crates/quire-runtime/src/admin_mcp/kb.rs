@@ -17,10 +17,16 @@ impl AdminMcpServer {
         &self,
         Parameters(request): Parameters<crate::preview::PreviewReportInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let result = crate::preview::execute_preview_report(self.service.config(), request)
+        let tools = crate::preview::PreviewToolService::new(
+            std::sync::Arc::new(self.service.config().clone()),
+            self.service.store().clone(),
+            quire_server::report::QuireReportService::new(self.service.report_app_state()),
+        );
+        let result = tools
+            .preview_report(quire_server::auth::RequestContext::system(), request)
             .await
             .map_err(admin_error)?;
-        Ok(result.to_mcp_call_tool_result())
+        result.into_mcp_result()
     }
 
     /// List the active production knowledge-base branch, all `draft`/`active`/`archived` branches, and the 20 most recent immutable snapshots.

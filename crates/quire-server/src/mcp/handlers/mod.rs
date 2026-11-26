@@ -21,6 +21,7 @@ use super::QuireMcpServer;
 
 mod lifecycle;
 mod mutations;
+mod preview;
 mod support;
 
 pub(crate) use support::*;
@@ -29,6 +30,7 @@ impl QuireMcpServer {
     pub(crate) fn tool_router() -> ToolRouter<Self> {
         let mut router = Self::lifecycle_router();
         router.merge(Self::mutations_router());
+        router.merge(Self::preview_router());
         router
     }
 }
